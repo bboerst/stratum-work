@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from urllib.parse import urlparse
 
-from crate import client
+from pymongo import MongoClient
 
 LOG = logging.getLogger()
 
@@ -99,7 +99,7 @@ class Watcher:
         resp = self.get_msg()
         LOG.debug(f"Received: {resp}")
 
-    def get_stratum_work(self):
+    def get_stratum_work(self, db_name, db_username, db_password):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.info(f"Connected to server {self.purl.geturl()}")
@@ -120,33 +120,33 @@ class Watcher:
                 return
 
             if "method" in n and n["method"] == "mining.notify":
-                insert_notification(n, self.pool_name, self.db_url)
+                insert_notification(n, self.pool_name, self.db_url, db_name, db_username, db_password)
 
-def insert_notification(data, pool_name, db_url):
-    conn = client.connect(db_url)
-    cursor = conn.cursor()
+def insert_notification(data, pool_name, db_url, db_name, db_username, db_password):
+    client = MongoClient(db_url, username=db_username, password=db_password)
+    db = client[db_name]
+    collection = db.mining_notify
+
     notification_id = str(uuid.uuid4())
     now = datetime.utcnow()
 
-    # Insert into mining_notify table
-    query = "INSERT INTO mining_notify (id, timestamp, pool_name, job_id, prev_hash, coinbase1, coinbase2, merkle_branches, version, nbits, ntime, clean_jobs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    cursor.execute(query, (
-        notification_id,
-        now,
-        pool_name,
-        data["params"][0],
-        data["params"][1],
-        data["params"][2],
-        data["params"][3],
-        data["params"][4],
-        data["params"][5],
-        data["params"][6],
-        data["params"][7],
-        data["params"][8]
-    ))
+    document = {
+        "_id": notification_id,
+        "timestamp": now,
+        "pool_name": pool_name,
+        "job_id": data["params"][0],
+        "prev_hash": data["params"][1],
+        "coinbase1": data["params"][2],
+        "coinbase2": data["params"][3],
+        "merkle_branches": data["params"][4],
+        "version": data["params"][5],
+        "nbits": data["params"][6],
+        "ntime": data["params"][7],
+        "clean_jobs": data["params"][8]
+    }
 
-    conn.commit()
-    conn.close()
+    collection.insert_one(document)
+    client.close()
 
 def main():
     parser = argparse.ArgumentParser(
@@ -160,7 +160,16 @@ def main():
         "-p", "--pool-name", required=True, help="The name of the pool"
     )
     parser.add_argument(
-        "-d", "--db-url", default="localhost:4200", help="The URL of the CrateDB database (default: localhost:4200)"
+        "-d", "--db-url", default="mongodb://localhost:27017", help="The URL of the MongoDB database (default: mongodb://localhost:27017)"
+    )
+    parser.add_argument(
+        "-dn", "--db-name", required=True, help="The name of the MongoDB database"
+    )
+    parser.add_argument(
+        "-du", "--db-username", required=True, help="The username for MongoDB authentication"
+    )
+    parser.add_argument(
+        "-dp", "--db-password", required=True, help="The password for MongoDB authentication"
     )
     parser.add_argument(
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -177,7 +186,7 @@ def main():
     while True:
         w = Watcher(args.url, args.userpass, args.pool_name, args.db_url)
         try:
-            w.get_stratum_work()
+            w.get_stratum_work(args.db_name, args.db_username, args.db_password)
         except KeyboardInterrupt:
             break
         finally:

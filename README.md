@@ -1,6 +1,6 @@
 # Stratum Logger
 
-Stratum Logger aims to log all "mining.notify" stratum messages incoming from a pool to a databse for historical logging purposes. I plan to run many of these concurrently in order to capture history of what work pools sent to miners to work on. In the future, queries can be developed to get an overview of work delegation historically. Additionally, a frontend can be developed to utilize the database for realtime data aggregation of visualization.
+Stratum Logger aims to log all "mining.notify" stratum messages incoming from a pool to a databse for historical logging purposes. I plan to run many of these concurrently in order to capture history of what work pools sent to miners to work on. In the future, queries can be developed to get an overview of work delegation historically. Additionally, a frontend can be developed to utilize the database for realtime data aggregation and visualization.
 
 ```
 python main.py --help

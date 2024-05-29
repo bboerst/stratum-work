@@ -4,17 +4,27 @@ Stratum Logger aims to log all "mining.notify" stratum messages incoming from a 
 
 ```
 python main.py --help
-usage: main.py [-h] -u URL -up USERPASS -p POOL_NAME [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
+usage: main.py [-h] -u URL -up USERPASS -p POOL_NAME [-d DB_URL] -dn DB_NAME -du DB_USERNAME -dp
+               DB_PASSWORD [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
 
 Subscribe to a Stratum endpoint and listen for new work
 
 options:
   -h, --help            show this help message and exit
-  -u URL, --url URL     The URL of the stratum server, including port. Ex: stratum+tcp://beststratumpool.com:3333
+  -u URL, --url URL     The URL of the stratum server, including port. Ex:
+                        stratum+tcp://beststratumpool.com:3333
   -up USERPASS, --userpass USERPASS
                         Username and password combination separated by a colon (:)
   -p POOL_NAME, --pool-name POOL_NAME
                         The name of the pool
+  -d DB_URL, --db-url DB_URL
+                        The URL of the MongoDB database (default: mongodb://localhost:27017)
+  -dn DB_NAME, --db-name DB_NAME
+                        The name of the MongoDB database
+  -du DB_USERNAME, --db-username DB_USERNAME
+                        The username for MongoDB authentication
+  -dp DB_PASSWORD, --db-password DB_PASSWORD
+                        The password for MongoDB authentication
   -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level (default: INFO)
 ```

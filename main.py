@@ -13,11 +13,12 @@ from crate import client
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name):
+    def __init__(self, url, userpass, pool_name, db_url):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
         self.pool_name = pool_name
+        self.db_url = db_url
         self.purl = self.parse_url(url)
         self.init_socket()
 
@@ -119,10 +120,10 @@ class Watcher:
                 return
 
             if "method" in n and n["method"] == "mining.notify":
-                insert_notification(n, self.pool_name)
+                insert_notification(n, self.pool_name, self.db_url)
 
-def insert_notification(data, pool_name):
-    conn = client.connect("localhost:4200")
+def insert_notification(data, pool_name, db_url):
+    conn = client.connect(db_url)
     cursor = conn.cursor()
     notification_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -159,6 +160,9 @@ def main():
         "-p", "--pool-name", required=True, help="The name of the pool"
     )
     parser.add_argument(
+        "-d", "--db-url", default="localhost:4200", help="The URL of the CrateDB database (default: localhost:4200)"
+    )
+    parser.add_argument(
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
@@ -171,7 +175,7 @@ def main():
     )
 
     while True:
-        w = Watcher(args.url, args.userpass, args.pool_name)
+        w = Watcher(args.url, args.userpass, args.pool_name, args.db_url)
         try:
             w.get_stratum_work()
         except KeyboardInterrupt:

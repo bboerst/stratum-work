@@ -1,0 +1,18 @@
+releases:
+  {{- range .Values.pools }}
+  - name: stratum-logger-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
+    namespace: stratum-logger
+    chart: ./stratum-logger
+    values:
+      - image:
+          repository: bboerst/stratum-logger
+          tag: 3
+          pullPolicy: IfNotPresent
+        poolName: "{{ .poolName }}"
+        arguments:
+          - --pool-name
+          - {{ .poolName }}
+        {{- range .arguments }}
+          - {{ . }}
+        {{- end }}
+  {{- end }}

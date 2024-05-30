@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mining Pool Results</title>
+    
+    <link href="https://tabulator.info/css/tabulator/6.2/tabulator_bootstrap5.css" rel="stylesheet">
+    <link href="https://tabulator.info/css/tabulator/6.2/tabulator_site.css" rel="stylesheet">
+    <link href="https://tabulator.info/css/tabulator/6.2/tabulator.css" rel="stylesheet">
+
+    <script type="text/javascript" src="https://tabulator.info/js/tabulator/6.2/tabulator.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.js"></script>
+    <script src="https://unpkg.com/moment" />
+    <script src="https://cdn.jsdelivr.net/npm/luxon/build/global/luxon.min.js"></script>
+    <script type="module">import "{{ url_for('static', filename='bitcoinjs-lib.js') }}"</script>
+    <script src="{{ url_for('static', filename='main.js') }}"></script>
+
+    <style>
+        body {
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>Mining Pool Results</h1>
+    <div id="mining-table"></div>
+</body>
+</html>

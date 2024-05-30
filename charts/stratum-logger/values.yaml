@@ -1,0 +1,22 @@
+image:
+  repository: bboerst/stratum-logger
+  tag: v0.1.1-pre
+  pullPolicy: IfNotPresent
+
+poolName: "Best Stratum Pool"
+
+arguments:
+  - --url
+  - "stratum+tcp://beststratumpool.com:3333"
+  - --userpass
+  - "username:password"
+  - --db-url
+  - "mongodb://localhost:27017"
+  - --db-name
+  - "stratum_db"
+  - --db-username
+  - "admin"
+  - --db-password
+  - "password"
+  - --log-level
+  - "INFO"

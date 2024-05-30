@@ -20,6 +20,8 @@ class Watcher:
         self.pool_name = pool_name
         self.db_url = db_url
         self.purl = self.parse_url(url)
+        self.extranonce1 = None
+        self.extranonce2_length = -1
         self.init_socket()
 
     def parse_url(self, url):
@@ -97,8 +99,12 @@ class Watcher:
         self.sock.send(json_data.encode())
 
         resp = self.get_msg()
-        LOG.debug(f"Received: {resp}")
 
+        if resp["id"] == 1 and resp["result"] is not None:
+            self.extranonce1, self.extranonce2_length = resp["result"][-2:]
+
+        LOG.debug(f"Received: {resp}")
+        
     def get_stratum_work(self, db_name, db_username, db_password):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
@@ -120,10 +126,10 @@ class Watcher:
                 return
 
             if "method" in n and n["method"] == "mining.notify":
-                insert_notification(n, self.pool_name, self.db_url, db_name, db_username, db_password)
+                insert_notification(n, self.pool_name, self.extranonce1, self.extranonce2_length, self.db_url, db_name, db_username, db_password)
 
-def insert_notification(data, pool_name, db_url, db_name, db_username, db_password):
-    client = MongoClient(db_url, username=db_username, password=db_password)
+def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url, db_name, db_username, db_password):
+    client = MongoClient(db_url, username=db_username, password=db_password, directConnection=True)
     db = client[db_name]
     collection = db.mining_notify
 
@@ -142,7 +148,9 @@ def insert_notification(data, pool_name, db_url, db_name, db_username, db_passwo
         "version": data["params"][5],
         "nbits": data["params"][6],
         "ntime": data["params"][7],
-        "clean_jobs": data["params"][8]
+        "clean_jobs": data["params"][8],
+        "extranonce1": extranonce1,
+        "extranonce2_length": extranonce2_length
     }
 
     collection.insert_one(document)

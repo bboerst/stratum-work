@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}
+spec:
+  serviceName: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - "/usr/local/bin/python"
+        - "main.py"
+        args:
+        {{- range .Values.arguments }}
+        - {{ . }}
+        {{- end }}

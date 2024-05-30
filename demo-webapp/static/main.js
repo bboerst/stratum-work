@@ -3,28 +3,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const table = new Tabulator('#mining-table', {
         index: 'pool_name',
         layout: 'fitColumns',
+        movableColumns: true,
         columns: [
-            { title: 'Pool Name', field: 'pool_name', headerFilter: 'input' },
+            { title: 'Pool Name', field: 'pool_name' },
             {
                 title: 'Timestamp',
                 field: 'timestamp',
                 formatter: function(cell, formatterParams, onRendered) {
                     const timestamp = cell.getValue().$date;
                     const date = new Date(timestamp);
-                    const formattedTimestamp = `${date.getFullYear()}-${padZero(date.getMonth() + 1)}-${padZero(date.getDate())} ${padZero(date.getHours())}:${padZero(date.getMinutes())}:${padZero(date.getSeconds())}`;
+                    const formattedTimestamp = `${padZero(date.getHours())}:${padZero(date.getMinutes())}:${padZero(date.getSeconds())}`;
                     return formattedTimestamp;
                 }
             },
-            { title: 'Job ID', field: 'job_id' },
-            { title: 'Prev Hash', field: 'prev_hash' },
+            // { title: 'Prev Hash', field: 'prev_hash' },
+            { title: 'Height', field: 'height' },
             { title: 'Previous Block Hash', field: 'prev_block_hash' },
-            { title: 'Block Version', field: 'block_version' },
-            { title: 'Coinbase1', field: 'coinbase1' },
-            { title: 'Coinbase2', field: 'coinbase2' },
-            { title: 'Version', field: 'version' },
-            { title: 'Nbits', field: 'nbits' },
-            { title: 'Ntime', field: 'ntime' },
+            // { title: 'Block Version', field: 'block_version' },
+            // { title: 'Coinbase1', field: 'coinbase1' },
+            // { title: 'Coinbase2', field: 'coinbase2' },
+            // { title: 'Version', field: 'version' },
+            // { title: 'Nbits', field: 'nbits' },
+            // { title: 'Ntime', field: 'ntime' },
             { title: 'Clean Jobs', field: 'clean_jobs' },
+            { title: 'First Transaction', field: 'first_transaction' },
             { title: 'Merkle Branch 0', field: 'merkle_branches', formatter: merkleBranchFormatter(0) },
             { title: 'Merkle Branch 1', field: 'merkle_branches', formatter: merkleBranchFormatter(1) },
             { title: 'Merkle Branch 2', field: 'merkle_branches', formatter: merkleBranchFormatter(2) },
@@ -38,12 +40,11 @@ document.addEventListener('DOMContentLoaded', () => {
             { title: 'Merkle Branch 10', field: 'merkle_branches', formatter: merkleBranchFormatter(10) },
             { title: 'Merkle Branch 11', field: 'merkle_branches', formatter: merkleBranchFormatter(11) },
             { title: 'Coinbase Output Value', field: 'coinbase_output_value' },
-            { title: 'Coinbase RAW', field: 'coinbase_raw' },
-            { title: 'Height', field: 'height' },
+            // { title: 'Coinbase RAW', field: 'coinbase_raw' },
         ],
         initialSort:[
             {column:'coinbase_output_value', dir:"desc"},
-        ]
+        ],
     });
 
     socket.on('mining_data', (data) => {
@@ -83,6 +84,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // Extract block version
             const blockVer = parseInt(version, 16);
             row.block_version = blockVer;
+
+            // Extract first transaction after coinbase
+            const merkleBranches = row.merkle_branches;
+            if (merkleBranches.length > 0) {
+                const firstTxBytes = merkleBranches[0].match(/../g).reverse();
+                row.first_transaction = firstTxBytes.join('');
+            } else {
+                row.first_transaction = 'empty block';
+            }
         });
 
         const existingData = table.getData();
@@ -91,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return newRow || existingRow;
         });
         
-        table.updateOrAddData(updatedData);
+        table.replaceData(updatedData);
 
         const newData = data.filter(newRow => !existingData.some(existingRow => existingRow.pool_name === newRow.pool_name));
         table.addData(newData);
@@ -113,10 +123,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function getColorFromHex(hexValue) {
         if (!hexValue) return 'white';
-        
+      
         const hash = hashCode(hexValue);
         const hue = Math.abs(hash % 360);
-        return `hsl(${hue}, 100%, 80%)`;
+        const lightness = 60 + (hash % 25); // Lightness values between 25% and 75%
+      
+        return `hsl(${hue}, 100%, ${lightness}%)`;
     }
 
     function hashCode(str) {

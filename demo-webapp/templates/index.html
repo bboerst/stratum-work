@@ -69,6 +69,19 @@
             <div id="column-toggles"></div>
         </div>
     </div>
+    <div id="view-selector">
+        <label for="view-select">View:</label>
+        <select id="view-select">
+            <option value="live">Live</option>
+            <option value="datetime">Date and Time</option>
+        </select>
+        </div>
+
+        <div id="datetime-selector" style="display: none;">
+        <label for="datetime-input">Select Date and Time:</label>
+        <input type="datetime-local" id="datetime-input" step="0.001">
+        <button id="load-datetime-data">Load Data</button>
+    </div>
     <h1>Pool Work</h1>
     <div id="mining-table"></div>
 </body>

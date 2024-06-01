@@ -129,7 +129,7 @@ class Watcher:
                 insert_notification(n, self.pool_name, self.extranonce1, self.extranonce2_length, self.db_url, db_name, db_username, db_password)
 
 def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url, db_name, db_username, db_password):
-    client = MongoClient(db_url, username=db_username, password=db_password, directConnection=True)
+    client = MongoClient(db_url, username=db_username, password=db_password)
     db = client[db_name]
     collection = db.mining_notify
 

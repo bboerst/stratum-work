@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Mining Pool Results</title>
+    <title>Pool Work</title>
     
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_site.css" rel="stylesheet">
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_simple.min.css" rel="stylesheet">
@@ -10,6 +10,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.js"></script>
     <script src="https://unpkg.com/moment" />
     <script src="https://cdn.jsdelivr.net/npm/luxon/build/global/luxon.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <script src="https://mempool.space/mempool.js"></script>
     <script type="module">import "{{ url_for('static', filename='bitcoinjs-lib.js') }}"</script>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
 
@@ -17,10 +19,57 @@
         body {
             font-family: monospace;
         }
+        
+        .settings-container {
+            position: relative;
+            display: inline-block;
+            float: right;
+            margin-right: 10px;
+        }
+
+        .settings-icon {
+            cursor: pointer;
+        }
+
+        .config-section {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background-color: #f9f9f9;
+            min-width: 200px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            z-index: 1;
+        }
+
+        .config-section.show {
+            display: block;
+        }
+
+        #column-toggles label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        #column-toggles div {
+            margin-bottom: 5px;
+        }
+
+        #mining-table {
+            width: 100%;
+        }
     </style>
 </head>
 <body>
-    <h1>Mining Pool Results</h1>
+    <div class="settings-container">
+        <i class="fas fa-cog settings-icon"></i>
+        <div id="config-section" class="config-section">
+            <h3>Columns</h3>
+            <div id="column-toggles"></div>
+        </div>
+    </div>
+    <h1>Pool Work</h1>
     <div id="mining-table"></div>
 </body>
 </html>

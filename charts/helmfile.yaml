@@ -6,7 +6,7 @@ releases:
     values:
       - image:
           repository: bboerst/stratum-logger
-          tag: 3
+          tag: 8
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
         arguments:

@@ -5,8 +5,8 @@ releases:
     chart: ./stratum-logger
     values:
       - image:
-          repository: bboerst/stratum-logger
-          tag: 8
+          repository: bboerst/pool-work-collector
+          tag: v0.1.2-pre
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
         arguments:

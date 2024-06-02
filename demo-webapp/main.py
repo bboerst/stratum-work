@@ -1,18 +1,25 @@
-from flask import Flask, render_template, send_file
+from flask import Flask, render_template, send_file, request, jsonify
+from datetime import datetime
 from pymongo import MongoClient
 from flask_socketio import SocketIO
-from bson import json_util
+from bson import json_util, Decimal128
 import json
 import logging
 import signal
 import sys
+import os
+
+# MongoDB connection with authentication and connection pooling
+mongodb_username = os.environ.get('MONGODB_USERNAME')
+mongodb_password = os.environ.get('MONGODB_PASSWORD')
+mongodb_hosts = os.environ.get('MONGODB_HOSTS')
 
 app = Flask(__name__)
 socketio = SocketIO(app)
 
 # MongoDB connection with authentication and connection pooling
-client = MongoClient("mongodb://stratum:abc1234@localhost:27017", maxPoolSize=50)
-db = client["mining-notify"]
+client = MongoClient(f"mongodb://{mongodb_username}:{mongodb_password}@{mongodb_hosts}", maxPoolSize=50)
+db = client["stratum-logger"]
 collection = db["mining_notify"]
 
 # Create indexes on frequently queried fields
@@ -22,6 +29,16 @@ collection.create_index("pool_name")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal128):
+            return str(obj)
+        return super(CustomJSONEncoder, self).default(obj)
+
+app.json_encoder = CustomJSONEncoder
 
 def get_mining_data():
     try:
@@ -41,7 +58,8 @@ def get_mining_data():
                     "nbits": {"$first": "$nbits"},
                     "ntime": {"$first": "$ntime"},
                     "clean_jobs": {"$first": "$clean_jobs"},
-                    "merkle_branches": {"$first": "$merkle_branches"}
+                    "merkle_branches": {"$first": "$merkle_branches"},
+                    "height": {"$first": "$height"}
                 }
             },
             {
@@ -69,13 +87,23 @@ def get_mining_data():
                     "merkle_branch_10": {"$arrayElemAt": ["$merkle_branches", 10]},
                     "merkle_branch_11": {"$arrayElemAt": ["$merkle_branches", 11]},
                     "extranonce1": 1,
-                    "extranonce2_length": 1
+                    "extranonce2_length": 1,
+                    "height": 1
                 }
             }
         ]))
-        return results
+        # Convert timestamps to local browser time
+        for item in results:
+            item['timestamp'] = item['timestamp'] - datetime.timedelta(minutes=datetime.now().utcoffset().total_seconds() / 60)
+
+        return app.response_class(
+            response=json.dumps(results, cls=CustomJSONEncoder),
+            status=200,
+            mimetype='application/json'
+        )
     except Exception as e:
-        logger.exception("Error occurred while streaming mining data")
+        logger.exception("Error occurred while fetching data by timestamp range")
+        return jsonify([])
 
 def stream_mining_data():
     with collection.watch() as stream:
@@ -89,6 +117,56 @@ def index():
     results = get_mining_data()
     return render_template("index.html", results=results)
 
+@app.route('/data')
+def get_data_by_block_height():
+    block_height = request.args.get('block_height', type=int)
+
+    if block_height is None:
+        return jsonify([])
+
+    try:
+        results = list(collection.aggregate([
+            {
+                "$match": {
+                    "height": block_height
+                }
+            },
+            {
+                "$sort": {"timestamp": 1}
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "pool_name": 1,
+                    "timestamp": 1,
+                    "prev_hash": 1,
+                    "coinbase1": 1,
+                    "coinbase2": 1,
+                    "version": 1,
+                    "nbits": 1,
+                    "ntime": 1,
+                    "clean_jobs": 1,
+                    "merkle_branches": 1,
+                    "extranonce1": 1,
+                    "extranonce2_length": 1,
+                    "height": 1
+                }
+            }
+        ]))
+        if not results:
+            return jsonify([])
+        
+        logger.info(f"Found {len(results)} records for block height {block_height}")
+
+        return app.response_class(
+            response=json.dumps(results, cls=CustomJSONEncoder),
+            status=200,
+            mimetype='application/json'
+        )
+    except Exception as e:
+        logger.exception("Error occurred while fetching data by block height")
+        return jsonify([])
+        
 @app.route('/static/bitcoinjs-lib.js')
 def serve_js():
     return send_file('static/bitcoinjs-lib.js', mimetype='application/javascript')

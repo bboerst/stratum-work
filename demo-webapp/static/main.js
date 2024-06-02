@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const socket = io();
+  const socket = io(SOCKET_URL);
   const { bitcoin: { transactions } } = mempoolJS({ hostname: 'mempool.space' });
   const transactionCache = new Map();
   const savedColumnVisibility = JSON.parse(localStorage.getItem('columnVisibility')) || {};
@@ -24,12 +24,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const historicalSelector = document.getElementById('historical-selector');
   const historicalSelect = document.getElementById('historical-select');
 
-  // liveTab.addEventListener('click', () => {
-  //   toggleTab(liveTab, historicalTab);
-  //   historicalSelector.style.display = 'none';
-  //   socket.connect();
-  //   table.clearData();
-  // });
+  liveTab.addEventListener('click', () => {
+    toggleTab(liveTab, historicalTab);
+    historicalSelector.style.display = 'none';
+    socket.connect();
+    table.clearData();
+  });
 
   // historicalTab.addEventListener('click', () => {
   //   toggleTab(historicalTab, liveTab);

@@ -12,6 +12,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <script src="https://mempool.space/mempool.js"></script>
     <script type="module">import "{{ url_for('static', filename='bitcoinjs-lib.js') }}"</script>
+    <script>
+        const SOCKET_URL = 'http://localhost:8000';
+    </script>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
     <style>
         body {

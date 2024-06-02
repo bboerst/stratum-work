@@ -2,6 +2,7 @@ from flask import Flask, render_template, send_file, request, jsonify
 from datetime import datetime
 from pymongo import MongoClient
 from flask_socketio import SocketIO
+from flask_cors import CORS
 from bson import json_util, Decimal128
 import json
 import logging
@@ -15,7 +16,8 @@ mongodb_password = os.environ.get('MONGODB_PASSWORD')
 mongodb_hosts = os.environ.get('MONGODB_HOSTS')
 
 app = Flask(__name__)
-socketio = SocketIO(app)
+CORS(app, resources={r"/*": {"origins": "http://127.0.0.1:8000"}})
+socketio = SocketIO(app, cors_allowed_origins="http://127.0.0.1:8000")
 
 # MongoDB connection with authentication and connection pooling
 client = MongoClient(f"mongodb://{mongodb_username}:{mongodb_password}@{mongodb_hosts}", maxPoolSize=50)

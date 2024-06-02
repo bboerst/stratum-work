@@ -5,7 +5,7 @@ on:
     types: [published]
 
 env:
-  DOCKER_IMAGE: bboerst/stratum-logger
+  DOCKER_IMAGE: bboerst/pool-work-collector
 
 jobs:
   build:

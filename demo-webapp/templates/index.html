@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Pool Work</title>
-    
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_site.css" rel="stylesheet">
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_simple.min.css" rel="stylesheet">
-
     <script type="text/javascript" src="https://tabulator.info/js/tabulator/6.2/tabulator.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.js"></script>
     <script src="https://unpkg.com/moment" />
@@ -14,12 +13,11 @@
     <script src="https://mempool.space/mempool.js"></script>
     <script type="module">import "{{ url_for('static', filename='bitcoinjs-lib.js') }}"</script>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
-
     <style>
         body {
             font-family: monospace;
         }
-        
+
         .settings-container {
             position: relative;
             display: inline-block;
@@ -59,8 +57,25 @@
         #mining-table {
             width: 100%;
         }
+
+        #view-tabs {
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            background-color: #f1f1f1;
+            border: none;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .tab.active {
+            background-color: #ccc;
+        }
     </style>
 </head>
+
 <body>
     <div class="settings-container">
         <i class="fas fa-cog settings-icon"></i>
@@ -69,20 +84,17 @@
             <div id="column-toggles"></div>
         </div>
     </div>
-    <div id="view-selector">
-        <label for="view-select">View:</label>
-        <select id="view-select">
-            <option value="live">Live</option>
-            <option value="datetime">Date and Time</option>
-        </select>
-        </div>
-
-        <div id="datetime-selector" style="display: none;">
-        <label for="datetime-input">Select Date and Time:</label>
-        <input type="datetime-local" id="datetime-input" step="0.001">
-        <button id="load-datetime-data">Load Data</button>
+    <div id="view-tabs">
+        <button id="live-tab" class="tab active">Live</button>
+        <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
     </div>
+    <div id="historical-selector" style="display: none;">
+        <label for="historical-select">Select Block Height:</label>
+        <select id="historical-select"></select>
+    </div>
+
     <h1>Pool Work</h1>
     <div id="mining-table"></div>
 </body>
+
 </html>

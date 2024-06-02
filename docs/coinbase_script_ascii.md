@@ -1,0 +1,1 @@
+# Coinbase Script (ASCII)

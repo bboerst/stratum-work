@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from pymongo import MongoClient
+from pycoin.symbols.btc import network
 
 LOG = logging.getLogger()
 
@@ -135,15 +136,27 @@ def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url
 
     notification_id = str(uuid.uuid4())
     now = datetime.utcnow()
-
+    
+    coinbase1 = data["params"][2]
+    coinbase2 = data["params"][3]
+    
+    coinbase = None
+    height = 0
+    try:
+        coinbase = network.Tx.from_hex(coinbase1 + extranonce1 + "00"*extranonce2_length + coinbase2)
+        height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
+    except Exception as e:
+        print(e)
+                    
     document = {
         "_id": notification_id,
         "timestamp": now,
         "pool_name": pool_name,
+        "height": height,
         "job_id": data["params"][0],
         "prev_hash": data["params"][1],
-        "coinbase1": data["params"][2],
-        "coinbase2": data["params"][3],
+        "coinbase1": coinbase1,
+        "coinbase2":coinbase2,
         "merkle_branches": data["params"][4],
         "version": data["params"][5],
         "nbits": data["params"][6],

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+{{- if .Values.service.labels }}
+{{ toYaml .Values.service.labels | indent 4 }}
+{{- end }}
+    app: {{ template "pool-work-webapp.name" . }}
+    chart: {{ template "pool-work-webapp.chart" . }}
+    component: "{{ .Values.name }}"
+    heritage: {{ .Release.Service }}
+  name: {{ template "pool-work-webapp.fullname" . }}-config
+data:
+{{ toYaml .Values.configurationFiles | indent 2 }}

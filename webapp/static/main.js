@@ -47,16 +47,20 @@ document.addEventListener('DOMContentLoaded', () => {
     updateBlockHeights(data.height);
   });
 
-  setInterval(refreshTransactionCache, 20000);
+  setInterval(refreshTransactionCache, 180000);
 
   function getTableColumns() {
     return [
-      { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/pool_name.md" target="_blank"><i class="fas fa-question-circle"></i></a> Pool Name', field: 'pool_name' },
+      {
+        title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/pool_name.md" target="_blank"><i class="fas fa-question-circle"></i></a> Pool Name',
+        field: 'pool_name',
+        width: 130,
+      },
       {
         title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a> Timestamp',
         field: 'timestamp',
         formatter: formatTimestamp,
-        sorter: function(a, b, aRow, bRow, column, dir, sorterParams) {
+        sorter: function (a, b, aRow, bRow, column, dir, sorterParams) {
           const timestampA = new Date(a).getTime();
           const timestampB = new Date(b).getTime();
           return timestampA - timestampB;
@@ -71,7 +75,18 @@ document.addEventListener('DOMContentLoaded', () => {
       { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/ntime.md" target="_blank"><i class="fas fa-question-circle"></i></a> Ntime', field: 'ntime', formatter: formatNtimeTimestamp },
       { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a> Coinbase Script (ASCII)', field: 'coinbase_script_ascii', formatter: extractCoinbaseScriptAscii },
       { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/clean_jobs.md" target="_blank"><i class="fas fa-question-circle"></i></a> Clean Jobs', field: 'clean_jobs' },
-      { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/first_transaction.md" target="_blank"><i class="fas fa-question-circle"></i></a> First Tx', field: 'first_transaction' },
+      {
+        title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/first_transaction.md" target="_blank"><i class="fas fa-question-circle"></i></a> First Tx',
+        field: 'first_transaction',
+        formatter: function(cell, formatterParams, onRendered) {
+          const value = cell.getValue();
+          if (value !== 'empty block') {
+            return `<a href="https://mempool.space/tx/${value}" target="_blank">${value}</a>`;
+          } else {
+            return value;
+          }
+        }
+      },
       { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/fee_rate.md" target="_blank"><i class="fas fa-question-circle"></i></a> First Tx Fee Rate (sat/vB)', field: 'fee_rate' },
       ...getMerkleBranchColumns(),
       { title: '<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/coinbase_output_value.md" target="_blank"><i class="fas fa-question-circle"></i></a> Coinbase Output Value', field: 'coinbase_output_value' },
@@ -137,22 +152,23 @@ document.addEventListener('DOMContentLoaded', () => {
   async function updateTableData(data) {
     const filteredData = (Array.isArray(data) ? data : [data]).filter((row) => row !== undefined && row !== null);
     const processedData = await Promise.all(filteredData.map(processRowData));
-
-    const existingData = table.getData();
-    const updatedData = existingData.map((existingRow) => {
-      const processedRow = processedData.find((row) => row.pool_name === existingRow.pool_name);
-      return processedRow || existingRow;
-    });
-
-    const newData = processedData.filter((newRow) => !existingData.some((existingRow) => existingRow.pool_name === newRow.pool_name));
-
-    // Fetch transaction fee rates for all data
+  
+    // Fetch transaction fee rates for all processed data
     await Promise.all(processedData.map(async (row) => {
       const feeRate = await getTransactionFeeRate(row.first_transaction);
       row.fee_rate = feeRate;
     }));
-
-    table.replaceData([...updatedData, ...newData]);
+  
+    const existingData = table.getData();
+    const updatedData = existingData.map(existingRow => {
+      const newRow = processedData.find(row => row.pool_name === existingRow.pool_name);
+      return newRow || existingRow;
+    });
+  
+    table.replaceData(updatedData);
+  
+    const newData = processedData.filter(newRow => !existingData.some(existingRow => existingRow.pool_name === newRow.pool_name));
+    table.addData(newData);
   }
 
   function refreshTransactionCache() {
@@ -224,24 +240,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function getTransactionFeeRate(firstTransaction) {
-    if (firstTransaction === 'empty block') return 'Empty Block';
+    if (firstTransaction === 'empty block') return '';
 
     if (transactionCache.has(firstTransaction)) {
       const cachedResult = transactionCache.get(firstTransaction);
-      if (cachedResult === 'not_exist') return 'Not Exist';
+      if (cachedResult === 'not_exist') return 'not found';
       if (cachedResult === 'error') return 'Error';
       return calculateFeeRate(cachedResult.fee, cachedResult.weight);
     }
 
     const result = await fetchTransactionFeeWeight(firstTransaction);
-    if (result === 'not_exist') return 'Not Exist';
+    if (result === 'not_exist') return 'not found';
     if (result === 'error') return 'Error';
 
     const { fee, weight } = result;
     if (fee !== null && weight !== null) {
       return calculateFeeRate(fee, weight);
     } else {
-      return 'Not Found';
+      return 'not found';
     }
   }
 

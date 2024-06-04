@@ -1,0 +1,327 @@
+# Default values for pool-work-webapp.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 8
+
+image:
+  repository: bboerst/pool-work-webapp
+  tag: ""
+  pullPolicy: IfNotPresent
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 25%
+    maxSurge: 25%
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name:
+
+env:
+  MONGODB_USERNAME: "mongoadmin"
+  MONGODB_PASSWORD: "hunter1"
+  MONGODB_HOSTS: "mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017/"
+
+arguments: []
+
+configurationFiles:
+  # uwsgi.ini: |
+  #   [uwsgi]
+  #   # placeholders that you have to change
+  #   my_app_folder = /app
+  #   my_user = root
+
+  #   chdir = %(my_app_folder)
+  #   file = main.py
+  #   callable = app
+
+  #   # environment variables
+  #   env = CUDA_VISIBLE_DEVICES=-1
+  #   env = KERAS_BACKEND=theano
+  #   env = PYTHONPATH=%(my_app_folder):$PYTHONPATH
+
+  #   protocol = http
+  #   master = true
+  #   gevent_uwsgi = 1000
+  #   http-websockets = true
+  #   http-socket = 127.0.0.1:8000
+
+  #   processes = 5
+  #   # allows nginx (and all users) to read and write on this socket
+  #   chmod-socket = 666
+  #   # remove the socket when the process stops
+  #   vacuum = true
+
+  #   # loads your application one time per worker
+  #   # will very probably consume more memory,
+  #   # but will run in a more consistent and clean environment.
+  #   lazy-apps = true
+
+  #   uid = %(my_user)
+  #   gid = %(my_user)
+
+  #   # uWSGI will kill the process instead of reloading it
+  #   die-on-term = true
+  #   # socket file for getting stats about the workers
+    
+  #   # Scaling the server with the Cheaper subsystem
+
+  #   # set cheaper algorithm to use, if not set default will be used
+  #   cheaper-algo = spare
+  #   # minimum number of workers to keep at all times
+  #   cheaper = 5
+  #   # number of workers to spawn at startup
+  #   cheaper-initial = 5
+  #   # maximum number of workers that can be spawned
+  #   workers = 50
+  #   # how many workers should be spawned at a time
+  #   cheaper-step = 3
+
+  #   #location of log files
+  #   logto = /app/%n.log
+  #   die-on-term = true
+  # nginx.conf: |
+  #   user nginx;
+  #   worker_processes auto;
+  #   pid /var/run/nginx.pid;
+
+  #   events {
+  #       worker_connections 1024;
+  #   }
+
+  #   http {
+  #     server {
+  #         server_name poolwork.live;
+
+  #         location / {
+  #             proxy_http_version 1.1;
+  #             proxy_pass http://127.0.0.1:8000;
+  #         }
+
+  #         location /socket.io {
+  #             proxy_http_version 1.1;
+  #             proxy_set_header Upgrade $http_upgrade;
+  #             proxy_set_header Connection "upgrade";
+  #             proxy_pass http://127.0.0.1:8000/socket.io;
+  #         }
+
+  #         listen 80;
+
+  #     }
+  #   }
+
+
+# user nginx;
+# worker_processes auto;
+# pid /var/run/nginx.pid;
+
+# events {
+#     worker_connections 1024;
+# }
+
+# http {
+#     include       /etc/nginx/mime.types;
+#     default_type  application/octet-stream;
+
+#     log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+#                     '$status $body_bytes_sent "$http_referer" '
+#                     '"$http_user_agent" "$http_x_forwarded_for"';
+
+#     access_log /var/log/nginx/access.log main;
+#     error_log /var/log/nginx/error.log warn;
+
+#     sendfile on;
+#     tcp_nopush on;
+#     tcp_nodelay on;
+#     keepalive_timeout 65;
+#     types_hash_max_size 2048;
+
+#     gzip on;
+#     gzip_disable "msie6";
+
+#     # Security headers
+#     add_header X-Frame-Options SAMEORIGIN;
+#     add_header X-Content-Type-Options nosniff;
+#     add_header X-XSS-Protection "1; mode=block";
+#     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+#     # Proxy pass to the uWSGI server
+#     server {
+#         listen 80;
+
+#         location / {
+#             uwsgi_pass unix:/app/production_flask.sock;
+#             include uwsgi_params;
+#             uwsgi_read_timeout 300;
+#             uwsgi_send_timeout 300;
+#             uwsgi_connect_timeout 300;
+#             uwsgi_busy_buffers_size 1024k;
+#             uwsgi_buffers 16 1024k;
+#             uwsgi_buffer_size 1024k;
+#             uwsgi_temp_file_write_size 1024k;
+#             uwsgi_intercept_errors on;
+#             uwsgi_param HTTP_X_REAL_IP $remote_addr;
+#             uwsgi_param HTTP_X_FORWARDED_FOR $proxy_add_x_forwarded_for;
+#             uwsgi_param HTTP_X_FORWARDED_PROTO $scheme;
+#             proxy_http_version 1.1;
+#             proxy_set_header Host $http_host;
+#             proxy_set_header Connection $http_connection;
+#             proxy_set_header Upgrade $http_upgrade;
+#             proxy_pass http://unix:/app/production_flask.sock:/socket.io;
+#         }
+#     }
+# }
+
+
+# user nginx;
+# worker_processes auto;
+# pid /var/run/nginx.pid;
+
+# events {
+#     worker_connections 1024;
+# }
+
+# http {
+#   server {
+#       listen 80;
+
+#       location / {
+#           include         uwsgi_params;
+#           # change this to the location of the uWSGI socket file (set in uwsgi.ini)
+#           uwsgi_pass      unix:/app/production_flask.sock;
+#           proxy_http_version 1.1;
+#           proxy_set_header Upgrade $http_upgrade;
+#           proxy_set_header Connection "upgrade";
+#           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#           proxy_set_header Host $host;
+#       }
+#   }
+# }
+
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  enabled: true
+
+  annotations: {}
+  labels: {}
+  ## Deprecated, instead simply do not provide a clusterIP value
+  omitClusterIP: false
+  # clusterIP: ""
+
+  ## List of IP addresses at which the controller services are available
+  ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+  ##
+  externalIPs: []
+
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+
+  ## Set external traffic policy to: "Local" to preserve source IP on
+  ## providers supporting it
+  ## Ref: https://kubernetes.io/docs/tutorials/services/source-ip/#source-ip-for-services-with-typeloadbalancer
+  externalTrafficPolicy: ""
+
+  # Must be either "None" or "ClientIP" if set. Kubernetes will default to "None".
+  # Ref: https://kubernetes.io/docs/concepts/services-networking/service/#virtual-ips-and-service-proxies
+  sessionAffinity: ""
+
+  healthCheckNodePort: 0
+
+  ports:
+    flask: 8000
+
+  type: ClusterIP
+
+ingress:
+  enabled: false
+  # For Kubernetes >= 1.18 you should specify the ingress-controller via the field ingressClassName
+  # See https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#specifying-the-class-of-an-ingress
+  # ingressClassName: nginx
+  # Values can be templated
+  annotations: {}
+    # traefik.ingress.kubernetes.io/protocol: http
+    # traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    # traefik.ingress.kubernetes.io/websocket: "true"
+    # traefik.ingress.kubernetes.io/websocket-timeout: "300s"
+  labels: {}
+  path: /
+
+  # pathType is only for k8s >= 1.1=
+  pathType: Prefix
+
+  hosts:
+    - chart-example.local
+  ## Extra paths to prepend to every host configuration. This is useful when working with annotation based services.
+  extraPaths: []
+  # - path: /*
+  #   backend:
+  #     serviceName: ssl-redirect
+  #     servicePort: use-annotation
+  ## Or for k8s > 1.19
+  # - path: /*
+  #   pathType: Prefix
+  #   backend:
+  #     service:
+  #       name: ssl-redirect
+  #       port:
+  #         name: use-annotation
+
+persistence:
+  enabled: false
+  ## pool-work-webapp data Persistent Volume Storage Class
+  ## If defined, storageClassName: <storageClass>
+  ## If set to "-", storageClassName: "", which disables dynamic provisioning
+  ## If undefined (the default) or set to null, no storageClassName spec is
+  ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  ##   GKE, AWS & OpenStack)
+  ##
+  # storageClass: "-"
+  ##
+  ## If you want to reuse an existing claim, you can pass the name of the PVC using
+  ## the existingClaim variable
+  # existingClaim: your-claim
+  ##
+  ## If you want to use a volume on the host machine instead of a PVC:
+  # hostPath: /path/to/the/config/folder
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+  tls: []
+  #  - secretName: pool-work-webapp-tls
+  #    hosts:
+  #      - pool-work-webapp.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

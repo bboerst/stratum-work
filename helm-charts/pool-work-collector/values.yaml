@@ -1,6 +1,6 @@
 image:
-  repository: bboerst/stratum-logger
-  tag: v0.1.1-pre
+  repository: bboerst/pool-work-collector
+  tag: v0.1.2-pre
   pullPolicy: IfNotPresent
 
 poolName: "Best Stratum Pool"

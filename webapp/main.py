@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, send_file, request, jsonify
 from datetime import datetime
 from pymongo import MongoClient
@@ -10,14 +13,14 @@ import signal
 import sys
 import os
 
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"]}})
+socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"])
+
 # MongoDB connection with authentication and connection pooling
 mongodb_username = os.environ.get('MONGODB_USERNAME')
 mongodb_password = os.environ.get('MONGODB_PASSWORD')
 mongodb_hosts = os.environ.get('MONGODB_HOSTS')
-
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "https://poolwork.live"]}})
-socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "https://poolwork.live"])
 
 # MongoDB connection with authentication and connection pooling
 client = MongoClient(f"mongodb://{mongodb_username}:{mongodb_password}@{mongodb_hosts}", maxPoolSize=50)
@@ -95,8 +98,8 @@ def get_mining_data():
             }
         ]))
         # Convert timestamps to local browser time
-        for item in results:
-            item['timestamp'] = item['timestamp'] - datetime.timedelta(minutes=datetime.now().utcoffset().total_seconds() / 60)
+        # for item in results:
+        #     item['timestamp'] = item['timestamp'] - datetime.timedelta(minutes=datetime.now().utcoffset().total_seconds() / 60)
 
         return app.response_class(
             response=json.dumps(results, cls=CustomJSONEncoder),
@@ -176,6 +179,7 @@ def serve_js():
 @socketio.on('connect')
 def handle_connect():
     logger.info('Client connected')
+    socketio.start_background_task(target=stream_mining_data)
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -191,8 +195,4 @@ def handle_sigterm(*args):
     sys.exit(0)
 
 if __name__ == "__main__":
-    # Register the SIGTERM signal handler for graceful shutdown
-    signal.signal(signal.SIGTERM, handle_sigterm)
-
-    socketio.start_background_task(stream_mining_data)
-    socketio.run(app, port=8000, debug=True)
+    socketio.run(app)

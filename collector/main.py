@@ -8,22 +8,34 @@ import uuid
 from datetime import datetime
 from urllib.parse import urlparse
 
+import pika
 from pymongo import MongoClient
 from pycoin.symbols.btc import network
 
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, db_url):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
         self.pool_name = pool_name
+        self.rabbitmq_exchange = rabbitmq_exchange
+        self.rabbitmq_host = rabbitmq_host
+        self.rabbitmq_port = rabbitmq_port
+        self.rabbitmq_username = rabbitmq_username
+        self.rabbitmq_password = rabbitmq_password
+        self.rabbitmq_exchange = rabbitmq_exchange
         self.db_url = db_url
+        self.db_name = db_name
+        self.db_username = db_username
+        self.db_password = db_password
         self.purl = self.parse_url(url)
         self.extranonce1 = None
         self.extranonce2_length = -1
         self.init_socket()
+        self.connection = None
+        self.channel = None
 
     def parse_url(self, url):
         purl = urlparse(url)
@@ -106,7 +118,16 @@ class Watcher:
 
         LOG.debug(f"Received: {resp}")
         
-    def get_stratum_work(self, db_name, db_username, db_password):
+    def connect_to_rabbitmq(self):
+        credentials = pika.PlainCredentials(self.rabbitmq_username, self.rabbitmq_password)
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(self.rabbitmq_host, self.rabbitmq_port, '/', credentials))
+        self.channel = self.connection.channel()
+        self.channel.exchange_declare(exchange=self.rabbitmq_exchange, exchange_type='fanout', durable=True)
+
+    def publish_to_rabbitmq(self, message):
+        self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
+
+    def get_stratum_work(self):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.info(f"Connected to server {self.purl.geturl()}")
@@ -127,19 +148,17 @@ class Watcher:
                 return
 
             if "method" in n and n["method"] == "mining.notify":
-                insert_notification(n, self.pool_name, self.extranonce1, self.extranonce2_length, self.db_url, db_name, db_username, db_password)
+                document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
+                insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                self.publish_to_rabbitmq(document)
 
-def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url, db_name, db_username, db_password):
-    client = MongoClient(db_url, username=db_username, password=db_password)
-    db = client[db_name]
-    collection = db.mining_notify
-
+def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
     notification_id = str(uuid.uuid4())
     now = datetime.utcnow()
-    
+
     coinbase1 = data["params"][2]
     coinbase2 = data["params"][3]
-    
+
     coinbase = None
     height = 0
     try:
@@ -147,16 +166,16 @@ def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url
         height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
     except Exception as e:
         print(e)
-                    
+
     document = {
         "_id": notification_id,
-        "timestamp": now,
+        "timestamp": now.isoformat(),  # Convert datetime to ISO 8601 formatted string
         "pool_name": pool_name,
         "height": height,
         "job_id": data["params"][0],
         "prev_hash": data["params"][1],
         "coinbase1": coinbase1,
-        "coinbase2":coinbase2,
+        "coinbase2": coinbase2,
         "merkle_branches": data["params"][4],
         "version": data["params"][5],
         "nbits": data["params"][6],
@@ -165,6 +184,13 @@ def insert_notification(data, pool_name, extranonce1, extranonce2_length, db_url
         "extranonce1": extranonce1,
         "extranonce2_length": extranonce2_length
     }
+
+    return document
+
+def insert_notification(document, db_url, db_name, db_username, db_password):
+    client = MongoClient(db_url, username=db_username, password=db_password)
+    db = client[db_name]
+    collection = db.mining_notify
 
     collection.insert_one(document)
     client.close()
@@ -179,6 +205,21 @@ def main():
     )
     parser.add_argument(
         "-p", "--pool-name", required=True, help="The name of the pool"
+    )
+    parser.add_argument(
+        "-r", "--rabbitmq-host", default="localhost", help="The hostname or IP address of the RabbitMQ server (default: localhost)"
+    )
+    parser.add_argument(
+        "-rpc", "--rabbitmq-port", default=5672, help="The port of the RabbitMQ server (default: 5672)"
+    )
+    parser.add_argument(
+        "-ru", "--rabbitmq-username", required=True, help="The username for RabbitMQ authentication"
+    )
+    parser.add_argument(
+        "-rp", "--rabbitmq-password", required=True, help="The password for RabbitMQ authentication"
+    )
+    parser.add_argument(
+        "-re", "--rabbitmq-exchange", default="mining_notify_exchange", help="The name of the RabbitMQ exchange (default: mining_notify_exchange)"
     )
     parser.add_argument(
         "-d", "--db-url", default="mongodb://localhost:27017", help="The URL of the MongoDB database (default: mongodb://localhost:27017)"
@@ -205,13 +246,16 @@ def main():
     )
 
     while True:
-        w = Watcher(args.url, args.userpass, args.pool_name, args.db_url)
+        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
         try:
-            w.get_stratum_work(args.db_name, args.db_username, args.db_password)
+            w.connect_to_rabbitmq()
+            w.get_stratum_work()
         except KeyboardInterrupt:
             break
         finally:
             w.close()
+            if w.connection:
+                w.connection.close()
 
 if __name__ == "__main__":
     main()

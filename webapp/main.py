@@ -5,45 +5,23 @@ from flask import Flask, render_template, send_file, request, jsonify, after_thi
 import gzip
 import io
 from datetime import datetime
-from pymongo import MongoClient
-from pymongo import errors as pymongo_errors
-from pymongo import ASCENDING
 from flask_socketio import SocketIO
 from flask_cors import CORS
-from bson import json_util, Decimal128
 from pycoin.symbols.btc import network
+from bson import json_util
 import json
 import logging
+import requests
+import time
 import signal
 import string
 import sys
 import os
-import requests
-import time
+import pika
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"]}})
 socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"])
-
-# MongoDB connection with authentication and connection pooling
-mongodb_username = os.environ.get('MONGODB_USERNAME')
-mongodb_password = os.environ.get('MONGODB_PASSWORD')
-mongodb_hosts = os.environ.get('MONGODB_HOSTS')
-
-# MongoDB connection with authentication and connection pooling
-client = MongoClient(f"mongodb://{mongodb_username}:{mongodb_password}@{mongodb_hosts}",
-                     maxPoolSize=1000,
-                     socketTimeoutMS=20000,
-                     connectTimeoutMS=20000,
-                     serverSelectionTimeoutMS=20000)
-
-db = client["stratum-logger"]
-collection = db["mining_notify"]
-
-# Create indexes on frequently queried fields
-collection.create_index("timestamp")
-collection.create_index("pool_name")
-collection.create_index([("operationType", ASCENDING)])
 
 # Dictionary to store cached transaction results
 transaction_cache = {}
@@ -52,81 +30,12 @@ transaction_cache = {}
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif isinstance(obj, Decimal128):
-            return str(obj)
-        return super(CustomJSONEncoder, self).default(obj)
-
-app.json_encoder = CustomJSONEncoder
-
-def get_mining_data():
-    try:
-        with client.start_session() as session:
-            with session.start_transaction():
-                results = list(collection.aggregate([
-                    {
-                        "$sort": {"timestamp": -1}
-                    },
-                    {
-                        "$group": {
-                            "_id": "$pool_name",
-                            "timestamp": {"$first": "$timestamp"},
-                            "prev_hash": {"$first": "$prev_hash"},
-                            "coinbase1": {"$first": "$coinbase1"},
-                            "coinbase2": {"$first": "$coinbase2"},
-                            "version": {"$first": "$version"},
-                            "nbits": {"$first": "$nbits"},
-                            "ntime": {"$first": "$ntime"},
-                            "clean_jobs": {"$first": "$clean_jobs"},
-                            "merkle_branches": {"$first": "$merkle_branches"},
-                            "height": {"$first": "$height"},
-                            "extranonce1": {"$first": "$extranonce1"},
-                            "extranonce2_length": {"$first": "$extranonce2_length"}
-                        }
-                    },
-                    {
-                        "$project": {
-                            "_id": 0,
-                            "pool_name": "$_id",
-                            "timestamp": 1,
-                            "prev_hash": 1,
-                            "coinbase1": 1,
-                            "coinbase2": 1,
-                            "version": 1,
-                            "nbits": 1,
-                            "ntime": 1,
-                            "clean_jobs": 1,
-                            "merkle_branches": 1,
-                            "height": 1,
-                            "extranonce1": 1,
-                            "extranonce2_length": 1
-                        }
-                    }
-                ]))
-
-        processed_results = []
-        for row in results:
-            processed_row = process_row_data(row)
-            processed_results.append(processed_row)
-
-        @after_this_request
-        def compress_response(response):
-            return gzip_response(response)
-
-        return app.response_class(
-            response=json.dumps(processed_results, cls=CustomJSONEncoder),
-            status=200,
-            mimetype='application/json'
-        )
-    except pymongo_errors.ConnectionFailure as e:
-        logger.exception("Connection failure occurred")
-        return jsonify({"error": "Database connection failure"}), 500
-    except Exception as e:
-        logger.exception("Error occurred while fetching data by timestamp range")
-        return jsonify([])
+# RabbitMQ connection details
+rabbitmq_host = os.environ.get('RABBITMQ_HOST')
+rabbitmq_port = os.environ.get('RABBITMQ_PORT')
+rabbitmq_username = os.environ.get('RABBITMQ_USERNAME')
+rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
+rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
 
 def process_row_data(row):
     coinbase1 = row['coinbase1']
@@ -222,17 +131,45 @@ def precompute_merkle_branch_colors(merkle_branches):
 def hash_code(text):
     return sum(ord(char) for char in text)
 
-def stream_mining_data():
-    pipeline = [
-        {"$match": {"operationType": "insert"}},
-    ]
-    
-    with collection.watch(pipeline) as stream:
-        for change in stream:
-            document = change['fullDocument']
-            processed_document = process_row_data(document)
-            socketio.emit('mining_data', json.loads(json_util.dumps(processed_document)))
-                                    
+def consume_messages():
+    credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
+    connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
+    channel = connection.channel()
+
+    # Declare the exchange
+    channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
+
+    # Create a new queue for each consumer
+    result = channel.queue_declare(queue='', exclusive=True)
+    queue_name = result.method.queue
+
+    # Bind the queue to the exchange
+    channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
+
+    def callback(ch, method, properties, body):
+        try:
+            message = json.loads(body)
+            # Process the message data
+            processed_message = process_row_data(message)
+            # Emit the message to connected clients via Socket.IO
+            socketio.emit('mining_data', processed_message)
+        except Exception as e:
+            logger.exception(f"Error processing message: {e}")
+
+    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+
+    logger.info('Started consuming messages from the exchange')
+    channel.start_consuming()
+
+@socketio.on('connect')
+def handle_connect():
+    logger.info('Client connected')
+    socketio.start_background_task(target=consume_messages)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info('Client disconnected')
+
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')
 
@@ -264,19 +201,6 @@ def index():
 @app.route('/static/bitcoinjs-lib.js')
 def serve_js():
     return send_file('static/bitcoinjs-lib.js', mimetype='application/javascript')
-    
-@socketio.on('connect')
-def handle_connect():
-    logger.info('Client connected')
-    socketio.start_background_task(target=stream_mining_data)
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    logger.info('Client disconnected')
-
-def emit_data():
-    results = get_mining_data()
-    socketio.emit('mining_data', results)
 
 def handle_sigterm(*args):
     logger.info("Received SIGTERM signal. Shutting down gracefully.")

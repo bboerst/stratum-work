@@ -1,8 +1,8 @@
 releases:
   {{- range .Values.pools }}
-  - name: stratum-logger-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
-    namespace: stratum-logger
-    chart: ./stratum-logger
+  - name: pool-work-collector-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
+    namespace: pool-work
+    chart: ./pool-work-collector
     values:
       - image:
           repository: bboerst/pool-work-collector

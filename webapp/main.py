@@ -139,8 +139,8 @@ def consume_messages():
     # Declare the exchange
     channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
 
-    # Create a new queue for each consumer
-    result = channel.queue_declare(queue='', exclusive=True)
+    # Create a new exclusive and auto-delete queue for each consumer
+    result = channel.queue_declare(queue='', exclusive=True, auto_delete=True)
     queue_name = result.method.queue
 
     # Bind the queue to the exchange
@@ -149,9 +149,7 @@ def consume_messages():
     def callback(ch, method, properties, body):
         try:
             message = json.loads(body)
-            # Process the message data
             processed_message = process_row_data(message)
-            # Emit the message to connected clients via Socket.IO
             socketio.emit('mining_data', processed_message)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")

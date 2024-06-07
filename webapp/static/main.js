@@ -125,18 +125,20 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function updateTableData(data) {
-    const filteredData = (Array.isArray(data) ? data : [data]).filter((row) => row !== undefined && row !== null);
-    
-    const existingData = table.getData();
-    const updatedData = existingData.map(existingRow => {
-      const newRow = filteredData.find(row => row.pool_name === existingRow.pool_name);
-      return newRow || existingRow;
+    const currentSorters = table.getSorters();
+
+    // Replace empty merkle_branches with an empty string
+    const modifiedData = (Array.isArray(data) ? data : [data]).map(row => {
+      if (row.merkle_branches) {
+        row.merkle_branches = row.merkle_branches.map(branch => branch || '');
+      }
+      return row;
     });
-  
-    table.replaceData(updatedData);
-  
-    const newData = filteredData.filter(newRow => !existingData.some(existingRow => existingRow.pool_name === newRow.pool_name));
-    table.addData(newData);
+
+    table.updateOrAddData(modifiedData);
+    if (currentSorters.length > 0) {
+      table.setSort(currentSorters);
+    }
   }
 
   function createColumnToggles() {

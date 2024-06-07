@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getMerkleBranchColumns() {
     const merkleBranchColumns = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 11; i++) {
       merkleBranchColumns.push({
         title: `<a href="https://github.com/bboerst/stratum-logger/blob/main/docs/merkle_branches.md" target="_blank"><i class="fas fa-question-circle"></i></a> Merkle Branch ${i}`,
         field: 'merkle_branches',
@@ -118,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const merkleBranches = cell.getValue();
       const colors = cell.getRow().getData().merkle_branch_colors;
       if (!merkleBranches) return '';
-      const value = merkleBranches[index] || '';
+      const value = merkleBranches[index] || '&nbsp;';
       cell.getElement().style.backgroundColor = colors[index] || 'white';
       return `${value}`;
     };
@@ -126,16 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function updateTableData(data) {
     const currentSorters = table.getSorters();
-
-    // Replace empty merkle_branches with an empty string
-    const modifiedData = (Array.isArray(data) ? data : [data]).map(row => {
-      if (row.merkle_branches) {
-        row.merkle_branches = row.merkle_branches.map(branch => branch || '');
-      }
-      return row;
-    });
-
-    table.updateOrAddData(modifiedData);
+    table.updateOrAddData(Array.isArray(data) ? data : [data]);
     if (currentSorters.length > 0) {
       table.setSort(currentSorters);
     }

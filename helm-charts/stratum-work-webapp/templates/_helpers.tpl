@@ -2,7 +2,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "pool-work-webapp.name" -}}
+{{- define "stratum-work-webapp.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
@@ -11,7 +11,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "pool-work-webapp.fullname" -}}
+{{- define "stratum-work-webapp.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -27,16 +27,16 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "pool-work-webapp.chart" -}}
+{{- define "stratum-work-webapp.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
 Common labels
 */}}
-{{- define "pool-work-webapp.labels" -}}
-app.kubernetes.io/name: {{ include "pool-work-webapp.name" . }}
-helm.sh/chart: {{ include "pool-work-webapp.chart" . }}
+{{- define "stratum-work-webapp.labels" -}}
+app.kubernetes.io/name: {{ include "stratum-work-webapp.name" . }}
+helm.sh/chart: {{ include "stratum-work-webapp.chart" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
@@ -47,9 +47,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "pool-work-webapp.serviceAccountName" -}}
+{{- define "stratum-work-webapp.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-    {{ default (include "pool-work-webapp.fullname" .) .Values.serviceAccount.name }}
+    {{ default (include "stratum-work-webapp.fullname" .) .Values.serviceAccount.name }}
 {{- else -}}
     {{ default "default" .Values.serviceAccount.name }}
 {{- end -}}
@@ -59,7 +59,7 @@ Create the name of the service account to use
 {{/*
 Allow the release namespace to be overridden for multi-namespace deployments in combined charts
 */}}
-{{- define "pool-work-webapp.namespace" -}}
+{{- define "stratum-work-webapp.namespace" -}}
   {{- if .Values.namespaceOverride -}}
     {{- .Values.namespaceOverride -}}
   {{- else -}}
@@ -70,7 +70,7 @@ Allow the release namespace to be overridden for multi-namespace deployments in 
 {{/*
 Return the appropriate apiVersion for ingress.
 */}}
-{{- define "pool-work-webapp.ingress.apiVersion" -}}
+{{- define "stratum-work-webapp.ingress.apiVersion" -}}
   {{- if and (.Capabilities.APIVersions.Has "networking.k8s.io/v1") (semverCompare ">= 1.19-0" .Capabilities.KubeVersion.Version) -}}
       {{- print "networking.k8s.io/v1" -}}
   {{- else if .Capabilities.APIVersions.Has "networking.k8s.io/v1beta1" -}}
@@ -82,18 +82,18 @@ Return the appropriate apiVersion for ingress.
 {{/*
 Return if ingress is stable.
 */}}
-{{- define "pool-work-webapp.ingress.isStable" -}}
-  {{- eq (include "pool-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1" -}}
+{{- define "stratum-work-webapp.ingress.isStable" -}}
+  {{- eq (include "stratum-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1" -}}
 {{- end -}}
 {{/*
 Return if ingress supports ingressClassName.
 */}}
-{{- define "pool-work-webapp.ingress.supportsIngressClassName" -}}
-  {{- or (eq (include "pool-work-webapp.ingress.isStable" .) "true") (and (eq (include "pool-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) -}}
+{{- define "stratum-work-webapp.ingress.supportsIngressClassName" -}}
+  {{- or (eq (include "stratum-work-webapp.ingress.isStable" .) "true") (and (eq (include "stratum-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) -}}
 {{- end -}}
 {{/*
 Return if ingress supports pathType.
 */}}
-{{- define "pool-work-webapp.ingress.supportsPathType" -}}
-  {{- or (eq (include "pool-work-webapp.ingress.isStable" .) "true") (and (eq (include "pool-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) -}}
+{{- define "stratum-work-webapp.ingress.supportsPathType" -}}
+  {{- or (eq (include "stratum-work-webapp.ingress.isStable" .) "true") (and (eq (include "stratum-work-webapp.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) -}}
 {{- end -}}

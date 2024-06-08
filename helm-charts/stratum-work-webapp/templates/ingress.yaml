@@ -1,19 +1,19 @@
 {{- if .Values.ingress.enabled -}}
-{{- $ingressApiIsStable := eq (include "pool-work-webapp.ingress.isStable" .) "true" -}}
-{{- $ingressSupportsIngressClassName := eq (include "pool-work-webapp.ingress.supportsIngressClassName" .) "true" -}}
-{{- $ingressSupportsPathType := eq (include "pool-work-webapp.ingress.supportsPathType" .) "true" -}}
-{{- $fullName := include "pool-work-webapp.fullname" . -}}
+{{- $ingressApiIsStable := eq (include "stratum-work-webapp.ingress.isStable" .) "true" -}}
+{{- $ingressSupportsIngressClassName := eq (include "stratum-work-webapp.ingress.supportsIngressClassName" .) "true" -}}
+{{- $ingressSupportsPathType := eq (include "stratum-work-webapp.ingress.supportsPathType" .) "true" -}}
+{{- $fullName := include "stratum-work-webapp.fullname" . -}}
 {{- $servicePort := .Values.service.ports.flask -}}
 {{- $ingressPath := .Values.ingress.path -}}
 {{- $ingressPathType := .Values.ingress.pathType -}}
 {{- $extraPaths := .Values.ingress.extraPaths -}}
-apiVersion: {{ include "pool-work-webapp.ingress.apiVersion" . }}
+apiVersion: {{ include "stratum-work-webapp.ingress.apiVersion" . }}
 kind: Ingress
 metadata:
   name: {{ $fullName }}
-  namespace: {{ template "pool-work-webapp.namespace" . }}
+  namespace: {{ template "stratum-work-webapp.namespace" . }}
   labels:
-    {{- include "pool-work-webapp.labels" . | nindent 4 }}
+    {{- include "stratum-work-webapp.labels" . | nindent 4 }}
 {{- if .Values.ingress.labels }}
 {{ toYaml .Values.ingress.labels | indent 4 }}
 {{- end }}

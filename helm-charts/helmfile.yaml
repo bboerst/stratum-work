@@ -1,12 +1,12 @@
 releases:
   {{- range .Values.pools }}
-  - name: pool-work-collector-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
-    namespace: pool-work
-    chart: ./pool-work-collector
+  - name: stratum-work-collector-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
+    namespace: stratum-work
+    chart: ./stratum-work-collector
     values:
       - image:
-          repository: bboerst/pool-work-collector
-          tag: v0.1.2-pre
+          repository: bboerst/stratum-work-collector
+          tag: 1
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
         arguments:

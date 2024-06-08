@@ -13,11 +13,11 @@ metadata:
 {{- if .Values.service.labels }}
 {{ toYaml .Values.service.labels | indent 4 }}
 {{- end }}
-    app: {{ template "pool-work-webapp.name" . }}
-    chart: {{ template "pool-work-webapp.chart" . }}
+    app: {{ template "stratum-work-webapp.name" . }}
+    chart: {{ template "stratum-work-webapp.chart" . }}
     component: "{{ .Values.name }}"
     heritage: {{ .Release.Service }}
-  name: {{ template "pool-work-webapp.fullname" . }}
+  name: {{ template "stratum-work-webapp.fullname" . }}
 spec:
 {{- if not .Values.service.omitClusterIP }}
   {{- with .Values.service.clusterIP }}
@@ -50,6 +50,6 @@ spec:
       protocol: TCP
       targetPort: "flask"
   selector:
-    app: {{ template "pool-work-webapp.name" . }}
+    app: {{ template "stratum-work-webapp.name" . }}
   type: "{{ .Values.service.type }}"
 {{- end }}

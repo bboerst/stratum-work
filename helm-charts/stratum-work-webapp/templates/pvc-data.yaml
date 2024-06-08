@@ -3,10 +3,10 @@
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
-  name: {{ template "pool-work-webapp.fullname" . }}
+  name: {{ template "stratum-work-webapp.fullname" . }}
   labels:
-    app.kubernetes.io/name: {{ include "pool-work-webapp.name" . }}
-    helm.sh/chart: {{ include "pool-work-webapp.chart" . }}
+    app.kubernetes.io/name: {{ include "stratum-work-webapp.name" . }}
+    helm.sh/chart: {{ include "stratum-work-webapp.chart" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:

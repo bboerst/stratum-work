@@ -1,5 +1,5 @@
 image:
-  repository: bboerst/pool-work-collector
+  repository: bboerst/stratum-work-collector
   tag: v0.1.2-pre
   pullPolicy: IfNotPresent
 

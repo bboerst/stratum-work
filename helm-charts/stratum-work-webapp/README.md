@@ -1,8 +1,8 @@
-# pool-work-webapp
+# stratum-work-webapp
 
 ![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![AppVersion: v0.1.4](https://img.shields.io/badge/AppVersion-v0.1.4-informational?style=flat-square)
 
-A Helm chart for pool-work-webapp
+A Helm chart for stratum-work-webapp
 
 ## Values
 
@@ -12,7 +12,7 @@ A Helm chart for pool-work-webapp
 | arguments | list | `[]` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/sethforprivacy/pool-work-webapp"` |  |
+| image.repository | string | `"ghcr.io/sethforprivacy/stratum-work-webapp"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |

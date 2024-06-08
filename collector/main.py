@@ -128,7 +128,7 @@ class Watcher:
         LOG.info(f"Publishing message to RabbitMQ: {json.dumps(message)}")
         self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
 
-    def get_stratum_work(self):
+    def get_stratum_work(self, keep_alive=False):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.info(f"Connected to server {self.purl.geturl()}")
@@ -138,6 +138,8 @@ class Watcher:
 
         self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
         LOG.info("Authed with the pool")
+
+        last_subscribe_time = time.time()
 
         while True:
             try:
@@ -152,6 +154,12 @@ class Watcher:
                 document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
                 self.publish_to_rabbitmq(document)
+
+            # Send a subscribe request every 2 minutes to keep the connection alive if keep_alive is enabled
+            if keep_alive and time.time() - last_subscribe_time > 120:
+                LOG.info("Sending subscribe request to keep connection alive")
+                self.send_jsonrpc("mining.subscribe", [])
+                last_subscribe_time = time.time()
 
 def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
     notification_id = str(uuid.uuid4())
@@ -235,6 +243,9 @@ def main():
         "-dp", "--db-password", required=True, help="The password for MongoDB authentication"
     )
     parser.add_argument(
+        "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
+    )
+    parser.add_argument(
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
@@ -250,7 +261,7 @@ def main():
         w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
         try:
             w.connect_to_rabbitmq()
-            w.get_stratum_work()
+            w.get_stratum_work(keep_alive=args.keep_alive)
         except KeyboardInterrupt:
             break
         finally:

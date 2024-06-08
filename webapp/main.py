@@ -23,6 +23,11 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"]}})
 socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"])
 
+@app.after_request
+def add_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = 'https://stratum.work'
+    return response
+
 connection = None
 channel = None
 connected_clients = set()

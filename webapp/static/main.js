@@ -118,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const merkleBranches = cell.getValue();
       const colors = cell.getRow().getData().merkle_branch_colors;
       if (!merkleBranches) return '';
-      const value = merkleBranches[index] || '&nbsp;';
+      const value = merkleBranches[index] || '';
       cell.getElement().style.backgroundColor = colors[index] || 'white';
       return `${value}`;
     };
@@ -126,9 +126,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function updateTableData(data) {
     const currentSorters = table.getSorters();
-    table.updateOrAddData(Array.isArray(data) ? data : [data]);
-    if (currentSorters.length > 0) {
-      table.setSort(currentSorters);
+    const maxBlockHeight = Math.max(...blockHeights);
+  
+    // Filter out data that is more than 3 blocks behind the latest block height, probably stale
+    if (data.height >= maxBlockHeight - 2) {
+      const poolName = data.pool_name;
+  
+      // Delete the existing row with the same pool_name
+      const existingRow = table.getRow(poolName);
+      if (existingRow) {
+        table.deleteRow(existingRow);
+      }
+  
+      // Add the new row
+      table.addData(data)
+        .catch(function(error) {
+          console.error("Error adding table data: ", error);
+        });
+  
+      if (currentSorters.length > 0) {
+        table.setSort(currentSorters);
+      }
     }
   }
 
@@ -149,7 +167,14 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('columnVisibility', JSON.stringify(savedColumnVisibility));
       });
       toggleLabel.appendChild(toggleCheckbox);
-      toggleLabel.appendChild(document.createTextNode(column.getDefinition().title));
+  
+      // Extract the text content of the column title
+      const columnTitle = column.getDefinition().title;
+      const tempElement = document.createElement('div');
+      tempElement.innerHTML = columnTitle;
+      const columnTitleText = tempElement.textContent;
+  
+      toggleLabel.appendChild(document.createTextNode(columnTitleText));
       toggleDiv.appendChild(toggleLabel);
       columnToggles.appendChild(toggleDiv);
     });

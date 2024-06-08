@@ -20,8 +20,12 @@ import os
 import pika
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"]}})
-socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live"])
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"]}})
+socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"])
+
+connection = None
+channel = None
+connected_clients = set()
 
 # Dictionary to store cached transaction results
 transaction_cache = {}
@@ -132,25 +136,28 @@ def hash_code(text):
     return sum(ord(char) for char in text)
 
 def consume_messages():
+    global connection, channel
+
     credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
     connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
     channel = connection.channel()
 
-    # Declare the exchange
+    # Declare the exchange as a fanout exchange
     channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
 
-    # Create a new exclusive and auto-delete queue for each consumer
-    result = channel.queue_declare(queue='', exclusive=True, auto_delete=True)
+    # Let RabbitMQ generate a unique queue name for each consumer
+    result = channel.queue_declare(queue='', exclusive=True)
     queue_name = result.method.queue
 
-    # Bind the queue to the exchange
+    # Bind the generated queue to the fanout exchange
     channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
 
     def callback(ch, method, properties, body):
         try:
             message = json.loads(body)
             processed_message = process_row_data(message)
-            socketio.emit('mining_data', processed_message)
+            for client_id in connected_clients:
+                socketio.emit('mining_data', processed_message, room=client_id)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
 
@@ -158,15 +165,22 @@ def consume_messages():
 
     logger.info('Started consuming messages from the exchange')
     channel.start_consuming()
-
+    
 @socketio.on('connect')
 def handle_connect():
     logger.info('Client connected')
-    socketio.start_background_task(target=consume_messages)
+    if len(connected_clients) == 0:
+        socketio.start_background_task(target=consume_messages)
+    connected_clients.add(request.sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     logger.info('Client disconnected')
+    connected_clients.remove(request.sid)
+    if len(connected_clients) == 0:
+        if channel and connection:
+            channel.stop_consuming()
+            connection.close()
 
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')
@@ -194,7 +208,8 @@ def gzip_response(response):
 
 @app.route('/')
 def index():
-    return render_template("index.html")
+    socket_url = os.environ.get('SOCKET_URL', 'https://stratum.work')
+    return render_template('index.html', SOCKET_URL=socket_url)
 
 @app.route('/static/bitcoinjs-lib.js')
 def serve_js():

@@ -18,6 +18,83 @@
     <style>
         body {
             font-family: monospace;
+            transition: background-color 0.3s;
+        }
+
+        body.dark-mode {
+            background-color: black;
+            color: white;
+        }
+
+        .tabulator.dark-mode {
+            background-color: black;
+        }
+
+        .tabulator.dark-mode .tabulator-col-content {
+            background: black;
+            color: #e3e3e3;
+        }
+
+        body.dark-mode .fas {
+            color: #e3e3e3;
+        }
+
+        .tabulator-row.tabulator-selectable:hover {
+            background-color: #bbb !important;
+        }
+
+        .tabulator.dark-mode .tabulator-row.tabulator-selectable:hover {
+            color: black
+        }
+
+        .tabulator-row {
+            border-bottom: unset
+        }
+
+        .tabulator.dark-mode .tabulator-row {
+            background-color: #333;
+            color: #e3e3e3;
+        }
+
+        .tabulator.dark-mode .tabulator-cell {
+            border-right: 1px solid #444;
+        }
+
+        .tabulator.dark-mode .transaction-link {
+            color: #d7d7fc;
+        }
+
+        #theme-toggle {
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+
+        #theme-toggle i {
+            font-size: 20px;
+        }
+
+        #theme-toggle .fa-sun {
+            color: #ffc107;
+        }
+
+        #theme-toggle .fa-moon {
+            color: #007bff;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .header h1 {
+            margin: 0;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
         }
 
         .tabulator .tabulator-col-resize-handle {
@@ -28,7 +105,7 @@
             position: relative;
             display: inline-block;
             float: right;
-            margin-right: 10px;
+            margin: 0px 8px 8px 8px;
         }
 
         .settings-icon {
@@ -45,6 +122,7 @@
             padding: 10px;
             border: 1px solid #ccc;
             z-index: 1;
+            color: black;
         }
 
         .config-section.show {
@@ -66,6 +144,7 @@
 
         #view-tabs {
             margin-bottom: 10px;
+            margin-right: 5px;
         }
 
         .tab {
@@ -74,10 +153,35 @@
             border: none;
             cursor: pointer;
             outline: none;
+            transition: background-color 0.3s;
+        }
+
+        .tab:hover {
+            background-color: #ddd;
         }
 
         .tab.active {
             background-color: #ccc;
+            font-weight: bold;
+        }
+
+        body.dark-mode .tab {
+            background-color: #444;
+            color: #e3e3e3;
+        }
+
+        body.dark-mode .tab:hover {
+            background-color: #555;
+        }
+
+        body.dark-mode .tab.active {
+            background-color: #666;
+        }
+
+        #loading-message {
+            text-align: center;
+            font-size: 18px;
+            margin-top: 20px;
         }
 
         .fas {
@@ -88,24 +192,34 @@
 </head>
 
 <body>
-    <div class="settings-container">
-        <i class="fas fa-cog settings-icon"></i>
-        <div id="config-section" class="config-section">
-            <h3>Columns</h3>
-            <div id="column-toggles"></div>
+    <div class="header">
+        <h1>stratum.work</h1>
+        <div class="header-right">
+            <div id="view-tabs">
+                <button id="live-tab" class="tab active">Live</button>
+                <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
+            </div>
+            <div class="settings-container">
+                <i class="fas fa-cog settings-icon"></i>
+                <div id="config-section" class="config-section">
+                    <div id="theme-toggle">
+                        <i class="fas fa-sun"></i>
+                        <i class="fas fa-moon"></i>
+                    </div>
+                    <h3>Columns</h3>
+                    <div id="column-toggles"></div>
+                </div>
+            </div>
         </div>
     </div>
-    <div id="view-tabs">
-        <button id="live-tab" class="tab active">Live</button>
-        <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
-    </div>
+
     <div id="historical-selector" style="display: none;">
         <label for="historical-select">Select Block Height:</label>
         <select id="historical-select"></select>
     </div>
 
-    <h1>Stratum Work</h1>
     <div id="mining-table"></div>
+    <div id="loading-message">Wait for new stratum messages...</div>
 </body>
 
 </html>

@@ -57,15 +57,15 @@ document.addEventListener('DOMContentLoaded', () => {
       { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_raw.md" target="_blank"><i class="fas fa-question-circle"></i></a> Coinbase RAW', field: 'coinbase_raw' },
       { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/version.md" target="_blank"><i class="fas fa-question-circle"></i></a> Version', field: 'version' },
       { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/nbits.md" target="_blank"><i class="fas fa-question-circle"></i></a> Nbits', field: 'nbits' },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/ntime.md" target="_blank"><i class="fas fa-question-circle"></i></a> Ntime', field: 'ntime', formatter: formatNtimeTimestamp },      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a> Coinbase Script (ASCII)', field: 'coinbase_script_ascii' },
+      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/ntime.md" target="_blank"><i class="fas fa-question-circle"></i></a> Ntime', field: 'ntime', formatter: formatNtimeTimestamp }, { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a> Coinbase Script (ASCII)', field: 'coinbase_script_ascii' },
       { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/clean_jobs.md" target="_blank"><i class="fas fa-question-circle"></i></a> Clean Jobs', field: 'clean_jobs' },
       {
         title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a> First Tx',
         field: 'first_transaction',
-        formatter: function(cell, formatterParams, onRendered) {
+        formatter: function (cell, formatterParams, onRendered) {
           const value = cell.getValue();
           if (value !== 'empty block') {
-            return `<a href="https://mempool.space/tx/${value}" target="_blank">${value}</a>`;
+            return `<a href="https://mempool.space/tx/${value}" class="transaction-link" target="_blank">${value}</a>`;
           } else {
             return value;
           }
@@ -120,6 +120,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!merkleBranches) return '';
       const value = merkleBranches[index] || '';
       cell.getElement().style.backgroundColor = colors[index] || 'white';
+      cell.getElement().style.color = 'black';
+      cell.getElement().style.borderColor = colors[index];
       return `${value}`;
     };
   }
@@ -127,23 +129,29 @@ document.addEventListener('DOMContentLoaded', () => {
   async function updateTableData(data) {
     const currentSorters = table.getSorters();
     const maxBlockHeight = Math.max(...blockHeights);
-  
+
+    // Remove the loading message when the first row is added
+    if (table.getDataCount() === 0) {
+      const loadingMessage = document.getElementById('loading-message');
+      loadingMessage.style.display = 'none';
+    }
+
     // Filter out data that is more than 3 blocks behind the latest block height, probably stale
     if (data.height >= maxBlockHeight - 2) {
       const poolName = data.pool_name;
-  
+
       // Delete the existing row with the same pool_name
       const existingRow = table.getRow(poolName);
       if (existingRow) {
         table.deleteRow(existingRow);
       }
-  
+
       // Add the new row
       table.addData(data)
-        .catch(function(error) {
+        .catch(function (error) {
           console.error("Error adding table data: ", error);
         });
-  
+
       if (currentSorters.length > 0) {
         table.setSort(currentSorters);
       }
@@ -167,13 +175,13 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('columnVisibility', JSON.stringify(savedColumnVisibility));
       });
       toggleLabel.appendChild(toggleCheckbox);
-  
+
       // Extract the text content of the column title
       const columnTitle = column.getDefinition().title;
       const tempElement = document.createElement('div');
       tempElement.innerHTML = columnTitle;
       const columnTitleText = tempElement.textContent;
-  
+
       toggleLabel.appendChild(document.createTextNode(columnTitleText));
       toggleDiv.appendChild(toggleLabel);
       columnToggles.appendChild(toggleDiv);
@@ -222,5 +230,35 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!configSection.contains(target) && !settingsIcon.contains(target)) {
       configSection.classList.remove('show');
     }
+  });
+
+  table.on('tableBuilt', () => {
+    applyColumnVisibility();
+    createColumnToggles();
+
+    const themeToggle = document.getElementById('theme-toggle');
+    const body = document.body;
+    const tabulatorElement = document.querySelector('.tabulator');
+    const faQuestionCircle = document.querySelector('.fa-question-circle');
+    const fas = document.querySelector('.fas');
+
+    // Check for saved theme preference
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      body.classList.add('dark-mode');
+      tabulatorElement.classList.add('dark-mode');
+      fas.classList.add('dark-mode');
+    } else {
+      body.classList.remove('dark-mode');
+      tabulatorElement.classList.remove('dark-mode');
+      fas.classList.remove('dark-mode');
+    }
+
+    themeToggle.addEventListener('click', () => {
+      body.classList.toggle('dark-mode');
+      tabulatorElement.classList.toggle('dark-mode');
+      const isDarkMode = body.classList.contains('dark-mode');
+      localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+    });
   });
 });

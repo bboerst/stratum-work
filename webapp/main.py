@@ -89,7 +89,6 @@ def process_row_data(row):
 
 def get_prev_block_hash(prev_hash):
     prev_block_hash = bytes.fromhex(prev_hash)[::-1].hex()
-    print("prev_hash: ", prev_block_hash)
     return prev_block_hash
 
 def get_transaction_fee_rate(first_transaction):

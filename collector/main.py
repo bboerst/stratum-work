@@ -125,6 +125,7 @@ class Watcher:
         self.channel.exchange_declare(exchange=self.rabbitmq_exchange, exchange_type='fanout', durable=True)
 
     def publish_to_rabbitmq(self, message):
+        LOG.info(f"Publishing message to RabbitMQ: {json.dumps(message)}")
         self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
 
     def get_stratum_work(self):

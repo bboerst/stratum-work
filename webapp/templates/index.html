@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>Pool Work</title>
+    <title>Stratum Work</title>
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_site.css" rel="stylesheet">
     <link href="https://tabulator.info/css/tabulator/6.2/tabulator_simple.min.css" rel="stylesheet">
     <script type="text/javascript" src="https://tabulator.info/js/tabulator/6.2/tabulator.js"></script>
@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <script type="module">import "{{ url_for('static', filename='bitcoinjs-lib.js') }}"</script>
     <script>
-        const SOCKET_URL = 'https://poolwork.live';
+        const SOCKET_URL = '{{ SOCKET_URL }}';
     </script>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
     <style>
@@ -104,7 +104,7 @@
         <select id="historical-select"></select>
     </div>
 
-    <h1>Pool Work</h1>
+    <h1>Stratum Work</h1>
     <div id="mining-table"></div>
 </body>
 

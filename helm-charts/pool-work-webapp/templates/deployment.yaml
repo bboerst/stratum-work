@@ -59,6 +59,7 @@ spec:
           ip: {{ .ip }}
         {{- end }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: 10
@@ -88,12 +89,11 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+          - name: worker-tmp
+            mountPath: /tmp
           - name: config
-            mountPath: /app/uwsgi.ini
-            subPath: uwsgi.ini
-          - name: config
-            mountPath: /etc/nginx/nginx.conf
-            subPath: nginx.conf
+            mountPath: /app/gunicorn.conf.py
+            subPath: gunicorn.conf.py
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -107,6 +107,8 @@ spec:
         {{- toYaml . | nindent 8 }}
     {{- end }}
       volumes:
+        - name: worker-tmp
+          emptyDir: {}
         - name: config
           configMap:
             name: {{ template "pool-work-webapp.fullname" . }}-config

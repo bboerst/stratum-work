@@ -33,188 +33,37 @@ env:
 
 arguments: []
 
+automountServiceAccountToken: false
+
 configurationFiles:
-  # uwsgi.ini: |
-  #   [uwsgi]
-  #   # placeholders that you have to change
-  #   my_app_folder = /app
-  #   my_user = root
+  gunicorn.conf.py: |
+    import gunicorn
+    bind = '0.0.0.0:8000'
+    workers = 1
+    worker_class = 'eventlet'
+    secure_scheme_headers = {'X-FORWARDED-PROTOCOL': 'ssl', 'X-FORWARDED-PROTO': 'https', 'X-FORWARDED-SSL': 'on'}
+    forwarded_allow_ips = '*'
+    keepalive = 65
+    timeout = 300
+    proc_name = 'stratum-work'
+    loglevel = 'info'
+    accesslog = '-'
+    errorlog = '-'
+    gunicorn.SERVER = 'undisclosed'
 
-  #   chdir = %(my_app_folder)
-  #   file = main.py
-  #   callable = app
-
-  #   # environment variables
-  #   env = CUDA_VISIBLE_DEVICES=-1
-  #   env = KERAS_BACKEND=theano
-  #   env = PYTHONPATH=%(my_app_folder):$PYTHONPATH
-
-  #   protocol = http
-  #   master = true
-  #   gevent_uwsgi = 1000
-  #   http-websockets = true
-  #   http-socket = 127.0.0.1:8000
-
-  #   processes = 5
-  #   # allows nginx (and all users) to read and write on this socket
-  #   chmod-socket = 666
-  #   # remove the socket when the process stops
-  #   vacuum = true
-
-  #   # loads your application one time per worker
-  #   # will very probably consume more memory,
-  #   # but will run in a more consistent and clean environment.
-  #   lazy-apps = true
-
-  #   uid = %(my_user)
-  #   gid = %(my_user)
-
-  #   # uWSGI will kill the process instead of reloading it
-  #   die-on-term = true
-  #   # socket file for getting stats about the workers
-    
-  #   # Scaling the server with the Cheaper subsystem
-
-  #   # set cheaper algorithm to use, if not set default will be used
-  #   cheaper-algo = spare
-  #   # minimum number of workers to keep at all times
-  #   cheaper = 5
-  #   # number of workers to spawn at startup
-  #   cheaper-initial = 5
-  #   # maximum number of workers that can be spawned
-  #   workers = 50
-  #   # how many workers should be spawned at a time
-  #   cheaper-step = 3
-
-  #   #location of log files
-  #   logto = /app/%n.log
-  #   die-on-term = true
-  # nginx.conf: |
-  #   user nginx;
-  #   worker_processes auto;
-  #   pid /var/run/nginx.pid;
-
-  #   events {
-  #       worker_connections 1024;
-  #   }
-
-  #   http {
-  #     server {
-  #         server_name poolwork.live;
-
-  #         location / {
-  #             proxy_http_version 1.1;
-  #             proxy_pass http://127.0.0.1:8000;
-  #         }
-
-  #         location /socket.io {
-  #             proxy_http_version 1.1;
-  #             proxy_set_header Upgrade $http_upgrade;
-  #             proxy_set_header Connection "upgrade";
-  #             proxy_pass http://127.0.0.1:8000/socket.io;
-  #         }
-
-  #         listen 80;
-
-  #     }
-  #   }
-
-
-# user nginx;
-# worker_processes auto;
-# pid /var/run/nginx.pid;
-
-# events {
-#     worker_connections 1024;
-# }
-
-# http {
-#     include       /etc/nginx/mime.types;
-#     default_type  application/octet-stream;
-
-#     log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-#                     '$status $body_bytes_sent "$http_referer" '
-#                     '"$http_user_agent" "$http_x_forwarded_for"';
-
-#     access_log /var/log/nginx/access.log main;
-#     error_log /var/log/nginx/error.log warn;
-
-#     sendfile on;
-#     tcp_nopush on;
-#     tcp_nodelay on;
-#     keepalive_timeout 65;
-#     types_hash_max_size 2048;
-
-#     gzip on;
-#     gzip_disable "msie6";
-
-#     # Security headers
-#     add_header X-Frame-Options SAMEORIGIN;
-#     add_header X-Content-Type-Options nosniff;
-#     add_header X-XSS-Protection "1; mode=block";
-#     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-#     # Proxy pass to the uWSGI server
-#     server {
-#         listen 80;
-
-#         location / {
-#             uwsgi_pass unix:/app/production_flask.sock;
-#             include uwsgi_params;
-#             uwsgi_read_timeout 300;
-#             uwsgi_send_timeout 300;
-#             uwsgi_connect_timeout 300;
-#             uwsgi_busy_buffers_size 1024k;
-#             uwsgi_buffers 16 1024k;
-#             uwsgi_buffer_size 1024k;
-#             uwsgi_temp_file_write_size 1024k;
-#             uwsgi_intercept_errors on;
-#             uwsgi_param HTTP_X_REAL_IP $remote_addr;
-#             uwsgi_param HTTP_X_FORWARDED_FOR $proxy_add_x_forwarded_for;
-#             uwsgi_param HTTP_X_FORWARDED_PROTO $scheme;
-#             proxy_http_version 1.1;
-#             proxy_set_header Host $http_host;
-#             proxy_set_header Connection $http_connection;
-#             proxy_set_header Upgrade $http_upgrade;
-#             proxy_pass http://unix:/app/production_flask.sock:/socket.io;
-#         }
-#     }
-# }
-
-
-# user nginx;
-# worker_processes auto;
-# pid /var/run/nginx.pid;
-
-# events {
-#     worker_connections 1024;
-# }
-
-# http {
-#   server {
-#       listen 80;
-
-#       location / {
-#           include         uwsgi_params;
-#           # change this to the location of the uWSGI socket file (set in uwsgi.ini)
-#           uwsgi_pass      unix:/app/production_flask.sock;
-#           proxy_http_version 1.1;
-#           proxy_set_header Upgrade $http_upgrade;
-#           proxy_set_header Connection "upgrade";
-#           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-#           proxy_set_header Host $host;
-#       }
-#   }
-# }
-
-
-podSecurityContext: {}
-  # fsGroup: 2000
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   allowPrivilegeEscalation: false
-  seccompProfile:
-    type: RuntimeDefault
+  capabilities:
+    drop:
+    - ALL
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
 
 service:
   enabled: true

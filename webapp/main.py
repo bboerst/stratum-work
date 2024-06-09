@@ -7,6 +7,7 @@ import io
 from datetime import datetime
 from flask_socketio import SocketIO
 from flask_cors import CORS
+from bitcoinrpc import BitcoinRPC
 from pycoin.symbols.btc import network
 from bson import json_util
 import json
@@ -46,7 +47,13 @@ rabbitmq_username = os.environ.get('RABBITMQ_USERNAME')
 rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
 rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
 
-def process_row_data(row):
+# Bitcoin Core RPC connection details
+bitcoin_rpc_host = os.environ.get('BITCOIN_RPC_HOST')
+bitcoin_rpc_port = os.environ.get('BITCOIN_RPC_PORT')
+bitcoin_rpc_username = os.environ.get('BITCOIN_RPC_USERNAME')
+bitcoin_rpc_password = os.environ.get('BITCOIN_RPC_PASSWORD')
+
+async def process_row_data(row):
     coinbase1 = row['coinbase1']
     coinbase2 = row['coinbase2']
     extranonce1 = row['extranonce1']
@@ -62,7 +69,7 @@ def process_row_data(row):
     prev_block_hash = get_prev_block_hash(prev_hash)
     block_version = int(version, 16)
     first_transaction = bytes(reversed(bytes.fromhex(merkle_branches[0]))).hex() if merkle_branches else 'empty block'
-    fee_rate = get_transaction_fee_rate(first_transaction)
+    fee_rate = await get_transaction_fee_rate(first_transaction)
     merkle_branch_colors = precompute_merkle_branch_colors(merkle_branches)
     script_sig_ascii = extract_coinbase_script_ascii(coinbase_tx)
 
@@ -91,7 +98,7 @@ def get_prev_block_hash(prev_hash):
     prev_block_hash = bytes.fromhex(prev_hash)[::-1].hex()
     return prev_block_hash
 
-def get_transaction_fee_rate(first_transaction):
+async def get_transaction_fee_rate(first_transaction):
     if first_transaction == 'empty block':
         return ''
 
@@ -100,6 +107,32 @@ def get_transaction_fee_rate(first_transaction):
         cached_result, expiration_time = transaction_cache[first_transaction]
         if time.time() < expiration_time:
             return cached_result
+
+    try:
+        # Create a BitcoinRPC instance with the RPC connection details
+        async with BitcoinRPC.from_config(f"http://{bitcoin_rpc_host}:{bitcoin_rpc_port}", (bitcoin_rpc_username, bitcoin_rpc_password)) as rpc:
+            # Make an RPC call to get the raw transaction
+            raw_transaction = await rpc.getrawtransaction(first_transaction)
+
+            # Parse the raw transaction using pycoin
+            transaction = network.Tx.from_hex(raw_transaction)
+
+            # Calculate the transaction fee
+            input_value = sum(tx_in.value for tx_in in transaction.txs_in)
+            output_value = sum(tx_out.coin_value for tx_out in transaction.txs_out)
+            fee = input_value - output_value
+
+            # Calculate the transaction weight
+            weight = len(transaction.as_bin()) + len(transaction.as_bin(include_unspents=True))
+
+            if fee is not None and weight is not None:
+                fee_rate = round(fee / (weight / 4))
+                # Cache the result for 5 minutes
+                expiration_time = time.time() + 300  # 5 minutes in seconds
+                transaction_cache[first_transaction] = (fee_rate, expiration_time)
+                return fee_rate
+    except Exception as e:
+        logger.exception(f"Error fetching transaction fee rate from Bitcoin Core node for {first_transaction}")
 
     try:
         response = requests.get(f'https://mempool.space/api/tx/{first_transaction}')
@@ -115,9 +148,9 @@ def get_transaction_fee_rate(first_transaction):
                 return fee_rate
         return 'not found'
     except requests.exceptions.RequestException as e:
-        logger.exception(f"Error fetching transaction fee rate for {first_transaction}")
+        logger.exception(f"Error fetching transaction fee rate from mempool.space for {first_transaction}")
         return 'Error'
-
+    
 def extract_coinbase_script_ascii(coinbase_tx):
     # Get the script_sig in hex from the input of the coinbase transaction
     script_sig_hex = coinbase_tx.txs_in[0].script.hex()
@@ -155,7 +188,7 @@ def consume_messages():
     # Bind the generated queue to the fanout exchange
     channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
 
-    def callback(ch, method, properties, body):
+    async def callback(ch, method, properties, body):
         try:
             message = json.loads(body)
             processed_message = process_row_data(message)

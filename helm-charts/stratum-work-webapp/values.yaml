@@ -132,31 +132,6 @@ ingress:
   #       port:
   #         name: use-annotation
 
-persistence:
-  enabled: false
-  ## stratum-work-webapp data Persistent Volume Storage Class
-  ## If defined, storageClassName: <storageClass>
-  ## If set to "-", storageClassName: "", which disables dynamic provisioning
-  ## If undefined (the default) or set to null, no storageClassName spec is
-  ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
-  ##   GKE, AWS & OpenStack)
-  ##
-  # storageClass: "-"
-  ##
-  ## If you want to reuse an existing claim, you can pass the name of the PVC using
-  ## the existingClaim variable
-  # existingClaim: your-claim
-  ##
-  ## If you want to use a volume on the host machine instead of a PVC:
-  # hostPath: /path/to/the/config/folder
-  accessMode: ReadWriteOnce
-  size: 1Gi
-
-  tls: []
-  #  - secretName: stratum-work-webapp-tls
-  #    hosts:
-  #      - stratum-work-webapp.local
-
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
@@ -174,3 +149,24 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+extraManifests: []
+  # - |
+  #   apiVersion: traefik.containo.us/v1alpha1
+  #   kind: IngressRoute
+  #   metadata:
+  #     labels:
+  #       {{ .Values.componentLabelKeyOverride | default "app.kubernetes.io/component" }}: stratum-work-webapp
+  #     name: {{ template "stratum-work-webapp.fullname" . }}
+  #   spec:
+  #     entryPoints:
+  #       - web
+  #       - websecure
+  #     routes:
+  #       - middlewares:
+  #         - name: rate-limiter
+  #       - match: Host(`stratum.work`)
+  #         kind: Rule
+  #         services:
+  #         - name: {{ template "stratum-work-webapp.fullname" . }}
+  #           port: {{ .Values.service.ports.flask }}

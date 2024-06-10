@@ -97,6 +97,12 @@
             align-items: center;
         }
 
+        .github-link,
+        .settings-container {
+            display: inline-block;
+            vertical-align: middle;
+        }
+
         .tabulator .tabulator-col-resize-handle {
             right: unset;
         }
@@ -104,12 +110,13 @@
         .settings-container {
             position: relative;
             display: inline-block;
-            float: right;
-            margin: 0px 8px 8px 8px;
+            margin: 0px 8px 8px 20px;
         }
 
         .settings-icon {
             cursor: pointer;
+            font-size: 25px;
+            margin-top: 8px;
         }
 
         .config-section {
@@ -188,17 +195,31 @@
             font-weight: 700;
             color: black;
         }
+
+        .github-link {
+            background-image: url("https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png");
+            background-size: contain;
+            background-repeat: no-repeat;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+        }
+
+        body.dark-mode .github-link {
+            filter: invert(1);
+        }
+        
     </style>
 </head>
 
 <body>
     <div class="header">
-        <h1>stratum.work</h1>
+        <div id="view-tabs">
+            <button id="live-tab" class="tab active">Live</button>
+            <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
+        </div>
         <div class="header-right">
-            <div id="view-tabs">
-                <button id="live-tab" class="tab active">Live</button>
-                <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
-            </div>
+            <a href="https://github.com/bboerst/stratum-work" target="_blank"><i class="github-link"></i></a>
             <div class="settings-container">
                 <i class="fas fa-cog settings-icon"></i>
                 <div id="config-section" class="config-section">
@@ -211,6 +232,7 @@
                 </div>
             </div>
         </div>
+    </div>
     </div>
 
     <div id="historical-selector" style="display: none;">

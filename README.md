@@ -1,30 +1,22 @@
-# Pool Work
+# Stratum Work
 
-"Pool Work" aims to log all "mining.notify" stratum messages incoming from a pool to a databse for historical logging purposes. I plan to run many of these concurrently in order to capture history of what work pools sent to miners to work on. In the future, queries can be developed to get an overview of work delegation historically. Additionally, a frontend can be developed to utilize the database for realtime data aggregation and visualization.
+Stratum Work is a web application that provides real-time visualizations of mining work notifications from Stratum mining pools. It allows users to monitor and analyze the mining activity of various pools in a user-friendly interface. All credit for this idea goes to `0xB10C` and his thread here: https://primal.net/e/note1qckcs4y67eyaawad96j7mxevucgygsfwxg42cvlrs22mxptrg05qtv0jz3. I'm merely copying his idea and putting it into a form where many people can access this data.
 
-```
-python main.py --help
-usage: main.py [-h] -u URL -up USERPASS -p POOL_NAME [-d DB_URL] -dn DB_NAME -du DB_USERNAME -dp
-               DB_PASSWORD [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
+## Features
 
-Subscribe to a Stratum endpoint and listen for new work
+- Real-time display of `mining.notify` messages from Stratum pools
+- Customizable table columns for displaying relevant data
+- Light and dark mode
+- Live and historical data views (historical view coming soon)
+- Integration with RabbitMQ for efficient message processing
+- MongoDB integration for data storage and retrieval (future)
+- Most 'work' is done server-side to keep the browser performant
 
-options:
-  -h, --help            show this help message and exit
-  -u URL, --url URL     The URL of the stratum server, including port. Ex:
-                        stratum+tcp://beststratumpool.com:3333
-  -up USERPASS, --userpass USERPASS
-                        Username and password combination separated by a colon (:)
-  -p POOL_NAME, --pool-name POOL_NAME
-                        The name of the pool
-  -d DB_URL, --db-url DB_URL
-                        The URL of the MongoDB database (default: mongodb://localhost:27017)
-  -dn DB_NAME, --db-name DB_NAME
-                        The name of the MongoDB database
-  -du DB_USERNAME, --db-username DB_USERNAME
-                        The username for MongoDB authentication
-  -dp DB_PASSWORD, --db-password DB_PASSWORD
-                        The password for MongoDB authentication
-  -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
-                        Set the logging level (default: INFO)
-```
+## Installation
+
+This a bit of a complex architecture to replicate, but if you want to recreate this, at a high-level it looks like this:
+
+- Kubernetes StatefulSet pods individually connect to a list of pools. One pod per pool.
+- These pods listen for `mining.notify` Stratum messages. Once receives, they are sent to MongoDB for archival and a RabbitMQ exchange
+- The RabbitMQ portion is configured with an exchange + fanout
+- The server-side web application uses Flask, gunicorn with eventlet, and socket.io. As clients connect, they get subscribed to the RabbitMQ exchange. A websocket sends realtime updates to the client.

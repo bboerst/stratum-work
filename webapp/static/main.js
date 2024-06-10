@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
         width: 130,
       },
       {
-        title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Timestamp',
+        title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Timestamp',
         field: 'timestamp',
         sorter: function (a, b, aRow, bRow, column, dir, sorterParams) {
           const timestampA = new Date(a).getTime();
@@ -51,17 +51,17 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         formatter: formatTimestamp,
       },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/height.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Height', field: 'height' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/height.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Height', field: 'height' },
       { title: 'Previous Block Hash', field: 'prev_block_hash' },
       { title: 'Block Version', field: 'block_version' },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_raw.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Coinbase RAW', field: 'coinbase_raw' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_raw.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Coinbase RAW', field: 'coinbase_raw' },
       { title: 'Version', field: 'version' },
       { title: 'Nbits', field: 'nbits' },
       { title: 'Ntime', field: 'ntime', formatter: formatNtimeTimestamp },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Coinbase Script (ASCII)', field: 'coinbase_script_ascii' },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/clean_jobs.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Clean Jobs', field: 'clean_jobs' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Coinbase Script (ASCII)', field: 'coinbase_script_ascii' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/clean_jobs.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Clean Jobs', field: 'clean_jobs' },
       {
-        title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a><br /> First Tx',
+        title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->First Tx',
         field: 'first_transaction',
         formatter: function (cell, formatterParams, onRendered) {
           const value = cell.getValue();
@@ -72,9 +72,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       },
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a><br /> First Tx Fee Rate (sat/vB)', field: 'fee_rate' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->First Tx Fee Rate (sat/vB)', field: 'fee_rate' },
       ...getMerkleBranchColumns(),
-      { title: '<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_output_value.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Coinbase Output Value', field: 'coinbase_output_value' },
+      { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_output_value.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Coinbase Output Value', field: 'coinbase_output_value' },
     ];
   }
 
@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const merkleBranchColumns = [];
     for (let i = 0; i < 11; i++) {
       merkleBranchColumns.push({
-        title: `<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#merkle-tree" target="_blank"><i class="fas fa-question-circle"></i></a><br /> Merkle Branch ${i}`,
+        title: `<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#merkle-tree" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Merkle Branch ${i}`,
         field: 'merkle_branches',
         formatter: merkleBranchFormatter(i),
       });

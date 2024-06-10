@@ -156,7 +156,18 @@ class Watcher:
                 self.publish_to_rabbitmq(document)
 
             # Send a subscribe request every 2 minutes to keep the connection alive if keep_alive is enabled
-            if keep_alive and time.time() - last_subscribe_time > 120:
+            if keep_alive and time.time() - last_subscribe_time > 480:
+                LOG.info(f"Disconnecting from server for keep alive {self.purl.geturl()}")
+                self.close()
+                time.sleep(1)
+                self.init_socket()  # Reinitialize the socket before reconnecting
+                self.sock.connect((self.purl.hostname, self.purl.port))
+                LOG.info(f"Reconnected to server {self.purl.geturl()}")
+                self.send_jsonrpc("mining.subscribe", [])
+                LOG.info("Resubscribed to pool notifications")
+                self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
+                LOG.info("Reauthed with the pool")
+                
                 LOG.info("Sending subscribe request to keep connection alive")
                 self.send_jsonrpc("mining.subscribe", [])
                 last_subscribe_time = time.time()

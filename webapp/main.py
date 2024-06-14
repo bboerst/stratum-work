@@ -97,41 +97,38 @@ def get_transaction_fee_rate(first_transaction):
 
     # Check if the transaction result is already cached
     if first_transaction in transaction_cache:
-        cached_result, expiration_time = transaction_cache[first_transaction]
+        cached_result, cpfp_result, expiration_time = transaction_cache[first_transaction]
         if time.time() < expiration_time:
-            return cached_result
+            return cpfp_result if cpfp_result is not None else cached_result
+
+    fee_rate = None
+    cpfp_fee_rate = None
 
     try:
+        # Check if the transaction is a CPFP transaction
+        cpfp_response = requests.get(f'https://mempool.space/api/v1/cpfp/{first_transaction}')
+        logger.info(f"mempool.space API - CPFP tx response: {cpfp_response.status_code} - {first_transaction}")
+        if cpfp_response.status_code == 200:
+            cpfp_data = cpfp_response.json()
+            if 'effectiveFeePerVsize' in cpfp_data:
+                cpfp_fee_rate = round(cpfp_data['effectiveFeePerVsize'])
+                # Cache the CPFP result for 5 minutes
+                expiration_time = time.time() + 300  # 5 minutes in seconds
+                transaction_cache[first_transaction] = (None, cpfp_fee_rate, expiration_time)
+                return cpfp_fee_rate
+
+        # If not a CPFP transaction, calculate normal fee rate
         response = requests.get(f'https://mempool.space/api/tx/{first_transaction}')
+        logger.info(f"mempool.space API - Reg tx response: {response.status_code} - {first_transaction}")
         if response.status_code == 200:
             data = response.json()
             fee = data.get('fee')
             weight = data.get('weight')
-
-            if 'ancestors' in data:
-                # Handle child pays for parent (CPFP) transactions
-                total_fee = fee
-                total_weight = weight
-
-                for ancestor in data['ancestors']:
-                    ancestor_response = requests.get(f'https://mempool.space/api/tx/{ancestor}')
-                    if ancestor_response.status_code == 200:
-                        ancestor_data = ancestor_response.json()
-                        total_fee += ancestor_data.get('fee', 0)
-                        total_weight += ancestor_data.get('weight', 0)
-
-                if total_weight > 0:
-                    fee_rate = round(total_fee / (total_weight / 4))
-                    # Cache the result for 5 minutes
-                    expiration_time = time.time() + 300  # 5 minutes in seconds
-                    transaction_cache[first_transaction] = (fee_rate, expiration_time)
-                    return fee_rate
-            elif fee is not None and weight is not None:
-                # Handle normal transactions
+            if fee is not None and weight is not None:
                 fee_rate = round(fee / (weight / 4))
-                # Cache the result for 5 minutes
+                # Cache the normal result for 5 minutes
                 expiration_time = time.time() + 300  # 5 minutes in seconds
-                transaction_cache[first_transaction] = (fee_rate, expiration_time)
+                transaction_cache[first_transaction] = (fee_rate, None, expiration_time)
                 return fee_rate
 
         return 'not found'

@@ -1,6 +1,6 @@
 apiVersion: v2
 description: Web frontend/backend for Pool Work
 name: stratum-work-webapp
-version: 0.1.0
+version: 0.1.1
 # renovate: image=bboerst/stratum-work-webapp
-appVersion: "v0.1.2-pre"
+appVersion: "v1.0.1"

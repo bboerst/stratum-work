@@ -104,7 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getMerkleBranchColumns() {
     const merkleBranchColumns = [];
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 13; i++) {
       merkleBranchColumns.push({
         title: `<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#merkle-tree" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Merkle Branch ${i}`,
         field: 'merkle_branches',

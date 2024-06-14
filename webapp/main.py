@@ -107,12 +107,33 @@ def get_transaction_fee_rate(first_transaction):
             data = response.json()
             fee = data.get('fee')
             weight = data.get('weight')
-            if fee is not None and weight is not None:
+
+            if 'ancestors' in data:
+                # Handle child pays for parent (CPFP) transactions
+                total_fee = fee
+                total_weight = weight
+
+                for ancestor in data['ancestors']:
+                    ancestor_response = requests.get(f'https://mempool.space/api/tx/{ancestor}')
+                    if ancestor_response.status_code == 200:
+                        ancestor_data = ancestor_response.json()
+                        total_fee += ancestor_data.get('fee', 0)
+                        total_weight += ancestor_data.get('weight', 0)
+
+                if total_weight > 0:
+                    fee_rate = round(total_fee / (total_weight / 4))
+                    # Cache the result for 5 minutes
+                    expiration_time = time.time() + 300  # 5 minutes in seconds
+                    transaction_cache[first_transaction] = (fee_rate, expiration_time)
+                    return fee_rate
+            elif fee is not None and weight is not None:
+                # Handle normal transactions
                 fee_rate = round(fee / (weight / 4))
                 # Cache the result for 5 minutes
                 expiration_time = time.time() + 300  # 5 minutes in seconds
                 transaction_cache[first_transaction] = (fee_rate, expiration_time)
                 return fee_rate
+
         return 'not found'
     except requests.exceptions.RequestException as e:
         logger.exception(f"Error fetching transaction fee rate for {first_transaction}")

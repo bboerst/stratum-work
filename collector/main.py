@@ -67,39 +67,35 @@ class Watcher:
 
     def get_msg(self):
         while True:
-            split_buf = self.buf.split(b"\n", maxsplit=1)
-            r = split_buf[0]
-            if r == b'':
-                # If r is an empty byte string, continue reading data from the socket
-                try:
-                    new_buf = self.sock.recv(4096)
-                except Exception as e:
-                    LOG.debug(f"Error receiving data: {e}")
-                    self.close()
-                    raise EOFError
-                if len(new_buf) == 0:
-                    self.close()
-                self.buf += new_buf
-                continue
             try:
-                resp = json.loads(r)
-                if len(split_buf) == 2:
-                    self.buf = split_buf[1]
-                else:
-                    self.buf = b""
-                return resp
-            except (json.decoder.JSONDecodeError, ConnectionResetError) as e:
-                LOG.debug(f"Error decoding JSON: {e}")
-                new_buf = b""
-                try:
+                split_buf = self.buf.split(b"\n", maxsplit=1)
+                r = split_buf[0]
+                if r == b'':
                     new_buf = self.sock.recv(4096)
-                except Exception as e:
-                    LOG.debug(f"Error receiving data: {e}")
-                    self.close()
-                    raise EOFError
-                if len(new_buf) == 0:
-                    self.close()
-                self.buf += new_buf
+                    if len(new_buf) == 0:
+                        self.close()
+                    self.buf += new_buf
+                    continue
+                try:
+                    resp = json.loads(r)
+                    if len(split_buf) == 2:
+                        self.buf = split_buf[1]
+                    else:
+                        self.buf = b""
+                    return resp
+                except json.decoder.JSONDecodeError as e:
+                    LOG.debug(f"Error decoding JSON: {e}")
+                    new_buf = self.sock.recv(4096)
+                    if len(new_buf) == 0:
+                        self.close()
+                    self.buf += new_buf
+            except TimeoutError as e:
+                LOG.warning(f"Timeout occurred: {e}")
+                continue
+            except ConnectionResetError as e:
+                LOG.warning(f"Connection reset by peer: {e}")
+                self.close()
+                raise EOFError
 
     def send_jsonrpc(self, method, params):
         data = {
@@ -260,15 +256,28 @@ def main():
         level=getattr(logging, args.log_level),
     )
 
+    max_retries = 5
+    retry_delay = 1
+    retry_count = 0
+
     while True:
         w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password, args.reconnect_threshold)
         try:
             w.connect_to_rabbitmq()
             while True:
                 w.get_stratum_work()
-                time.sleep(1)  # Add a small delay before reconnecting
         except KeyboardInterrupt:
             break
+        except Exception as e:
+            LOG.error(f"Unexpected error occurred: {e}")
+            retry_count += 1
+            if retry_count <= max_retries:
+                LOG.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                LOG.error("Max retries exceeded. Exiting...")
+                break
         finally:
             w.close()
             if w.connection:

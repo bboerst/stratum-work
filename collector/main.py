@@ -15,9 +15,11 @@ from pycoin.symbols.btc import network
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, reconnect_threshold):
         self.buf = b""
         self.id = 1
+        self.last_notify_time = None
+        self.reconnect_threshold = reconnect_threshold
         self.userpass = userpass
         self.pool_name = pool_name
         self.rabbitmq_exchange = rabbitmq_exchange
@@ -128,7 +130,7 @@ class Watcher:
         LOG.info(f"Publishing message to RabbitMQ: {json.dumps(message)}")
         self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
 
-    def get_stratum_work(self, keep_alive=False):
+    def get_stratum_work(self):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.info(f"Connected to server {self.purl.geturl()}")
@@ -139,38 +141,27 @@ class Watcher:
         self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
         LOG.info("Authed with the pool")
 
-        last_subscribe_time = time.time()
+        self.last_notify_time = time.time()
 
         while True:
             try:
                 n = self.get_msg()
                 LOG.debug(f"Received notification: {n}")
+
+                if "method" in n and n["method"] == "mining.notify":
+                    self.last_notify_time = time.time()
+                    document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
+                    insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                    self.publish_to_rabbitmq(document)
             except Exception as e:
                 LOG.info(f"Received exception: {e}")
                 self.close()
                 return
 
-            if "method" in n and n["method"] == "mining.notify":
-                document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
-                insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
-                self.publish_to_rabbitmq(document)
-
-            # Send a subscribe request every 2 minutes to keep the connection alive if keep_alive is enabled
-            if keep_alive and time.time() - last_subscribe_time > 480:
-                LOG.info(f"Disconnecting from server for keep alive {self.purl.geturl()}")
+            if time.time() - self.last_notify_time > self.reconnect_threshold:
+                LOG.info(f"No mining.notify message received for {self.reconnect_threshold} seconds. Reconnecting...")
                 self.close()
-                time.sleep(1)
-                self.init_socket()  # Reinitialize the socket before reconnecting
-                self.sock.connect((self.purl.hostname, self.purl.port))
-                LOG.info(f"Reconnected to server {self.purl.geturl()}")
-                self.send_jsonrpc("mining.subscribe", [])
-                LOG.info("Resubscribed to pool notifications")
-                self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-                LOG.info("Reauthed with the pool")
-                
-                LOG.info("Sending subscribe request to keep connection alive")
-                self.send_jsonrpc("mining.subscribe", [])
-                last_subscribe_time = time.time()
+                return
 
 def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
     notification_id = str(uuid.uuid4())
@@ -254,7 +245,8 @@ def main():
         "-dp", "--db-password", required=True, help="The password for MongoDB authentication"
     )
     parser.add_argument(
-        "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
+        "-rt", "--reconnect-threshold", type=int, default=180,
+        help="The maximum duration (in seconds) allowed without receiving a 'mining.notify' message before initiating a reconnect (default: 300)"
     )
     parser.add_argument(
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -269,10 +261,12 @@ def main():
     )
 
     while True:
-        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
+        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password, args.reconnect_threshold)
         try:
             w.connect_to_rabbitmq()
-            w.get_stratum_work(keep_alive=args.keep_alive)
+            while True:
+                w.get_stratum_work()
+                time.sleep(1)  # Add a small delay before reconnecting
         except KeyboardInterrupt:
             break
         finally:

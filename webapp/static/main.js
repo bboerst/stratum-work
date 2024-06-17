@@ -123,6 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cell.getElement().style.backgroundColor = colors[index] || 'white';
       cell.getElement().style.color = 'black';
       cell.getElement().style.borderColor = colors[index];
+      
       return `${value}`;
     };
   }
@@ -261,5 +262,107 @@ document.addEventListener('DOMContentLoaded', () => {
       const isDarkMode = body.classList.contains('dark-mode');
       localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
     });
+  });
+
+  const tutorialIcon = document.querySelector('.tutorial-icon');
+  const tutorialPopup = document.querySelector('.tutorial-popup');
+  const tutorialOverlay = document.querySelector('.tutorial-overlay');
+  const tutorialContent = document.querySelector('.tutorial-content');
+  const tutorialPrev = document.querySelector('.tutorial-prev');
+  const tutorialNext = document.querySelector('.tutorial-next');
+
+  let tutorialStep = 0;
+
+  const tutorialSteps = [
+    {
+      content: 'This table shows data coming from each individual mining pool. The data is a block template with enough pieces for the miner to assemble a completed block once they find a valid nonce.',
+      highlight: '#mining-table',
+    },
+    {
+      content: 'When multiple pools share the same exact set of merkle branches, it means they are mining the exact same set of transactions.',
+      highlight: '.merkle-branch-highlight',
+    },
+    {
+      content: 'A lower than normal fee rate in the "First Transaction Fee Rate" column indicates that a pool is using a custom prioritization for transactions, rather than choosing based solely on fee rate.',
+      highlight: '.tabulator-cell[tabulator-field="fee_rate"]',
+    },
+  ];
+
+  function showTutorialStep(step) {
+    tutorialContent.textContent = tutorialSteps[step].content;
+    tutorialPopup.style.display = 'block';
+    tutorialOverlay.style.display = 'block';
+  
+    const highlightSelector = tutorialSteps[step].highlight;
+    const highlightElements = document.querySelectorAll(highlightSelector);
+  
+    // Reset the visibility and highlighting of all elements
+    document.querySelectorAll('#mining-table, .tabulator-cell[tabulator-field="fee_rate"], .tabulator-cell[tabulator-field*="merkle_branch"]').forEach((element) => {
+      element.style.zIndex = '';
+      element.style.position = '';
+      element.classList.remove('tutorial-highlight');
+    });
+  
+    // Highlight and show the relevant elements for each step
+    if (step === 0) {
+      document.querySelector('#mining-table').style.zIndex = '10002';
+      document.querySelector('#mining-table').style.position = 'relative';
+    } else if (step === 1) {
+      document.querySelectorAll('.tabulator-cell[tabulator-field*="merkle_branch"]').forEach((element) => {
+        element.classList.add('tutorial-highlight');
+        element.style.zIndex = '10002';
+        element.style.position = 'relative';
+      });
+    } else if (step === 2) {
+      document.querySelectorAll('.tabulator-cell[tabulator-field="fee_rate"]').forEach((element) => {
+        element.classList.add('tutorial-highlight');
+        element.style.zIndex = '10002';
+        element.style.position = 'relative';
+      });
+    }
+  
+    if (step === tutorialSteps.length - 1) {
+      tutorialNext.textContent = 'Finish';
+    } else {
+      tutorialNext.textContent = 'Next';
+    }
+  }
+
+  function hideTutorialStep() {
+    tutorialPopup.style.display = 'none';
+    tutorialOverlay.style.display = 'none';
+
+    const highlightElements = document.querySelectorAll('.tutorial-highlight');
+    highlightElements.forEach((element) => {
+      element.classList.remove('tutorial-highlight');
+    });
+  }
+
+  tutorialIcon.addEventListener('click', () => {
+    tutorialStep = 0;
+    showTutorialStep(tutorialStep);
+  });
+
+  tutorialNext.addEventListener('click', () => {
+    if (tutorialStep < tutorialSteps.length - 1) {
+      hideTutorialStep();
+      tutorialStep++;
+      showTutorialStep(tutorialStep);
+    } else {
+      hideTutorialStep();
+    }
+  });
+
+  tutorialPrev.addEventListener('click', () => {
+    if (tutorialStep > 0) {
+      hideTutorialStep();
+      tutorialStep--;
+      showTutorialStep(tutorialStep);
+    }
+  });
+
+  tutorialIcon.addEventListener('click', () => {
+    tutorialStep = 0;
+    showTutorialStep(tutorialStep);
   });
 });

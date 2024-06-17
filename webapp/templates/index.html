@@ -208,7 +208,77 @@
         body.dark-mode .github-link {
             filter: invert(1);
         }
-        
+
+        .tutorial-icon {
+            font-size: 25px;
+            margin: 0 10px;
+            cursor: pointer;
+        }
+
+        .tutorial-popup {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            z-index: 10003;
+            /* Increase the z-index value */
+            max-width: 500px;
+        }
+
+        .tutorial-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            pointer-events: none;
+        }
+
+        .tutorial-overlay::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: -1;
+            pointer-events: auto;
+        }
+
+        #mining-table {
+            position: relative;
+            z-index: 10000;
+        }
+
+        .tutorial-content {
+            margin-bottom: 20px;
+        }
+
+        .tutorial-nav {
+            text-align: right;
+        }
+
+        .tutorial-prev,
+        .tutorial-next {
+            padding: 5px 10px;
+            margin-left: 10px;
+        }
+
+        .tutorial-highlight {
+            position: relative;
+            z-index: 10002;
+            background-color: transparent !important;
+            outline: 2px solid red;
+        }
     </style>
 </head>
 
@@ -220,6 +290,7 @@
         </div>
         <div class="header-right">
             <a href="https://github.com/bboerst/stratum-work" target="_blank"><i class="github-link"></i></a>
+            <i class="fas fa-question-circle tutorial-icon"></i>
             <div class="settings-container">
                 <i class="fas fa-cog settings-icon"></i>
                 <div id="config-section" class="config-section">
@@ -242,6 +313,15 @@
 
     <div id="mining-table"></div>
     <div id="loading-message">Wait for new stratum messages...</div>
+
+    <div class="tutorial-overlay"></div>
+    <div class="tutorial-popup">
+        <div class="tutorial-content"></div>
+        <div class="tutorial-nav">
+            <button class="tutorial-prev">Previous</button>
+            <button class="tutorial-next">Next</button>
+        </div>
+    </div>
 </body>
 
 </html>

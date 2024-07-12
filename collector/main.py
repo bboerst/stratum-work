@@ -68,15 +68,17 @@ class Watcher:
             split_buf = self.buf.split(b"\n", maxsplit=1)
             r = split_buf[0]
             if r == b'':
-                # If r is an empty byte string, continue reading data from the socket
                 try:
                     new_buf = self.sock.recv(4096)
-                except Exception as e:
+                except (OSError, EOFError, ConnectionResetError) as e:
                     LOG.debug(f"Error receiving data: {e}")
                     self.close()
-                    raise EOFError
+                    self.init_socket()  # Reinitialize the socket
+                    return None  # Return None to indicate a reconnection is needed
                 if len(new_buf) == 0:
                     self.close()
+                    self.init_socket()  # Reinitialize the socket
+                    return None  # Return None to indicate a reconnection is needed
                 self.buf += new_buf
                 continue
             try:
@@ -113,10 +115,15 @@ class Watcher:
 
         resp = self.get_msg()
 
+        if resp is None:
+            # Connection lost or exception occurred
+            return None
+
         if resp["id"] == 1 and resp["result"] is not None:
             self.extranonce1, self.extranonce2_length = resp["result"][-2:]
 
         LOG.debug(f"Received: {resp}")
+        return resp
         
     def connect_to_rabbitmq(self):
         credentials = pika.PlainCredentials(self.rabbitmq_username, self.rabbitmq_password)
@@ -130,36 +137,56 @@ class Watcher:
 
     def get_stratum_work(self, keep_alive=False, keep_alive_period=120):
         self.sock.setblocking(True)
-        self.sock.connect((self.purl.hostname, self.purl.port))
-        LOG.info(f"Connected to server {self.purl.geturl()}")
-
-        self.send_jsonrpc("mining.subscribe", [])
-        LOG.info("Subscribed to pool notifications")
-
-        self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-        LOG.info("Authed with the pool")
-
-        last_subscribe_time = time.time()
 
         while True:
             try:
-                n = self.get_msg()
-                LOG.debug(f"Received notification: {n}")
-            except Exception as e:
-                LOG.info(f"Received exception: {e}")
-                self.close()
-                return
+                self.sock.connect((self.purl.hostname, self.purl.port))
+                LOG.info(f"Connected to server {self.purl.geturl()}")
 
-            if "method" in n and n["method"] == "mining.notify":
-                document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
-                insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
-                self.publish_to_rabbitmq(document)
+                resp = self.send_jsonrpc("mining.subscribe", [])
+                if resp is None:
+                    # Connection lost or exception occurred
+                    raise EOFError("Failed to subscribe to pool notifications")
+                LOG.info("Subscribed to pool notifications")
 
-            # Send a subscribe request every keep_alive_period seconds to keep the connection alive if keep_alive is enabled
-            if keep_alive and time.time() - last_subscribe_time > keep_alive_period:
-                LOG.info(f"Sending subscribe request to keep connection alive (period: {keep_alive_period}s)")
-                self.send_jsonrpc("mining.subscribe", [])
+                resp = self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
+                if resp is None:
+                    # Connection lost or exception occurred
+                    raise EOFError("Failed to authorize with the pool")
+                LOG.info("Authed with the pool")
+
                 last_subscribe_time = time.time()
+
+                while True:
+                    try:
+                        n = self.get_msg()
+                        if n is None:
+                            # Reconnection is needed
+                            break
+                        LOG.debug(f"Received notification: {n}")
+                    except (OSError, EOFError, ConnectionResetError) as e:
+                        LOG.info(f"Received exception: {e}")
+                        break
+
+                    if "method" in n and n["method"] == "mining.notify":
+                        document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
+                        insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                        self.publish_to_rabbitmq(document)
+
+                    # Send a subscribe request every keep_alive_period seconds to keep the connection alive if keep_alive is enabled
+                    if keep_alive and time.time() - last_subscribe_time > keep_alive_period:
+                        LOG.info(f"Sending subscribe request to keep connection alive (period: {keep_alive_period}s)")
+                        self.send_jsonrpc("mining.subscribe", [])
+                        last_subscribe_time = time.time()
+
+            except (OSError, EOFError, ConnectionResetError) as e:
+                LOG.info(f"Error connecting to server: {e}")
+                time.sleep(5)  # Wait for a few seconds before retrying
+
+            LOG.info(f"Disconnected from server {self.purl.geturl()}")
+            self.close()
+            time.sleep(1)  # Wait for a short period before reconnecting
+            self.init_socket()  # Reinitialize the socket before reconnecting
 
 def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
     notification_id = str(uuid.uuid4())
@@ -261,16 +288,31 @@ def main():
     )
 
     while True:
-        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
+        w = Watcher(
+            args.url,
+            args.userpass,
+            args.pool_name,
+            args.rabbitmq_host,
+            args.rabbitmq_port,
+            args.rabbitmq_username,
+            args.rabbitmq_password,
+            args.rabbitmq_exchange,
+            args.db_url,
+            args.db_name,
+            args.db_username,
+            args.db_password
+        )
         try:
             w.connect_to_rabbitmq()
             w.get_stratum_work(keep_alive=args.keep_alive, keep_alive_period=args.keep_alive_period)
         except KeyboardInterrupt:
             break
         finally:
-            w.close()
-            if w.connection:
+            try:
                 w.connection.close()
+            except Exception as e:
+                LOG.error(f"Error closing RabbitMQ connection: {e}")
+            w.close()
 
 if __name__ == "__main__":
     main()

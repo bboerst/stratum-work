@@ -128,7 +128,7 @@ class Watcher:
         LOG.info(f"Publishing message to RabbitMQ: {json.dumps(message)}")
         self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
 
-    def get_stratum_work(self, keep_alive=False):
+    def get_stratum_work(self, keep_alive=False, keep_alive_period=120):
         self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.info(f"Connected to server {self.purl.geturl()}")
@@ -155,20 +155,9 @@ class Watcher:
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
                 self.publish_to_rabbitmq(document)
 
-            # Send a subscribe request every 2 minutes to keep the connection alive if keep_alive is enabled
-            if keep_alive and time.time() - last_subscribe_time > 480:
-                LOG.info(f"Disconnecting from server for keep alive {self.purl.geturl()}")
-                self.close()
-                time.sleep(1)
-                self.init_socket()  # Reinitialize the socket before reconnecting
-                self.sock.connect((self.purl.hostname, self.purl.port))
-                LOG.info(f"Reconnected to server {self.purl.geturl()}")
-                self.send_jsonrpc("mining.subscribe", [])
-                LOG.info("Resubscribed to pool notifications")
-                self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-                LOG.info("Reauthed with the pool")
-                
-                LOG.info("Sending subscribe request to keep connection alive")
+            # Send a subscribe request every keep_alive_period seconds to keep the connection alive if keep_alive is enabled
+            if keep_alive and time.time() - last_subscribe_time > keep_alive_period:
+                LOG.info(f"Sending subscribe request to keep connection alive (period: {keep_alive_period}s)")
                 self.send_jsonrpc("mining.subscribe", [])
                 last_subscribe_time = time.time()
 
@@ -257,6 +246,9 @@ def main():
         "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
     )
     parser.add_argument(
+        "-kp", "--keep-alive-period", type=int, default=120, help="The period in seconds for sending keep-alive subscribe requests (default: 120)"
+    )
+    parser.add_argument(
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
@@ -272,7 +264,7 @@ def main():
         w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
         try:
             w.connect_to_rabbitmq()
-            w.get_stratum_work(keep_alive=args.keep_alive)
+            w.get_stratum_work(keep_alive=args.keep_alive, keep_alive_period=args.keep_alive_period)
         except KeyboardInterrupt:
             break
         finally:

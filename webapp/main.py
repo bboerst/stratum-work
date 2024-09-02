@@ -18,6 +18,7 @@ import string
 import sys
 import os
 import pika
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"]}})
@@ -91,6 +92,7 @@ def get_prev_block_hash(prev_hash):
     prev_block_hash = bytes.fromhex(prev_hash)[::-1].hex()
     return prev_block_hash
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_transaction_fee_rate(first_transaction):
     if first_transaction == 'empty block':
         return ''
@@ -106,7 +108,7 @@ def get_transaction_fee_rate(first_transaction):
 
     try:
         # Check if the transaction is a CPFP transaction
-        cpfp_response = requests.get(f'https://mempool.space/api/v1/cpfp/{first_transaction}')
+        cpfp_response = requests.get(f'https://mempool.space/api/v1/cpfp/{first_transaction}', timeout=10)
         logger.info(f"mempool.space API - CPFP tx response: {cpfp_response.status_code} - {first_transaction}")
         if cpfp_response.status_code == 200:
             cpfp_data = cpfp_response.json()
@@ -118,7 +120,7 @@ def get_transaction_fee_rate(first_transaction):
                 return cpfp_fee_rate
 
         # If not a CPFP transaction, calculate normal fee rate
-        response = requests.get(f'https://mempool.space/api/tx/{first_transaction}')
+        response = requests.get(f'https://mempool.space/api/tx/{first_transaction}', timeout=10)
         logger.info(f"mempool.space API - Reg tx response: {response.status_code} - {first_transaction}")
         if response.status_code == 200:
             data = response.json()
@@ -134,7 +136,7 @@ def get_transaction_fee_rate(first_transaction):
         return 'not found'
     except requests.exceptions.RequestException as e:
         logger.exception(f"Error fetching transaction fee rate for {first_transaction}")
-        return 'Error'
+        raise  # This will trigger a retry
 
 def extract_coinbase_script_ascii(coinbase_tx):
     # Get the script_sig in hex from the input of the coinbase transaction
@@ -156,22 +158,33 @@ def precompute_merkle_branch_colors(merkle_branches):
 def hash_code(text):
     return sum(ord(char) for char in text)
 
+def connect_rabbitmq():
+    global connection, channel
+    while True:
+        try:
+            credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
+            connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
+            channel = connection.channel()
+
+            # Declare the exchange as a fanout exchange
+            channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
+
+            # Let RabbitMQ generate a unique queue name for each consumer
+            result = channel.queue_declare(queue='', exclusive=True)
+            queue_name = result.method.queue
+
+            # Bind the generated queue to the fanout exchange
+            channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
+
+            logger.info('Successfully connected to RabbitMQ')
+            return queue_name
+        except pika.exceptions.AMQPConnectionError:
+            logger.error('Failed to connect to RabbitMQ. Retrying in 5 seconds...')
+            time.sleep(5)
+
 def consume_messages():
     global connection, channel
-
-    credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
-    connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
-    channel = connection.channel()
-
-    # Declare the exchange as a fanout exchange
-    channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
-
-    # Let RabbitMQ generate a unique queue name for each consumer
-    result = channel.queue_declare(queue='', exclusive=True)
-    queue_name = result.method.queue
-
-    # Bind the generated queue to the fanout exchange
-    channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
+    queue_name = connect_rabbitmq()
 
     def callback(ch, method, properties, body):
         try:
@@ -182,10 +195,17 @@ def consume_messages():
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
 
-    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
-
-    logger.info('Started consuming messages from the exchange')
-    channel.start_consuming()
+    while True:
+        try:
+            channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+            logger.info('Started consuming messages from the exchange')
+            channel.start_consuming()
+        except pika.exceptions.AMQPConnectionError:
+            logger.error('Lost connection to RabbitMQ. Reconnecting...')
+            queue_name = connect_rabbitmq()
+        except Exception as e:
+            logger.exception(f"Unexpected error in consume_messages: {e}")
+            time.sleep(5)  # Wait before attempting to reconnect
     
 @socketio.on('connect')
 def handle_connect():
@@ -198,10 +218,6 @@ def handle_connect():
 def handle_disconnect():
     logger.info('Client disconnected')
     connected_clients.remove(request.sid)
-    if len(connected_clients) == 0:
-        if channel and connection:
-            channel.stop_consuming()
-            connection.close()
 
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')

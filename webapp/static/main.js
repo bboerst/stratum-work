@@ -1,5 +1,24 @@
 document.addEventListener('DOMContentLoaded', () => {
   const socket = io(SOCKET_URL);
+  let isPaused = false;
+
+  const pauseButton = document.getElementById('pause-button');
+  const resumeButton = document.getElementById('resume-button');
+
+  pauseButton.addEventListener('click', () => {
+    isPaused = true;
+    pauseButton.style.display = 'none';
+    resumeButton.style.display = 'inline-block';
+  });
+
+  resumeButton.addEventListener('click', () => {
+    isPaused = false;
+    resumeButton.style.display = 'none';
+    pauseButton.style.display = 'inline-block';
+    // Fetch the latest data when resuming
+    socket.emit('request_latest_data');
+  });
+
   const savedColumnVisibility = JSON.parse(localStorage.getItem('columnVisibility')) || {};
   let blockHeights = [];
 
@@ -17,21 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
     createColumnToggles();
   });
 
-  const liveTab = document.getElementById('live-tab');
-  const historicalTab = document.getElementById('historical-tab');
-  const historicalSelector = document.getElementById('historical-selector');
-  const historicalSelect = document.getElementById('historical-select');
-
-  liveTab.addEventListener('click', () => {
-    toggleTab(liveTab, historicalTab);
-    historicalSelector.style.display = 'none';
-    socket.connect();
-    table.clearData();
-  });
-
   socket.on('mining_data', async (data) => {
-    await updateTableData(data);
-    updateBlockHeights(data.height);
+    if (!isPaused) {
+      await updateTableData(data);
+      updateBlockHeights(data.height);
+    }
   });
 
   function getTableColumns() {
@@ -195,27 +204,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function toggleTab(activeTab, inactiveTab) {
-    activeTab.classList.add('active');
-    inactiveTab.classList.remove('active');
-  }
-
   function updateBlockHeights(blockHeight) {
     if (!blockHeights.includes(blockHeight)) {
       blockHeights.push(blockHeight);
-      populateBlockHeightsDropdown();
-    }
-  }
-
-  function populateBlockHeightsDropdown() {
-    const latestBlockHeight = Math.max(...blockHeights);
-    const startBlockHeight = Math.max(0, latestBlockHeight - 100);
-    historicalSelect.innerHTML = '';
-    for (let i = latestBlockHeight; i >= startBlockHeight; i--) {
-      const option = document.createElement('option');
-      option.value = i;
-      option.textContent = i;
-      historicalSelect.appendChild(option);
     }
   }
 

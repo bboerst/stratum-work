@@ -217,6 +217,22 @@
             background-color: #555;
         }
 
+        .tabulator .tabulator-cell[tabulator-field="coinbase_outputs"] {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        @keyframes flash-border {
+            0% { border-color: red; }
+            50% { border-color: transparent; }
+            100% { border-color: red; }
+        }
+
+        .flashing-border {
+            animation: flash-border 1s infinite;
+            border: 2px solid red;
+        }
     </style>
 </head>
 

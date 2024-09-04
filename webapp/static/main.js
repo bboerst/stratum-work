@@ -9,11 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
     isPaused = true;
     pauseButton.style.display = 'none';
     resumeButton.style.display = 'inline-block';
+    resumeButton.classList.add('flashing-border');
   });
 
   resumeButton.addEventListener('click', () => {
     isPaused = false;
     resumeButton.style.display = 'none';
+    resumeButton.classList.remove('flashing-border');
     pauseButton.style.display = 'inline-block';
     // Fetch the latest data when resuming
     socket.emit('request_latest_data');
@@ -69,6 +71,34 @@ document.addEventListener('DOMContentLoaded', () => {
       { title: 'Ntime', field: 'ntime', formatter: formatNtimeTimestamp },
       { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_script_ascii.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Coinbase Script (ASCII)', field: 'coinbase_script_ascii' },
       { title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/clean_jobs.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Clean Jobs', field: 'clean_jobs' },
+      {
+        title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/coinbase_outputs.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Coinbase Outputs',
+        field: 'coinbase_outputs',
+        formatter: function(cell, formatterParams, onRendered) {
+          const outputs = cell.getValue();
+          if (Array.isArray(outputs)) {
+            const formattedOutputs = outputs
+              .filter(output => !output.address.includes("nulldata"))
+              .map(output => `${output.address}:${output.value}`)
+              .join('|');
+            
+            const color = generateColorFromOutputs(outputs);
+            cell.getElement().style.backgroundColor = color;
+            cell.getElement().style.whiteSpace = 'nowrap';
+            cell.getElement().style.overflow = 'hidden';
+            cell.getElement().style.textOverflow = 'ellipsis';
+            cell.getElement().title = formattedOutputs;
+            return formattedOutputs;
+          }
+          return '';
+        },
+        sorter: function(a, b, aRow, bRow, column, dir, sorterParams) {
+          const aOutputs = a ? a.filter(output => !output.address.includes("nulldata")).map(output => `${output.address}:${output.value}`).join('|') : '';
+          const bOutputs = b ? b.filter(output => !output.address.includes("nulldata")).map(output => `${output.address}:${output.value}`).join('|') : '';
+          return aOutputs.localeCompare(bOutputs);
+        },
+        resizable: true,
+      },
       {
         title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/merkle_branches.md#first-transaction-after-coinbase" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->First Tx',
         field: 'first_transaction',
@@ -253,4 +283,20 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
     });
   });
+
+  function generateColorFromOutputs(outputs) {
+    const addressString = outputs
+      .filter(output => !output.address.includes('nulldata'))
+      .map(output => output.address)
+      .join('|');
+    const hue = Math.abs(hash_code(addressString) % 360);
+    const saturation = 70 + (hash_code(addressString) % 30); // 70-100%
+    const lightness = 60 + (hash_code(addressString) % 25); // 60-85%
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  }
+
+  function hash_code(text) {
+    return text.split('').reduce((prevHash, currVal) =>
+      (((prevHash << 5) - prevHash) + currVal.charCodeAt(0))|0, 0);
+  }
 });

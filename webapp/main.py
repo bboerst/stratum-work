@@ -7,7 +7,7 @@ import io
 from datetime import datetime
 from flask_socketio import SocketIO
 from flask_cors import CORS
-from pycoin.symbols.btc import network
+from pycoin.symbols.btc import network as btc_network
 from bson import json_util
 import json
 import logging
@@ -56,7 +56,7 @@ def process_row_data(row):
     merkle_branches = row['merkle_branches']
 
     coinbase_hex = coinbase1 + extranonce1 + '00' * extranonce2_length + coinbase2
-    coinbase_tx = network.Tx.from_hex(coinbase_hex)
+    coinbase_tx = btc_network.Tx.from_hex(coinbase_hex)
     output_value = sum(tx_out.coin_value for tx_out in coinbase_tx.txs_out) / 1e8
     height = int.from_bytes(coinbase_tx.txs_in[0].script[1:4], byteorder='little')
     prev_block_hash = get_prev_block_hash(prev_hash)
@@ -65,6 +65,13 @@ def process_row_data(row):
     fee_rate = get_transaction_fee_rate(first_transaction)
     merkle_branch_colors = precompute_merkle_branch_colors(merkle_branches)
     script_sig_ascii = extract_coinbase_script_ascii(coinbase_tx)
+
+    # Extract coinbase output addresses
+    coinbase_outputs = []
+    for tx_out in coinbase_tx.txs_out:
+        address = btc_network.address.for_script(tx_out.script)
+        value = tx_out.coin_value / 1e8
+        coinbase_outputs.append({"address": address, "value": value})
 
     processed_row = {
         'pool_name': row['pool_name'],
@@ -82,7 +89,8 @@ def process_row_data(row):
         'fee_rate': fee_rate,
         'merkle_branches': merkle_branches,
         'merkle_branch_colors': merkle_branch_colors,
-        'coinbase_output_value': output_value
+        'coinbase_output_value': output_value,
+        'coinbase_outputs': coinbase_outputs
     }
 
     return processed_row

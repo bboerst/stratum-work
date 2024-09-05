@@ -84,7 +84,7 @@
         .header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            justify-content: flex-end;
             margin-bottom: 10px;
         }
 
@@ -95,6 +95,7 @@
         .header-right {
             display: flex;
             align-items: center;
+            margin-left: auto;
         }
 
         .github-link,
@@ -149,42 +150,6 @@
             width: 100%;
         }
 
-        #view-tabs {
-            margin-bottom: 10px;
-            margin-right: 5px;
-        }
-
-        .tab {
-            padding: 8px 16px;
-            background-color: #f1f1f1;
-            border: none;
-            cursor: pointer;
-            outline: none;
-            transition: background-color 0.3s;
-        }
-
-        .tab:hover {
-            background-color: #ddd;
-        }
-
-        .tab.active {
-            background-color: #ccc;
-            font-weight: bold;
-        }
-
-        body.dark-mode .tab {
-            background-color: #444;
-            color: #e3e3e3;
-        }
-
-        body.dark-mode .tab:hover {
-            background-color: #555;
-        }
-
-        body.dark-mode .tab.active {
-            background-color: #666;
-        }
-
         #loading-message {
             text-align: center;
             font-size: 18px;
@@ -208,17 +173,75 @@
         body.dark-mode .github-link {
             filter: invert(1);
         }
-        
+
+        .control-button {
+            padding: 5px 10px;
+            margin-right: 10px;
+            cursor: pointer;
+            background-color: #f1f1f1;
+            border: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .control-button i {
+            margin-right: 5px;
+        }
+
+        .control-button:hover {
+            background-color: #ddd;
+        }
+
+        body.dark-mode .control-button {
+            background-color: #444;
+            color: #e3e3e3;
+        }
+
+        body.dark-mode .control-button:hover {
+            background-color: #555;
+        }
+
+        .separator {
+            height: 20px;
+            width: 1px;
+            background-color: #ccc;
+            margin: 0 10px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        body.dark-mode .separator {
+            background-color: #555;
+        }
+
+        .tabulator .tabulator-cell[tabulator-field="coinbase_outputs"] {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        @keyframes flash-border {
+            0% { border-color: red; }
+            50% { border-color: transparent; }
+            100% { border-color: red; }
+        }
+
+        .flashing-border {
+            animation: flash-border 1s infinite;
+            border: 2px solid red;
+        }
     </style>
 </head>
 
 <body>
     <div class="header">
-        <div id="view-tabs">
-            <button id="live-tab" class="tab active">Live</button>
-            <button id="historical-tab" class="tab">Historical (Coming Soon)</button>
-        </div>
         <div class="header-right">
+            <button id="pause-button" class="control-button"><i class="fas fa-pause"></i> Pause</button>
+            <button id="resume-button" class="control-button" style="display: none;"><i class="fas fa-play"></i> Resume</button>
+            <div class="separator"></div>
             <a href="https://github.com/bboerst/stratum-work" target="_blank"><i class="github-link"></i></a>
             <div class="settings-container">
                 <i class="fas fa-cog settings-icon"></i>
@@ -232,12 +255,6 @@
                 </div>
             </div>
         </div>
-    </div>
-    </div>
-
-    <div id="historical-selector" style="display: none;">
-        <label for="historical-select">Select Block Height:</label>
-        <select id="historical-select"></select>
     </div>
 
     <div id="mining-table"></div>

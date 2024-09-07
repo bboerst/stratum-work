@@ -291,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .join('|');
     const hue = Math.abs(hash_code(addressString) % 360);
     const saturation = 70 + (hash_code(addressString) % 30); // 70-100%
-    const lightness = 60 + (hash_code(addressString) % 25); // 60-85%
+    const lightness = 80 + (hash_code(addressString) % 20); // 80-100%
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
   }
 

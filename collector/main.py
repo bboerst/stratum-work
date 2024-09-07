@@ -11,11 +11,12 @@ from urllib.parse import urlparse
 import pika
 from pymongo import MongoClient
 from pycoin.symbols.btc import network
+import socks
 
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
@@ -33,6 +34,9 @@ class Watcher:
         self.purl = self.parse_url(url)
         self.extranonce1 = None
         self.extranonce2_length = -1
+        self.use_proxy = use_proxy
+        self.proxy_host = proxy_host
+        self.proxy_port = proxy_port
         self.init_socket()
         self.connection = None
         self.channel = None
@@ -52,16 +56,26 @@ class Watcher:
         return purl
 
     def init_socket(self):
-        self.sock = socket.socket()
+        LOG.info("Initializing socket")
+        if self.use_proxy:
+            LOG.info(f"Using proxy: {self.proxy_host}:{self.proxy_port}")
+            self.sock = socks.socksocket()
+            self.sock.set_proxy(socks.SOCKS5, self.proxy_host, self.proxy_port)
+        else:
+            LOG.info("Using direct connection")
+            self.sock = socket.socket()
         self.sock.settimeout(600)
+        LOG.info("Socket initialized with 600 seconds timeout")
 
     def close(self):
+        LOG.info(f"Closing connection to {self.purl.geturl()}")
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+            LOG.info("Socket shutdown successful")
+        except OSError as e:
+            LOG.warning(f"Error during socket shutdown: {e}")
         self.sock.close()
-        LOG.info(f"Disconnected from {self.purl.geturl()}")
+        LOG.info(f"Socket closed. Disconnected from {self.purl.geturl()}")
 
     def get_msg(self):
         while True:
@@ -129,15 +143,26 @@ class Watcher:
         self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
 
     def get_stratum_work(self, keep_alive=False):
+        LOG.info("Starting get_stratum_work")
         self.sock.setblocking(True)
-        self.sock.connect((self.purl.hostname, self.purl.port))
-        LOG.info(f"Connected to server {self.purl.geturl()}")
+        LOG.info("Socket set to blocking mode")
+        if self.use_proxy:
+            LOG.info(f"Connecting through proxy: {self.proxy_host}:{self.proxy_port}")
+        LOG.info(f"Attempting to connect to {self.purl.hostname}:{self.purl.port}")
+        try:
+            self.sock.connect((self.purl.hostname, self.purl.port))
+            LOG.info(f"Successfully connected to server {self.purl.geturl()}")
+        except Exception as e:
+            LOG.error(f"Failed to connect to server: {e}")
+            raise
 
+        LOG.info("Sending mining.subscribe request")
         self.send_jsonrpc("mining.subscribe", [])
-        LOG.info("Subscribed to pool notifications")
+        LOG.info("Successfully subscribed to pool notifications")
 
+        LOG.info("Sending mining.authorize request")
         self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-        LOG.info("Authed with the pool")
+        LOG.info("Successfully authorized with the pool")
 
         last_subscribe_time = time.time()
 
@@ -146,31 +171,34 @@ class Watcher:
                 n = self.get_msg()
                 LOG.debug(f"Received notification: {n}")
             except Exception as e:
-                LOG.info(f"Received exception: {e}")
+                LOG.error(f"Error receiving message: {e}")
                 self.close()
                 return
 
             if "method" in n and n["method"] == "mining.notify":
+                LOG.info("Received mining.notify message")
                 document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
                 self.publish_to_rabbitmq(document)
 
-            # Send a subscribe request every 2 minutes to keep the connection alive if keep_alive is enabled
             if keep_alive and time.time() - last_subscribe_time > 480:
+                LOG.info("Keep-alive interval reached")
                 LOG.info(f"Disconnecting from server for keep alive {self.purl.geturl()}")
                 self.close()
                 time.sleep(1)
-                self.init_socket()  # Reinitialize the socket before reconnecting
+                LOG.info("Reinitializing socket")
+                self.init_socket()
+                LOG.info(f"Reconnecting to server {self.purl.geturl()}")
                 self.sock.connect((self.purl.hostname, self.purl.port))
-                LOG.info(f"Reconnected to server {self.purl.geturl()}")
+                LOG.info(f"Successfully reconnected to server {self.purl.geturl()}")
+                LOG.info("Resubscribing to pool notifications")
                 self.send_jsonrpc("mining.subscribe", [])
-                LOG.info("Resubscribed to pool notifications")
+                LOG.info("Reauthorizing with the pool")
                 self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-                LOG.info("Reauthed with the pool")
-
                 LOG.info("Sending subscribe request to keep connection alive")
                 self.send_jsonrpc("mining.subscribe", [])
                 last_subscribe_time = time.time()
+                LOG.info("Keep-alive cycle completed")
 
 def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
     notification_id = str(uuid.uuid4())
@@ -260,6 +288,15 @@ def main():
         "-l", "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
+    parser.add_argument(
+        "--use-proxy", action="store_true", help="Use a proxy for the connection"
+    )
+    parser.add_argument(
+        "--proxy-host", default="localhost", help="Proxy hostname (default: localhost)"
+    )
+    parser.add_argument(
+        "--proxy-port", type=int, default=9050, help="Proxy port (default: 9050)"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -269,7 +306,7 @@ def main():
     )
 
     while True:
-        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password)
+        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password, args.use_proxy, args.proxy_host, args.proxy_port)
         try:
             w.connect_to_rabbitmq()
             w.get_stratum_work(keep_alive=args.keep_alive)

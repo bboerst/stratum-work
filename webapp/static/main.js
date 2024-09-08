@@ -60,6 +60,20 @@ document.addEventListener('DOMContentLoaded', () => {
         visible: true,
       },
       {
+        title: 'Time Since Last Revision',
+        field: 'time_since_last_revision',
+        width: 85,
+        sorter: 'number',
+        formatter: function(cell) {
+          const value = cell.getValue();
+          if (value === undefined || value === null) return '';
+          const seconds = Math.floor(value);
+          const milliseconds = Math.round((value - seconds) * 1000);
+          return `${seconds}.${milliseconds.toString().padStart(3, '0')}s`;
+        },
+        visible: true,
+      },
+      {
         title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Timestamp',
         field: 'timestamp',
         sorter: function (a, b, aRow, bRow, column, dir, sorterParams) {
@@ -88,7 +102,6 @@ document.addEventListener('DOMContentLoaded', () => {
               .filter(output => !output.address.includes("nulldata"))
               .map(output => `${output.address}:${output.value}`)
               .join('|');
-            
             const color = generateColorFromOutputs(outputs);
             cell.getElement().style.backgroundColor = color;
             cell.getElement().style.whiteSpace = 'nowrap';

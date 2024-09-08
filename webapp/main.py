@@ -84,6 +84,14 @@ def process_row_data(row):
         value = tx_out.coin_value / 1e8
         coinbase_outputs.append({"address": address, "value": value})
 
+    current_time = time.time()
+    if 'last_revision_time' not in counters[pool_name]:
+        counters[pool_name]['last_revision_time'] = current_time
+        time_since_last_revision = 0
+    else:
+        time_since_last_revision = current_time - counters[pool_name]['last_revision_time']
+        counters[pool_name]['last_revision_time'] = current_time
+
     processed_row = {
         'pool_name': row['pool_name'],
         'timestamp': row['timestamp'],
@@ -102,7 +110,8 @@ def process_row_data(row):
         'merkle_branches': merkle_branches,
         'merkle_branch_colors': merkle_branch_colors,
         'coinbase_output_value': output_value,
-        'coinbase_outputs': coinbase_outputs
+        'coinbase_outputs': coinbase_outputs,
+        'time_since_last_revision': time_since_last_revision
     }
 
     return processed_row

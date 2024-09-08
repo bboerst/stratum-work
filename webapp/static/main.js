@@ -53,6 +53,13 @@ document.addEventListener('DOMContentLoaded', () => {
         width: 130,
       },
       {
+        title: 'Template Revision',
+        field: 'template_revision',
+        width: 100,
+        sorter: 'number',
+        visible: true,
+      },
+      {
         title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Timestamp',
         field: 'timestamp',
         sorter: function (a, b, aRow, bRow, column, dir, sorterParams) {

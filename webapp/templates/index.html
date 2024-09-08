@@ -233,6 +233,11 @@
             animation: flash-border 1s infinite;
             border: 2px solid red;
         }
+
+        .tabulator .tabulator-col[tabulator-field="template_revision"] .tabulator-col-title::after {
+            content: " ℹ️";
+            cursor: help;
+        }
     </style>
 </head>
 
@@ -259,6 +264,24 @@
 
     <div id="mining-table"></div>
     <div id="loading-message">Wait for new stratum messages...</div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList') {
+                        const templateRevisionHeader = document.querySelector('.tabulator-col[tabulator-field="template_revision"] .tabulator-col-title');
+                        if (templateRevisionHeader) {
+                            templateRevisionHeader.setAttribute('title', 'Number of template revisions for this pool in the current block');
+                            observer.disconnect();
+                        }
+                    }
+                });
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+        });
+    </script>
 </body>
 
 </html>

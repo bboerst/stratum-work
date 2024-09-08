@@ -47,6 +47,17 @@ rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
 rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
 
 def process_row_data(row):
+    if 'counters' not in globals():
+        globals()['counters'] = {}
+
+    pool_name = row['pool_name']
+    if pool_name not in counters or counters[pool_name]['height'] != row['height']:
+        counters[pool_name] = {'height': row['height'], 'count': 1}
+    else:
+        counters[pool_name]['count'] += 1
+
+    template_revision = counters[pool_name]['count']
+
     coinbase1 = row['coinbase1']
     coinbase2 = row['coinbase2']
     extranonce1 = row['extranonce1']
@@ -77,6 +88,7 @@ def process_row_data(row):
         'pool_name': row['pool_name'],
         'timestamp': row['timestamp'],
         'height': height,
+        'template_revision': template_revision,
         'prev_block_hash': prev_block_hash,
         'block_version': block_version,
         'coinbase_raw': coinbase_hex,

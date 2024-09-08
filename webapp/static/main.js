@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
       {
         title: 'Template Revision',
         field: 'template_revision',
-        width: 100,
+        width: 50,
         sorter: 'number',
         visible: true,
       },

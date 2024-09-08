@@ -53,16 +53,16 @@ document.addEventListener('DOMContentLoaded', () => {
         width: 130,
       },
       {
-        title: 'Template Revision',
+        title: 'Template Revision for Current Block',
         field: 'template_revision',
         width: 50,
         sorter: 'number',
         visible: true,
       },
       {
-        title: 'Time Since Last Revision',
+        title: 'Time Since Last Template Revision',
         field: 'time_since_last_revision',
-        width: 85,
+        width: 80,
         sorter: 'number',
         formatter: function(cell) {
           const value = cell.getValue();

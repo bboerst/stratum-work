@@ -169,7 +169,10 @@ def extract_coinbase_script_ascii(coinbase_tx):
     # Get the script_sig in hex from the input of the coinbase transaction
     script_sig_hex = coinbase_tx.txs_in[0].script.hex()
     
-    # Convert the script_sig hex to ASCII and filter out non-printable characters
+    # Remove the first 8 characters (4 bytes) which represent the block height
+    script_sig_hex = script_sig_hex[8:]
+    
+    # Convert the remaining script_sig hex to ASCII and filter out non-printable characters
     return ''.join(filter(lambda x: x in string.printable, bytes.fromhex(script_sig_hex).decode('ascii', 'replace')))
 
 def precompute_merkle_branch_colors(merkle_branches):

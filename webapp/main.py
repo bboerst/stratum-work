@@ -18,14 +18,21 @@ import string
 import sys
 import os
 import pika
+import requests
+from pymongo import MongoClient
+import schedule
+import time
+import threading
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"]}})
-socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"])
+CORS(app, resources={r"/*": {"origins": ["http://localhost:3000", "http://localhost:8000", "https://stratum.work"]}})
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000", "http://localhost:8000", "https://stratum.work"])
 
 @app.after_request
 def add_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = 'https://stratum.work'
+    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
 connection = None
@@ -293,6 +300,64 @@ def handle_sigterm(*args):
     socketio.stop()
     sys.exit(0)
 
+# MongoDB setup
+mongodb_username = os.environ.get('MONGODB_USERNAME', 'default_username')
+mongodb_password = os.environ.get('MONGODB_PASSWORD', 'default_password')
+mongodb_hosts = os.environ.get('MONGODB_HOSTS', 'localhost:27017')
+mongodb_database = os.environ.get('MONGODB_DATABASE', 'blockchain_db')
+client = MongoClient(mongodb_hosts, username=mongodb_username, password=mongodb_password)
+db = client[mongodb_database]
+blocks_collection = db['blocks']
+
+# mempool.space API endpoint
+MEMPOOL_API_URL = 'https://mempool.space/api'
+
+def fetch_latest_block():
+    try:
+        response = requests.get(f'{MEMPOOL_API_URL}/blocks/tip/height')
+        response.raise_for_status()
+        block_height = int(response.text)
+        
+        block_hash_response = requests.get(f'{MEMPOOL_API_URL}/block-height/{block_height}')
+        block_hash_response.raise_for_status()
+        block_hash = block_hash_response.text.strip('"')
+        
+        block_details_response = requests.get(f'{MEMPOOL_API_URL}/block/{block_hash}')
+        block_details_response.raise_for_status()
+        block_details = block_details_response.json()
+        
+        block_data = {
+            'height': block_height,
+            'hash': block_hash,
+            'pool': block_details.get('extras', {}).get('pool', {}).get('name', 'Unknown'),
+            'timestamp': block_details.get('timestamp', int(time.time()))
+        }
+        
+        blocks_collection.update_one({'height': block_height}, {'$set': block_data}, upsert=True)
+        socketio.emit('new_block', block_data)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching latest block: {e}")
+    except (KeyError, ValueError, AttributeError) as e:
+        logger.error(f"Error processing block data: {e}")
+        logger.debug(f"Block details: {block_details}")
+
+def check_for_new_blocks():
+    schedule.every(10).seconds.do(fetch_latest_block)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Start the block checking thread
+threading.Thread(target=check_for_new_blocks, daemon=True).start()
+
+@app.route('/api/blocks')
+def get_blocks():
+    latest_blocks = list(blocks_collection.find({}, {'_id': 0}).sort('height', -1).limit(5))
+    return jsonify(latest_blocks)
+
+    
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, handle_sigterm)
-    socketio.run(app, debug=True, use_reloader=False)
+    logger.info(f"Starting server on port 8000")
+    socketio.run(app, debug=True, use_reloader=False, allow_unsafe_werkzeug=True, port=8000, log_output=True)
+    socketio.run(app)

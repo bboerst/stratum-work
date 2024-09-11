@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function connectWebSocket() {
     const socket = io(SOCKET_URL, {
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       randomizationFactor: 0.5,
@@ -10,17 +10,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('connect', () => {
       console.log('WebSocket connected');
+      hideReconnectionMessage();
     });
 
     socket.on('disconnect', (reason) => {
       console.log('WebSocket disconnected:', reason);
+      showReconnectionMessage();
     });
 
     socket.on('connect_error', (error) => {
       console.error('WebSocket connection error:', error);
+      showReconnectionMessage();
     });
 
     return socket;
+  }
+
+  function showReconnectionMessage() {
+    const message = document.getElementById('reconnection-message');
+    if (!message) {
+      const newMessage = document.createElement('div');
+      newMessage.id = 'reconnection-message';
+      newMessage.innerHTML = 'Attempting to reconnect...';
+      newMessage.style.position = 'fixed';
+      newMessage.style.top = '10px';
+      newMessage.style.right = '10px';
+      newMessage.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+      newMessage.style.color = 'white';
+      newMessage.style.padding = '10px';
+      newMessage.style.borderRadius = '5px';
+      newMessage.style.zIndex = '1000';
+      document.body.appendChild(newMessage);
+    }
+  }
+
+  function hideReconnectionMessage() {
+    const message = document.getElementById('reconnection-message');
+    if (message) {
+      message.remove();
+    }
   }
 
   const socket = connectWebSocket();

@@ -246,6 +246,8 @@ def handle_disconnect():
     try:
         logger.info('Client disconnected')
         connected_clients.remove(request.sid)
+    except KeyError:
+        logger.info('Client disconnected (already removed)')
     except Exception as e:
         logger.warning(f"Error during client disconnect: {e}")
 

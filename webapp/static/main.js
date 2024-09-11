@@ -1,5 +1,29 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const socket = io(SOCKET_URL);
+  function connectWebSocket() {
+    const socket = io(SOCKET_URL, {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      randomizationFactor: 0.5,
+    });
+
+    socket.on('connect', () => {
+      console.log('WebSocket connected');
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('WebSocket disconnected:', reason);
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('WebSocket connection error:', error);
+    });
+
+    return socket;
+  }
+
+  const socket = connectWebSocket();
   let isPaused = false;
 
   const pauseButton = document.getElementById('pause-button');
@@ -319,4 +343,13 @@ document.addEventListener('DOMContentLoaded', () => {
     return text.split('').reduce((prevHash, currVal) =>
       (((prevHash << 5) - prevHash) + currVal.charCodeAt(0))|0, 0);
   }
+
+  setInterval(() => {
+    if (socket.connected) {
+      socket.emit('heartbeat');
+    } else {
+      console.log('WebSocket not connected, attempting to reconnect...');
+      socket.connect();
+    }
+  }, 30000); // Send heartbeat every 30 seconds
 });

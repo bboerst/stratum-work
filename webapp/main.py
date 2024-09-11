@@ -249,6 +249,10 @@ def handle_disconnect():
     except Exception as e:
         logger.warning(f"Error during client disconnect: {e}")
 
+@socketio.on('heartbeat')
+def handle_heartbeat():
+    pass  # Simply acknowledge the heartbeat
+
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')
 

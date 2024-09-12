@@ -47,6 +47,17 @@ rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
 rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
 
 def process_row_data(row):
+    if 'counters' not in globals():
+        globals()['counters'] = {}
+
+    pool_name = row['pool_name']
+    if pool_name not in counters or counters[pool_name]['height'] != row['height']:
+        counters[pool_name] = {'height': row['height'], 'count': 1}
+    else:
+        counters[pool_name]['count'] += 1
+
+    template_revision = counters[pool_name]['count']
+
     coinbase1 = row['coinbase1']
     coinbase2 = row['coinbase2']
     extranonce1 = row['extranonce1']
@@ -73,10 +84,19 @@ def process_row_data(row):
         value = tx_out.coin_value / 1e8
         coinbase_outputs.append({"address": address, "value": value})
 
+    current_time = time.time()
+    if 'last_revision_time' not in counters[pool_name]:
+        counters[pool_name]['last_revision_time'] = current_time
+        time_since_last_revision = 0
+    else:
+        time_since_last_revision = current_time - counters[pool_name]['last_revision_time']
+        counters[pool_name]['last_revision_time'] = current_time
+
     processed_row = {
         'pool_name': row['pool_name'],
         'timestamp': row['timestamp'],
         'height': height,
+        'template_revision': template_revision,
         'prev_block_hash': prev_block_hash,
         'block_version': block_version,
         'coinbase_raw': coinbase_hex,
@@ -90,7 +110,8 @@ def process_row_data(row):
         'merkle_branches': merkle_branches,
         'merkle_branch_colors': merkle_branch_colors,
         'coinbase_output_value': output_value,
-        'coinbase_outputs': coinbase_outputs
+        'coinbase_outputs': coinbase_outputs,
+        'time_since_last_revision': time_since_last_revision
     }
 
     return processed_row
@@ -148,7 +169,10 @@ def extract_coinbase_script_ascii(coinbase_tx):
     # Get the script_sig in hex from the input of the coinbase transaction
     script_sig_hex = coinbase_tx.txs_in[0].script.hex()
     
-    # Convert the script_sig hex to ASCII and filter out non-printable characters
+    # Remove the first 8 characters (4 bytes) which represent the block height
+    script_sig_hex = script_sig_hex[8:]
+    
+    # Convert the remaining script_sig hex to ASCII and filter out non-printable characters
     return ''.join(filter(lambda x: x in string.printable, bytes.fromhex(script_sig_hex).decode('ascii', 'replace')))
 
 def precompute_merkle_branch_colors(merkle_branches):
@@ -164,52 +188,72 @@ def precompute_merkle_branch_colors(merkle_branches):
 def hash_code(text):
     return sum(ord(char) for char in text)
 
-def consume_messages():
+def initialize_queue_connection():
     global connection, channel
+    try:
+        credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
+        connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
+        channel = connection.channel()
 
-    credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
-    connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
-    channel = connection.channel()
+        # Declare the exchange as a fanout exchange
+        channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
 
-    # Declare the exchange as a fanout exchange
-    channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
+        # Let RabbitMQ generate a unique queue name for each consumer
+        result = channel.queue_declare(queue='', exclusive=True)
+        queue_name = result.method.queue
 
-    # Let RabbitMQ generate a unique queue name for each consumer
-    result = channel.queue_declare(queue='', exclusive=True)
-    queue_name = result.method.queue
+        # Bind the generated queue to the fanout exchange
+        channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
 
-    # Bind the generated queue to the fanout exchange
-    channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
+        logger.info('RabbitMQ connection initialized')
+        return queue_name
+    except Exception as e:
+        logger.exception(f"Error initializing RabbitMQ connection: {e}")
+        return None
 
-    def callback(ch, method, properties, body):
-        try:
-            message = json.loads(body)
-            processed_message = process_row_data(message)
-            for client_id in connected_clients:
-                socketio.emit('mining_data', processed_message, room=client_id)
-        except Exception as e:
-            logger.exception(f"Error processing message: {e}")
+def consume_messages(queue_name):
+    try:
+        def callback(ch, method, properties, body):
+            try:
+                message = json.loads(body)
+                processed_message = process_row_data(message)
+                socketio.emit('mining_data', processed_message, to=None)
+            except Exception as e:
+                logger.exception(f"Error processing message: {e}")
 
-    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+        channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+        logger.info('Started consuming messages from the exchange')
+        channel.start_consuming()
+    except Exception as e:
+        logger.exception(f"Error in consume_messages: {e}")
 
-    logger.info('Started consuming messages from the exchange')
-    channel.start_consuming()
-    
+# Initialize queue connection
+queue_name = initialize_queue_connection()
+if queue_name:
+    # Start consuming messages in a background thread
+    socketio.start_background_task(target=consume_messages, queue_name=queue_name)
+
 @socketio.on('connect')
 def handle_connect():
-    logger.info('Client connected')
-    if len(connected_clients) == 0:
-        socketio.start_background_task(target=consume_messages)
-    connected_clients.add(request.sid)
+    try:
+        logger.info('Client connected')
+        connected_clients.add(request.sid)
+    except Exception as e:
+        logger.warning(f"Error during client connect: {e}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info('Client disconnected')
-    connected_clients.remove(request.sid)
-    if len(connected_clients) == 0:
-        if channel and connection:
-            channel.stop_consuming()
-            connection.close()
+    try:
+        logger.info('Client disconnected')
+        connected_clients.remove(request.sid)
+    except KeyError:
+        logger.info('Client disconnected (already removed)')
+    except Exception as e:
+        logger.warning(f"Error during client disconnect: {e}")
+
+@socketio.on('heartbeat')
+def handle_heartbeat():
+    pass  # Simply acknowledge the heartbeat
 
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')
@@ -248,6 +292,7 @@ def handle_sigterm(*args):
     logger.info("Received SIGTERM signal. Shutting down gracefully.")
     socketio.stop()
     sys.exit(0)
-    
+
 if __name__ == "__main__":
-    socketio.run(app)
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    socketio.run(app, debug=True, use_reloader=False)

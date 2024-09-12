@@ -6,7 +6,7 @@ releases:
     values:
       - image:
           repository: bboerst/stratum-work-collector
-          tag: 1
+          # tag: 
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
         arguments:

@@ -1,17 +1,19 @@
 import * as React from "react"
-
 import { cn } from "@/lib/utils"
+import { useRef, useEffect } from "react";
 
 const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement>
 >(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
+  <div className="table-container">
+    <div className="table-wrapper">
+      <table
+        ref={ref}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    </div>
   </div>
 ))
 Table.displayName = "Table"
@@ -20,7 +22,7 @@ const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, ...props }, ref) => (
-  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
+  <thead ref={ref} className={cn("table-header", className)} {...props} />
 ))
 TableHeader.displayName = "TableHeader"
 
@@ -42,10 +44,7 @@ const TableFooter = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <tfoot
     ref={ref}
-    className={cn(
-      "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
-      className
-    )}
+    className={cn("bg-primary font-medium text-primary-foreground", className)}
     {...props}
   />
 ))
@@ -58,7 +57,7 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+      "table-row transition-colors hover:bg-blue-500/30 data-[state=selected]:bg-muted",
       className
     )}
     {...props}
@@ -68,17 +67,58 @@ TableRow.displayName = "TableRow"
 
 const TableHead = React.forwardRef<
   HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <th
-    ref={ref}
-    className={cn(
-      "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-      className
-    )}
-    {...props}
-  />
-))
+  React.ThHTMLAttributes<HTMLTableCellElement> & { isPoolName?: boolean }
+>(({ className, isPoolName, ...props }, ref) => {
+  const thRef = useRef<HTMLTableCellElement>(null);
+
+  useEffect(() => {
+    const th = thRef.current;
+    if (!th || isPoolName) return;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      const startX = e.pageX;
+      const startWidth = th.offsetWidth;
+
+      const handleMouseMove = (e: MouseEvent) => {
+        const newWidth = startWidth + (e.pageX - startX);
+        th.style.width = `${newWidth}px`;
+      };
+
+      const handleMouseUp = () => {
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    };
+
+    th.addEventListener("mousedown", handleMouseDown);
+
+    return () => {
+      th.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [isPoolName]);
+
+  return (
+    <th
+      ref={(node) => {
+        thRef.current = node;
+        if (typeof ref === "function") {
+          ref(node);
+        } else if (ref) {
+          (ref as React.MutableRefObject<HTMLTableCellElement>).current = node;
+        }
+      }}
+      className={cn(
+        "h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 resizable",
+        className
+      )}
+      style={isPoolName ? { width: '120px' } : {}}
+      {...props}
+    />
+  );
+});
 TableHead.displayName = "TableHead"
 
 const TableCell = React.forwardRef<
@@ -88,7 +128,7 @@ const TableCell = React.forwardRef<
   <td
     ref={ref}
     className={cn(
-      "p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+      "p-2 align-middle [&:has([role=checkbox])]:pr-0 font-semibold text-sm",
       className
     )}
     {...props}

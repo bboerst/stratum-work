@@ -4,14 +4,11 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --foreground: #000000;
+  --primary: #333333;
+  --secondary: #1d1f31;
+  --accent: #4b4a4a;
+  --border: #555555;
 }
 
 body {
@@ -20,89 +17,206 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+:root.dark {
+  --background: #11131f;
+  --foreground: #ffffff;
+  --primary: #333333;
+  --secondary: #1d1f31;
+  --accent: #4b4a4a;
+  --border: #555555;
 }
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-    --radius: 0.5rem;
-  }
-  .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-  }
+:root:not(.dark) .table-wrapper {
+  background: none;
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
+:root:not(.dark) .table-header th {
+  background-color: transparent;
 }
 
-@layer components {
-  .table-fixed {
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-  .table-fixed th,
-  .table-fixed td {
-    border-right: 1px solid hsl(var(--border));
-    border-bottom: none;
-  }
-  .table-fixed th:last-child,
-  .table-fixed td:last-child {
-    border-right: none;
-  }
+:root:not(.dark) .table-row td:not([data-merkle-branch]) {
+  border-right: 1px solid #ddd;
+}
+
+:root:not(.dark) .block-cube {
+  background-color: #7b7b7b;
+}
+
+:root:not(.dark) .block-cube::after {
+  background-color: #d0d0d0;
+}
+
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  padding: 10px;
+}
+
+.table-wrapper {
+  min-width: 100%;
+  background: linear-gradient(145deg, var(--primary), var(--secondary));
+  padding: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+:root:not(.dark) .table-wrapper {
+  background: none;
+}
+
+.table-header th {
+  background-color: var(--accent);
+  color: var(--foreground);
+  font-weight: bold;
+  text-transform: uppercase;
+  padding: 12px 8px;
+}
+
+:root:not(.dark) .table-header th {
+  background-color: transparent;
+}
+
+.table-header th.resizable {
+  position: relative;
+  overflow: hidden;
+}
+
+.table-header th.resizable::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.table-row:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.table-row:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.table-row td {
+  padding: 4px;
+  font-weight: 100;
+}
+
+.table-row td:not([data-merkle-branch]) {
+  border-right: 1px solid var(--border);
+}
+
+:root:not(.dark) .table-row td:not([data-merkle-branch]) {
+  border-right: 1px solid #ddd;
+}
+
+.table-row td[data-merkle-branch] {
+  border-right: none;
+}
+
+.scene {
+  width: 100px;
+  height: 100px;
+  perspective: 400px;
+}
+
+.cube {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transform: translateZ(-50px);
+  transition: transform 0.5s;
+}
+
+.cube.mining {
+  animation: rotate 5s infinite linear;
+}
+
+.cube__face {
+  position: absolute;
+  width: 100px;
+  height: 100px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  text-align: center;
+}
+
+.cube__face--front  { background: rgba(0, 100, 200, 0.7); transform: rotateY(  0deg) translateZ(50px); }
+.cube__face--right  { background: rgba(0, 80, 180, 0.7);  transform: rotateY( 90deg) translateZ(50px); }
+.cube__face--back   { background: rgba(0, 60, 160, 0.7);  transform: rotateY(180deg) translateZ(50px); }
+.cube__face--left   { background: rgba(0, 40, 140, 0.7);  transform: rotateY(-90deg) translateZ(50px); }
+.cube__face--top    { background: rgba(0, 20, 120, 0.7);  transform: rotateX( 90deg) translateZ(50px); }
+.cube__face--bottom { background: rgba(0, 0, 100, 0.7);   transform: rotateX(-90deg) translateZ(50px); }
+
+@keyframes rotate {
+  0% { transform: translateZ(-50px) rotateX(0deg) rotateY(0deg); }
+  100% { transform: translateZ(-50px) rotateX(360deg) rotateY(360deg); }
+}
+
+.block-cube {
+  width: 120px;
+  height: 120px;
+  position: relative;
+  background-color: #2a2d3e;
+  padding: 10px;
+  margin-top: 15px;
+  margin-bottom: 10px;
+  transform: translateZ(0);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+:root:not(.dark) .block-cube {
+  background-color: #7b7b7b;
+}
+
+.block-cube::before {
+  content: "";
+  width: 15px;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: -15px;
+  background-color: #1f2130;
+  transform: skewY(45deg);
+  transform-origin: top right;
+}
+
+.block-cube::after {
+  content: "";
+  width: 100%;
+  height: 15px;
+  position: absolute;
+  top: -15px;
+  left: 0;
+  background-color: #3a3d4e;
+  transform: skewX(45deg);
+  transform-origin: bottom left;
+}
+
+:root:not(.dark) .block-cube::after {
+  background-color: #d0d0d0;
+}
+
+.cube-face {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  text-align: center;
+  color: #ffffff;
+}
+
+.cube-face.front {
+  transform: translateZ(0);
 }

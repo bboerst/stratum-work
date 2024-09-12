@@ -9,6 +9,10 @@ const nextConfig = {
         source: '/socket.io/:path*',
         destination: 'http://localhost:8000/socket.io/:path*',
       },
+      {
+        source: '/api/blocks',
+        destination: 'http://localhost:8000/api/blocks',
+      },
     ];
   },
 };

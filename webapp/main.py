@@ -1,27 +1,36 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, send_file, request, jsonify, after_this_request, g
 import gzip
 import io
-from datetime import datetime
-from flask_socketio import SocketIO
-from flask_cors import CORS
-from pycoin.symbols.btc import network as btc_network
-from bson import json_util
 import json
 import logging
+import os
+import pika
 import requests
-import time
 import signal
 import string
 import sys
-import os
-import pika
+import time
+from datetime import datetime
+
+from bson import json_util
+from flask import Flask, render_template, send_file, request
+from flask_cors import CORS
+from flask_socketio import SocketIO
+from pycoin.symbols.btc import network as btc_network
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"]}})
-socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://poolwork.live", "https://stratum.work"])
+CORS(app, resources={r"/*": {"origins": [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://stratum.work"
+]}})
+socketio = SocketIO(app, cors_allowed_origins=[
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://stratum.work"
+])
 
 @app.after_request
 def add_headers(response):
@@ -47,8 +56,9 @@ rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
 rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
 
 def process_row_data(row):
+    global counters
     if 'counters' not in globals():
-        globals()['counters'] = {}
+        counters = {}
 
     pool_name = row['pool_name']
     if pool_name not in counters or counters[pool_name]['height'] != row['height']:
@@ -67,22 +77,31 @@ def process_row_data(row):
     merkle_branches = row['merkle_branches']
 
     coinbase_hex = coinbase1 + extranonce1 + '00' * extranonce2_length + coinbase2
-    coinbase_tx = btc_network.Tx.from_hex(coinbase_hex)
-    output_value = sum(tx_out.coin_value for tx_out in coinbase_tx.txs_out) / 1e8
-    height = int.from_bytes(coinbase_tx.txs_in[0].script[1:4], byteorder='little')
+    
+    try:
+        coinbase_tx = btc_network.Tx.from_hex(coinbase_hex)
+        output_value = sum(tx_out.coin_value for tx_out in coinbase_tx.txs_out) / 1e8
+        height = int.from_bytes(coinbase_tx.txs_in[0].script[1:4], byteorder='little')
+        script_sig_ascii = extract_coinbase_script_ascii(coinbase_tx)
+        
+        # Extract coinbase output addresses
+        coinbase_outputs = []
+        for tx_out in coinbase_tx.txs_out:
+            address = btc_network.address.for_script(tx_out.script)
+            value = tx_out.coin_value / 1e8
+            coinbase_outputs.append({"address": address, "value": value})
+    except Exception as e:
+        logger.error(f"Error parsing coinbase transaction: {e}")
+        output_value = 0
+        height = 0
+        script_sig_ascii = "Error parsing coinbase"
+        coinbase_outputs = []
+
     prev_block_hash = get_prev_block_hash(prev_hash)
     block_version = int(version, 16)
     first_transaction = bytes(reversed(bytes.fromhex(merkle_branches[0]))).hex() if merkle_branches else 'empty block'
     fee_rate = get_transaction_fee_rate(first_transaction)
     merkle_branch_colors = precompute_merkle_branch_colors(merkle_branches)
-    script_sig_ascii = extract_coinbase_script_ascii(coinbase_tx)
-
-    # Extract coinbase output addresses
-    coinbase_outputs = []
-    for tx_out in coinbase_tx.txs_out:
-        address = btc_network.address.for_script(tx_out.script)
-        value = tx_out.coin_value / 1e8
-        coinbase_outputs.append({"address": address, "value": value})
 
     current_time = time.time()
     if 'last_revision_time' not in counters[pool_name]:

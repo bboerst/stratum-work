@@ -1,57 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-  function connectWebSocket() {
-    const socket = io(SOCKET_URL, {
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      randomizationFactor: 0.5,
-    });
-
-    socket.on('connect', () => {
-      console.log('WebSocket connected');
-      hideReconnectionMessage();
-    });
-
-    socket.on('disconnect', (reason) => {
-      console.log('WebSocket disconnected:', reason);
-      showReconnectionMessage();
-    });
-
-    socket.on('connect_error', (error) => {
-      console.error('WebSocket connection error:', error);
-      showReconnectionMessage();
-    });
-
-    return socket;
-  }
-
-  function showReconnectionMessage() {
-    const message = document.getElementById('reconnection-message');
-    if (!message) {
-      const newMessage = document.createElement('div');
-      newMessage.id = 'reconnection-message';
-      newMessage.innerHTML = 'Attempting to reconnect...';
-      newMessage.style.position = 'fixed';
-      newMessage.style.top = '10px';
-      newMessage.style.right = '10px';
-      newMessage.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-      newMessage.style.color = 'white';
-      newMessage.style.padding = '10px';
-      newMessage.style.borderRadius = '5px';
-      newMessage.style.zIndex = '1000';
-      document.body.appendChild(newMessage);
-    }
-  }
-
-  function hideReconnectionMessage() {
-    const message = document.getElementById('reconnection-message');
-    if (message) {
-      message.remove();
-    }
-  }
-
-  const socket = connectWebSocket();
+  const socket = io(SOCKET_URL);
   let isPaused = false;
 
   const pauseButton = document.getElementById('pause-button');
@@ -105,27 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
         width: 130,
       },
       {
-        title: 'Template Revision for Current Block',
-        field: 'template_revision',
-        width: 50,
-        sorter: 'number',
-        visible: true,
-      },
-      {
-        title: 'Time Since Last Template Revision',
-        field: 'time_since_last_revision',
-        width: 80,
-        sorter: 'number',
-        formatter: function(cell) {
-          const value = cell.getValue();
-          if (value === undefined || value === null) return '';
-          const seconds = Math.floor(value);
-          const milliseconds = Math.round((value - seconds) * 1000);
-          return `${seconds}.${milliseconds.toString().padStart(3, '0')}s`;
-        },
-        visible: true,
-      },
-      {
         title: '<!--<a href="https://github.com/bboerst/stratum-work/blob/main/docs/timestamp.md" target="_blank"><i class="fas fa-question-circle"></i></a><br /> -->Timestamp',
         field: 'timestamp',
         sorter: function (a, b, aRow, bRow, column, dir, sorterParams) {
@@ -154,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
               .filter(output => !output.address.includes("nulldata"))
               .map(output => `${output.address}:${output.value}`)
               .join('|');
+
             const color = generateColorFromOutputs(outputs);
             cell.getElement().style.backgroundColor = color;
             cell.getElement().style.whiteSpace = 'nowrap';
@@ -371,13 +299,4 @@ document.addEventListener('DOMContentLoaded', () => {
     return text.split('').reduce((prevHash, currVal) =>
       (((prevHash << 5) - prevHash) + currVal.charCodeAt(0))|0, 0);
   }
-
-  setInterval(() => {
-    if (socket.connected) {
-      socket.emit('heartbeat');
-    } else {
-      console.log('WebSocket not connected, attempting to reconnect...');
-      socket.connect();
-    }
-  }, 30000); // Send heartbeat every 30 seconds
 });

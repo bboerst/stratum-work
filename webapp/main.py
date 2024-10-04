@@ -19,13 +19,18 @@ import sys
 import os
 import pika
 
+# Get CORS origins from environment variable
+CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:8000,http://localhost:8000').split(',')
+
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:8000", "http://localhost:8000", "https://stratum.work", "https://stratum-dev.work"]}})
-socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:8000", "http://localhost:8000", "https://stratum.work", "https://stratum-dev.work"])
+CORS(app, resources={r"/*": {"origins": CORS_ORIGINS}})
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
 @app.after_request
 def add_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = 'https://stratum.work'
+    origin = request.headers.get('Origin')
+    if origin in CORS_ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = origin
     return response
 
 connection = None

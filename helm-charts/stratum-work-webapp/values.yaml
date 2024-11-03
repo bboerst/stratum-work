@@ -30,6 +30,7 @@ env:
   MONGODB_USERNAME: "mongoadmin"
   MONGODB_PASSWORD: "hunter1"
   MONGODB_HOSTS: "mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017/"
+  CORS_ORIGINS: "http://127.0.0.1:8000,http://localhost:8000"
 
 arguments: []
 

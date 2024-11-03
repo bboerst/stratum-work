@@ -13,7 +13,7 @@ metadata:
 {{- if .Values.service.labels }}
 {{ toYaml .Values.service.labels | indent 4 }}
 {{- end }}
-    app: {{ template "stratum-work-webapp.name" . }}
+    app: {{ template "stratum-work-webapp.fullname" . }}
     chart: {{ template "stratum-work-webapp.chart" . }}
     component: "{{ .Values.name }}"
     heritage: {{ .Release.Service }}
@@ -50,6 +50,6 @@ spec:
       protocol: TCP
       targetPort: "flask"
   selector:
-    app: {{ template "stratum-work-webapp.name" . }}
+    app: {{ template "stratum-work-webapp.fullname" . }}
   type: "{{ .Values.service.type }}"
 {{- end }}

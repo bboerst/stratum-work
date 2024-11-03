@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: {{ template "stratum-work-webapp.name" . }}
+    app: {{ template "stratum-work-webapp.fullname" . }}
     chart: {{ template "stratum-work-webapp.chart" . }}
     heritage: {{ .Release.Service }}
     {{ .Values.componentLabelKeyOverride | default "app.kubernetes.io/component" }}: stratum-work-webapp
@@ -21,7 +21,7 @@ spec:
     {{- end }}
   selector:
     matchLabels:
-      app: {{ template "stratum-work-webapp.name" . }}
+      app: {{ template "stratum-work-webapp.fullname" . }}
     {{- if .Values.useComponentLabel }}
       {{ .Values.componentLabelKeyOverride | default "app.kubernetes.io/component" }}: stratum-work-webapp
     {{- end }}
@@ -37,7 +37,7 @@ spec:
       {{- end }}
       {{- end }}
       labels:
-        app: {{ template "stratum-work-webapp.name" . }}
+        app: {{ template "stratum-work-webapp.fullname" . }}
         component: "{{ .Values.name }}"
         {{ .Values.componentLabelKeyOverride | default "app.kubernetes.io/component" }}: stratum-work-webapp
         {{- if .Values.podLabels }}

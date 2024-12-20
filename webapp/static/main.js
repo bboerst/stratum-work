@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const savedColumnVisibility = JSON.parse(localStorage.getItem('columnVisibility')) || {};
   let blockHeights = [];
+  let sankeyData = { nodes: [], links: [] };
 
   const table = new Tabulator('#mining-table', {
     index: 'pool_name',
@@ -42,6 +43,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isPaused) {
       await updateTableData(data);
       updateBlockHeights(data.height);
+      updateSankeyData(data);
+      renderSankey();
     }
   });
 
@@ -165,6 +168,10 @@ document.addEventListener('DOMContentLoaded', () => {
       return `${value}`;
     };
   }
+
+  table.on('dataChanged', () => {
+    renderSankey();
+  });
 
   async function updateTableData(data) {
     const currentSorters = table.getSorters();
@@ -299,4 +306,120 @@ document.addEventListener('DOMContentLoaded', () => {
     return text.split('').reduce((prevHash, currVal) =>
       (((prevHash << 5) - prevHash) + currVal.charCodeAt(0))|0, 0);
   }
+
+  function renderSankey() {
+    const baseWidth = 800; // Base width of the diagram
+    const nodesCount = table.getData().length; // Number of rows in the table
+    const minNodeHeight = 60; // Minimum height per node
+    const baseHeight = Math.max(1000, nodesCount * minNodeHeight); // Dynamic height based on node count
+
+    const svg = d3.select('#sankey-diagram');
+    svg.selectAll('*').remove(); // Clear the previous diagram
+
+    // Dynamically adjust nodePadding based on available height
+    const nodePadding = Math.max(20, baseHeight / (nodesCount + 1));
+
+    const sankey = d3.sankey()
+        .nodeWidth(30) // Slightly wider nodes
+        .nodePadding(nodePadding) // Dynamically calculated padding
+        .extent([[50, 0], [baseWidth - 50, baseHeight]]); // Added padding to diagram edges
+
+    const tableData = table.getData();
+
+    // Build Sankey data structure
+    const sankeyNodes = [];
+    const sankeyLinks = [];
+    const nodeMap = new Map();
+
+    tableData.forEach(row => {
+        const poolNode = row.pool_name;
+        const branchNodes = row.merkle_branches.map(branch => branch);
+
+        if (!nodeMap.has(poolNode)) {
+            nodeMap.set(poolNode, sankeyNodes.length);
+            sankeyNodes.push({ name: poolNode });
+        }
+
+        branchNodes.forEach(branchNode => {
+            if (!nodeMap.has(branchNode)) {
+                nodeMap.set(branchNode, sankeyNodes.length);
+                sankeyNodes.push({ name: branchNode });
+            }
+
+            const sourceIndex = nodeMap.get(poolNode);
+            const targetIndex = nodeMap.get(branchNode);
+
+            const link = sankeyLinks.find(link => link.source === sourceIndex && link.target === targetIndex);
+            if (link) {
+                link.value += 1;
+            } else {
+                sankeyLinks.push({ source: sourceIndex, target: targetIndex, value: 1 });
+            }
+        });
+    });
+
+    const graph = sankey({
+        nodes: sankeyNodes.map(d => Object.assign({}, d)),
+        links: sankeyLinks.map(d => Object.assign({}, d)),
+    });
+
+    // Adjust the size of the SVG dynamically
+    const diagramWidth = d3.max(graph.nodes, d => d.x1) + 100; // Add padding for labels
+    const diagramHeight = d3.max(graph.nodes, d => d.y1) + 100;
+
+    svg.attr('width', Math.max(baseWidth, diagramWidth))
+       .attr('height', Math.max(baseHeight, diagramHeight));
+
+    const svgGroup = svg.append('g');
+
+    // Render links
+    const link = svgGroup.append('g')
+        .selectAll('path')
+        .data(graph.links)
+        .enter()
+        .append('path')
+        .attr('d', d3.sankeyLinkHorizontal())
+        .attr('stroke-width', d => Math.max(1, d.width))
+        .style('stroke', (d, i) => `hsl(${(i * 40) % 360}, 50%, 60%)`)
+        .style('fill', 'none')
+        .style('opacity', 0.7);
+
+    // Render nodes
+    svgGroup.append('g')
+        .selectAll('rect')
+        .data(graph.nodes)
+        .enter()
+        .append('rect')
+        .attr('x', d => d.x0)
+        .attr('y', d => d.y0)
+        .attr('height', d => d.y1 - d.y0)
+        .attr('width', d => d.x1 - d.x0)
+        .attr('fill', (d, i) => `hsl(${(i * 40) % 360}, 70%, 50%)`)
+        .attr('stroke', '#000')
+        .attr('stroke-width', 1);
+
+    // Add labels to nodes
+    svgGroup.append('g')
+        .selectAll('text')
+        .data(graph.nodes)
+        .enter()
+        .append('text')
+        .attr('x', d => (d.x0 < diagramWidth / 2 ? d.x1 + 10 : d.x0 - 10))
+        .attr('y', d => (d.y0 + d.y1) / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', d => (d.x0 < diagramWidth / 2 ? 'start' : 'end'))
+        .text(d => {
+            if (d.name.length > 20) {
+                return `${d.name.slice(0, 4)}...`; // merkle branches to 4 chars
+            }
+            return d.name;
+        })
+        .style('font-size', '14px')
+        .style('fill', 'black');
+  }
+  
+  const sankeyContainer = document.createElement('div');
+  sankeyContainer.innerHTML = '<svg id="sankey-diagram" width="700" height="400"></svg>';
+  document.body.insertBefore(sankeyContainer, document.body.firstChild);
+
 });

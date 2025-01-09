@@ -1,19 +1,17 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, send_file, request, jsonify, after_this_request, g
+from flask import Flask, render_template, send_file, request, jsonify
 import gzip
 import io
 from datetime import datetime
 from flask_socketio import SocketIO
 from flask_cors import CORS
 from pycoin.symbols.btc import network as btc_network
-from bson import json_util
 import json
 import logging
 import requests
 import time
-import signal
 import string
 import sys
 import os
@@ -26,15 +24,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": CORS_ORIGINS}})
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
-@app.after_request
-def add_headers(response):
-    origin = request.headers.get('Origin')
-    if origin in CORS_ORIGINS:
-        response.headers['Access-Control-Allow-Origin'] = origin
-    return response
-
-connection = None
-channel = None
+# Store connected client SIDs
 connected_clients = set()
 
 # Dictionary to store cached transaction results
@@ -46,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # RabbitMQ connection details
 rabbitmq_host = os.environ.get('RABBITMQ_HOST')
-rabbitmq_port = os.environ.get('RABBITMQ_PORT')
+rabbitmq_port = int(os.environ.get('RABBITMQ_PORT') or 5672)
 rabbitmq_username = os.environ.get('RABBITMQ_USERNAME')
 rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
 rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
@@ -101,8 +91,7 @@ def process_row_data(row):
     return processed_row
 
 def get_prev_block_hash(prev_hash):
-    prev_block_hash = bytes.fromhex(prev_hash)[::-1].hex()
-    return prev_block_hash
+    return bytes.fromhex(prev_hash)[::-1].hex()
 
 def get_transaction_fee_rate(first_transaction):
     if first_transaction == 'empty block':
@@ -126,7 +115,7 @@ def get_transaction_fee_rate(first_transaction):
             if 'effectiveFeePerVsize' in cpfp_data:
                 cpfp_fee_rate = round(cpfp_data['effectiveFeePerVsize'])
                 # Cache the CPFP result for 5 minutes
-                expiration_time = time.time() + 300  # 5 minutes in seconds
+                expiration_time = time.time() + 300
                 transaction_cache[first_transaction] = (None, cpfp_fee_rate, expiration_time)
                 return cpfp_fee_rate
 
@@ -140,12 +129,12 @@ def get_transaction_fee_rate(first_transaction):
             if fee is not None and weight is not None:
                 fee_rate = round(fee / (weight / 4))
                 # Cache the normal result for 5 minutes
-                expiration_time = time.time() + 300  # 5 minutes in seconds
+                expiration_time = time.time() + 300
                 transaction_cache[first_transaction] = (fee_rate, None, expiration_time)
                 return fee_rate
 
         return 'not found'
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         logger.exception(f"Error fetching transaction fee rate for {first_transaction}")
         return 'Error'
 
@@ -173,10 +162,10 @@ def hash_code(text):
     return sum(ord(char) for char in text)
 
 def consume_messages():
-    global connection, channel
-
-    credentials = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
-    connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host, rabbitmq_port, '/', credentials))
+    """Run exactly once in a background thread for the entire app lifecycle."""
+    creds = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
+    params = pika.ConnectionParameters(host=rabbitmq_host, port=rabbitmq_port, credentials=creds)
+    connection = pika.BlockingConnection(params)
     channel = connection.channel()
 
     # Declare the exchange as a fanout exchange
@@ -189,47 +178,54 @@ def consume_messages():
     # Bind the generated queue to the fanout exchange
     channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
 
-    def callback(ch, method, properties, body):
+    def on_message(ch, method, properties, body):
         try:
             message = json.loads(body)
             processed_message = process_row_data(message)
-            for client_id in connected_clients:
-                socketio.emit('mining_data', processed_message, room=client_id)
+            for sid in connected_clients:
+                socketio.emit('mining_data', processed_message, room=sid)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
 
-    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
+    channel.basic_consume(queue=queue_name, on_message_callback=on_message, auto_ack=True)
+    logger.info('Global RabbitMQ consumer started. Waiting for messages...')
+    try:
+        channel.start_consuming()  # Block forever
+    except Exception:
+        logger.exception("Error in consumer loop")
+    finally:
+        # If we ever exit, try to close properly
+        logger.info("Stopping RabbitMQ consumer.")
+        try:
+            channel.stop_consuming()
+        except Exception:
+            pass
+        connection.close()
 
-    logger.info('Started consuming messages from the exchange')
-    channel.start_consuming()
+@app.after_request
+def add_headers(response):
+    origin = request.headers.get('Origin')
+    if origin in CORS_ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    return response
 
 @socketio.on('connect')
 def handle_connect():
-    logger.info('Client connected')
-    if len(connected_clients) == 0:
-        socketio.start_background_task(target=consume_messages)
+    logger.info(f'Client connected: {request.sid}')
     connected_clients.add(request.sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info('Client disconnected')
-    connected_clients.remove(request.sid)
-    if len(connected_clients) == 0:
-        if channel and connection:
-            channel.stop_consuming()
-            connection.close()
+    logger.info(f'Client disconnected: {request.sid}')
+    connected_clients.discard(request.sid)
 
 def gzip_response(response):
     accept_encoding = request.headers.get('Accept-Encoding', '')
-
     if 'gzip' not in accept_encoding.lower():
         return response
 
     response.direct_passthrough = False
-
-    if (response.status_code < 200 or
-        response.status_code >= 300 or
-        'Content-Encoding' in response.headers):
+    if response.status_code < 200 or response.status_code >= 300 or 'Content-Encoding' in response.headers:
         return response
 
     gzip_buffer = io.BytesIO()
@@ -240,8 +236,10 @@ def gzip_response(response):
     response.data = gzip_buffer.getvalue()
     response.headers['Content-Encoding'] = 'gzip'
     response.headers['Content-Length'] = len(response.data)
-
     return response
+
+logger.info("Importing the module, starting consumer thread.")
+socketio.start_background_task(consume_messages)
 
 @app.route('/')
 def index():
@@ -253,7 +251,7 @@ def serve_js():
     return send_file('static/bitcoinjs-lib.js', mimetype='application/javascript')
 
 def handle_sigterm(*args):
-    logger.info("Received SIGTERM signal. Shutting down gracefully.")
+    logger.info("Received SIGTERM signal. Shutting down gracefully...")
     socketio.stop()
     sys.exit(0)
 

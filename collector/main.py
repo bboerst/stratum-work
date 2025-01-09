@@ -128,11 +128,13 @@ class Watcher:
         self.sock.send(json_data.encode())
 
         resp = self.get_msg()
-
-        if resp["id"] == 1 and resp["result"] is not None:
-            self.extranonce1, self.extranonce2_length = resp["result"][-2:]
-
         LOG.debug(f"Received: {resp}")
+
+        # If we just called mining.subscribe, we expect the last two items in 'result'
+        # to be extranonce1 and extranonce2_size, respectively.
+        if method == "mining.subscribe" and resp.get("result") is not None:
+            self.extranonce1, self.extranonce2_length = resp["result"][-2:]
+            LOG.debug(f"Extracted extranonce1={self.extranonce1} extranonce2_length={self.extranonce2_length}")
 
     def connect_to_rabbitmq(self):
         for attempt in range(self.max_retries):
@@ -171,7 +173,7 @@ class Watcher:
                 LOG.info(f"Attempting to connect to {self.purl.hostname}:{self.purl.port}")
                 self.sock.connect((self.purl.hostname, self.purl.port))
                 LOG.info(f"Successfully connected to server {self.purl.geturl()}")
-                
+
                 LOG.info("Sending mining.subscribe request")
                 self.send_jsonrpc("mining.subscribe", [])
                 LOG.info("Successfully subscribed to pool notifications")
@@ -179,7 +181,7 @@ class Watcher:
                 LOG.info("Sending mining.authorize request")
                 self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
                 LOG.info("Successfully authorized with the pool")
-                
+
                 return
             except Exception as e:
                 LOG.error(f"Failed to connect to stratum server (attempt {attempt + 1}/{self.max_retries}): {e}")

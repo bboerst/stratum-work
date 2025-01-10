@@ -9,6 +9,10 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
+podmonitor:
+  enabled: false
+  labels: {}
+
 updateStrategy:
   type: RollingUpdate
   rollingUpdate:

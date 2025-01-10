@@ -2,8 +2,9 @@ import eventlet
 eventlet.monkey_patch()
 
 import os, socket, json, logging, time, requests, string, sys, io
-from flask import Flask, render_template, send_file, request
+from flask import Flask, render_template, send_file, request, Response
 from flask_socketio import SocketIO
+from prometheus_client import Gauge, generate_latest
 from flask_cors import CORS
 from pycoin.symbols.btc import network as btc_network
 import pika
@@ -16,6 +17,9 @@ CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:8000,http://loca
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": CORS_ORIGINS}})
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
+
+# A gauge to track how many active Socket.IO clients we have
+connected_clients_gauge = Gauge("socketio_active_clients", "Number of active Socket.IO clients")
 
 # Track connected Socket.IO clients
 connected_clients = set()
@@ -233,11 +237,13 @@ def add_headers(response):
 def handle_connect():
     logger.info(f'Client connected: {request.sid}')
     connected_clients.add(request.sid)
+    connected_clients_gauge.set(len(connected_clients))
 
 @socketio.on('disconnect')
 def handle_disconnect():
     logger.info(f'Client disconnected: {request.sid}')
     connected_clients.discard(request.sid)
+    connected_clients_gauge.set(len(connected_clients))
 
 @app.route('/')
 def index():
@@ -247,6 +253,11 @@ def index():
 @app.route('/static/bitcoinjs-lib.js')
 def serve_js():
     return send_file('static/bitcoinjs-lib.js', mimetype='application/javascript')
+
+@app.route("/metrics")
+def metrics():
+    # Return current values of all metrics in Prometheus text format
+    return Response(generate_latest(), mimetype="text/plain")
 
 def handle_sigterm(*args):
     logger.info("Received SIGTERM signal. Shutting down gracefully...")

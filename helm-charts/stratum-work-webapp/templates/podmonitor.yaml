@@ -1,0 +1,22 @@
+{{- if .Values.podmonitor.enabled }}
+{{- $fullName := include "stratum-work-webapp.fullname" . -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  labels:
+    {{- include "stratum-work-webapp.labels" . | nindent 4 }}
+    {{- if .Values.podmonitor.labels }}
+    {{- .Values.podmonitor.labels | toYaml | nindent 4 }}
+    {{- end }}
+  name: {{ $fullName }}
+  namespace: {{ template "stratum-work-webapp.namespace" . }}
+spec:
+  namespaceSelector:
+    matchNames:
+    - {{ template "stratum-work-webapp.namespace" . }}
+  podMetricsEndpoints:
+  - port: flask
+  selector:
+    matchLabels:
+      app: {{ template "stratum-work-webapp.fullname" . }}
+{{- end -}}

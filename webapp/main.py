@@ -1,47 +1,53 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, send_file, request, jsonify
-import gzip
-import io
-from datetime import datetime
+import os, socket, json, logging, time, requests, string, sys, io
+from flask import Flask, render_template, send_file, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 from pycoin.symbols.btc import network as btc_network
-import json
-import logging
-import requests
-import time
-import string
-import sys
-import os
 import pika
 
-# Get CORS origins from environment variable
-CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:8000,http://localhost:8000').split(',')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Flask and Socket.IO setup
+CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:8000,http://localhost:8000').split(',')
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": CORS_ORIGINS}})
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
-# Store connected client SIDs
+# Track connected Socket.IO clients
 connected_clients = set()
 
-# Dictionary to store cached transaction results
+# Cache transaction fee lookups
 transaction_cache = {}
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# RabbitMQ details
+rabbitmq_host = os.environ.get('RABBITMQ_HOST', 'rabbitmq')
+rabbitmq_port = int(os.environ.get('RABBITMQ_PORT', 5672))
+rabbitmq_username = os.environ.get('RABBITMQ_USERNAME', 'guest')
+rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD', 'guest')
+rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE', 'mining_notify_exchange')
 
-# RabbitMQ connection details
-rabbitmq_host = os.environ.get('RABBITMQ_HOST')
-rabbitmq_port = int(os.environ.get('RABBITMQ_PORT') or 5672)
-rabbitmq_username = os.environ.get('RABBITMQ_USERNAME')
-rabbitmq_password = os.environ.get('RABBITMQ_PASSWORD')
-rabbitmq_exchange = os.environ.get('RABBITMQ_EXCHANGE')
+###############################################################################
+# Helpers
+###############################################################################
+
+def get_prev_block_hash(prev_hash_hex):
+    """Reverse-hex the previous block hash."""
+    return bytes.fromhex(prev_hash_hex)[::-1].hex()
+
+def extract_coinbase_script_ascii(coinbase_tx):
+    """Extract ASCII from coinbase script, skipping block-height bytes."""
+    script_sig_hex = coinbase_tx.txs_in[0].script.hex()
+    # Remove first 8 hex characters = 4 bytes (block height, etc.)
+    script_sig_hex = script_sig_hex[8:]
+    ascii_script = bytes.fromhex(script_sig_hex).decode('ascii', 'replace')
+    return ''.join(ch for ch in ascii_script if ch in string.printable)
 
 def process_row_data(row):
+    """Convert the raw row from RabbitMQ into a structure the front-end can use."""
     coinbase1 = row['coinbase1']
     coinbase2 = row['coinbase2']
     extranonce1 = row['extranonce1']
@@ -52,23 +58,29 @@ def process_row_data(row):
 
     coinbase_hex = coinbase1 + extranonce1 + '00' * extranonce2_length + coinbase2
     coinbase_tx = btc_network.Tx.from_hex(coinbase_hex)
+
     output_value = sum(tx_out.coin_value for tx_out in coinbase_tx.txs_out) / 1e8
     height = int.from_bytes(coinbase_tx.txs_in[0].script[1:4], byteorder='little')
     prev_block_hash = get_prev_block_hash(prev_hash)
     block_version = int(version, 16)
-    first_transaction = bytes(reversed(bytes.fromhex(merkle_branches[0]))).hex() if merkle_branches else 'empty block'
+
+    if merkle_branches:
+        first_transaction = bytes(reversed(bytes.fromhex(merkle_branches[0]))).hex()
+    else:
+        first_transaction = 'empty block'
+
     fee_rate = get_transaction_fee_rate(first_transaction)
     merkle_branch_colors = precompute_merkle_branch_colors(merkle_branches)
     script_sig_ascii = extract_coinbase_script_ascii(coinbase_tx)
 
-    # Extract coinbase output addresses
+    # Extract coinbase outputs
     coinbase_outputs = []
     for tx_out in coinbase_tx.txs_out:
-        address = btc_network.address.for_script(tx_out.script)
-        value = tx_out.coin_value / 1e8
-        coinbase_outputs.append({"address": address, "value": value})
+        addr = btc_network.address.for_script(tx_out.script)
+        val = tx_out.coin_value / 1e8
+        coinbase_outputs.append({"address": addr, "value": val})
 
-    processed_row = {
+    return {
         'pool_name': row['pool_name'],
         'timestamp': row['timestamp'],
         'height': height,
@@ -88,119 +100,127 @@ def process_row_data(row):
         'coinbase_outputs': coinbase_outputs
     }
 
-    return processed_row
-
-def get_prev_block_hash(prev_hash):
-    return bytes.fromhex(prev_hash)[::-1].hex()
-
-def get_transaction_fee_rate(first_transaction):
-    if first_transaction == 'empty block':
+def get_transaction_fee_rate(first_txid):
+    """Look up transaction fee rate from mempool.space, caching results."""
+    if first_txid == 'empty block':
         return ''
 
-    # Check if the transaction result is already cached
-    if first_transaction in transaction_cache:
-        cached_result, cpfp_result, expiration_time = transaction_cache[first_transaction]
-        if time.time() < expiration_time:
-            return cpfp_result if cpfp_result is not None else cached_result
-
-    fee_rate = None
-    cpfp_fee_rate = None
+    # Check cache
+    if first_txid in transaction_cache:
+        cached_fee, cpfp_fee, expire_time = transaction_cache[first_txid]
+        if time.time() < expire_time:
+            return cpfp_fee if cpfp_fee is not None else cached_fee
 
     try:
-        # Check if the transaction is a CPFP transaction
-        cpfp_response = requests.get(f'https://mempool.space/api/v1/cpfp/{first_transaction}')
-        logger.info(f"mempool.space API - CPFP tx response: {cpfp_response.status_code} - {first_transaction}")
-        if cpfp_response.status_code == 200:
-            cpfp_data = cpfp_response.json()
-            if 'effectiveFeePerVsize' in cpfp_data:
-                cpfp_fee_rate = round(cpfp_data['effectiveFeePerVsize'])
-                # Cache the CPFP result for 5 minutes
-                expiration_time = time.time() + 300
-                transaction_cache[first_transaction] = (None, cpfp_fee_rate, expiration_time)
-                return cpfp_fee_rate
+        # Check CPFP
+        cpfp_url = f'https://mempool.space/api/v1/cpfp/{first_txid}'
+        cpfp_resp = requests.get(cpfp_url)
+        logger.info(f"mempool.space CPFP response: {cpfp_resp.status_code} for {first_txid}")
+        if cpfp_resp.status_code == 200:
+            data = cpfp_resp.json()
+            if 'effectiveFeePerVsize' in data:
+                fee_val = round(data['effectiveFeePerVsize'])
+                transaction_cache[first_txid] = (None, fee_val, time.time() + 300)
+                return fee_val
 
-        # If not a CPFP transaction, calculate normal fee rate
-        response = requests.get(f'https://mempool.space/api/tx/{first_transaction}')
-        logger.info(f"mempool.space API - Reg tx response: {response.status_code} - {first_transaction}")
-        if response.status_code == 200:
-            data = response.json()
+        # Check normal tx
+        tx_url = f'https://mempool.space/api/tx/{first_txid}'
+        tx_resp = requests.get(tx_url)
+        logger.info(f"mempool.space Reg tx response: {tx_resp.status_code} for {first_txid}")
+        if tx_resp.status_code == 200:
+            data = tx_resp.json()
             fee = data.get('fee')
             weight = data.get('weight')
             if fee is not None and weight is not None:
-                fee_rate = round(fee / (weight / 4))
-                # Cache the normal result for 5 minutes
-                expiration_time = time.time() + 300
-                transaction_cache[first_transaction] = (fee_rate, None, expiration_time)
-                return fee_rate
+                normal_rate = round(fee / (weight / 4))
+                transaction_cache[first_txid] = (normal_rate, None, time.time() + 300)
+                return normal_rate
 
         return 'not found'
     except requests.exceptions.RequestException:
-        logger.exception(f"Error fetching transaction fee rate for {first_transaction}")
+        logger.exception(f"Error fetching fee rate for {first_txid}")
         return 'Error'
-
-def extract_coinbase_script_ascii(coinbase_tx):
-    # Get the script_sig in hex from the input of the coinbase transaction
-    script_sig_hex = coinbase_tx.txs_in[0].script.hex()
-
-    # Remove the first 8 characters (4 bytes) which represent the block height
-    script_sig_hex = script_sig_hex[8:]
-    
-    # Convert the remaining script_sig hex to ASCII and filter out non-printable characters
-    return ''.join(filter(lambda x: x in string.printable, bytes.fromhex(script_sig_hex).decode('ascii', 'replace')))
 
 def precompute_merkle_branch_colors(merkle_branches):
     colors = []
     for branch in merkle_branches:
-        hash_value = branch
-        hue = abs(hash_code(hash_value) % 360)
-        lightness = 60 + (hash_code(hash_value) % 25)
+        hue = abs(hash_code(branch) % 360)
+        lightness = 60 + (hash_code(branch) % 25)
         color = f'hsl({hue}, 100%, {lightness}%)'
         colors.append(color)
     return colors
 
 def hash_code(text):
-    return sum(ord(char) for char in text)
+    return sum(ord(c) for c in text)
+
+###############################################################################
+# RabbitMQ Consumer in a Background Task
+###############################################################################
 
 def consume_messages():
-    """Run exactly once in a background thread for the entire app lifecycle."""
+    """
+    In a multi-replica deployment, each replica declares the same fanout exchange
+    but a unique queue name, so each replica gets all messages. Then we broadcast
+    them to our local connected Socket.IO clients.
+    """
+    logger.info("Global RabbitMQ consumer thread starting...")
+
+    # Build connection
     creds = pika.PlainCredentials(rabbitmq_username, rabbitmq_password)
     params = pika.ConnectionParameters(host=rabbitmq_host, port=rabbitmq_port, credentials=creds)
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
 
-    # Declare the exchange as a fanout exchange
+    # Declare fanout exchange
     channel.exchange_declare(exchange=rabbitmq_exchange, exchange_type='fanout', durable=True)
 
-    # Let RabbitMQ generate a unique queue name for each consumer
-    result = channel.queue_declare(queue='', exclusive=True)
-    queue_name = result.method.queue
+    # Use pod hostname (or something unique) for the queue name so each replica sees all messages
+    queue_name = f"stratum_broadcast_{socket.gethostname()}"
 
-    # Bind the generated queue to the fanout exchange
+    # Declare a non-durable, auto-delete queue
+    # (If you prefer it to persist across restarts, set auto_delete=False or use a stable name.)
+    channel.queue_declare(
+        queue=queue_name,
+        durable=False,
+        exclusive=False,
+        auto_delete=True
+    )
+
+    # Bind queue to fanout exchange so each replica gets a copy
     channel.queue_bind(exchange=rabbitmq_exchange, queue=queue_name)
 
     def on_message(ch, method, properties, body):
         try:
             message = json.loads(body)
-            processed_message = process_row_data(message)
-            for sid in connected_clients:
-                socketio.emit('mining_data', processed_message, room=sid)
+            row_data = process_row_data(message)
+            # Copy the set so we don't get "Set changed size during iteration"
+            for sid in list(connected_clients):
+                socketio.emit('mining_data', row_data, room=sid)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
 
-    channel.basic_consume(queue=queue_name, on_message_callback=on_message, auto_ack=True)
-    logger.info('Global RabbitMQ consumer started. Waiting for messages...')
+    channel.basic_consume(
+        queue=queue_name,
+        on_message_callback=on_message,
+        auto_ack=True
+    )
+
+    logger.info(f"Bound queue [{queue_name}] to exchange [{rabbitmq_exchange}]. Starting consume loop...")
     try:
         channel.start_consuming()  # Block forever
     except Exception:
         logger.exception("Error in consumer loop")
     finally:
-        # If we ever exit, try to close properly
-        logger.info("Stopping RabbitMQ consumer.")
+        logger.info("Shutting down consumer.")
         try:
             channel.stop_consuming()
         except Exception:
             pass
         connection.close()
+
+###############################################################################
+# Flask/Socket.IO routes & events
+###############################################################################
 
 @app.after_request
 def add_headers(response):
@@ -219,28 +239,6 @@ def handle_disconnect():
     logger.info(f'Client disconnected: {request.sid}')
     connected_clients.discard(request.sid)
 
-def gzip_response(response):
-    accept_encoding = request.headers.get('Accept-Encoding', '')
-    if 'gzip' not in accept_encoding.lower():
-        return response
-
-    response.direct_passthrough = False
-    if response.status_code < 200 or response.status_code >= 300 or 'Content-Encoding' in response.headers:
-        return response
-
-    gzip_buffer = io.BytesIO()
-    gzip_file = gzip.GzipFile(mode='wb', compresslevel=5, fileobj=gzip_buffer)
-    gzip_file.write(response.data)
-    gzip_file.close()
-
-    response.data = gzip_buffer.getvalue()
-    response.headers['Content-Encoding'] = 'gzip'
-    response.headers['Content-Length'] = len(response.data)
-    return response
-
-logger.info("Importing the module, starting consumer thread.")
-socketio.start_background_task(consume_messages)
-
 @app.route('/')
 def index():
     socket_url = os.environ.get('SOCKET_URL', 'https://stratum.work')
@@ -255,5 +253,13 @@ def handle_sigterm(*args):
     socketio.stop()
     sys.exit(0)
 
+###############################################################################
+# Start the consumer in a background task at module import, so it also works
+# under Gunicorn (which doesn't run __main__).
+###############################################################################
+logger.info("Importing module => launching RabbitMQ consumer in background...")
+socketio.start_background_task(consume_messages)
+
 if __name__ == "__main__":
-    socketio.run(app)
+    logger.info("Running via __main__: starting Socket.IO eventlet server.")
+    socketio.run(app, host="0.0.0.0", port=8000)

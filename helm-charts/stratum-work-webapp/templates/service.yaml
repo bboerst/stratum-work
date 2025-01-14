@@ -45,10 +45,10 @@ spec:
   healthCheckNodePort: {{ .Values.service.healthCheckNodePort }}
 {{- end }}
   ports:
-    - name: "flask"
-      port: {{ .Values.service.ports.flask }}
+    - name: "nextjs"
+      port: {{ .Values.service.ports.nextjs }}
       protocol: TCP
-      targetPort: "flask"
+      targetPort: "nextjs"
   selector:
     app: {{ template "stratum-work-webapp.fullname" . }}
   type: "{{ .Values.service.type }}"

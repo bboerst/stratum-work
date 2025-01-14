@@ -5,7 +5,7 @@
 replicaCount: 1
 
 image:
-  repository: bboerst/stratum-work-webapp
+  repository: bboerst/stratum-work-web
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -35,22 +35,6 @@ env:
 arguments: []
 
 automountServiceAccountToken: false
-
-configurationFiles:
-  gunicorn.conf.py: |
-    import gunicorn
-    bind = '0.0.0.0:8000'
-    workers = 1
-    worker_class = 'eventlet'
-    secure_scheme_headers = {'X-FORWARDED-PROTOCOL': 'ssl', 'X-FORWARDED-PROTO': 'https', 'X-FORWARDED-SSL': 'on'}
-    forwarded_allow_ips = '*'
-    keepalive = 65
-    timeout = 300
-    proc_name = 'stratum-work'
-    loglevel = 'info'
-    accesslog = '-'
-    errorlog = '-'
-    gunicorn.SERVER = 'undisclosed'
 
 podSecurityContext:
   runAsNonRoot: true
@@ -95,7 +79,7 @@ service:
   healthCheckNodePort: 0
 
   ports:
-    flask: 8000
+    nextjs: 3000
 
   type: ClusterIP
 

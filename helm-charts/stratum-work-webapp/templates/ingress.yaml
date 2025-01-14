@@ -3,7 +3,7 @@
 {{- $ingressSupportsIngressClassName := eq (include "stratum-work-webapp.ingress.supportsIngressClassName" .) "true" -}}
 {{- $ingressSupportsPathType := eq (include "stratum-work-webapp.ingress.supportsPathType" .) "true" -}}
 {{- $fullName := include "stratum-work-webapp.fullname" . -}}
-{{- $servicePort := .Values.service.ports.flask -}}
+{{- $servicePort := .Values.service.ports.nextjs -}}
 {{- $ingressPath := .Values.ingress.path -}}
 {{- $ingressPathType := .Values.ingress.pathType -}}
 {{- $extraPaths := .Values.ingress.extraPaths -}}

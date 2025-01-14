@@ -83,17 +83,14 @@ spec:
             value: {{ $val | quote }}
           {{- end }}
           ports:
-            - name: "flask"
-              containerPort: {{ .Values.service.ports.flask }}
+            - name: "nextjs"
+              containerPort: {{ .Values.service.ports.nextjs }}
               protocol: TCP
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
           - name: worker-tmp
             mountPath: /tmp
-          - name: config
-            mountPath: /app/gunicorn.conf.py
-            subPath: gunicorn.conf.py
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -109,6 +106,3 @@ spec:
       volumes:
         - name: worker-tmp
           emptyDir: {}
-        - name: config
-          configMap:
-            name: {{ template "stratum-work-webapp.fullname" . }}-config

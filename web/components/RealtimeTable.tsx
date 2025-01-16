@@ -202,6 +202,13 @@ function formatTimestamp(ts: string): string {
 }
 
 /* -----------------------------------
+   Interface for column-resizing
+----------------------------------- */
+interface ColumnWidths {
+  [key: string]: number;
+}
+
+/* -----------------------------------
    Main RealtimeTable Component
 ----------------------------------- */
 export default function RealtimeTable() {
@@ -249,7 +256,107 @@ export default function RealtimeTable() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // ---------------------- SSE subscription ----------------------
+  // ---------------------------------------------------------------------
+  // State for column widths and logic for resizing
+  // ---------------------------------------------------------------------
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>({
+    pool_name: 130,
+    timestamp: 80,
+    height: 65,
+    prev_hash: 60,
+    coinbaseScriptASCII: 100,
+    coinbase_outputs: 100,
+    clean_jobs: 60,
+    first_transaction: 90,
+    fee_rate: 90,
+    version: 60,
+    nbits: 60,
+    ntime: 60,
+    coinbaseRaw: 120,
+    coinbaseOutputValue: 100,
+  });
+
+  // Load widths from local storage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("columnWidths");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as ColumnWidths;
+          setColumnWidths((prev) => ({ ...prev, ...parsed }));
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+  }, []);
+
+  // Save widths to local storage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("columnWidths", JSON.stringify(columnWidths));
+    }
+  }, [columnWidths]);
+
+  const isResizing = useRef(false);
+  const currentColKey = useRef<string | null>(null);
+  const startX = useRef<number>(0);
+  const startWidth = useRef<number>(0);
+
+  const handleMouseDown = (colKey: string, e: React.MouseEvent) => {
+    isResizing.current = true;
+    currentColKey.current = colKey;
+    startX.current = e.clientX;
+    startWidth.current = columnWidths[colKey] ?? 80;
+    // Prevent text selection
+    document.body.style.userSelect = "none";
+  };
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing.current || !currentColKey.current) return;
+    const diff = e.clientX - startX.current;
+    const newWidth = Math.max(40, startWidth.current + diff);
+    setColumnWidths((prev) => ({
+      ...prev,
+      [currentColKey.current as string]: newWidth,
+    }));
+  };
+
+  const handleMouseUp = () => {
+    isResizing.current = false;
+    currentColKey.current = null;
+    document.body.style.userSelect = "";
+  };
+
+  useEffect(() => {
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+  // ---------------------------------------------------------------------
+
+  // Column settings to be toggled in the UI
+  const mainColumns: { key: keyof SortedRow; label: string }[] = [
+    { key: "pool_name", label: "Pool Name" },
+    { key: "timestamp", label: "Timestamp" },
+    { key: "height", label: "Height" },
+    { key: "prev_hash", label: "Prev Block Hash" },
+    { key: "coinbaseScriptASCII", label: "Coinbase Script (ASCII)" },
+    { key: "coinbase_outputs", label: "Coinbase Outputs" },
+    { key: "clean_jobs", label: "Clean Jobs" },
+    { key: "first_transaction", label: "First Tx" },
+    { key: "fee_rate", label: "Fee Rate" },
+    { key: "version", label: "Version" },
+    { key: "nbits", label: "Nbits" },
+    { key: "ntime", label: "Ntime" },
+    { key: "coinbaseRaw", label: "Coinbase RAW" },
+    { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
+  ];
+
+  // SSE subscription
   useEffect(() => {
     let evtSource: EventSource | null = null;
     let reconnectFrequencySeconds = 1;
@@ -304,7 +411,7 @@ export default function RealtimeTable() {
     };
   }, [paused]);
 
-  // ---------------------- Compute Derived Fields ----------------------
+  // Compute derived fields
   const computedRows: SortedRow[] = useMemo(() => {
     return rows.map((row) => {
       const coinbaseRaw = formatCoinbaseRaw(
@@ -332,14 +439,13 @@ export default function RealtimeTable() {
     });
   }, [rows, feeRateMap]);
 
-  // ---------------------- Cache or fetch missing fee rates ----------------------
+  // Cache or fetch missing fee rates
   useEffect(() => {
-    // For each row, if we don't have a feeRateMap entry, fetch & store it
     computedRows.forEach((row) => {
       if (
         row.first_transaction &&
         row.first_transaction !== "empty block" &&
-        !feeRateMap[row.first_transaction] && // not in cache yet
+        !feeRateMap[row.first_transaction] &&
         typeof row.feeRateComputed !== "number"
       ) {
         fetchFeeRate(row.first_transaction).then((rate) => {
@@ -349,7 +455,7 @@ export default function RealtimeTable() {
     });
   }, [computedRows, feeRateMap]);
 
-  // ---------------------- Sorting ----------------------
+  // Sorting
   const sortedRows = useMemo(() => {
     const arr = [...computedRows];
     const { key, direction } = sortConfig;
@@ -385,30 +491,12 @@ export default function RealtimeTable() {
     return sortConfig.direction === "asc" ? " ↑" : " ↓";
   }
 
-  // ---------------------- Column Toggling ----------------------
+  // Toggle columns
   const toggleColumn = (colKey: string) => {
     setColumnsVisible((prev) => ({ ...prev, [colKey]: !prev[colKey] }));
   };
 
-  // Column settings to be toggled in the UI
-  const mainColumns: { key: keyof SortedRow; label: string }[] = [
-    { key: "pool_name", label: "Pool Name" },
-    { key: "timestamp", label: "Timestamp" },
-    { key: "height", label: "Height" },
-    { key: "prev_hash", label: "Prev Block Hash" },
-    { key: "coinbaseScriptASCII", label: "Coinbase Script (ASCII)" },
-    { key: "coinbase_outputs", label: "Coinbase Outputs" },
-    { key: "clean_jobs", label: "Clean Jobs" },
-    { key: "first_transaction", label: "First Tx" },
-    { key: "fee_rate", label: "Fee Rate" },
-    { key: "version", label: "Version" },
-    { key: "nbits", label: "Nbits" },
-    { key: "ntime", label: "Ntime" },
-    { key: "coinbaseRaw", label: "Coinbase RAW" },
-    { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
-  ];
-
-  // ---------------------- Auto-hide settings panel if clicked outside ----------------------
+  // Auto-hide settings panel if clicked outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -425,7 +513,6 @@ export default function RealtimeTable() {
     };
   }, [showSettings]);
 
-  // ---------------------- Render ----------------------
   return (
     <div className="p-4 font-mono w-full overflow-x-auto relative">
       {/* Top Bar: Pause/Resume, GitHub link, Settings button */}
@@ -437,7 +524,6 @@ export default function RealtimeTable() {
         >
           {paused ? (
             <>
-              {/* Play Icon */}
               <svg
                 className="inline-block w-5 h-5 mr-1 align-text-bottom"
                 height="800px"
@@ -452,7 +538,6 @@ export default function RealtimeTable() {
             </>
           ) : (
             <>
-              {/* Pause Icon */}
               <svg
                 className="inline-block w-5 h-5 mr-1 align-text-bottom"
                 fill="#000000"
@@ -474,7 +559,7 @@ export default function RealtimeTable() {
           )}
         </button>
 
-        {/* GitHub link (example) */}
+        {/* GitHub link */}
         <a
           href="https://github.com/bboerst/stratum-work"
           target="_blank"
@@ -537,109 +622,212 @@ export default function RealtimeTable() {
       <Table className="w-full table-fixed">
         <TableHeader>
           <TableRow>
-            {/* main columns (in the same order as the body) */}
             {columnsVisible.pool_name && (
               <TableHead
                 onClick={() => handleSort("pool_name")}
-                className="p-1 text-xs border-r-2 w-[130px] cursor-pointer select-none"
+                className="relative p-1 text-xs border-r-2 w-[130px] cursor-pointer select-none"
+                style={{ width: columnWidths.pool_name }}
               >
                 Pool Name{renderSortIndicator("pool_name")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("pool_name", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.timestamp && (
               <TableHead
                 onClick={() => handleSort("timestamp")}
-                className="p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
+                style={{ width: columnWidths.timestamp }}
               >
                 Timestamp{renderSortIndicator("timestamp")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("timestamp", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.height && (
               <TableHead
                 onClick={() => handleSort("height")}
-                className="p-1 border-r-2 text-xs w-[65px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[65px] cursor-pointer select-none"
+                style={{ width: columnWidths.height }}
               >
                 Height{renderSortIndicator("height")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("height", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.prev_hash && (
               <TableHead
                 onClick={() => handleSort("prev_hash")}
-                className="p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                style={{ width: columnWidths.prev_hash }}
               >
                 Prev Block Hash{renderSortIndicator("prev_hash")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("prev_hash", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.coinbaseScriptASCII && (
               <TableHead
                 onClick={() => handleSort("coinbaseScriptASCII")}
-                className="p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbaseScriptASCII }}
               >
                 Coinbase Script (ASCII){renderSortIndicator("coinbaseScriptASCII")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("coinbaseScriptASCII", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.coinbase_outputs && (
               <TableHead
                 onClick={() => handleSort("coinbase_outputs")}
-                className="p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbase_outputs }}
               >
                 Coinbase Outputs
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("coinbase_outputs", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.clean_jobs && (
               <TableHead
                 onClick={() => handleSort("clean_jobs")}
-                className="p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                style={{ width: columnWidths.clean_jobs }}
               >
                 Clean Jobs{renderSortIndicator("clean_jobs")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("clean_jobs", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.first_transaction && (
               <TableHead
                 onClick={() => handleSort("first_transaction")}
-                className="p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
+                style={{ width: columnWidths.first_transaction }}
               >
                 First Tx{renderSortIndicator("first_transaction")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("first_transaction", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.fee_rate && (
               <TableHead
                 onClick={() => handleSort("fee_rate")}
-                className="p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
+                style={{ width: columnWidths.fee_rate }}
               >
                 First Tx Fee Rate{renderSortIndicator("fee_rate")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("fee_rate", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.version && (
               <TableHead
                 onClick={() => handleSort("version")}
-                className="p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                style={{ width: columnWidths.version }}
               >
                 Version{renderSortIndicator("version")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("version", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.nbits && (
               <TableHead
                 onClick={() => handleSort("nbits")}
-                className="p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                style={{ width: columnWidths.nbits }}
               >
                 Nbits
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("nbits", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.ntime && (
               <TableHead
                 onClick={() => handleSort("ntime")}
-                className="p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
+                style={{ width: columnWidths.ntime }}
               >
                 Ntime
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("ntime", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {columnsVisible.coinbaseRaw && (
               <TableHead
                 onClick={() => handleSort("coinbaseRaw")}
-                className="p-1 border-r-2 text-xs w-[120px] cursor-pointer select-none"
+                className="relative p-1 border-r-2 text-xs w-[120px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbaseRaw }}
               >
                 Coinbase RAW{renderSortIndicator("coinbaseRaw")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("coinbaseRaw", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
             {/* Merkle branches: always shown; 13 columns */}
@@ -654,23 +842,37 @@ export default function RealtimeTable() {
             {columnsVisible.coinbaseOutputValue && (
               <TableHead
                 onClick={() => handleSort("coinbaseOutputValue")}
-                className="p-1 text-xs w-[100px] cursor-pointer select-none"
+                className="relative p-1 text-xs w-[100px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbaseOutputValue }}
               >
                 Coinbase Output Value{renderSortIndicator("coinbaseOutputValue")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("coinbaseOutputValue", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
               </TableHead>
             )}
           </TableRow>
         </TableHeader>
+
         <TableBody>
           {sortedRows.map((row, idx) => (
             <TableRow key={idx} className="hover:bg-gray-200">
               {columnsVisible.pool_name && (
-                <TableCell className="p-1 truncate" title={row.pool_name}>
+                <TableCell
+                  style={{ width: columnWidths.pool_name }}
+                  className="p-1 truncate"
+                  title={row.pool_name}
+                >
                   {row.pool_name}
                 </TableCell>
               )}
               {columnsVisible.timestamp && (
                 <TableCell
+                  style={{ width: columnWidths.timestamp }}
                   className="p-1 truncate"
                   title={formatTimestamp(row.timestamp)}
                 >
@@ -678,10 +880,16 @@ export default function RealtimeTable() {
                 </TableCell>
               )}
               {columnsVisible.height && (
-                <TableCell className="p-1 truncate">{row.height}</TableCell>
+                <TableCell
+                  style={{ width: columnWidths.height }}
+                  className="p-1 truncate"
+                >
+                  {row.height}
+                </TableCell>
               )}
               {columnsVisible.prev_hash && (
                 <TableCell
+                  style={{ width: columnWidths.prev_hash }}
                   className="p-1 truncate"
                   title={formatPrevBlockHash(row.prev_hash)}
                 >
@@ -689,7 +897,11 @@ export default function RealtimeTable() {
                 </TableCell>
               )}
               {columnsVisible.coinbaseScriptASCII && (
-                <TableCell className="p-1 truncate" title={row.coinbaseScriptASCII}>
+                <TableCell
+                  style={{ width: columnWidths.coinbaseScriptASCII }}
+                  className="p-1 truncate"
+                  title={row.coinbaseScriptASCII}
+                >
                   {row.coinbaseScriptASCII}
                 </TableCell>
               )}
@@ -705,7 +917,12 @@ export default function RealtimeTable() {
                       : "N/A"
                   }
                   style={{
-                    backgroundColor: generateColorFromOutputs(row.coinbase_outputs || []),
+                    ...{
+                      width: columnWidths.coinbase_outputs,
+                    },
+                    backgroundColor: generateColorFromOutputs(
+                      row.coinbase_outputs || []
+                    ),
                     border: `1px solid ${generateColorFromOutputs(
                       row.coinbase_outputs || []
                     )}`,
@@ -720,12 +937,18 @@ export default function RealtimeTable() {
                 </TableCell>
               )}
               {columnsVisible.clean_jobs && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.clean_jobs }}
+                  className="p-1 truncate"
+                >
                   {row.clean_jobs?.toString() || "N/A"}
                 </TableCell>
               )}
               {columnsVisible.first_transaction && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.first_transaction }}
+                  className="p-1 truncate"
+                >
                   {row.first_transaction && row.first_transaction !== "empty block" ? (
                     <a
                       href={`https://mempool.space/tx/${row.first_transaction}`}
@@ -742,34 +965,51 @@ export default function RealtimeTable() {
                 </TableCell>
               )}
               {columnsVisible.fee_rate && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.fee_rate }}
+                  className="p-1 truncate"
+                >
                   {typeof row.feeRateComputed === "number"
                     ? row.feeRateComputed
                     : row.feeRateComputed || "N/A"}
                 </TableCell>
               )}
               {columnsVisible.version && (
-                <TableCell className="p-1 truncate">{row.version}</TableCell>
+                <TableCell
+                  style={{ width: columnWidths.version }}
+                  className="p-1 truncate"
+                >
+                  {row.version}
+                </TableCell>
               )}
               {columnsVisible.nbits && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.nbits }}
+                  className="p-1 truncate"
+                >
                   {row.nbits || "N/A"}
                 </TableCell>
               )}
               {columnsVisible.ntime && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.ntime }}
+                  className="p-1 truncate"
+                >
                   {row.ntime ? formatNtime(row.ntime) : "N/A"}
                 </TableCell>
               )}
               {columnsVisible.coinbaseRaw && (
-                <TableCell className="p-1 truncate" title={row.coinbaseRaw}>
+                <TableCell
+                  style={{ width: columnWidths.coinbaseRaw }}
+                  className="p-1 truncate"
+                  title={row.coinbaseRaw}
+                >
                   {row.coinbaseRaw}
                 </TableCell>
               )}
               {/* Merkle branch columns */}
               {Array.from({ length: 13 }).map((_, i) => {
                 let bg = "transparent";
-                // If user provided custom colors, otherwise pick color from the branch text
                 if (row.merkle_branch_colors && row.merkle_branch_colors[i]) {
                   bg = row.merkle_branch_colors[i];
                 } else if (row.merkle_branches && row.merkle_branches[i]) {
@@ -793,7 +1033,10 @@ export default function RealtimeTable() {
                 );
               })}
               {columnsVisible.coinbaseOutputValue && (
-                <TableCell className="p-1 truncate">
+                <TableCell
+                  style={{ width: columnWidths.coinbaseOutputValue }}
+                  className="p-1 truncate"
+                >
                   {isNaN(row.coinbaseOutputValue)
                     ? "N/A"
                     : row.coinbaseOutputValue.toFixed(8)}
@@ -809,7 +1052,6 @@ export default function RealtimeTable() {
           Wait for new stratum messages...
         </div>
       )}
-
     </div>
   );
 }

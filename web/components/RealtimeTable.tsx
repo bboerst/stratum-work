@@ -47,6 +47,10 @@ interface SortedRow extends MiningData {
    Helper Functions
 ----------------------------------- */
 
+// Memo caches for colors:
+const coinbaseColorCache = new Map<string, string>();
+const merkleColorCache = new Map<string, string>();
+
 // Reverse a hex string (e.g. for prev_block_hash)
 function reverseHex(hex: string): string {
   return Buffer.from(hex, "hex").reverse().toString("hex");
@@ -151,8 +155,27 @@ function generateColorFromOutputs(
   if (!outputs || outputs.length === 0) return "transparent";
   const filtered = outputs.filter((o) => !o.address.includes("nulldata"));
   const text = filtered.map((o) => `${o.address}:${o.value.toFixed(8)}`).join("|");
+  // Memoize result:
+  if (coinbaseColorCache.has(text)) {
+    return coinbaseColorCache.get(text)!;
+  }
   const hue = Math.abs(hashCode(text) % 360);
-  return `hsl(${hue}, 60%, 80%)`;
+  const color = `hsl(${hue}, 60%, 80%)`;
+  coinbaseColorCache.set(text, color);
+  return color;
+}
+
+function getMerkleColor(branch: string): string {
+  if (!branch) return "transparent";
+  if (merkleColorCache.has(branch)) {
+    return merkleColorCache.get(branch)!;
+  }
+  const hash = hashCode(branch);
+  const hue = Math.abs(hash % 360);
+  const lightness = 60 + (hash % 25);
+  const color = `hsl(${hue}, 100%, ${lightness}%)`;
+  merkleColorCache.set(branch, color);
+  return color;
 }
 
 // Format ntime as HH:MM:SS
@@ -381,7 +404,9 @@ export default function RealtimeTable() {
           setRows((prev) => {
             // Remove any existing row for the same pool_name, then add the new one
             const withoutPool = prev.filter((r) => r.pool_name !== data.pool_name);
-            return [...withoutPool, data];
+            const newRows = [...withoutPool, data];
+            // Limit how many rows we keep (for example, keep the 50 most recent)
+            return newRows.slice(-50);
           });
         } catch {
           console.error("Error parsing SSE data");
@@ -1019,10 +1044,7 @@ export default function RealtimeTable() {
                 if (row.merkle_branch_colors && row.merkle_branch_colors[i]) {
                   bg = row.merkle_branch_colors[i];
                 } else if (row.merkle_branches && row.merkle_branches[i]) {
-                  const hash = hashCode(row.merkle_branches[i]);
-                  const hue = Math.abs(hash % 360);
-                  const lightness = 60 + (hash % 25);
-                  bg = `hsl(${hue}, 100%, ${lightness}%)`;
+                  bg = getMerkleColor(row.merkle_branches[i]);
                 }
                 const branchValue = row.merkle_branches
                   ? row.merkle_branches[i] || ""

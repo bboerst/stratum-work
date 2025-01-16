@@ -102,14 +102,17 @@ services:
       --db-password "mongopassword"
       --log-level "DEBUG"
 
-  webapp:
-    build: ./webapp
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
-      - "8000:8000"
-    depends_on:
-      - rabbitmq
-      - mongodb
+      - "3000:3000"
     environment:
+      CORS_ORIGINS: "http://localhost:3000"
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: mquser
@@ -118,27 +121,12 @@ services:
       MONGODB_USERNAME: mongouser
       MONGODB_PASSWORD: mongopassword
       MONGODB_HOSTS: mongodb
-      SOCKET_URL: http://localhost:8000
-    command:
-      - /bin/bash
-      - '-c'
-      - |
-        cat <<EOF > /app/gunicorn.conf.py
-        import gunicorn
-        bind = "0.0.0.0:8000"
-        workers = 1
-        worker_class = "eventlet"
-        forwarded_allow_ips = "*"
-        keepalive = 65
-        timeout = 300
-        proc_name = "stratum-work"
-        loglevel = "info"
-        accesslog = "-"
-        errorlog = "-"
-        gunicorn.SERVER = "undisclosed"
-        EOF
-        cat /app/gunicorn.conf.py
-        gunicorn -c /app/gunicorn.conf.py main:app
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - rabbitmq
+      - mongodb
 
 volumes:
   mongo-data:

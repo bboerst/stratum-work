@@ -1,6 +1,6 @@
 # stratum-work-webapp
 
-![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-informational?style=flat-square) ![AppVersion: v1.0.1](https://img.shields.io/badge/AppVersion-v1.0.1-informational?style=flat-square)
+![Version: 0.1.8](https://img.shields.io/badge/Version-0.1.8-informational?style=flat-square) ![AppVersion: v1.0.8](https://img.shields.io/badge/AppVersion-v1.0.8-informational?style=flat-square)
 
 Web frontend/backend for Pool Work
 
@@ -11,14 +11,14 @@ Web frontend/backend for Pool Work
 | affinity | object | `{}` |  |
 | arguments | list | `[]` |  |
 | automountServiceAccountToken | bool | `false` |  |
-| configurationFiles."gunicorn.conf.py" | string | `"import gunicorn\nbind = '0.0.0.0:8000'\nworkers = 1\nworker_class = 'eventlet'\nsecure_scheme_headers = {'X-FORWARDED-PROTOCOL': 'ssl', 'X-FORWARDED-PROTO': 'https', 'X-FORWARDED-SSL': 'on'}\nforwarded_allow_ips = '*'\nkeepalive = 65\ntimeout = 300\nproc_name = 'stratum-work'\nloglevel = 'info'\naccesslog = '-'\nerrorlog = '-'\ngunicorn.SERVER = 'undisclosed'\n"` |  |
+| env.CORS_ORIGINS | string | `"http://127.0.0.1:8000,http://localhost:8000"` |  |
 | env.MONGODB_HOSTS | string | `"mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017/"` |  |
 | env.MONGODB_PASSWORD | string | `"hunter1"` |  |
 | env.MONGODB_USERNAME | string | `"mongoadmin"` |  |
 | extraManifests | list | `[]` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"bboerst/stratum-work-webapp"` |  |
+| image.repository | string | `"bboerst/stratum-work-web"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |
@@ -48,7 +48,7 @@ Web frontend/backend for Pool Work
 | service.loadBalancerIP | string | `""` |  |
 | service.loadBalancerSourceRanges | list | `[]` |  |
 | service.omitClusterIP | bool | `false` |  |
-| service.ports.flask | int | `8000` |  |
+| service.ports.nextjs | int | `3000` |  |
 | service.sessionAffinity | string | `""` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.create | bool | `true` |  |

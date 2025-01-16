@@ -1,6 +1,6 @@
 # stratum-work-collector
 
-![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-informational?style=flat-square) ![AppVersion: 1.0.1](https://img.shields.io/badge/AppVersion-1.0.1-informational?style=flat-square)
+![Version: 0.1.7](https://img.shields.io/badge/Version-0.1.7-informational?style=flat-square) ![AppVersion: v1.0.7](https://img.shields.io/badge/AppVersion-v1.0.7-informational?style=flat-square)
 
 A Helm chart for deploying the Pool Work Collector Python script
 
@@ -24,7 +24,6 @@ A Helm chart for deploying the Pool Work Collector Python script
 | arguments[9] | string | `"admin"` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"bboerst/stratum-work-collector"` |  |
-| image.tag | string | `"v0.1.2-pre"` |  |
 | poolName | string | `"Best Stratum Pool"` |  |
 
 ----------------------------------------------

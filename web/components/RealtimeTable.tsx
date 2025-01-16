@@ -166,7 +166,10 @@ function formatNtime(ntimeHex: string): string {
   }
 }
 
-// Actually fetch the fee rate from mempool.space
+// Fetch the fee rate from mempool.space
+// Use a global in-flight map so we don't re-request the same txid
+const inFlightRequests: { [txid: string]: boolean } = {};
+
 async function fetchFeeRate(firstTxid: string): Promise<number | string> {
   try {
     // Check CPFP endpoint first
@@ -439,17 +442,20 @@ export default function RealtimeTable() {
     });
   }, [rows, feeRateMap]);
 
-  // Cache or fetch missing fee rates
+  // Cache or fetch missing fee rates, but never re-fetch the same txid
   useEffect(() => {
+    // For each row, see if we need to fetch its fee rate
     computedRows.forEach((row) => {
-      if (
-        row.first_transaction &&
-        row.first_transaction !== "empty block" &&
-        !feeRateMap[row.first_transaction] &&
-        typeof row.feeRateComputed !== "number"
-      ) {
-        fetchFeeRate(row.first_transaction).then((rate) => {
-          setFeeRateMap((prev) => ({ ...prev, [row.first_transaction]: rate }));
+      // Skip empty block or if we already have a numeric (or any) feeRate in feeRateMap
+      if (!row.first_transaction || row.first_transaction === "empty block") return;
+
+      const txid = row.first_transaction;
+      // We only fetch if it's not in our cache AND not already in-flight
+      if (!feeRateMap[txid] && !inFlightRequests[txid]) {
+        inFlightRequests[txid] = true;
+        fetchFeeRate(txid).then((rate) => {
+          setFeeRateMap((prev) => ({ ...prev, [txid]: rate }));
+          delete inFlightRequests[txid]; // done
         });
       }
     });

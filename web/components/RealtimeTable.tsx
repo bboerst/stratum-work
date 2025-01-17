@@ -44,6 +44,21 @@ interface SortedRow extends MiningData {
 }
 
 /* -----------------------------------
+    Caching
+----------------------------------- */
+// For coinbase outputs
+const coinbaseOutputsCache = new Map<string, { address: string; value: number }[]>();
+
+// For coinbase script ASCII
+const coinbaseScriptAsciiCache = new Map<string, string>();
+
+// Track each pool’s current coinbaseRaw, so we know when it changes
+const poolCoinbaseMap = new Map<string, string>();
+
+// For coinbase output values
+const coinbaseOutputValueCache = new Map<string, number>();
+
+/* -----------------------------------
    Helper Functions
 ----------------------------------- */
 
@@ -77,6 +92,9 @@ function formatCoinbaseRaw(
 
 // Extract ASCII portion of the coinbase script from the first transaction input
 function formatCoinbaseScriptASCII(coinbaseRaw: string): string {
+  if (coinbaseScriptAsciiCache.has(coinbaseRaw)) {
+    return coinbaseScriptAsciiCache.get(coinbaseRaw)!;
+  }
   try {
     const tx = Transaction.fromHex(coinbaseRaw);
     // script hex from first input
@@ -89,7 +107,10 @@ function formatCoinbaseScriptASCII(coinbaseRaw: string): string {
       .split("")
       .filter((ch) => ch >= " " && ch <= "~")
       .join("");
-    return printable.length > 80 ? printable.substring(0, 80) + "…" : printable;
+    const result = printable.length > 80 ? printable.substring(0, 80) + "…" : printable;
+
+    coinbaseScriptAsciiCache.set(coinbaseRaw, result);
+    return result;
   } catch (err) {
     console.error("Error parsing coinbase script:", err);
     return "";
@@ -102,10 +123,15 @@ function hashCode(str: string): number {
 
 // Compute total satoshis in the coinbase transaction
 function computeCoinbaseOutputValue(coinbaseRaw: string): number {
+  if (coinbaseOutputValueCache.has(coinbaseRaw)) {
+    return coinbaseOutputValueCache.get(coinbaseRaw)!;
+  }
   try {
     const tx = Transaction.fromHex(coinbaseRaw);
     const totalSatoshis = tx.outs.reduce((sum, output) => sum + output.value, 0);
-    return totalSatoshis / 1e8;
+    const value = totalSatoshis / 1e8;
+    coinbaseOutputValueCache.set(coinbaseRaw, value);
+    return value;
   } catch {
     console.error("Error decoding coinbase transaction");
     return NaN;
@@ -129,11 +155,13 @@ function computeFirstTransaction(merkle_branches: string[]): string {
 // Extract all coinbase outputs that have a recognized address
 function computeCoinbaseOutputs(coinbaseRaw: string): {
   address: string;
-  value: number;
-}[] {
+  value: number }[] {
+    if (coinbaseOutputsCache.has(coinbaseRaw)) {
+      return coinbaseOutputsCache.get(coinbaseRaw)!;
+  }
   try {
     const tx = Transaction.fromHex(coinbaseRaw);
-    return tx.outs.reduce((acc, out) => {
+    const outputs = tx.outs.reduce((acc, out) => {
       try {
         const addr = address.fromOutputScript(out.script, networks.bitcoin);
         acc.push({ address: addr, value: out.value / 1e8 });
@@ -142,6 +170,9 @@ function computeCoinbaseOutputs(coinbaseRaw: string): {
       }
       return acc;
     }, [] as { address: string; value: number }[]);
+
+    coinbaseOutputsCache.set(coinbaseRaw, outputs);
+    return outputs;
   } catch (err) {
     console.error("Error computing coinbase outputs:", err);
     return [];
@@ -401,8 +432,30 @@ export default function RealtimeTable() {
         if (paused) return;
         try {
           const data: MiningData = JSON.parse(event.data);
+      
+          // Reconstruct the coinbaseRaw so we know its unique string
+          const newCoinbaseRaw = formatCoinbaseRaw(
+            data.coinbase1,
+            data.extranonce1,
+            data.extranonce2_length,
+            data.coinbase2
+          );
+      
+          // Check if this pool had a coinbaseRaw stored:
+          const oldCoinbaseRaw = poolCoinbaseMap.get(data.pool_name);
+          if (oldCoinbaseRaw && oldCoinbaseRaw !== newCoinbaseRaw) {
+            // Remove the old coinbase from both caches
+            coinbaseOutputsCache.delete(oldCoinbaseRaw);
+            coinbaseScriptAsciiCache.delete(oldCoinbaseRaw);
+            coinbaseOutputValueCache.delete(oldCoinbaseRaw);
+          }
+      
+          // Store the new coinbaseRaw for this pool
+          poolCoinbaseMap.set(data.pool_name, newCoinbaseRaw);
+      
+          // Adding/updating `rows` in state
           setRows((prev) => {
-            // Remove any existing row for the same pool_name, then add the new one
+            // Remove any existing row for that pool_name, etc.)
             const withoutPool = prev.filter((r) => r.pool_name !== data.pool_name);
             const newRows = [...withoutPool, data];
             // Limit how many rows we keep (for example, keep the 50 most recent)

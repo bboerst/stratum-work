@@ -65,6 +65,7 @@ const coinbaseOutputValueCache = new Map<string, number>();
 // Memo caches for colors:
 const coinbaseColorCache = new Map<string, string>();
 const merkleColorCache = new Map<string, string>();
+const timeColorCache = new Map<string, string>();
 
 // Reverse a hex string (e.g. for prev_block_hash)
 function reverseHex(hex: string): string {
@@ -209,12 +210,11 @@ function getMerkleColor(branch: string): string {
   return color;
 }
 
-// Format ntime as HH:MM:SS
+// Format ntime as unix time
 function formatNtime(ntimeHex: string): string {
   try {
-    const timestamp = parseInt(ntimeHex, 16) * 1000;
-    const date = new Date(timestamp);
-    return date.toISOString().substr(11, 8);
+    const unixTime = parseInt(ntimeHex, 16)
+    return unixTime.toString()
   } catch {
     return "N/A";
   }
@@ -252,10 +252,26 @@ async function fetchFeeRate(firstTxid: string): Promise<number | string> {
   }
 }
 
-// Format a timestamp as HH:MM:SS from the UTC date
+// Format a timestamp as unix time from the UTC date
 function formatTimestamp(ts: string): string {
-  const date = new Date(ts);
-  return date.toISOString().substr(11, 8);
+  try {
+    const date = new Date(ts);
+    const unixTime = Math.floor(date.getTime() / 1000);
+    return unixTime.toString();
+  } catch {
+    return "N/A";
+  }
+}
+
+// New: Generate a color from unix time string with drastic contrast based on the reversed unix time
+function getTimeColor(unixTime: string): string {
+  if (timeColorCache.has(unixTime)) return timeColorCache.get(unixTime)!;
+  const reversed = unixTime.split("").reverse().join("");
+  const num = parseInt(reversed, 10);
+  const hue = Math.abs(num % 360);
+  const color = `hsl(${hue}, 80%, 70%)`;
+  timeColorCache.set(unixTime, color);
+  return color;
 }
 
 /* -----------------------------------
@@ -293,20 +309,19 @@ export default function RealtimeTable() {
   const [columnsVisible, setColumnsVisible] = useState<{ [key: string]: boolean }>({
     // Visible by default
     pool_name: true,
-    timestamp: true,
     height: true,
     prev_hash: true,
     coinbaseScriptASCII: true,
-    coinbase_outputs: true,
+    clean_jobs: false,
     first_transaction: true,
     fee_rate: true,
-    coinbaseOutputValue: true,
-    // Hidden by default
-    clean_jobs: false,
     version: false,
     nbits: false,
-    ntime: false,
     coinbaseRaw: false,
+    timestamp: true,
+    ntime: true,
+    coinbase_outputs: true,
+    coinbaseOutputValue: true,
   });
 
   // Show/hide column settings panel
@@ -318,17 +333,17 @@ export default function RealtimeTable() {
   // ---------------------------------------------------------------------
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>({
     pool_name: 130,
-    timestamp: 80,
     height: 65,
     prev_hash: 60,
     coinbaseScriptASCII: 100,
-    coinbase_outputs: 100,
+    coinbase_outputs: 50,
     clean_jobs: 60,
     first_transaction: 90,
     fee_rate: 90,
     version: 60,
     nbits: 60,
-    ntime: 60,
+    timestamp: 72,
+    ntime: 72,
     coinbaseRaw: 120,
     coinbaseOutputValue: 100,
   });
@@ -398,18 +413,18 @@ export default function RealtimeTable() {
   // Column settings to be toggled in the UI
   const mainColumns: { key: keyof SortedRow; label: string }[] = [
     { key: "pool_name", label: "Pool Name" },
-    { key: "timestamp", label: "Timestamp" },
     { key: "height", label: "Height" },
     { key: "prev_hash", label: "Prev Block Hash" },
     { key: "coinbaseScriptASCII", label: "Coinbase Script (ASCII)" },
-    { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "clean_jobs", label: "Clean Jobs" },
     { key: "first_transaction", label: "First Tx" },
     { key: "fee_rate", label: "Fee Rate" },
     { key: "version", label: "Version" },
     { key: "nbits", label: "Nbits" },
-    { key: "ntime", label: "Ntime" },
     { key: "coinbaseRaw", label: "Coinbase RAW" },
+    { key: "timestamp", label: "Time Received" },
+    { key: "ntime", label: "Ntime" },
+    { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
   ];
 
@@ -722,22 +737,6 @@ export default function RealtimeTable() {
                 />
               </TableHead>
             )}
-            {columnsVisible.timestamp && (
-              <TableHead
-                onClick={() => handleSort("timestamp")}
-                className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
-                style={{ width: columnWidths.timestamp }}
-              >
-                Timestamp{renderSortIndicator("timestamp")}
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("timestamp", e);
-                  }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
             {columnsVisible.height && (
               <TableHead
                 onClick={() => handleSort("height")}
@@ -781,22 +780,6 @@ export default function RealtimeTable() {
                   onMouseDown={(e) => {
                     e.stopPropagation();
                     handleMouseDown("coinbaseScriptASCII", e);
-                  }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
-            {columnsVisible.coinbase_outputs && (
-              <TableHead
-                onClick={() => handleSort("coinbase_outputs")}
-                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
-                style={{ width: columnWidths.coinbase_outputs }}
-              >
-                Coinbase Outputs
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("coinbase_outputs", e);
                   }}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
@@ -882,22 +865,6 @@ export default function RealtimeTable() {
                 />
               </TableHead>
             )}
-            {columnsVisible.ntime && (
-              <TableHead
-                onClick={() => handleSort("ntime")}
-                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
-                style={{ width: columnWidths.ntime }}
-              >
-                Ntime
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("ntime", e);
-                  }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
             {columnsVisible.coinbaseRaw && (
               <TableHead
                 onClick={() => handleSort("coinbaseRaw")}
@@ -914,6 +881,39 @@ export default function RealtimeTable() {
                 />
               </TableHead>
             )}
+            {/* New Timestamp column inserted here */}
+            {columnsVisible.timestamp && (
+              <TableHead
+                onClick={() => handleSort("timestamp")}
+                className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
+                style={{ width: columnWidths.timestamp }}
+              >
+                Time Received{renderSortIndicator("timestamp")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("timestamp", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
+            {columnsVisible.ntime && (
+              <TableHead
+                onClick={() => handleSort("ntime")}
+                className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
+                style={{ width: columnWidths.ntime }}
+              >
+                Ntime{renderSortIndicator("ntime")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("ntime", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
             {/* Merkle branches: always shown; 13 columns */}
             {Array.from({ length: 13 }).map((_, i) => (
               <TableHead
@@ -923,6 +923,22 @@ export default function RealtimeTable() {
                 Merk. {i}
               </TableHead>
             ))}
+            {columnsVisible.coinbase_outputs && (
+              <TableHead
+                onClick={() => handleSort("coinbase_outputs")}
+                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbase_outputs }}
+              >
+                Coinbase Outputs
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleMouseDown("coinbase_outputs", e);
+                  }}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
             {columnsVisible.coinbaseOutputValue && (
               <TableHead
                 onClick={() => handleSort("coinbaseOutputValue")}
@@ -954,15 +970,6 @@ export default function RealtimeTable() {
                   {row.pool_name}
                 </TableCell>
               )}
-              {columnsVisible.timestamp && (
-                <TableCell
-                  style={{ width: columnWidths.timestamp }}
-                  className="p-1 truncate"
-                  title={formatTimestamp(row.timestamp)}
-                >
-                  {formatTimestamp(row.timestamp)}
-                </TableCell>
-              )}
               {columnsVisible.height && (
                 <TableCell
                   style={{ width: columnWidths.height }}
@@ -987,37 +994,6 @@ export default function RealtimeTable() {
                   title={row.coinbaseScriptASCII}
                 >
                   {row.coinbaseScriptASCII}
-                </TableCell>
-              )}
-              {columnsVisible.coinbase_outputs && (
-                <TableCell
-                  className="p-1 truncate"
-                  title={
-                    row.coinbase_outputs && row.coinbase_outputs.length
-                      ? row.coinbase_outputs
-                          .filter((o) => !o.address.includes("nulldata"))
-                          .map((o) => `${o.address}:${o.value.toFixed(8)}`)
-                          .join(" | ")
-                      : "N/A"
-                  }
-                  style={{
-                    ...{
-                      width: columnWidths.coinbase_outputs,
-                    },
-                    backgroundColor: generateColorFromOutputs(
-                      row.coinbase_outputs || []
-                    ),
-                    border: `1px solid ${generateColorFromOutputs(
-                      row.coinbase_outputs || []
-                    )}`,
-                  }}
-                >
-                  {row.coinbase_outputs && row.coinbase_outputs.length
-                    ? row.coinbase_outputs
-                        .filter((o) => !o.address.includes("nulldata"))
-                        .map((o) => `${o.address}:${o.value.toFixed(8)}`)
-                        .join(" | ")
-                    : "N/A"}
                 </TableCell>
               )}
               {columnsVisible.clean_jobs && (
@@ -1074,14 +1050,6 @@ export default function RealtimeTable() {
                   {row.nbits || "N/A"}
                 </TableCell>
               )}
-              {columnsVisible.ntime && (
-                <TableCell
-                  style={{ width: columnWidths.ntime }}
-                  className="p-1 truncate"
-                >
-                  {row.ntime ? formatNtime(row.ntime) : "N/A"}
-                </TableCell>
-              )}
               {columnsVisible.coinbaseRaw && (
                 <TableCell
                   style={{ width: columnWidths.coinbaseRaw }}
@@ -1089,6 +1057,31 @@ export default function RealtimeTable() {
                   title={row.coinbaseRaw}
                 >
                   {row.coinbaseRaw}
+                </TableCell>
+              )}
+              {columnsVisible.timestamp && (
+                <TableCell
+                  style={{ 
+                    width: columnWidths.timestamp, 
+                    backgroundColor: getTimeColor(formatTimestamp(row.timestamp)),
+                    border: `1px solid ${getTimeColor(formatTimestamp(row.timestamp))}`
+                  }}
+                  className="p-1 truncate"
+                  title={formatTimestamp(row.timestamp)}
+                >
+                  {formatTimestamp(row.timestamp)}
+                </TableCell>
+              )}
+              {columnsVisible.ntime && (
+                <TableCell
+                  style={{ 
+                    width: columnWidths.ntime,
+                    backgroundColor: row.ntime ? getTimeColor(formatNtime(row.ntime)) : "transparent",
+                    border: row.ntime ? `1px solid ${getTimeColor(formatNtime(row.ntime))}` : "1px solid transparent"
+                  }}
+                  className="p-1 truncate"
+                >
+                  {row.ntime ? formatNtime(row.ntime) : "N/A"}
                 </TableCell>
               )}
               {/* Merkle branch columns */}
@@ -1113,6 +1106,37 @@ export default function RealtimeTable() {
                   </TableCell>
                 );
               })}
+              {columnsVisible.coinbase_outputs && (
+                <TableCell
+                  className="p-1 truncate"
+                  title={
+                    row.coinbase_outputs && row.coinbase_outputs.length
+                      ? row.coinbase_outputs
+                          .filter((o) => !o.address.includes("nulldata"))
+                          .map((o) => `${o.address}:${o.value.toFixed(8)}`)
+                          .join(" | ")
+                      : "N/A"
+                  }
+                  style={{
+                    ...{
+                      width: columnWidths.coinbase_outputs,
+                    },
+                    backgroundColor: generateColorFromOutputs(
+                      row.coinbase_outputs || []
+                    ),
+                    border: `1px solid ${generateColorFromOutputs(
+                      row.coinbase_outputs || []
+                    )}`,
+                  }}
+                >
+                  {row.coinbase_outputs && row.coinbase_outputs.length
+                    ? row.coinbase_outputs
+                        .filter((o) => !o.address.includes("nulldata"))
+                        .map((o) => `${o.address}:${o.value.toFixed(8)}`)
+                        .join(" | ")
+                    : "N/A"}
+                </TableCell>
+              )}
               {columnsVisible.coinbaseOutputValue && (
                 <TableCell
                   style={{ width: columnWidths.coinbaseOutputValue }}

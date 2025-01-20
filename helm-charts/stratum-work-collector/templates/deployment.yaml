@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}
+  name: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
 spec:
-  serviceName: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" }}-service
+  serviceName: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}-service
   replicas: 1
   selector:
     matchLabels:

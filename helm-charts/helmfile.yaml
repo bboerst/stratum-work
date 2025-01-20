@@ -1,6 +1,6 @@
 releases:
   {{- range .Values.pools }}
-  - name: stratum-work-collector-{{ .poolName | lower | replace " " "-" | replace "." "-"}}
+  - name: stratum-work-collector-{{ .poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-"}}
     namespace: stratum-work
     chart: ./stratum-work-collector
     values:

@@ -194,27 +194,23 @@ class Watcher:
     def get_stratum_work(self, keep_alive=False):
         LOG.info("Starting get_stratum_work")
         last_subscribe_time = time.time()
-
         while True:
             try:
                 if not self.sock:
                     self.connect_to_stratum()
-
                 n = self.get_msg()
+                event_time = datetime.utcnow()
                 LOG.debug(f"Received notification: {n}")
-
                 if "method" in n and n["method"] == "mining.notify":
                     LOG.info("Received mining.notify message")
-                    document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length)
+                    document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length, event_time)
                     insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
                     self.publish_to_rabbitmq(document)
-
                 if keep_alive and time.time() - last_subscribe_time > 480:
                     LOG.info("Keep-alive interval reached")
                     self.send_jsonrpc("mining.subscribe", [])
                     last_subscribe_time = time.time()
                     LOG.info("Keep-alive cycle completed")
-
             except (EOFError, ConnectionResetError, socket.timeout) as e:
                 LOG.error(f"Connection error: {e}")
                 self.close()
@@ -225,14 +221,11 @@ class Watcher:
                 self.close()
                 time.sleep(self.retry_delay)
                 self.connect_to_stratum()
-
-def create_notification_document(data, pool_name, extranonce1, extranonce2_length):
+                
+def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp):
     notification_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-
     coinbase1 = data["params"][2]
     coinbase2 = data["params"][3]
-
     coinbase = None
     height = 0
     try:
@@ -240,10 +233,9 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
     except Exception as e:
         print(e)
-
     document = {
         "_id": notification_id,
-        "timestamp": now.isoformat(),  # Convert datetime to ISO 8601 formatted string
+        "timestamp": timestamp.isoformat(),
         "pool_name": pool_name,
         "height": height,
         "job_id": data["params"][0],
@@ -258,7 +250,6 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         "extranonce1": extranonce1,
         "extranonce2_length": extranonce2_length
     }
-
     return document
 
 def insert_notification(document, db_url, db_name, db_username, db_password):

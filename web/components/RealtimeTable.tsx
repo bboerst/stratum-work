@@ -65,6 +65,7 @@ const coinbaseOutputValueCache = new Map<string, number>();
 // Memo caches for colors:
 const coinbaseColorCache = new Map<string, string>();
 const merkleColorCache = new Map<string, string>();
+const timeColorCache = new Map<string, string>();
 
 // Reverse a hex string (e.g. for prev_block_hash)
 function reverseHex(hex: string): string {
@@ -209,12 +210,11 @@ function getMerkleColor(branch: string): string {
   return color;
 }
 
-// Format ntime as HH:MM:SS
+// Format ntime as unix time
 function formatNtime(ntimeHex: string): string {
   try {
-    const timestamp = parseInt(ntimeHex, 16) * 1000;
-    const date = new Date(timestamp);
-    return date.toISOString().substr(11, 8);
+    const unixTime = parseInt(ntimeHex, 16)
+    return unixTime.toString()
   } catch {
     return "N/A";
   }
@@ -252,10 +252,30 @@ async function fetchFeeRate(firstTxid: string): Promise<number | string> {
   }
 }
 
-// Format a timestamp as HH:MM:SS from the UTC date
-function formatTimestamp(ts: string): string {
-  const date = new Date(ts);
-  return date.toISOString().substr(11, 8);
+function formatTimeReceived(tsHex: string): string {
+  try {
+    const ns = BigInt("0x" + tsHex)
+    const ms = Number(ns / BigInt(1000000))
+    const date = new Date(ms)
+    const hh = date.getHours().toString().padStart(2, "0")
+    const mm = date.getMinutes().toString().padStart(2, "0")
+    const ss = date.getSeconds().toString().padStart(2, "0")
+    const msec = date.getMilliseconds().toString().padStart(3, "0")
+    return `${hh}:${mm}:${ss}.${msec}`
+  } catch {
+    return "Invalid time"
+  }
+}
+
+// New: Generate a color from unix time string with drastic contrast based on the reversed unix time
+function getTimeColor(unixTime: string): string {
+  if (timeColorCache.has(unixTime)) return timeColorCache.get(unixTime)!;
+  const reversed = unixTime.split("").reverse().join("");
+  const num = parseInt(reversed, 10);
+  const hue = Math.abs(num % 360);
+  const color = `hsl(${hue}, 80%, 70%)`;
+  timeColorCache.set(unixTime, color);
+  return color;
 }
 
 /* -----------------------------------
@@ -285,7 +305,7 @@ export default function RealtimeTable() {
     direction: SortDirection;
   }
   const [sortConfig, setSortConfig] = useState<SortConfig>({
-    key: "coinbaseOutputValue",
+    key: "timestamp",
     direction: "desc",
   });
 
@@ -293,20 +313,19 @@ export default function RealtimeTable() {
   const [columnsVisible, setColumnsVisible] = useState<{ [key: string]: boolean }>({
     // Visible by default
     pool_name: true,
-    timestamp: true,
     height: true,
-    prev_hash: true,
+    prev_hash: false,
     coinbaseScriptASCII: true,
-    coinbase_outputs: true,
+    clean_jobs: false,
     first_transaction: true,
     fee_rate: true,
-    coinbaseOutputValue: true,
-    // Hidden by default
-    clean_jobs: false,
     version: false,
     nbits: false,
-    ntime: false,
     coinbaseRaw: false,
+    timestamp: true,
+    ntime: true,
+    coinbase_outputs: true,
+    coinbaseOutputValue: true,
   });
 
   // Show/hide column settings panel
@@ -318,19 +337,19 @@ export default function RealtimeTable() {
   // ---------------------------------------------------------------------
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>({
     pool_name: 130,
-    timestamp: 80,
     height: 65,
     prev_hash: 60,
     coinbaseScriptASCII: 100,
-    coinbase_outputs: 100,
+    coinbase_outputs: 50,
     clean_jobs: 60,
     first_transaction: 90,
-    fee_rate: 90,
+    fee_rate: 50,
     version: 60,
     nbits: 60,
-    ntime: 60,
+    timestamp: 85,
+    ntime: 72,
     coinbaseRaw: 120,
-    coinbaseOutputValue: 100,
+    coinbaseOutputValue: 65,
   });
 
   // Load widths from local storage
@@ -359,12 +378,14 @@ export default function RealtimeTable() {
   const currentColKey = useRef<string | null>(null);
   const startX = useRef<number>(0);
   const startWidth = useRef<number>(0);
+  const resizeActiveRef = useRef(false);
 
   const handleMouseDown = (colKey: string, e: React.MouseEvent) => {
     isResizing.current = true;
     currentColKey.current = colKey;
     startX.current = e.clientX;
     startWidth.current = columnWidths[colKey] ?? 80;
+    resizeActiveRef.current = false;
     // Prevent text selection
     document.body.style.userSelect = "none";
   };
@@ -372,6 +393,7 @@ export default function RealtimeTable() {
   const handleMouseMove = (e: MouseEvent) => {
     if (!isResizing.current || !currentColKey.current) return;
     const diff = e.clientX - startX.current;
+    if (Math.abs(diff) > 5) resizeActiveRef.current = true;
     const newWidth = Math.max(40, startWidth.current + diff);
     setColumnWidths((prev) => ({
       ...prev,
@@ -398,18 +420,18 @@ export default function RealtimeTable() {
   // Column settings to be toggled in the UI
   const mainColumns: { key: keyof SortedRow; label: string }[] = [
     { key: "pool_name", label: "Pool Name" },
-    { key: "timestamp", label: "Timestamp" },
     { key: "height", label: "Height" },
     { key: "prev_hash", label: "Prev Block Hash" },
     { key: "coinbaseScriptASCII", label: "Coinbase Script (ASCII)" },
-    { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "clean_jobs", label: "Clean Jobs" },
     { key: "first_transaction", label: "First Tx" },
     { key: "fee_rate", label: "Fee Rate" },
     { key: "version", label: "Version" },
     { key: "nbits", label: "Nbits" },
-    { key: "ntime", label: "Ntime" },
     { key: "coinbaseRaw", label: "Coinbase RAW" },
+    { key: "timestamp", label: "Time Received" },
+    { key: "ntime", label: "Ntime" },
+    { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
   ];
 
@@ -572,7 +594,24 @@ export default function RealtimeTable() {
 
   function renderSortIndicator(key: keyof SortedRow) {
     if (sortConfig.key !== key) return null;
-    return sortConfig.direction === "asc" ? " ↑" : " ↓";
+    const arrow = sortConfig.direction === "asc" ? "↑" : "↓";
+    return (
+      <span style={{
+        display: "inline-block",
+        width: "20px",
+        height: "20px",
+        backgroundColor: "black",
+        color: "white",
+        fontSize: "18px",
+        fontWeight: "bold",
+        textAlign: "center",
+        lineHeight: "16px",
+        marginLeft: "4px",
+        borderRadius: "20%"
+      }}>
+        {arrow}
+      </span>
+    );
   }
 
   // Toggle columns
@@ -708,7 +747,13 @@ export default function RealtimeTable() {
           <TableRow>
             {columnsVisible.pool_name && (
               <TableHead
-                onClick={() => handleSort("pool_name")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("pool_name");
+                }}
                 className="relative p-1 text-xs border-r-2 w-[130px] cursor-pointer select-none"
                 style={{ width: columnWidths.pool_name }}
               >
@@ -716,31 +761,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("pool_name", e);
                   }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
-            {columnsVisible.timestamp && (
-              <TableHead
-                onClick={() => handleSort("timestamp")}
-                className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
-                style={{ width: columnWidths.timestamp }}
-              >
-                Timestamp{renderSortIndicator("timestamp")}
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("timestamp", e);
-                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.height && (
               <TableHead
-                onClick={() => handleSort("height")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("height");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[65px] cursor-pointer select-none"
                 style={{ width: columnWidths.height }}
               >
@@ -748,15 +785,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("height", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.prev_hash && (
               <TableHead
-                onClick={() => handleSort("prev_hash")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("prev_hash");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.prev_hash }}
               >
@@ -764,15 +809,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("prev_hash", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.coinbaseScriptASCII && (
               <TableHead
-                onClick={() => handleSort("coinbaseScriptASCII")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseScriptASCII");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseScriptASCII }}
               >
@@ -780,31 +833,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseScriptASCII", e);
                   }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
-            {columnsVisible.coinbase_outputs && (
-              <TableHead
-                onClick={() => handleSort("coinbase_outputs")}
-                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
-                style={{ width: columnWidths.coinbase_outputs }}
-              >
-                Coinbase Outputs
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("coinbase_outputs", e);
-                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.clean_jobs && (
               <TableHead
-                onClick={() => handleSort("clean_jobs")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("clean_jobs");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.clean_jobs }}
               >
@@ -812,15 +857,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("clean_jobs", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.first_transaction && (
               <TableHead
-                onClick={() => handleSort("first_transaction")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("first_transaction");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
                 style={{ width: columnWidths.first_transaction }}
               >
@@ -828,15 +881,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("first_transaction", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.fee_rate && (
               <TableHead
-                onClick={() => handleSort("fee_rate")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("fee_rate");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
                 style={{ width: columnWidths.fee_rate }}
               >
@@ -844,15 +905,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("fee_rate", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.version && (
               <TableHead
-                onClick={() => handleSort("version")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("version");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.version }}
               >
@@ -860,15 +929,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("version", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.nbits && (
               <TableHead
-                onClick={() => handleSort("nbits")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("nbits");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.nbits }}
               >
@@ -876,40 +953,82 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("nbits", e);
                   }}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
-                />
-              </TableHead>
-            )}
-            {columnsVisible.ntime && (
-              <TableHead
-                onClick={() => handleSort("ntime")}
-                className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
-                style={{ width: columnWidths.ntime }}
-              >
-                Ntime
-                <div
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleMouseDown("ntime", e);
-                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.coinbaseRaw && (
               <TableHead
-                onClick={() => handleSort("coinbaseRaw")}
                 className="relative p-1 border-r-2 text-xs w-[120px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseRaw }}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseRaw");
+                }}
               >
                 Coinbase RAW{renderSortIndicator("coinbaseRaw")}
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseRaw", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
+            {columnsVisible.timestamp && (
+              <TableHead
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("timestamp");
+                }}
+                className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
+                style={{ width: columnWidths.timestamp }}
+              >
+                Time Received{renderSortIndicator("timestamp")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    handleMouseDown("timestamp", e);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
+            {columnsVisible.ntime && (
+              <TableHead
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("ntime");
+                }}
+                className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
+                style={{ width: columnWidths.ntime }}
+              >
+                Ntime{renderSortIndicator("ntime")}
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    handleMouseDown("ntime", e);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
@@ -923,9 +1042,39 @@ export default function RealtimeTable() {
                 Merk. {i}
               </TableHead>
             ))}
+            {columnsVisible.coinbase_outputs && (
+              <TableHead
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbase_outputs");
+                }}
+                className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
+                style={{ width: columnWidths.coinbase_outputs }}
+              >
+                Coinbase Outputs
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    handleMouseDown("coinbase_outputs", e);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+                />
+              </TableHead>
+            )}
             {columnsVisible.coinbaseOutputValue && (
               <TableHead
-                onClick={() => handleSort("coinbaseOutputValue")}
+                onClick={() => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseOutputValue");
+                }}
                 className="relative p-1 text-xs w-[100px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseOutputValue }}
               >
@@ -933,8 +1082,10 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseOutputValue", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
@@ -952,15 +1103,6 @@ export default function RealtimeTable() {
                   title={row.pool_name}
                 >
                   {row.pool_name}
-                </TableCell>
-              )}
-              {columnsVisible.timestamp && (
-                <TableCell
-                  style={{ width: columnWidths.timestamp }}
-                  className="p-1 truncate"
-                  title={formatTimestamp(row.timestamp)}
-                >
-                  {formatTimestamp(row.timestamp)}
                 </TableCell>
               )}
               {columnsVisible.height && (
@@ -987,37 +1129,6 @@ export default function RealtimeTable() {
                   title={row.coinbaseScriptASCII}
                 >
                   {row.coinbaseScriptASCII}
-                </TableCell>
-              )}
-              {columnsVisible.coinbase_outputs && (
-                <TableCell
-                  className="p-1 truncate"
-                  title={
-                    row.coinbase_outputs && row.coinbase_outputs.length
-                      ? row.coinbase_outputs
-                          .filter((o) => !o.address.includes("nulldata"))
-                          .map((o) => `${o.address}:${o.value.toFixed(8)}`)
-                          .join(" | ")
-                      : "N/A"
-                  }
-                  style={{
-                    ...{
-                      width: columnWidths.coinbase_outputs,
-                    },
-                    backgroundColor: generateColorFromOutputs(
-                      row.coinbase_outputs || []
-                    ),
-                    border: `1px solid ${generateColorFromOutputs(
-                      row.coinbase_outputs || []
-                    )}`,
-                  }}
-                >
-                  {row.coinbase_outputs && row.coinbase_outputs.length
-                    ? row.coinbase_outputs
-                        .filter((o) => !o.address.includes("nulldata"))
-                        .map((o) => `${o.address}:${o.value.toFixed(8)}`)
-                        .join(" | ")
-                    : "N/A"}
                 </TableCell>
               )}
               {columnsVisible.clean_jobs && (
@@ -1074,14 +1185,6 @@ export default function RealtimeTable() {
                   {row.nbits || "N/A"}
                 </TableCell>
               )}
-              {columnsVisible.ntime && (
-                <TableCell
-                  style={{ width: columnWidths.ntime }}
-                  className="p-1 truncate"
-                >
-                  {row.ntime ? formatNtime(row.ntime) : "N/A"}
-                </TableCell>
-              )}
               {columnsVisible.coinbaseRaw && (
                 <TableCell
                   style={{ width: columnWidths.coinbaseRaw }}
@@ -1089,6 +1192,27 @@ export default function RealtimeTable() {
                   title={row.coinbaseRaw}
                 >
                   {row.coinbaseRaw}
+                </TableCell>
+              )}
+              {columnsVisible.timestamp && (
+                <TableCell
+                  style={{ width: columnWidths.timestamp }}
+                  className="p-1 truncate"
+                  title={formatTimeReceived(row.timestamp)}
+                >
+                  {formatTimeReceived(row.timestamp)}
+                </TableCell>
+              )}
+              {columnsVisible.ntime && (
+                <TableCell
+                  style={{ 
+                    width: columnWidths.ntime,
+                    backgroundColor: row.ntime ? getTimeColor(formatNtime(row.ntime)) : "transparent",
+                    border: row.ntime ? `1px solid ${getTimeColor(formatNtime(row.ntime))}` : "1px solid transparent"
+                  }}
+                  className="p-1 truncate"
+                >
+                  {row.ntime ? formatNtime(row.ntime) : "N/A"}
                 </TableCell>
               )}
               {/* Merkle branch columns */}
@@ -1113,6 +1237,37 @@ export default function RealtimeTable() {
                   </TableCell>
                 );
               })}
+              {columnsVisible.coinbase_outputs && (
+                <TableCell
+                  className="p-1 truncate"
+                  title={
+                    row.coinbase_outputs && row.coinbase_outputs.length
+                      ? row.coinbase_outputs
+                          .filter((o) => !o.address.includes("nulldata"))
+                          .map((o) => `${o.address}:${o.value.toFixed(8)}`)
+                          .join(" | ")
+                      : "N/A"
+                  }
+                  style={{
+                    ...{
+                      width: columnWidths.coinbase_outputs,
+                    },
+                    backgroundColor: generateColorFromOutputs(
+                      row.coinbase_outputs || []
+                    ),
+                    border: `1px solid ${generateColorFromOutputs(
+                      row.coinbase_outputs || []
+                    )}`,
+                  }}
+                >
+                  {row.coinbase_outputs && row.coinbase_outputs.length
+                    ? row.coinbase_outputs
+                        .filter((o) => !o.address.includes("nulldata"))
+                        .map((o) => `${o.address}:${o.value.toFixed(8)}`)
+                        .join(" | ")
+                    : "N/A"}
+                </TableCell>
+              )}
               {columnsVisible.coinbaseOutputValue && (
                 <TableCell
                   style={{ width: columnWidths.coinbaseOutputValue }}

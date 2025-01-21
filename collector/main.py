@@ -199,7 +199,7 @@ class Watcher:
                 if not self.sock:
                     self.connect_to_stratum()
                 n = self.get_msg()
-                event_time = datetime.utcnow()
+                event_time = hex(time.time_ns())[2:]
                 LOG.debug(f"Received notification: {n}")
                 if "method" in n and n["method"] == "mining.notify":
                     LOG.info("Received mining.notify message")
@@ -235,7 +235,7 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         print(e)
     document = {
         "_id": notification_id,
-        "timestamp": timestamp.isoformat(),
+        "timestamp": timestamp,
         "pool_name": pool_name,
         "height": height,
         "job_id": data["params"][0],

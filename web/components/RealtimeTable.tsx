@@ -252,14 +252,18 @@ async function fetchFeeRate(firstTxid: string): Promise<number | string> {
   }
 }
 
-// Format a timestamp as unix time from the UTC date
-function formatTimestamp(ts: string): string {
+function formatTimeReceived(tsHex: string): string {
   try {
-    const date = new Date(ts);
-    const unixTime = Math.floor(date.getTime() / 1000);
-    return unixTime.toString();
+    const ns = BigInt("0x" + tsHex)
+    const ms = Number(ns / 1000000n)
+    const date = new Date(ms)
+    const hh = date.getHours().toString().padStart(2, "0")
+    const mm = date.getMinutes().toString().padStart(2, "0")
+    const ss = date.getSeconds().toString().padStart(2, "0")
+    const msec = date.getMilliseconds().toString().padStart(3, "0")
+    return `${hh}:${mm}:${ss}.${msec}`
   } catch {
-    return "N/A";
+    return "Invalid time"
   }
 }
 
@@ -301,7 +305,7 @@ export default function RealtimeTable() {
     direction: SortDirection;
   }
   const [sortConfig, setSortConfig] = useState<SortConfig>({
-    key: "coinbaseOutputValue",
+    key: "timestamp",
     direction: "desc",
   });
 
@@ -310,7 +314,7 @@ export default function RealtimeTable() {
     // Visible by default
     pool_name: true,
     height: true,
-    prev_hash: true,
+    prev_hash: false,
     coinbaseScriptASCII: true,
     clean_jobs: false,
     first_transaction: true,
@@ -339,13 +343,13 @@ export default function RealtimeTable() {
     coinbase_outputs: 50,
     clean_jobs: 60,
     first_transaction: 90,
-    fee_rate: 90,
+    fee_rate: 50,
     version: 60,
     nbits: 60,
-    timestamp: 72,
+    timestamp: 85,
     ntime: 72,
     coinbaseRaw: 120,
-    coinbaseOutputValue: 100,
+    coinbaseOutputValue: 65,
   });
 
   // Load widths from local storage
@@ -374,12 +378,14 @@ export default function RealtimeTable() {
   const currentColKey = useRef<string | null>(null);
   const startX = useRef<number>(0);
   const startWidth = useRef<number>(0);
+  const resizeActiveRef = useRef(false);
 
   const handleMouseDown = (colKey: string, e: React.MouseEvent) => {
     isResizing.current = true;
     currentColKey.current = colKey;
     startX.current = e.clientX;
     startWidth.current = columnWidths[colKey] ?? 80;
+    resizeActiveRef.current = false;
     // Prevent text selection
     document.body.style.userSelect = "none";
   };
@@ -387,6 +393,7 @@ export default function RealtimeTable() {
   const handleMouseMove = (e: MouseEvent) => {
     if (!isResizing.current || !currentColKey.current) return;
     const diff = e.clientX - startX.current;
+    if (Math.abs(diff) > 5) resizeActiveRef.current = true;
     const newWidth = Math.max(40, startWidth.current + diff);
     setColumnWidths((prev) => ({
       ...prev,
@@ -587,7 +594,24 @@ export default function RealtimeTable() {
 
   function renderSortIndicator(key: keyof SortedRow) {
     if (sortConfig.key !== key) return null;
-    return sortConfig.direction === "asc" ? " ↑" : " ↓";
+    const arrow = sortConfig.direction === "asc" ? "↑" : "↓";
+    return (
+      <span style={{
+        display: "inline-block",
+        width: "20px",
+        height: "20px",
+        backgroundColor: "black",
+        color: "white",
+        fontSize: "18px",
+        fontWeight: "bold",
+        textAlign: "center",
+        lineHeight: "16px",
+        marginLeft: "4px",
+        borderRadius: "20%"
+      }}>
+        {arrow}
+      </span>
+    );
   }
 
   // Toggle columns
@@ -723,7 +747,13 @@ export default function RealtimeTable() {
           <TableRow>
             {columnsVisible.pool_name && (
               <TableHead
-                onClick={() => handleSort("pool_name")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("pool_name");
+                }}
                 className="relative p-1 text-xs border-r-2 w-[130px] cursor-pointer select-none"
                 style={{ width: columnWidths.pool_name }}
               >
@@ -731,15 +761,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("pool_name", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.height && (
               <TableHead
-                onClick={() => handleSort("height")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("height");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[65px] cursor-pointer select-none"
                 style={{ width: columnWidths.height }}
               >
@@ -747,15 +785,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("height", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.prev_hash && (
               <TableHead
-                onClick={() => handleSort("prev_hash")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("prev_hash");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.prev_hash }}
               >
@@ -763,15 +809,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("prev_hash", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.coinbaseScriptASCII && (
               <TableHead
-                onClick={() => handleSort("coinbaseScriptASCII")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseScriptASCII");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseScriptASCII }}
               >
@@ -779,15 +833,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseScriptASCII", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.clean_jobs && (
               <TableHead
-                onClick={() => handleSort("clean_jobs")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("clean_jobs");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.clean_jobs }}
               >
@@ -795,15 +857,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("clean_jobs", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.first_transaction && (
               <TableHead
-                onClick={() => handleSort("first_transaction")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("first_transaction");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
                 style={{ width: columnWidths.first_transaction }}
               >
@@ -811,15 +881,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("first_transaction", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.fee_rate && (
               <TableHead
-                onClick={() => handleSort("fee_rate")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("fee_rate");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[90px] cursor-pointer select-none"
                 style={{ width: columnWidths.fee_rate }}
               >
@@ -827,15 +905,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("fee_rate", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.version && (
               <TableHead
-                onClick={() => handleSort("version")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("version");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.version }}
               >
@@ -843,15 +929,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("version", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.nbits && (
               <TableHead
-                onClick={() => handleSort("nbits")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("nbits");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[60px] cursor-pointer select-none"
                 style={{ width: columnWidths.nbits }}
               >
@@ -859,32 +953,47 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("nbits", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.coinbaseRaw && (
               <TableHead
-                onClick={() => handleSort("coinbaseRaw")}
                 className="relative p-1 border-r-2 text-xs w-[120px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseRaw }}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseRaw");
+                }}
               >
                 Coinbase RAW{renderSortIndicator("coinbaseRaw")}
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseRaw", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
-            {/* New Timestamp column inserted here */}
             {columnsVisible.timestamp && (
               <TableHead
-                onClick={() => handleSort("timestamp")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("timestamp");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[80px] cursor-pointer select-none"
                 style={{ width: columnWidths.timestamp }}
               >
@@ -892,15 +1001,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("timestamp", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.ntime && (
               <TableHead
-                onClick={() => handleSort("ntime")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("ntime");
+                }}
                 className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
                 style={{ width: columnWidths.ntime }}
               >
@@ -908,8 +1025,10 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("ntime", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
@@ -925,7 +1044,13 @@ export default function RealtimeTable() {
             ))}
             {columnsVisible.coinbase_outputs && (
               <TableHead
-                onClick={() => handleSort("coinbase_outputs")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbase_outputs");
+                }}
                 className="relative p-1 border-r-2 text-xs w-[100px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbase_outputs }}
               >
@@ -933,15 +1058,23 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbase_outputs", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
             )}
             {columnsVisible.coinbaseOutputValue && (
               <TableHead
-                onClick={() => handleSort("coinbaseOutputValue")}
+                onClick={(e) => {
+                  if (resizeActiveRef.current) {
+                    resizeActiveRef.current = false;
+                    return;
+                  }
+                  handleSort("coinbaseOutputValue");
+                }}
                 className="relative p-1 text-xs w-[100px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseOutputValue }}
               >
@@ -949,8 +1082,10 @@ export default function RealtimeTable() {
                 <div
                   onMouseDown={(e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleMouseDown("coinbaseOutputValue", e);
                   }}
+                  onClick={(e) => e.stopPropagation()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
                 />
               </TableHead>
@@ -1061,15 +1196,11 @@ export default function RealtimeTable() {
               )}
               {columnsVisible.timestamp && (
                 <TableCell
-                  style={{ 
-                    width: columnWidths.timestamp, 
-                    backgroundColor: getTimeColor(formatTimestamp(row.timestamp)),
-                    border: `1px solid ${getTimeColor(formatTimestamp(row.timestamp))}`
-                  }}
+                  style={{ width: columnWidths.timestamp }}
                   className="p-1 truncate"
-                  title={formatTimestamp(row.timestamp)}
+                  title={formatTimeReceived(row.timestamp)}
                 >
-                  {formatTimestamp(row.timestamp)}
+                  {formatTimeReceived(row.timestamp)}
                 </TableCell>
               )}
               {columnsVisible.ntime && (

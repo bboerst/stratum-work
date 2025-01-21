@@ -255,7 +255,7 @@ async function fetchFeeRate(firstTxid: string): Promise<number | string> {
 function formatTimeReceived(tsHex: string): string {
   try {
     const ns = BigInt("0x" + tsHex)
-    const ms = Number(ns / 1000000n)
+    const ms = Number(ns / BigInt(1000000))
     const date = new Date(ms)
     const hh = date.getHours().toString().padStart(2, "0")
     const mm = date.getMinutes().toString().padStart(2, "0")
@@ -747,7 +747,7 @@ export default function RealtimeTable() {
           <TableRow>
             {columnsVisible.pool_name && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -771,7 +771,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.height && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -795,7 +795,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.prev_hash && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -819,7 +819,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.coinbaseScriptASCII && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -843,7 +843,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.clean_jobs && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -867,7 +867,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.first_transaction && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -891,7 +891,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.fee_rate && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -915,7 +915,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.version && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -939,7 +939,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.nbits && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -965,7 +965,7 @@ export default function RealtimeTable() {
               <TableHead
                 className="relative p-1 border-r-2 text-xs w-[120px] cursor-pointer select-none"
                 style={{ width: columnWidths.coinbaseRaw }}
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -987,7 +987,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.timestamp && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -1011,7 +1011,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.ntime && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -1044,7 +1044,7 @@ export default function RealtimeTable() {
             ))}
             {columnsVisible.coinbase_outputs && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;
@@ -1068,7 +1068,7 @@ export default function RealtimeTable() {
             )}
             {columnsVisible.coinbaseOutputValue && (
               <TableHead
-                onClick={(e) => {
+                onClick={() => {
                   if (resizeActiveRef.current) {
                     resizeActiveRef.current = false;
                     return;

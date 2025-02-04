@@ -24,3 +24,5 @@ spec:
         {{- range .Values.arguments }}
         - {{ . }}
         {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}

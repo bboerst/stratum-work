@@ -20,3 +20,7 @@ arguments:
   - "password"
   - --log-level
   - "INFO"
+
+resources:
+  requests:
+    memory: 40Mi

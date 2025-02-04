@@ -140,5 +140,21 @@ services:
       - rabbitmq
       - mongodb
 
+  backend:
+    build: ./backend
+    environment:
+      BITCOIN_RPC_USER: "your_rpc_user"
+      BITCOIN_RPC_PASSWORD: "your_rpc_password"
+      BITCOIN_RPC_HOST: "host.docker.internal"
+      BITCOIN_RPC_PORT: "8332"
+      BITCOIN_ZMQ_BLOCK: "tcp://host.docker.internal:28332"
+      MONGODB_URL: "mongodb://mongodb:27017"
+      MONGODB_DB: "stratum-logger"
+      MONGODB_USERNAME: "mongouser"
+      MONGODB_PASSWORD: "mongopassword"
+      MIN_BLOCK_HEIGHT: "882260"
+    depends_on:
+      - mongodb
+
 volumes:
   mongo-data:

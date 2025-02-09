@@ -9,6 +9,12 @@ releases:
           # tag: 
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
+        service:
+          enabled: {{ .service.enabled }}
+          port:
+            stratum: {{ .service.port.stratum }}
+          type: {{ .service.type }}
+          loadBalancerIP: {{ .service.loadBalancerIP }}
         arguments:
           - --pool-name
           - {{ .poolName }}

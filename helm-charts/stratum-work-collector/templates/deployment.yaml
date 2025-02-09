@@ -2,16 +2,18 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
+  labels:
+    app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
 spec:
-  serviceName: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}-service
+  serviceName: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
   replicas: 1
   selector:
     matchLabels:
-      app: {{ .Chart.Name }}
+      app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
   template:
     metadata:
       labels:
-        app: {{ .Chart.Name }}
+        app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
     spec:
       containers:
       - name: {{ .Chart.Name }}
@@ -23,6 +25,12 @@ spec:
         args:
         {{- range .Values.arguments }}
         - {{ . }}
+        {{- end }}
+        {{- if .Values.service.enabled }}
+        ports:
+          - name: "stratum"
+            containerPort: {{ .Values.service.ports.stratum }}
+            protocol: TCP
         {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}

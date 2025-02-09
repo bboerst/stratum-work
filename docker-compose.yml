@@ -24,6 +24,8 @@ services:
   # Template for collector services
   collector-base: &collector-base
     build: ./collector
+    ports:
+      - "3333:3333"
     depends_on:
       - rabbitmq
       - mongodb

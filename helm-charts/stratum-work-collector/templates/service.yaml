@@ -1,0 +1,43 @@
+
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
+  labels:
+    app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
+spec:
+{{- if not .Values.service.omitClusterIP }}
+  {{- with .Values.service.clusterIP }}
+  clusterIP: {{ if eq "-" . }}""{{ else }}{{ . | quote }}{{ end }}
+  {{- end }}
+{{- end }}
+{{- if .Values.service.externalIPs }}
+  externalIPs:
+{{ toYaml .Values.service.externalIPs | indent 4 }}
+{{- end }}
+{{- if .Values.service.loadBalancerIP }}
+  loadBalancerIP: "{{ .Values.service.loadBalancerIP }}"
+{{- end }}
+{{- if .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+{{ toYaml .Values.service.loadBalancerSourceRanges | indent 4 }}
+{{- end }}
+{{- if and (semverCompare ">=1.7-0" .Capabilities.KubeVersion.GitVersion) (.Values.service.externalTrafficPolicy) }}
+  externalTrafficPolicy: "{{ .Values.service.externalTrafficPolicy }}"
+{{- end }}
+{{- if .Values.service.sessionAffinity }}
+  sessionAffinity: "{{ .Values.service.sessionAffinity }}"
+{{- end }}
+{{- if and (semverCompare ">=1.7-0" .Capabilities.KubeVersion.GitVersion) (.Values.service.healthCheckNodePort) }}
+  healthCheckNodePort: {{ .Values.service.healthCheckNodePort }}
+{{- end }}
+  ports:
+    - name: "stratum"
+      port: {{ .Values.service.ports.stratum }}
+      protocol: TCP
+      targetPort: "stratum"
+  selector:
+    app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
+  type: "{{ .Values.service.type }}"
+{{- end }}

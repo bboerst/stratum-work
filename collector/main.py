@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import datetime
 from urllib.parse import urlparse
+import select
 
 import pika
 from pymongo import MongoClient
@@ -16,7 +17,7 @@ import socks
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
@@ -42,6 +43,8 @@ class Watcher:
         self.channel = None
         self.max_retries = 5
         self.retry_delay = 5
+        self.enable_stratum_client = enable_stratum_client
+        self.stratum_client_port = stratum_client_port
 
     def parse_url(self, url):
         purl = urlparse(url)
@@ -174,14 +177,14 @@ class Watcher:
                 self.sock.connect((self.purl.hostname, self.purl.port))
                 LOG.info(f"Successfully connected to server {self.purl.geturl()}")
 
-                LOG.info("Sending mining.subscribe request")
-                self.send_jsonrpc("mining.subscribe", [])
-                LOG.info("Successfully subscribed to pool notifications")
+                if not self.enable_stratum_client:
+                    LOG.info("Sending mining.subscribe request")
+                    self.send_jsonrpc("mining.subscribe", [])
+                    LOG.info("Successfully subscribed to pool notifications")
 
-                LOG.info("Sending mining.authorize request")
-                self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-                LOG.info("Successfully authorized with the pool")
-
+                    LOG.info("Sending mining.authorize request")
+                    self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
+                    LOG.info("Successfully authorized with the pool")
                 return
             except Exception as e:
                 LOG.error(f"Failed to connect to stratum server (attempt {attempt + 1}/{self.max_retries}): {e}")
@@ -221,7 +224,73 @@ class Watcher:
                 self.close()
                 time.sleep(self.retry_delay)
                 self.connect_to_stratum()
-                
+
+    def run_proxy(self, client_socket):
+        """
+        Runs the proxy mode: relays messages between the attached mining device (client_socket)
+        and the pool connection (self.sock). Also processes mining.notify messages as usual.
+        """
+        pool_buf = b""
+        client_buf = b""
+        LOG.info("Starting proxy between mining device and pool")
+        while True:
+            try:
+                rlist, _, _ = select.select([self.sock, client_socket], [], [])
+            except Exception as e:
+                LOG.error(f"Select error: {e}")
+                break
+            if self.sock in rlist:
+                try:
+                    data = self.sock.recv(4096)
+                except Exception as e:
+                    LOG.error(f"Error receiving from pool: {e}")
+                    break
+                if not data:
+                    LOG.error("Pool closed connection")
+                    break
+                pool_buf += data
+                while b"\n" in pool_buf:
+                    line, pool_buf = pool_buf.split(b"\n", 1)
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except Exception as e:
+                        msg = None
+                    if msg and msg.get("method") == "mining.notify":
+                        LOG.info("Received mining.notify message from pool (via proxy)")
+                        event_time = hex(time.time_ns())[2:]
+                        document = create_notification_document(msg, self.pool_name, self.extranonce1, self.extranonce2_length, event_time)
+                        insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                        self.publish_to_rabbitmq(document)
+                    if msg and "result" in msg and isinstance(msg["result"], list) and len(msg["result"]) >= 2:
+                        self.extranonce1 = msg["result"][-2]
+                        self.extranonce2_length = msg["result"][-1]
+                    try:
+                        client_socket.sendall(line + b"\n")
+                    except Exception as e:
+                        LOG.error(f"Error sending to client: {e}")
+                        break
+            if client_socket in rlist:
+                try:
+                    data = client_socket.recv(4096)
+                except Exception as e:
+                    LOG.error(f"Error receiving from client: {e}")
+                    break
+                if not data:
+                    LOG.info("Client closed connection")
+                    break
+                client_buf += data
+                while b"\n" in client_buf:
+                    line, client_buf = client_buf.split(b"\n", 1)
+                    if not line:
+                        continue
+                    try:
+                        self.sock.sendall(line + b"\n")
+                    except Exception as e:
+                        LOG.error(f"Error sending to pool: {e}")
+                        break
+
 def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp):
     notification_id = str(uuid.uuid4())
     coinbase1 = data["params"][2]
@@ -314,6 +383,12 @@ def main():
     parser.add_argument(
         "--proxy-port", type=int, default=9050, help="Proxy port (default: 9050)"
     )
+    parser.add_argument(
+        "--enable-stratum-client", action="store_true", help="Enable acting as a Stratum client proxy for a mining device"
+    )
+    parser.add_argument(
+        "--stratum-client-port", type=int, default=3333, help="Port to listen for Stratum client connections (default: 3333)"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -322,17 +397,60 @@ def main():
         level=getattr(logging, args.log_level),
     )
 
-    while True:
-        w = Watcher(args.url, args.userpass, args.pool_name, args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange, args.db_url, args.db_name, args.db_username, args.db_password, args.use_proxy, args.proxy_host, args.proxy_port)
-        try:
-            w.connect_to_rabbitmq()
-            w.get_stratum_work(keep_alive=args.keep_alive)
-        except KeyboardInterrupt:
-            break
-        finally:
-            w.close()
-            if w.connection:
-                w.connection.close()
+    if args.enable_stratum_client:
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind(('', args.stratum_client_port))
+        server_socket.listen(1)
+        LOG.info(f"Listening for Stratum client connections on port {args.stratum_client_port}")
+        while True:
+            try:
+                client_conn, client_addr = server_socket.accept()
+                LOG.info(f"Accepted connection from {client_addr}")
+                w = Watcher(
+                    args.url, args.userpass, args.pool_name,
+                    args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange,
+                    args.db_url, args.db_name, args.db_username, args.db_password,
+                    args.use_proxy, args.proxy_host, args.proxy_port,
+                    enable_stratum_client=True, stratum_client_port=args.stratum_client_port
+                )
+                w.connect_to_rabbitmq()
+                w.connect_to_stratum()
+                w.run_proxy(client_conn)
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                LOG.error(f"Error in proxy mode: {e}")
+            finally:
+                try:
+                    w.close()
+                    if w.connection:
+                        w.connection.close()
+                except Exception:
+                    pass
+                try:
+                    client_conn.close()
+                except Exception:
+                    pass
+        server_socket.close()
+    else:
+        while True:
+            w = Watcher(
+                args.url, args.userpass, args.pool_name,
+                args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange,
+                args.db_url, args.db_name, args.db_username, args.db_password,
+                args.use_proxy, args.proxy_host, args.proxy_port,
+                enable_stratum_client=False
+            )
+            try:
+                w.connect_to_rabbitmq()
+                w.get_stratum_work(keep_alive=args.keep_alive)
+            except KeyboardInterrupt:
+                break
+            finally:
+                w.close()
+                if w.connection:
+                    w.connection.close()
 
 if __name__ == "__main__":
     main()

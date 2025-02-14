@@ -24,8 +24,6 @@ services:
   # Template for collector services
   collector-base: &collector-base
     build: ./collector
-    ports:
-      - "3333:3333"
     depends_on:
       - rabbitmq
       - mongodb
@@ -42,6 +40,9 @@ services:
 
   collector-antpool:
     <<: *collector-base
+    # Expose unique port for each collector if --enable-stratum-client
+    # ports:
+    #   - "3333:3333"
     command: >
       /usr/local/bin/python main.py
       --pool-name "Antpool"
@@ -58,6 +59,9 @@ services:
 
   collector-f2pool:
     <<: *collector-base
+    # Expose unique port for each collector if --enable-stratum-client
+    # ports:
+    #   - "3333:3333"
     command: >
       /usr/local/bin/python main.py
       --pool-name "F2Pool"
@@ -74,6 +78,9 @@ services:
 
   collector-poolin:
     <<: *collector-base
+    # Expose unique port for each collector if --enable-stratum-client
+    # ports:
+    #   - "3333:3333"
     command: >
       /usr/local/bin/python main.py
       --pool-name "Poolin"
@@ -90,6 +97,9 @@ services:
 
   collector-secpool:
     <<: *collector-base
+    # Expose unique port for each collector if --enable-stratum-client
+    # ports:
+    #   - "3333:3333"
     command: >
       /usr/local/bin/python main.py
       --pool-name "SecPool"

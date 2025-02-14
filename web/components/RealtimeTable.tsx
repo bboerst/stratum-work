@@ -1108,7 +1108,7 @@ export default function RealtimeTable() {
 
         <TableBody>
           {sortedRows.map((row, idx) => (
-            <TableRow key={idx} className="hover:bg-gray-200">
+            <TableRow key={idx} className="hover:bg-gray-200 dark:hover:bg-gray-800">
               {columnsVisible.pool_name && (
                 <TableCell
                   style={{ width: columnWidths.pool_name }}

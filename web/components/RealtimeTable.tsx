@@ -597,19 +597,7 @@ export default function RealtimeTable() {
     if (sortConfig.key !== key) return null;
     const arrow = sortConfig.direction === "asc" ? "↑" : "↓";
     return (
-      <span style={{
-        display: "inline-block",
-        width: "20px",
-        height: "20px",
-        backgroundColor: "black",
-        color: "white",
-        fontSize: "18px",
-        fontWeight: "bold",
-        textAlign: "center",
-        lineHeight: "16px",
-        marginLeft: "4px",
-        borderRadius: "20%"
-      }}>
+      <span className="sort-arrow inline-block w-5 h-5 bg-black text-white text-lg font-bold text-center leading-4 ml-1 rounded">
         {arrow}
       </span>
     );
@@ -642,7 +630,7 @@ export default function RealtimeTable() {
       {/* Top Bar: Pause/Resume, GitHub link, Settings button */}
       <div className="flex justify-end items-center mb-2 space-x-4">
         <button
-          className="bg-white text-gray-700 border border-gray-300 rounded px-2 py-1 hover:bg-gray-100"
+          className="pause-button bg-white text-gray-700 border border-gray-300 rounded px-2 py-1 hover:bg-gray-100"
           onClick={() => setPaused((prev) => !prev)}
           title={paused ? "Resume" : "Pause"}
         >

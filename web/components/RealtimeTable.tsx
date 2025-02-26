@@ -306,7 +306,7 @@ export default function RealtimeTable() {
     direction: SortDirection;
   }
   const [sortConfig, setSortConfig] = useState<SortConfig>({
-    key: "timestamp",
+    key: "coinbaseOutputValue",
     direction: "desc",
   });
 

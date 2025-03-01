@@ -16,7 +16,6 @@ import { MiningData } from "@/lib/types";
 /* -----------------------------------
    Type Definitions
 ----------------------------------- */
-// MiningData interface is now imported from @/lib/types
 
 // Internal "enhanced" row with derived fields
 interface SortedRow extends MiningData {
@@ -275,17 +274,14 @@ interface ColumnWidths {
 interface RealtimeTableProps {
   paused?: boolean;
   showSettings?: boolean;
+  onShowSettingsChange?: (showSettings: boolean) => void;
 }
 
-export default function RealtimeTable({ paused: externalPaused, showSettings: externalShowSettings }: RealtimeTableProps = {}) {
-  // Use internal state if external state is not provided
-  const [internalPaused] = useState(false);
-  const [internalShowSettings, setInternalShowSettings] = useState(false);
-  
-  // Use external state if provided, otherwise use internal state
-  const paused = externalPaused !== undefined ? externalPaused : internalPaused;
-  const showSettings = externalShowSettings !== undefined ? externalShowSettings : internalShowSettings;
-  
+export default function RealtimeTable({ 
+  paused = false, 
+  showSettings = false,
+  onShowSettingsChange
+}: RealtimeTableProps) {
   // SSE rows
   const [rows, setRows] = useState<MiningData[]>([]);
 
@@ -604,10 +600,8 @@ export default function RealtimeTable({ paused: externalPaused, showSettings: ex
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
-        // Use the appropriate setShowSettings based on whether external state is provided
-        if (externalShowSettings === undefined) {
-          setInternalShowSettings(false);
-        }
+        // Notify parent component of settings change
+        onShowSettingsChange?.(false);
       }
     };
     if (showSettings) {
@@ -618,7 +612,7 @@ export default function RealtimeTable({ paused: externalPaused, showSettings: ex
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showSettings, externalShowSettings]);
+  }, [showSettings, onShowSettingsChange]);
 
   return (
     <div className="p-4 font-mono w-full overflow-x-auto relative">

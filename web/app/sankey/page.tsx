@@ -9,7 +9,7 @@ import { useGlobalDataStream } from "@/lib/DataStreamContext";
  */
 
 export default function SankeyPage() {
-  const { data: miningData } = useGlobalDataStream();
+  const { data: stratumV1Data } = useGlobalDataStream();
 
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
@@ -25,7 +25,7 @@ export default function SankeyPage() {
           
           <textarea
             className="w-full h-[500px] font-mono text-sm p-4 border border-gray-300 rounded-lg"
-            value={miningData.map(data => JSON.stringify(data, null, 2)).join('\n\n')}
+            value={stratumV1Data.map(data => JSON.stringify(data, null, 2)).join('\n\n')}
             readOnly
           />
         </div>

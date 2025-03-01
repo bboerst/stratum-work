@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Transaction, address, networks } from "bitcoinjs-lib";
-import { MiningData } from "@/lib/types";
+import { StratumV1Data } from "@/lib/types";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 
 /* -----------------------------------
@@ -19,7 +19,7 @@ import { useGlobalDataStream } from "@/lib/DataStreamContext";
 ----------------------------------- */
 
 // Internal "enhanced" row with derived fields
-interface SortedRow extends MiningData {
+interface SortedRow extends StratumV1Data {
   coinbaseRaw: string;
   coinbaseScriptASCII: string;
   coinbaseOutputValue: number;
@@ -286,7 +286,7 @@ export default function RealtimeTable({
   const { data } = useGlobalDataStream();
   
   // Only update rows when not paused
-  const [rows, setRows] = useState<MiningData[]>([]);
+  const [rows, setRows] = useState<StratumV1Data[]>([]);
   
   // Update rows when streamData changes and not paused
   useEffect(() => {

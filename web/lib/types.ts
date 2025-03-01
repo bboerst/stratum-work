@@ -3,9 +3,9 @@
  */
 
 /**
- * Represents mining data received from the data stream
+ * Represents Stratum V1 data received from the data stream
  */
-export interface MiningData {
+export interface StratumV1Data {
   pool_name: string;
   timestamp: string;
   height: number;

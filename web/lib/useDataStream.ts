@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MiningData } from "./types";
+import { StratumV1Data } from "./types";
 
 interface UseDataStreamOptions {
   endpoint?: string;
@@ -10,7 +10,7 @@ interface UseDataStreamOptions {
 }
 
 interface UseDataStreamResult {
-  data: MiningData[];
+  data: StratumV1Data[];
   isConnected: boolean;
   clearData: () => void;
 }
@@ -28,7 +28,7 @@ export function useDataStream({
   paused = false,
   maxItems = 50
 }: UseDataStreamOptions = {}): UseDataStreamResult {
-  const [data, setData] = useState<MiningData[]>([]);
+  const [data, setData] = useState<StratumV1Data[]>([]);
   const [isConnected, setIsConnected] = useState(false);
 
   // Function to clear all data
@@ -53,7 +53,7 @@ export function useDataStream({
         if (paused) return;
         
         try {
-          const newData: MiningData = JSON.parse(event.data);
+          const newData: StratumV1Data = JSON.parse(event.data);
           
           // Add the new data to our state
           setData((prev) => {

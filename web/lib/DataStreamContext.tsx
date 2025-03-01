@@ -2,10 +2,10 @@
 
 import React, { createContext, useContext, ReactNode, useState } from "react";
 import { useDataStream } from "./useDataStream";
-import { MiningData } from "./types";
+import { StratumV1Data } from "./types";
 
 interface DataStreamContextType {
-  data: MiningData[];
+  data: StratumV1Data[];
   isConnected: boolean;
   clearData: () => void;
   setPaused: (paused: boolean) => void;

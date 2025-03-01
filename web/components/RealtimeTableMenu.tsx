@@ -1,21 +1,35 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
+import { useGlobalDataStream } from "@/lib/DataStreamContext";
 
 interface RealtimeTableMenuProps {
-  paused: boolean;
-  setPaused: (value: boolean | ((prev: boolean) => boolean)) => void;
+  paused?: boolean;
+  setPaused?: (value: boolean | ((prev: boolean) => boolean)) => void;
   showSettings: boolean;
   setShowSettings: (value: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 export default function RealtimeTableMenu({
-  paused,
-  setPaused,
+  paused: propsPaused,
+  setPaused: propSetPaused,
   showSettings,
   setShowSettings,
 }: RealtimeTableMenuProps) {
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const { paused, setPaused } = useGlobalDataStream();
+
+  // Use props values if provided, otherwise use global values
+  const effectivePaused = propsPaused !== undefined ? propsPaused : paused;
+  
+  // Handle the pause toggle
+  const handlePauseToggle = () => {
+    if (propSetPaused) {
+      propSetPaused(!effectivePaused);
+    } else {
+      setPaused(!effectivePaused);
+    }
+  };
 
   // Add click-outside handler
   useEffect(() => {
@@ -48,10 +62,10 @@ export default function RealtimeTableMenu({
       {/* Pause/Resume button */}
       <button
         className="pause-button px-2 py-1 transition-colors duration-200"
-        onClick={() => setPaused((prev) => !prev)}
-        title={paused ? "Resume" : "Pause"}
+        onClick={handlePauseToggle}
+        title={effectivePaused ? "Resume" : "Pause"}
       >
-        {paused ? (
+        {effectivePaused ? (
           <>
             <svg
               className="inline-block w-5 h-5 mr-1 align-text-bottom"

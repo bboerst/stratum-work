@@ -2,12 +2,16 @@
 
 import React from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
+import { ConnectionIndicator } from "./ConnectionIndicator";
 
 export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
   
   return (
     <div className="flex justify-end items-center space-x-4 z-50">
+      {/* Connection indicator - always present but only visible when disconnected */}
+      <ConnectionIndicator />
+      
       {/* Page-specific menu items */}
       {menuContent && (
         <>

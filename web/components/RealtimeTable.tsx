@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Transaction, address, networks } from "bitcoinjs-lib";
 import { MiningData } from "@/lib/types";
+import { useGlobalDataStream } from "@/lib/DataStreamContext";
 
 /* -----------------------------------
    Type Definitions
@@ -282,8 +283,41 @@ export default function RealtimeTable({
   showSettings = false,
   onShowSettingsChange
 }: RealtimeTableProps) {
-  // SSE rows
+  const { data } = useGlobalDataStream();
+  
+  // Only update rows when not paused
   const [rows, setRows] = useState<MiningData[]>([]);
+  
+  // Update rows when streamData changes and not paused
+  useEffect(() => {
+    if (paused) return;
+    
+    // Process each new data item to update caches
+    data.forEach(data => {
+      // Reconstruct the coinbaseRaw so we know its unique string
+      const newCoinbaseRaw = formatCoinbaseRaw(
+        data.coinbase1,
+        data.extranonce1,
+        data.extranonce2_length,
+        data.coinbase2
+      );
+  
+      // Check if this pool had a coinbaseRaw stored:
+      const oldCoinbaseRaw = poolCoinbaseMap.get(data.pool_name);
+      if (oldCoinbaseRaw && oldCoinbaseRaw !== newCoinbaseRaw) {
+        // Remove the old coinbase from both caches
+        coinbaseOutputsCache.delete(oldCoinbaseRaw);
+        coinbaseScriptAsciiCache.delete(oldCoinbaseRaw);
+        coinbaseOutputValueCache.delete(oldCoinbaseRaw);
+      }
+  
+      // Store the new coinbaseRaw for this pool
+      poolCoinbaseMap.set(data.pool_name, newCoinbaseRaw);
+    });
+
+    // Update rows state with the latest data
+    setRows(data);
+  }, [data, paused]);
 
   // Cached fee rates: txid -> (fee rate or "not found"/"error")
   const [feeRateMap, setFeeRateMap] = useState<{ [txid: string]: number | string }>({});
@@ -423,85 +457,6 @@ export default function RealtimeTable({
     { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
   ];
-
-  // SSE subscription
-  useEffect(() => {
-    let evtSource: EventSource | null = null;
-    let reconnectFrequencySeconds = 1;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
-
-    const setupEventSource = () => {
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
-      }
-
-      // Connect to your SSE endpoint
-      evtSource = new EventSource("/api/stream");
-
-      evtSource.onmessage = (event) => {
-        if (paused) return;
-        try {
-          const data: MiningData = JSON.parse(event.data);
-      
-          // Reconstruct the coinbaseRaw so we know its unique string
-          const newCoinbaseRaw = formatCoinbaseRaw(
-            data.coinbase1,
-            data.extranonce1,
-            data.extranonce2_length,
-            data.coinbase2
-          );
-      
-          // Check if this pool had a coinbaseRaw stored:
-          const oldCoinbaseRaw = poolCoinbaseMap.get(data.pool_name);
-          if (oldCoinbaseRaw && oldCoinbaseRaw !== newCoinbaseRaw) {
-            // Remove the old coinbase from both caches
-            coinbaseOutputsCache.delete(oldCoinbaseRaw);
-            coinbaseScriptAsciiCache.delete(oldCoinbaseRaw);
-            coinbaseOutputValueCache.delete(oldCoinbaseRaw);
-          }
-      
-          // Store the new coinbaseRaw for this pool
-          poolCoinbaseMap.set(data.pool_name, newCoinbaseRaw);
-      
-          // Adding/updating `rows` in state
-          setRows((prev) => {
-            // Remove any existing row for that pool_name, etc.)
-            const withoutPool = prev.filter((r) => r.pool_name !== data.pool_name);
-            const newRows = [...withoutPool, data];
-            // Limit how many rows we keep (for example, keep the 50 most recent)
-            return newRows.slice(-50);
-          });
-        } catch {
-          console.error("Error parsing SSE data");
-        }
-      };
-
-      evtSource.onopen = () => {
-        console.log("SSE connected");
-        reconnectFrequencySeconds = 1;
-      };
-
-      evtSource.onerror = () => {
-        console.log("SSE error, reconnecting...");
-        evtSource?.close();
-        reconnectTimeout = setTimeout(() => {
-          setupEventSource();
-          reconnectFrequencySeconds = Math.min(reconnectFrequencySeconds * 1.75, 18);
-        }, reconnectFrequencySeconds * 1000);
-      };
-    };
-
-    setupEventSource();
-
-    // Cleanup
-    return () => {
-      evtSource?.close();
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-    };
-  }, [paused]);
 
   // Compute derived fields
   const computedRows: SortedRow[] = useMemo(() => {

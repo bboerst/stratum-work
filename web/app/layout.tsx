@@ -5,6 +5,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import Navigation from "@/components/Navigation";
 import { GlobalMenu } from "@/components/GlobalMenu";
 import { GlobalMenuProvider } from "@/components/GlobalMenuContext";
+import { DataStreamProvider } from "@/lib/DataStreamContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,15 +28,17 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" storageKey="theme-default-dark">
-          <GlobalMenuProvider>
-            {/* Navigation will be present on all pages */}
-            <Navigation>
-              <GlobalMenu />
-            </Navigation>
-            <div>
-              {children}
-            </div>
-          </GlobalMenuProvider>
+          <DataStreamProvider>
+            <GlobalMenuProvider>
+              {/* Navigation will be present on all pages */}
+              <Navigation>
+                <GlobalMenu />
+              </Navigation>
+              <div>
+                {children}
+              </div>
+            </GlobalMenuProvider>
+          </DataStreamProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -296,15 +296,13 @@ interface RealtimeTableProps {
 
 export default function RealtimeTable({ paused: externalPaused, showSettings: externalShowSettings }: RealtimeTableProps = {}) {
   // Use internal state if external state is not provided
-  const [internalPaused, setInternalPaused] = useState(false);
+  const [internalPaused] = useState(false);
   const [internalShowSettings, setInternalShowSettings] = useState(false);
   
   // Use external state if provided, otherwise use internal state
   const paused = externalPaused !== undefined ? externalPaused : internalPaused;
-  const setPaused = externalPaused !== undefined ? () => {} : setInternalPaused;
   const showSettings = externalShowSettings !== undefined ? externalShowSettings : internalShowSettings;
-  const setShowSettings = externalShowSettings !== undefined ? () => {} : setInternalShowSettings;
-
+  
   // SSE rows
   const [rows, setRows] = useState<MiningData[]>([]);
 
@@ -623,7 +621,10 @@ export default function RealtimeTable({ paused: externalPaused, showSettings: ex
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
-        setShowSettings(false);
+        // Use the appropriate setShowSettings based on whether external state is provided
+        if (externalShowSettings === undefined) {
+          setInternalShowSettings(false);
+        }
       }
     };
     if (showSettings) {
@@ -634,7 +635,7 @@ export default function RealtimeTable({ paused: externalPaused, showSettings: ex
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showSettings]);
+  }, [showSettings, externalShowSettings]);
 
   return (
     <div className="p-4 font-mono w-full overflow-x-auto relative">

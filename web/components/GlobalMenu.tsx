@@ -2,12 +2,10 @@
 
 import React from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
-import { useTheme } from "next-themes";
 
-export default function GlobalMenu() {
+export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
-  const { theme } = useTheme();
-
+  
   return (
     <div className="flex justify-end items-center space-x-4 z-50">
       {/* Page-specific menu items */}

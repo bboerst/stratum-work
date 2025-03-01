@@ -1,33 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { MiningData } from "@/lib/types";
 
 /**
  * This is a placeholder for the Sankey diagram visualization.
  * Currently, it just displays raw messages from the data stream.
  * Feel free to change anything on this page, I'm just using it as a placeholder for the real Sankey diagram.
  */
-
-// Import the MiningData interface
-interface MiningData {
-  pool_name: string;
-  timestamp: string;
-  height: number;
-  prev_hash: string;
-  version: string;
-  coinbase1: string;
-  coinbase2: string;
-  clean_jobs: boolean | string;
-  first_transaction: string;
-  fee_rate: number | string;
-  merkle_branches: string[];
-  merkle_branch_colors?: string[];
-  extranonce1: string;
-  extranonce2_length: number;
-  coinbase_outputs?: { address: string; value: number }[];
-  nbits?: string;
-  ntime?: string;
-}
 
 export default function SankeyPage() {
   const [miningData, setMiningData] = useState<MiningData[]>([]);

@@ -24,3 +24,45 @@ export interface StratumV1Data {
   nbits?: string;
   ntime?: string;
 } 
+
+/**
+ * Represents Bitcoin block data
+ */
+export interface BlockData {
+  hash: string;
+  height: number;
+  timestamp: string;
+  size: number;
+  weight: number;
+  version: number;
+  merkle_root: string;
+  nonce: number;
+  bits: string;
+  difficulty: number;
+  transaction_count: number;
+  prev_block_hash: string;
+}
+
+/**
+ * Enum of supported data stream types
+ */
+export enum StreamDataType {
+  STRATUM_V1 = 'stratum_v1',
+  BLOCK = 'block'
+}
+
+/**
+ * Base interface for all stream data with common fields
+ */
+export interface BaseStreamData {
+  type: StreamDataType;
+  id: string;
+  timestamp: string;
+}
+
+/**
+ * Union type for all possible stream data types
+ */
+export type StreamData = 
+  | (BaseStreamData & { type: StreamDataType.STRATUM_V1, data: StratumV1Data })
+  | (BaseStreamData & { type: StreamDataType.BLOCK, data: BlockData }); 

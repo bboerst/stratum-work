@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Transaction, address, networks } from "bitcoinjs-lib";
-import { StratumV1Data } from "@/lib/types";
+import { StratumV1Data, StreamDataType } from "@/lib/types";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 
 /* -----------------------------------
@@ -283,17 +283,24 @@ export default function RealtimeTable({
   showSettings = false,
   onShowSettingsChange
 }: RealtimeTableProps) {
-  const { data } = useGlobalDataStream();
+  // Get data from the global data stream
+  const { filterByType } = useGlobalDataStream();
   
-  // Only update rows when not paused
+  // Filter for only Stratum V1 data
+  const stratumV1Data = useMemo(() => {
+    const filtered = filterByType(StreamDataType.STRATUM_V1);
+    return filtered.map(item => item.data as StratumV1Data);
+  }, [filterByType]);
+  
+  // State for the table rows
   const [rows, setRows] = useState<StratumV1Data[]>([]);
   
-  // Update rows when streamData changes and not paused
+  // Update rows when data changes
   useEffect(() => {
     if (paused) return;
     
     // Process each new data item to update caches
-    data.forEach(data => {
+    stratumV1Data.forEach(data => {
       // Reconstruct the coinbaseRaw so we know its unique string
       const newCoinbaseRaw = formatCoinbaseRaw(
         data.coinbase1,
@@ -316,8 +323,8 @@ export default function RealtimeTable({
     });
 
     // Update rows state with the latest data
-    setRows(data);
-  }, [data, paused]);
+    setRows(stratumV1Data);
+  }, [stratumV1Data, paused]);
 
   // Cached fee rates: txid -> (fee rate or "not found"/"error")
   const [feeRateMap, setFeeRateMap] = useState<{ [txid: string]: number | string }>({});

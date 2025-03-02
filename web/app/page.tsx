@@ -1,11 +1,8 @@
 "use client";
 
-import RealtimeTable from "../components/RealtimeTable";
+import TablePage from "./table/page";
 
 export default function HomePage() {
-  return (
-    <main className="min-h-screen bg-transparent">
-      <RealtimeTable />
-    </main>
-  );
+  // Render the TablePage component directly
+  return <TablePage />;
 }

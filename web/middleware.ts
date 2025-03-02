@@ -9,6 +9,7 @@ const corsHeaders = {
 }
 
 export function middleware(request: NextRequest) {
+  // Handle CORS
   if (request.method === "OPTIONS") {
     return NextResponse.json({}, { headers: corsHeaders })
   }
@@ -18,4 +19,12 @@ export function middleware(request: NextRequest) {
   })
 
   return response
+}
+
+// Configure which paths the middleware runs on
+export const config = {
+  matcher: [
+    // Apply to all paths except static assets and API routes
+    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+  ],
 }

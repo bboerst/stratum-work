@@ -98,10 +98,11 @@ export function useDataStream({
             let filteredData = [...prev];
             
             if (newData.type === StreamDataType.STRATUM_V1) {
-              // For Stratum data, we replace existing entries with the same pool_name
+              // For Stratum data, we replace existing entries with the same pool_name and height
               filteredData = prev.filter(item => 
                 !(item.type === StreamDataType.STRATUM_V1 && 
-                  item.data.pool_name === newData.data.pool_name)
+                  item.data.pool_name === newData.data.pool_name &&
+                  item.data.height === newData.data.height)
               );
             } else if (newData.type === StreamDataType.BLOCK) {
               // For Block data, we replace existing entries with the same hash

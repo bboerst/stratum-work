@@ -24,7 +24,7 @@ export function middleware(request: NextRequest) {
 // Configure which paths the middleware runs on
 export const config = {
   matcher: [
-    // Apply to all paths except static assets and API routes
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    // Only apply to API routes
+    '/api/:path*',
   ],
 }

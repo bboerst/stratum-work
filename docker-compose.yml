@@ -139,6 +139,39 @@ services:
     depends_on:
       - rabbitmq
       - mongodb
+      - backend
+
+  backend:
+    build: ./backend
+    # command: >
+    #   python main.py
+    #   --reindex-blocks
+    # Comment out the host network mode to use the default bridge network
+    # network_mode: host
+    environment:
+      BITCOIN_RPC_USER: "your_rpc_user"
+      BITCOIN_RPC_PASSWORD: "your_rpc_password"
+      BITCOIN_RPC_HOST: "host.docker.internal"
+      BITCOIN_RPC_PORT: "8332"
+      BITCOIN_ZMQ_BLOCK: "tcp://host.docker.internal:28332"
+      MONGODB_URL: "mongodb://mongodb:27017"
+      MONGODB_DB: "stratum-logger"
+      MONGODB_USERNAME: "mongouser"
+      MONGODB_PASSWORD: "mongopassword"
+      MIN_BLOCK_HEIGHT: "863998"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: "mquser"
+      RABBITMQ_PASSWORD: "mqpassword"
+      RABBITMQ_EXCHANGE: blocks
+      PORT: ${BACKEND_PORT:-8001}
+    ports:
+      - "${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
+    expose:
+      - "${BACKEND_PORT:-8001}"
+    depends_on:
+      - mongodb
+      - rabbitmq
 
 volumes:
   mongo-data:

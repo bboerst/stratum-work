@@ -1,0 +1,64 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Block model represents a Bitcoin block
+model Block {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  height      Int      @unique
+  block_hash  String   @unique
+  timestamp   Int
+  coinbase_script_sig String
+  pool        Json?    // Pool information
+  transactions Int?
+  size        Int?
+  weight      Int?
+  version     Int?
+  merkle_root String?
+  bits        String?
+  nonce       Int?
+  difficulty  Float?
+  
+  @@map("blocks")
+}
+
+// Pool model represents mining pool information
+model Pool {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  tag         String?
+  addresses   String[]
+  
+  @@map("pools")
+}
+
+// MiningNotify model represents stratum mining notifications
+model MiningNotify {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  height            Int
+  pool_name         String?
+  coinbase1         String
+  coinbase2         String
+  merkle_branches   String[]
+  version           String
+  prev_hash         String
+  timestamp         String
+  nbits             String
+  ntime             String
+  clean_jobs        Boolean
+  extranonce1       String
+  extranonce2_length Int
+  
+  @@map("mining_notify")
+}

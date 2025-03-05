@@ -1,143 +1,223 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { sankey, sankeyLinkHorizontal } from "d3-sankey";
-
-/**
- * SankeyDiagram Component
- * 
- * This component provides a Sankey diagram visualization using d3-sankey.
- * It displays a simple example of data flow between nodes.
- */
+import { sankey, sankeyLinkHorizontal, SankeyNode as D3SankeyNode, SankeyLink as D3SankeyLink } from "d3-sankey";
+import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
+import { eventSourceService } from "@/lib/eventSourceService";
+import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { StreamDataType } from "@/lib/types";
 
 interface SankeyDiagramProps {
   width: number;
   height: number;
+  useSampleData: boolean;
+  eventSourceUrl: string;
+  data?: any[]; 
 }
 
-// Define the node and link types for the Sankey diagram
-interface SankeyNode extends d3.SankeyNodeMinimal<SankeyNode, SankeyLink> {
-  name: string;
-}
-
-interface SankeyLink extends d3.SankeyLinkMinimal<SankeyNode, SankeyLink> {
-  value: number;
-}
-
-export function SankeyDiagram({
-  width,
-  height
+export function SankeyDiagram({ 
+  width, 
+  height,
+  useSampleData,
+  eventSourceUrl,
+  data = [] 
 }: SankeyDiagramProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-
-  // Sample data for the Sankey diagram
-  const data = {
-    nodes: [
-      { name: "Miner 1" },
-      { name: "Miner 2" },
-      { name: "Miner 3" },
-      { name: "Pool 1" },
-      { name: "Pool 2" },
-      { name: "Network" }
-    ],
-    links: [
-      { source: 0, target: 3, value: 20 },
-      { source: 1, target: 3, value: 15 },
-      { source: 1, target: 4, value: 5 },
-      { source: 2, target: 4, value: 25 },
-      { source: 3, target: 5, value: 35 },
-      { source: 4, target: 5, value: 30 }
-    ]
+  const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const { filterByType } = useGlobalDataStream();
+  
+  const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
+  
+  const initializeDiagram = () => {
+    try {
+      sankeyDataProcessor.reset();
+      
+      if (useSampleData) {
+        sankeyDataProcessor.processSampleData();
+        renderDiagram();
+      } else if (stratumV1Data.length > 0) {
+        processRealData();
+      }
+      
+      setError(null);
+    } catch (err) {
+      console.error("Error initializing diagram:", err);
+      setError(`Error initializing diagram: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
-
-  useEffect(() => {
+  
+  const processRealData = () => {
+    try {
+      console.log("Processing real data:", stratumV1Data);
+      
+      stratumV1Data.forEach((event: StratumV1Event) => {
+        sankeyDataProcessor.processStratumV1Event(event);
+      });
+      
+      renderDiagram();
+      
+      setIsConnected(true);
+    } catch (err) {
+      console.error("Error processing real data:", err);
+      setError(`Error processing real data: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  
+  const renderDiagram = () => {
     if (!svgRef.current) return;
-
-    // Clear any existing content
-    d3.select(svgRef.current).selectAll("*").remove();
-
-    // Set up the Sankey generator
-    const sankeyGenerator = sankey<SankeyNode, SankeyLink>()
-      .nodeWidth(15)
-      .nodePadding(10)
-      .extent([[1, 5], [width - 1, height - 5]]);
-
-    // Format the data to match the expected input
-    const sankeyData = {
-      nodes: data.nodes.map(d => Object.assign({}, d)),
-      links: data.links.map(d => Object.assign({}, d))
+    
+    try {
+      const data = sankeyDataProcessor.getSankeyData();
+      
+      d3.select(svgRef.current).selectAll("*").remove();
+      
+      if (data.nodes.length === 0) {
+        d3.select(svgRef.current)
+          .append("text")
+          .attr("x", width / 2)
+          .attr("y", height / 2)
+          .attr("text-anchor", "middle")
+          .text("No data available. Try connecting to a data source.");
+        return;
+      }
+      
+      const sankeyGenerator = sankey<D3SankeyNode, D3SankeyLink>()
+        .nodeWidth(15)
+        .nodePadding(10)
+        .extent([[1, 5], [width - 1, height - 5]]);
+      
+      const sankeyData = {
+        nodes: data.nodes.map((node, i) => ({
+          name: node.name,
+          type: node.type,
+          id: i
+        })),
+        links: data.links.map(link => ({
+          source: typeof link.source === 'string' ? parseInt(link.source) : link.source,
+          target: typeof link.target === 'string' ? parseInt(link.target) : link.target,
+          value: link.value
+        }))
+      };
+      
+      const { nodes, links } = sankeyGenerator(sankeyData);
+      
+      const svg = d3.select(svgRef.current);
+      
+      svg.append("g")
+        .selectAll("path")
+        .data(links)
+        .join("path")
+        .attr("d", sankeyLinkHorizontal())
+        .attr("stroke", "#aaa")
+        .attr("stroke-width", d => Math.max(1, d.width))
+        .attr("fill", "none")
+        .attr("opacity", 0.5);
+      
+      const nodeGroup = svg.append("g")
+        .selectAll("g")
+        .data(nodes)
+        .join("g")
+        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+      
+      nodeGroup.append("rect")
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("fill", d => (d as any).type === 'pool' ? "#1f77b4" : "#ff7f0e")
+        .attr("stroke", "#000");
+      
+      nodeGroup.append("text")
+        .attr("x", d => (d.x1 - d.x0) / 2)
+        .attr("y", d => (d.y1 - d.y0) / 2)
+        .attr("dy", "0.35em")
+        .attr("text-anchor", "middle")
+        .text(d => d.name)
+        .attr("font-size", "10px")
+        .attr("fill", "white");
+      
+      svg.append("text")
+        .attr("x", 10)
+        .attr("y", 20)
+        .attr("font-size", "12px")
+        .attr("fill", isConnected ? "green" : "gray")
+        .text(isConnected ? "Connected to live data" : "Using sample data");
+      
+      svg.append("text")
+        .attr("x", 10)
+        .attr("y", 40)
+        .attr("font-size", "12px")
+        .attr("fill", "#333")
+        .text(`Nodes: ${data.nodes.length}, Links: ${data.links.length}`);
+      
+    } catch (err) {
+      console.error("Error rendering diagram:", err);
+      setError(`Error rendering diagram: ${err instanceof Error ? err.message : String(err)}`);
+      
+      if (svgRef.current) {
+        d3.select(svgRef.current).selectAll("*").remove();
+        d3.select(svgRef.current)
+          .append("text")
+          .attr("x", width / 2)
+          .attr("y", height / 2)
+          .attr("text-anchor", "middle")
+          .attr("fill", "red")
+          .text(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  
+  const handleEvent = (event: any) => {
+    try {
+      console.log("Received event:", event);
+      sankeyDataProcessor.processEvent(event);
+      renderDiagram();
+    } catch (err) {
+      console.error("Error processing event:", err);
+      setError(`Error processing event: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  
+  useEffect(() => {
+    if (!useSampleData && stratumV1Data.length > 0) {
+      sankeyDataProcessor.reset();
+      processRealData();
+    }
+  }, [useSampleData, stratumV1Data]);
+  
+  useEffect(() => {
+    if (!useSampleData) {
+      try {
+        eventSourceService.onEvent(handleEvent);
+        setIsConnected(!useSampleData);
+      } catch (err) {
+        console.error("Error connecting to EventSource:", err);
+        setError(`Error connecting to EventSource: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    
+    return () => {
+      eventSourceService.offEvent(handleEvent);
     };
-
-    // Generate the Sankey layout
-    const { nodes, links } = sankeyGenerator(sankeyData);
-
-    // Create the SVG container
-    const svg = d3.select(svgRef.current);
-
-    // Add links
-    svg.append("g")
-      .attr("fill", "none")
-      .attr("stroke-opacity", 0.5)
-      .selectAll("path")
-      .data(links)
-      .join("path")
-      .attr("d", sankeyLinkHorizontal())
-      .attr("stroke", d => {
-        // Gradient color based on source and target
-        return "#aaa";
-      })
-      .attr("stroke-width", d => Math.max(1, d.width || 0));
-
-    // Add nodes
-    const node = svg.append("g")
-      .selectAll("rect")
-      .data(nodes)
-      .join("rect")
-      .attr("x", d => d.x0 || 0)
-      .attr("y", d => d.y0 || 0)
-      .attr("height", d => (d.y1 || 0) - (d.y0 || 0))
-      .attr("width", d => (d.x1 || 0) - (d.x0 || 0))
-      .attr("fill", "#69b3a2")
-      .attr("stroke", "#000");
-
-    // Add node labels
-    svg.append("g")
-      .selectAll("text")
-      .data(nodes)
-      .join("text")
-      .attr("x", d => (d.x0 || 0) < width / 2 ? (d.x1 || 0) + 6 : (d.x0 || 0) - 6)
-      .attr("y", d => ((d.y1 || 0) + (d.y0 || 0)) / 2)
-      .attr("dy", "0.35em")
-      .attr("text-anchor", d => (d.x0 || 0) < width / 2 ? "start" : "end")
-      .text(d => d.name)
-      .style("font-size", "10px");
-
-    // Add link value labels
-    svg.append("g")
-      .selectAll("text")
-      .data(links)
-      .join("text")
-      .attr("x", d => ((d.source.x1 || 0) + (d.target.x0 || 0)) / 2)
-      .attr("y", d => ((d.source.y1 || 0) + (d.source.y0 || 0)) / 2)
-      .attr("dy", "0.35em")
-      .attr("text-anchor", "middle")
-      .text(d => d.value)
-      .style("font-size", "9px")
-      .style("fill", "#555");
-
-  }, [width, height]);
-
+  }, [useSampleData, eventSourceUrl]);
+  
+  useEffect(() => {
+    initializeDiagram();
+  }, []);
+  
   return (
-    <div 
-      className="w-full h-full border border-gray-200 rounded-md bg-white"
-      style={{ width, height }}
-    >
+    <div className="relative">
+      {error && (
+        <div className="absolute top-0 left-0 right-0 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <strong className="font-bold">Error: </strong>
+          <span className="block sm:inline">{error}</span>
+        </div>
+      )}
       <svg 
         ref={svgRef} 
         width={width} 
         height={height}
-        className="overflow-visible"
+        className="border border-gray-300 rounded-lg bg-white"
       />
     </div>
   );

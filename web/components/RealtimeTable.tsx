@@ -72,7 +72,9 @@ function formatCoinbaseRaw(
   extranonce2_length: number,
   coinbase2: string
 ): string {
-  return coinbase1 + extranonce1 + "00".repeat(extranonce2_length) + coinbase2;
+  // Ensure extranonce2_length is non-negative to prevent String.repeat error
+  const safeLength = Math.max(0, extranonce2_length);
+  return coinbase1 + extranonce1 + "00".repeat(safeLength) + coinbase2;
 }
 
 // Extract ASCII portion of the coinbase script from the first transaction input

@@ -255,22 +255,6 @@ export class SankeyDataProcessor {
     this.nodes = [];
     this.nodeIndex.clear();
   }
-
-  /**
-   * Process sample data for testing
-   */
-  public processSampleData(): void {
-    this.reset();
-    
-    const events: MiningEvent[] = [
-      { poolName: "TrustPool", merkleBranches: ["720dff23f5d3511574d646d0e8bdbb8a7c040bf3ddd2015217373efe408bb750", "1cf5d3bea4dd10db1d91159dfdeb7414686d887f6ce0e97a15aebb3ab5fe0c56"] },
-      { poolName: "SlushPool", merkleBranches: ["45eb2d0eb6e1caaa80f54ab77cd1e91b484b6218ec58ed4406f8f305cb97faf6", "be117003d4b7dca8c900bb88c686e4e447027829f894c1f4a6789b3a14334074"] },
-      { poolName: "F2Pool", merkleBranches: ["30745d83854c779189261b15269d175d2f080bf448cfe8b730c006a7aff509c9", "4b26db3a172d0bda8522c196127832ea58c8b618dec7582abff0fd247c21ef43"] },
-      { poolName: "AntPool", merkleBranches: ["d1ee86066fa6edeefe51309fa0107ce3d27c404dd92af64a0ef6d66b8cd7055e"] }
-    ];
-
-    events.forEach(event => this.processEvent(event));
-  }
 }
 
 // Create a singleton instance

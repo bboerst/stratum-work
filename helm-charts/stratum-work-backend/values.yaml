@@ -1,0 +1,97 @@
+image:
+  repository: bboerst/stratum-work-backend
+  # tag:
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Command line arguments
+args: []
+  # - --update-pools
+  # - --reindex-blocks
+
+# Environment variables
+env:
+  # Bitcoin RPC connection
+  BITCOIN_RPC_USER: "user"
+  BITCOIN_RPC_PASSWORD: "password"
+  BITCOIN_RPC_HOST: "bitcoin-node"
+  BITCOIN_RPC_PORT: "8332"
+  
+  # ZMQ configuration
+  BITCOIN_ZMQ_BLOCK: "tcp://bitcoin-node:28332"
+  MIN_BLOCK_HEIGHT: "882000"
+  
+  # MongoDB connection
+  MONGODB_URL: "mongodb://mongodb:27017"
+  MONGODB_DB: "stratum-logger"
+  MONGODB_USERNAME: "mongouser"
+  MONGODB_PASSWORD: "mongopassword"
+  
+  # RabbitMQ connection
+  RABBITMQ_HOST: "rabbitmq"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USERNAME: "mquser"
+  RABBITMQ_PASSWORD: "mqpassword"
+  RABBITMQ_EXCHANGE: "blocks"
+  
+  # Pool definitions
+  POOL_LIST_URL: "https://raw.githubusercontent.com/mempool/mining-pools/refs/heads/master/pools-v2.json"
+  POOL_UPDATE_INTERVAL: "86400"
+  LOCAL_POOL_FILE: "pool_definitions.json"
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8001
+  
+  ## Deprecated, instead simply do not provide a clusterIP value
+  omitClusterIP: false
+  # clusterIP: ""
+
+  ## List of IP addresses at which the controller services are available
+  ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+  ##
+  externalIPs: []
+
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+
+  ## Set external traffic policy to: "Local" to preserve source IP on
+  ## providers supporting it
+  ## Ref: https://kubernetes.io/docs/tutorials/services/source-ip/#source-ip-for-services-with-typeloadbalancer
+  externalTrafficPolicy: ""
+
+  # Must be either "None" or "ClientIP" if set. Kubernetes will default to "None".
+  # Ref: https://kubernetes.io/docs/concepts/services-networking/service/#virtual-ips-and-service-proxies
+  sessionAffinity: ""
+
+  healthCheckNodePort: 0
+
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+    cpu: 500m
+
+# Pod Security Context
+securityContext: {}
+  # runAsUser: 1000
+  # runAsGroup: 1000
+  # fsGroup: 1000
+
+# Container Security Context
+containerSecurityContext: {}
+  # allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: true
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {} 

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: stratum-work-backend
+description: A Helm chart for deploying the Bitcoin Mining Pool Identification System backend
+version: 0.1.0
+appVersion: v1.0.0 

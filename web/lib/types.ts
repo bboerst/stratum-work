@@ -41,6 +41,14 @@ export interface BlockData {
   difficulty: number;
   transaction_count: number;
   prev_block_hash: string;
+  mining_pool?: {
+    id: number;
+    name: string;
+    link?: string;
+    slug?: string;
+    match_type?: string;
+    identification_method?: 'address' | 'tag';
+  };
 }
 
 /**

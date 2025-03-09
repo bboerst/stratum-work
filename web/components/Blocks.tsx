@@ -990,7 +990,7 @@ Type: ${block.isRealtime ? 'Real-time' : 'Historical'}`}
                 <div className="flex flex-col items-center justify-center w-full px-2">
                   <span className="text-base font-bold">{block.height}</span>
                   <span className="text-[10px] opacity-75 truncate max-w-[80px] text-center">
-                    {block.block_hash === 'pending' ? 'Receiving...' : block.mining_pool?.name || '?'}
+                    {block.block_hash === 'pending' ? '~receiving~' : block.mining_pool?.name || '?'}
                   </span>
                 </div>
               </div>

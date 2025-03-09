@@ -1,10 +1,33 @@
 // Utility functions for formatting data in the RealtimeTable
 
 // Reverse a hex string (e.g. for prev_block_hash)
+// This function correctly reverses Bitcoin block hashes by reversing 4-byte chunks
 export function reverseHex(hex: string): string {
   try {
-    return Buffer.from(hex, "hex").reverse().toString("hex");
-  } catch {
+    // Ensure the hex string has an even number of characters
+    if (hex.length % 2 !== 0) {
+      hex = '0' + hex;
+    }
+    
+    // For Bitcoin block hashes, we need to reverse in 4-byte chunks
+    // Each byte is 2 hex characters, so each chunk is 8 hex characters
+    const chunks = [];
+    
+    // Process the hex string in 8-character (4-byte) chunks
+    for (let i = 0; i < hex.length; i += 8) {
+      // Get the current 4-byte chunk
+      const chunkSize = Math.min(8, hex.length - i);
+      const chunk = hex.substring(i, i + chunkSize);
+      chunks.push(chunk);
+    }
+    
+    // Reverse the order of the chunks
+    chunks.reverse();
+    
+    // Join the chunks back together
+    return chunks.join('');
+  } catch (error) {
+    console.error('Error in reverseHex:', error);
     return hex;
   }
 }

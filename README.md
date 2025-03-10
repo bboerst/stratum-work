@@ -61,25 +61,25 @@ See [collector/main.py:294-323](collector/main.py#L294-L323) for the notificatio
 The web application performs extensive processing to make the data more readable and visually informative:
 
 1. **Coinbase Transaction Reconstruction**:  
-   See [web/utils/formatters.ts:38-45](web/utils/formatters.ts#L38-L45)
+   See [web/utils/formatters.ts:38-45](web/utils/formatters.ts#L41-L48)
 
 2. **Coinbase Script ASCII Extraction**:  
-   See [web/utils/bitcoinUtils.ts:48-76](web/utils/bitcoinUtils.ts#L48-L76)
+   See [web/utils/bitcoinUtils.ts:48-76](web/utils/bitcoinUtils.ts#L53-L83)
 
 3. **Coinbase Output Analysis**:  
-   See [web/utils/bitcoinUtils.ts:95-126](web/utils/bitcoinUtils.ts#L95-L126)
+   See [web/utils/bitcoinUtils.ts:95-126](web/utils/bitcoinUtils.ts#L122-L159)
 
 4. **First Transaction Extraction**:  
-   See [web/utils/bitcoinUtils.ts:129-139](web/utils/bitcoinUtils.ts#L129-L139)
+   See [web/utils/bitcoinUtils.ts:129-139](web/utils/bitcoinUtils.ts#L108-L120)
 
 5. **Fee Rate Calculation**:  
-   See [web/utils/bitcoinUtils.ts:142-168](web/utils/bitcoinUtils.ts#L142-L168)
+   See [web/utils/bitcoinUtils.ts:142-168](web/utils/bitcoinUtils.ts#L161-L191)
 
 ### Backend Block Processing
 
 The backend identifies which pool mined each block by analyzing the coinbase transaction:
 
-See [backend/main.py:815-890](backend/main.py#L815-L890) for the block processing function.
+See [backend/main.py:815-890](backend/main.py#L814-L913) for the block processing function.
 
 ## Features
 

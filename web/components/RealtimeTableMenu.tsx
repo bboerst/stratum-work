@@ -8,6 +8,7 @@ interface RealtimeTableMenuProps {
   setPaused?: (value: boolean | ((prev: boolean) => boolean)) => void;
   showSettings: boolean;
   setShowSettings: (value: boolean | ((prev: boolean) => boolean)) => void;
+  selectedBlockHeight?: number | null;
 }
 
 export default function RealtimeTableMenu({
@@ -15,6 +16,7 @@ export default function RealtimeTableMenu({
   setPaused: propSetPaused,
   showSettings,
   setShowSettings,
+  selectedBlockHeight = null,
 }: RealtimeTableMenuProps) {
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const { paused, setPaused } = useGlobalDataStream();
@@ -59,48 +61,50 @@ export default function RealtimeTableMenu({
 
   return (
     <>
-      {/* Pause/Resume button */}
-      <button
-        className="pause-button px-2 py-1 transition-colors duration-200"
-        onClick={handlePauseToggle}
-        title={effectivePaused ? "Resume" : "Pause"}
-      >
-        {effectivePaused ? (
-          <>
-            <svg
-              className="inline-block w-5 h-5 mr-1 align-text-bottom"
-              height="800px"
-              width="800px"
-              version="1.1"
-              viewBox="0 0 512 512"
-              fill="currentColor"
-            >
-              <path d="M256,0C114.625,0,0,114.625,0,256c0,141.374,114.625,256,256,256s256-114.626,256-256C512,114.625,397.374,0,256,0z M351.062,258.898l-144,85.945c-1.031,0.626-2.344,0.657-3.406,0.031c-1.031-0.594-1.687-1.702-1.687-2.937v-85.946v-85.946c0-1.218,0.656-2.343,1.687-2.938c1.062-0.609,2.375-0.578,3.406,0.031l144,85.962c1.031,0.586,1.641,1.718,1.641,2.89C352.703,257.187,352.094,258.297,351.062,258.898z" />
-            </svg>
-            Resume
-          </>
-        ) : (
-          <>
-            <svg
-              className="inline-block w-5 h-5 mr-1 align-text-bottom"
-              fill="currentColor"
-              version="1.1"
-              viewBox="0 0 45.812 45.812"
-              width="800px"
-              height="800px"
-            >
-              <g>
+      {/* Only show Pause/Resume button when viewing the being-mined block */}
+      {selectedBlockHeight === -1 && (
+        <button
+          className="pause-button px-2 py-1 transition-colors duration-200"
+          onClick={handlePauseToggle}
+          title={effectivePaused ? "Resume" : "Pause"}
+        >
+          {effectivePaused ? (
+            <>
+              <svg
+                className="inline-block w-5 h-5 mr-1 align-text-bottom"
+                height="800px"
+                width="800px"
+                version="1.1"
+                viewBox="0 0 512 512"
+                fill="currentColor"
+              >
+                <path d="M256,0C114.625,0,0,114.625,0,256c0,141.374,114.625,256,256,256s256-114.626,256-256C512,114.625,397.374,0,256,0z M351.062,258.898l-144,85.945c-1.031,0.626-2.344,0.657-3.406,0.031c-1.031-0.594-1.687-1.702-1.687-2.937v-85.946v-85.946c0-1.218,0.656-2.343,1.687-2.938c1.062-0.609,2.375-0.578,3.406,0.031l144,85.962c1.031,0.586,1.641,1.718,1.641,2.89C352.703,257.187,352.094,258.297,351.062,258.898z" />
+              </svg>
+              Resume
+            </>
+          ) : (
+            <>
+              <svg
+                className="inline-block w-5 h-5 mr-1 align-text-bottom"
+                fill="currentColor"
+                version="1.1"
+                viewBox="0 0 45.812 45.812"
+                width="800px"
+                height="800px"
+              >
                 <g>
                   <g>
-                    <path d="M39.104,6.708c-8.946-8.943-23.449-8.946-32.395,0c-8.946,8.944-8.946,23.447,0,32.394   c8.944,8.946,23.449,8.946,32.395,0C48.047,30.156,48.047,15.653,39.104,6.708z M20.051,31.704c0,1.459-1.183,2.64-2.641,2.64   s-2.64-1.181-2.64-2.64V14.108c0-1.457,1.182-2.64,2.64-2.64s2.641,1.183,2.641,2.64V31.704z M31.041,31.704   c0,1.459-1.183,2.64-2.64,2.64s-2.64-1.181-2.64-2.64V14.108c0-1.457,1.183-2.64,2.64-2.64s2.64,1.183,2.64,2.64V31.704z" />
+                    <g>
+                      <path d="M39.104,6.708c-8.946-8.943-23.449-8.946-32.395,0c-8.946,8.944-8.946,23.447,0,32.394   c8.944,8.946,23.449,8.946,32.395,0C48.047,30.156,48.047,15.653,39.104,6.708z M20.051,31.704c0,1.459-1.183,2.64-2.641,2.64   s-2.64-1.181-2.64-2.64V14.108c0-1.457,1.182-2.64,2.64-2.64s2.641,1.183,2.641,2.64V31.704z M31.041,31.704   c0,1.459-1.183,2.64-2.64,2.64s-2.64-1.181-2.64-2.64V14.108c0-1.457,1.183-2.64,2.64-2.64s2.64,1.183,2.64,2.64V31.704z" />
+                    </g>
                   </g>
                 </g>
-              </g>
-            </svg>
-            Pause
-          </>
-        )}
-      </button>
+              </svg>
+              Pause
+            </>
+          )}
+        </button>
+      )}
 
       {/* Settings button */}
       <button

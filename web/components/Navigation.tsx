@@ -8,7 +8,7 @@ export default function Navigation({ children }: { children: React.ReactNode }) 
   const pathname = usePathname() || "/";
   
   // Define routes and their active conditions
-  const isTableActive = pathname === "/" || pathname === "/table";
+  const isTableActive = pathname === "/" || pathname === "/table" || pathname.startsWith("/height");
   const isSankeyActive = pathname.startsWith("/sankey");
 
   return (

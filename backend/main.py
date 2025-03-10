@@ -46,6 +46,11 @@ RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
 RABBITMQ_USERNAME = os.getenv("RABBITMQ_USERNAME", "mquser")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "mqpassword")
 RABBITMQ_EXCHANGE = os.getenv("RABBITMQ_EXCHANGE", "blocks")
+RABBITMQ_HEARTBEAT = int(os.getenv("RABBITMQ_HEARTBEAT", "30"))  # Reduced from 60 to 30
+RABBITMQ_CONNECTION_TIMEOUT = int(os.getenv("RABBITMQ_CONNECTION_TIMEOUT", "10"))
+RABBITMQ_SOCKET_TIMEOUT = int(os.getenv("RABBITMQ_SOCKET_TIMEOUT", "5"))
+RABBITMQ_RETRY_DELAY = int(os.getenv("RABBITMQ_RETRY_DELAY", "2"))
+RABBITMQ_MAX_RETRIES = int(os.getenv("RABBITMQ_MAX_RETRIES", "5"))
 
 POOL_LIST_URL = os.getenv("POOL_LIST_URL", "https://raw.githubusercontent.com/mempool/mining-pools/refs/heads/master/pools-v2.json")
 POOL_UPDATE_INTERVAL = int(os.getenv("POOL_UPDATE_INTERVAL", "86400"))  # Default: once per day
@@ -85,17 +90,23 @@ except Exception as e:
 
 # --- RabbitMQ Connection Management ---
 class RabbitMQManager:
-    def __init__(self, host, port, username, password, exchange):
+    def __init__(self, host, port, username, password, exchange, 
+                 heartbeat=RABBITMQ_HEARTBEAT, 
+                 connection_timeout=RABBITMQ_CONNECTION_TIMEOUT,
+                 socket_timeout=RABBITMQ_SOCKET_TIMEOUT):
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.exchange = exchange
+        self.heartbeat = heartbeat
+        self.connection_timeout = connection_timeout
+        self.socket_timeout = socket_timeout
         self.connection = None
         self.channel = None
         self.lock = Lock()
         self.last_reconnect_attempt = 0
-        self.reconnect_cooldown = 5  # seconds
+        self.reconnect_cooldown = 2
         self.connect()
     
     def connect(self):
@@ -109,31 +120,31 @@ class RabbitMQManager:
                 except Exception as e:
                     logger.warning(f"Error closing existing RabbitMQ connection: {e}")
             
-            max_retries = 5
-            retry_delay = 2
+            max_retries = RABBITMQ_MAX_RETRIES
+            retry_delay = RABBITMQ_RETRY_DELAY
             
             for attempt in range(max_retries):
                 try:
-                    credentials = pika.PlainCredentials(self.username, self.password)
-                    connection_params = pika.ConnectionParameters(
-                        host=self.host,
-                        port=self.port,
-                        virtual_host='/',
-                        credentials=credentials,
-                        # Add heartbeat and connection timeout for better reliability
-                        heartbeat=60,  # Increased heartbeat
-                        blocked_connection_timeout=15,  # Increased timeout
-                        # Add socket options for better connection stability
-                        socket_timeout=10,  # Increased socket timeout
-                        # Add retry parameters
-                        retry_delay=1,
-                        connection_attempts=3
-                    )
-                    
-                    # Use URLParameters instead of ConnectionParameters for more robust connection
-                    # This helps avoid some of the internal Pika issues
+                    # Use URLParameters for more robust connection handling
                     url = f"amqp://{self.username}:{self.password}@{self.host}:{self.port}/%2F"
-                    self.connection = pika.BlockingConnection(pika.URLParameters(url))
+                    params = pika.URLParameters(url)
+                    
+                    # Override default parameters with our custom settings
+                    params.heartbeat = self.heartbeat
+                    params.socket_timeout = self.socket_timeout
+                    params.blocked_connection_timeout = self.connection_timeout
+                    params.retry_delay = 1
+                    params.connection_attempts = 3
+                    
+                    # Add TCP keepalive settings to prevent connection drops
+                    params.tcp_options = {
+                        'TCP_KEEPIDLE': 60,  # Start sending keepalive probes after 60 seconds
+                        'TCP_KEEPINTVL': 10,  # Send keepalive probes every 10 seconds
+                        'TCP_KEEPCNT': 5      # Drop connection after 5 failed probes
+                    }
+                    
+                    logger.info(f"Connecting to RabbitMQ at {self.host}:{self.port} (heartbeat={self.heartbeat}s)")
+                    self.connection = pika.BlockingConnection(params)
                     
                     self.channel = self.connection.channel()
                     # Set prefetch count to 1 to avoid overwhelming the channel
@@ -149,16 +160,17 @@ class RabbitMQManager:
                     return True
                 except (pika.exceptions.AMQPConnectionError, 
                         pika.exceptions.ConnectionClosedByBroker,
-                        pika.exceptions.ConnectionWrongStateError) as e:
+                        pika.exceptions.ConnectionWrongStateError,
+                        pika.exceptions.StreamLostError) as e:
                     logger.error(f"Failed to connect to RabbitMQ (attempt {attempt+1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
-                        retry_delay *= 2
+                        retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff with cap
                 except Exception as e:
                     logger.error(f"Unexpected error connecting to RabbitMQ (attempt {attempt+1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
-                        retry_delay *= 2
+                        retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff with cap
             
             logger.error("Failed to connect to RabbitMQ after all retries")
             return False
@@ -179,11 +191,14 @@ class RabbitMQManager:
         
         # Check if connection is still alive
         try:
-            # A lightweight check to see if the connection is still alive
-            if hasattr(self.connection, '_heartbeat_checker'):
-                if not self.connection._heartbeat_checker.is_alive():
-                    logger.warning("RabbitMQ heartbeat checker is not alive, reconnecting")
-                    return self.connect()
+            # Process any pending events to keep the connection alive
+            self.connection.process_data_events(time_limit=0)
+        except (pika.exceptions.ConnectionClosed, 
+                pika.exceptions.ChannelClosed, 
+                pika.exceptions.AMQPConnectionError,
+                pika.exceptions.StreamLostError) as e:
+            logger.warning(f"RabbitMQ connection error during health check: {e}")
+            return self.connect()
         except Exception as e:
             logger.warning(f"Error checking RabbitMQ connection health: {e}")
             return self.connect()
@@ -192,7 +207,8 @@ class RabbitMQManager:
     
     def publish(self, doc, max_retries=3):
         """Publish a message to RabbitMQ with retry logic"""
-        retry_delay = 2
+        retry_delay = RABBITMQ_RETRY_DELAY
+        message_type = doc.get('type', 'unknown')
         
         for attempt in range(max_retries):
             try:
@@ -201,7 +217,7 @@ class RabbitMQManager:
                     if attempt < max_retries - 1:
                         logger.warning(f"Failed to ensure RabbitMQ connection, retrying in {retry_delay}s")
                         time.sleep(retry_delay)
-                        retry_delay *= 2
+                        retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff with cap
                         continue
                     else:
                         logger.error("Failed to publish: could not establish RabbitMQ connection")
@@ -218,12 +234,17 @@ class RabbitMQManager:
                         body=message_body,
                         properties=pika.BasicProperties(
                             delivery_mode=2,  # make message persistent
-                            content_type='application/json'
+                            content_type='application/json',
+                            message_id=str(uuid.uuid4()),  # Add unique message ID
+                            timestamp=int(time.time())     # Add timestamp
                         ),
                         mandatory=False  # Don't require confirmation
                     )
                     
-                    logger.info(f"Published message to RabbitMQ: {doc.get('type', 'unknown')}")
+                    # Process any pending events to keep the connection alive
+                    self.connection.process_data_events(time_limit=0)
+                    
+                    logger.info(f"Published message to RabbitMQ: {message_type}")
                     return True
                 except (pika.exceptions.UnroutableError, pika.exceptions.NackError) as e:
                     # These are specific publishing errors
@@ -243,7 +264,7 @@ class RabbitMQManager:
                 
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
-                    retry_delay *= 2
+                    retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff with cap
             
             except Exception as e:
                 logger.error(f"Unexpected error publishing to RabbitMQ (attempt {attempt+1}/{max_retries}): {e}")
@@ -253,7 +274,7 @@ class RabbitMQManager:
                 
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
-                    retry_delay *= 2
+                    retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff with cap
                 else:
                     logger.error("Failed to publish to RabbitMQ after all retries")
                     return False
@@ -1112,6 +1133,37 @@ def pool_updater_task():
             logger.error(f"Error in pool updater task: {e}")
             time.sleep(3600)  # Retry after an hour
 
+# --- RabbitMQ Heartbeat Task ---
+def rabbitmq_heartbeat_task():
+    """
+    Periodically check and maintain the RabbitMQ connection
+    """
+    HEARTBEAT_INTERVAL = 15  # seconds
+    
+    logger.info("Starting RabbitMQ heartbeat task")
+    
+    while True:
+        try:
+            # Check if connection is active and process any pending events
+            if rabbitmq_manager.connection and not rabbitmq_manager.connection.is_closed:
+                try:
+                    # Process any pending events to keep the connection alive
+                    rabbitmq_manager.connection.process_data_events(time_limit=0)
+                    logger.debug("RabbitMQ heartbeat check successful")
+                except Exception as e:
+                    logger.warning(f"RabbitMQ heartbeat check failed: {e}")
+                    # Force reconnection
+                    rabbitmq_manager.connect()
+            else:
+                # Connection is closed or doesn't exist, try to reconnect
+                logger.warning("RabbitMQ connection is closed during heartbeat check, reconnecting")
+                rabbitmq_manager.connect()
+                
+        except Exception as e:
+            logger.error(f"Error in RabbitMQ heartbeat task: {e}")
+            
+        time.sleep(HEARTBEAT_INTERVAL)
+
 @app.on_event("startup")
 def startup_event():
     """Initialize background tasks on startup"""
@@ -1130,6 +1182,10 @@ def startup_event():
     pool_updater_thread = threading.Thread(target=pool_updater_task, daemon=True)
     pool_updater_thread.start()
     
+    # Start RabbitMQ heartbeat thread
+    rabbitmq_heartbeat_thread = threading.Thread(target=rabbitmq_heartbeat_task, daemon=True)
+    rabbitmq_heartbeat_thread.start()
+    
     # Note: We've removed the automatic reindexing that was here
     # If you need to reindex blocks, use the --reindex-blocks command line argument
     
@@ -1138,6 +1194,15 @@ def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutdown: cleaning up resources")
+    
+    # Close RabbitMQ connection
+    try:
+        if rabbitmq_manager.connection and not rabbitmq_manager.connection.is_closed:
+            logger.info("Closing RabbitMQ connection")
+            rabbitmq_manager.connection.close()
+    except Exception as e:
+        logger.error(f"Error closing RabbitMQ connection: {e}")
+    
     old_block_processor.shutdown(wait=True)
     new_block_processor.shutdown(wait=True)
     logger.info("Thread pools shut down")

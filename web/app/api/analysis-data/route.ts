@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
 import { getBlockByHeight } from "@/lib/db/blocks";
-import { formatCoinbaseRaw, formatPrevBlockHash, reverseHex } from "@/utils/formatters";
+import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
   computeCoinbaseOutputValue, 

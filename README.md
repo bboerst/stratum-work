@@ -86,8 +86,7 @@ See [backend/main.py:815-890](backend/main.py#L814-L913) for the block processin
 - Real-time display of `mining.notify` messages from Stratum pools
 - Customizable table columns for displaying relevant data
 - Light and dark mode
-- Live and historical data views (historical view coming soon)
-- Integration with RabbitMQ for efficient message processing
+- Live and historical data views
 - MongoDB integration for data storage and retrieval
 - Most 'work' is done client-side for trustless data processing
 - Raw data access via `/api/stream` endpoint

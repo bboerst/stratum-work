@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { StratumV1Data } from '@/lib/types';
 import { SortedRow, SortDirection, SortConfig, ColumnWidths } from '@/types/tableTypes';
+import { sortRowsByKey } from '@/utils/sortUtils';
 
 // Hook for managing column visibility
 export function useColumnVisibility() {
@@ -155,42 +156,8 @@ export function useSorting(isFiltering: boolean) {
   const sortData = useCallback((data: SortedRow[]) => {
     if (!data || data.length === 0) return [];
     
-    return [...data].sort((a, b) => {
-      const aValue = a[sortConfig.key];
-      const bValue = b[sortConfig.key];
-      
-      if (aValue === undefined || aValue === null) return 1;
-      if (bValue === undefined || bValue === null) return -1;
-      
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        return sortConfig.direction === "asc" ? aValue - bValue : bValue - aValue;
-      }
-      
-      // For date strings (like timestamp)
-      if (sortConfig.key === "timestamp") {
-        // Check if we're dealing with ISO date strings or hex timestamps
-        const aString = String(aValue);
-        const bString = String(bValue);
-        
-        if (aString.includes('-') && bString.includes('-')) {
-          // These are ISO date strings
-          const dateA = new Date(aString).getTime();
-          const dateB = new Date(bString).getTime();
-          return sortConfig.direction === "asc" ? dateA - dateB : dateB - dateA;
-        }
-        
-        // Otherwise, compare as strings
-        return sortConfig.direction === "asc" ? aString.localeCompare(bString) : bString.localeCompare(aString);
-      }
-      
-      // For other string values
-      const aString = String(aValue);
-      const bString = String(bValue);
-      
-      return sortConfig.direction === "asc" 
-        ? aString.localeCompare(bString) 
-        : bString.localeCompare(aString);
-    });
+    // Using our shared sortRowsByKey utility function
+    return sortRowsByKey(data, sortConfig.key, sortConfig.direction);
   }, [sortConfig]);
 
   return {

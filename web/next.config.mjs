@@ -15,9 +15,9 @@ const nextConfig = {
     ];
   },
   
-  // Development configuration from next.config.js and next.config.ts
+  // Development configuration
   ...(isDev && {
-    webpackDevMiddleware: (config) => {
+    webpack: (config) => {
       config.watchOptions = {
         poll: 1000,
         aggregateTimeout: 300,

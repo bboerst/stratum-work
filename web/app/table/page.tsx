@@ -1,38 +1,38 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import RealtimeTable from "@/components/RealtimeTable";
-import RealtimeTableMenu from "@/components/RealtimeTableMenu";
-import { useGlobalMenu } from "@/components/GlobalMenuContext";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { Settings2 } from "lucide-react";
 
 export default function TablePage() {
-  const [paused, setPaused] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const { setMenuContent } = useGlobalMenu();
-  const { isConnected } = useGlobalDataStream();
-  
-  // Set the menu content when the component mounts
-  useEffect(() => {
-    setMenuContent(
-      <RealtimeTableMenu 
-        paused={paused}
-        setPaused={setPaused}
-        showSettings={showSettings}
-        setShowSettings={setShowSettings}
-      />
-    );
-    
-    // Clean up when the component unmounts
-    return () => setMenuContent(null);
-  }, [paused, showSettings, setMenuContent, isConnected]);
+  const [paused, setPaused] = useState(false);
 
   return (
-    <main className="min-h-screen bg-transparent">
-      <RealtimeTable 
-        paused={paused}
-        showSettings={showSettings}
-      />
+    <main className="flex min-h-screen flex-col p-4">
+      <div className="container mx-auto">
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex gap-2">
+            <button
+              className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+              onClick={() => setPaused(!paused)}
+            >
+              {paused ? "Resume" : "Pause"}
+            </button>
+          </div>
+          <button
+            className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            <Settings2 className="h-6 w-6" />
+          </button>
+        </div>
+        <RealtimeTable
+          paused={paused}
+          showSettings={showSettings}
+          onShowSettingsChange={setShowSettings}
+        />
+      </div>
     </main>
   );
 } 

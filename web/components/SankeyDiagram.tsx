@@ -155,16 +155,17 @@ export function SankeyDiagram({
       
       // Create the Sankey generator
       const sankeyGenerator = sankey<D3SankeyNode, D3SankeyLink>()
-        .nodeWidth(15)
-        .nodePadding(10)
-        .extent([[1, 5], [width - 1, height - 5]]);
+        .nodeWidth(20)  // Increased from 15 to accommodate labels better
+        .nodePadding(15)  // Increased from 10 for better spacing
+        .extent([[1, 5], [width - 1, height - 5]]);  // Remove left margin
       
       // Convert our data format to D3's expected format
       const sankeyData = {
         nodes: data.nodes.map((node, i) => ({
           name: node.name,
           type: node.type,
-          id: i
+          id: i,
+          branchIndex: node.branchIndex
         })),
         links: data.links.map(link => ({
           source: typeof link.source === 'string' ? parseInt(link.source) : link.source,
@@ -207,16 +208,41 @@ export function SankeyDiagram({
         .attr("fill", d => (d as any).type === 'pool' ? colors.poolNode : colors.branchNode)
         .attr("stroke", colors.nodeStroke);
       
+      // Format node label
+      const formatNodeLabel = (node: any): string => {
+        if (node.type === 'pool') return node.name;
+        // For merkle branches, format as MB{index}-{first 6 chars}
+        const hashStart = node.name.substring(0, 6).toLowerCase();
+        return `MB${node.branchIndex}-${hashStart}`;
+      };
+      
+      // Find the rightmost x position to identify final column
+      const maxX = Math.max(...nodes.map(n => n.x0));
+
       // Add node labels
       nodeGroup.append("text")
-        .attr("x", d => (d.x1 - d.x0) / 2)
+        .attr("x", d => {
+          const isPool = (d as any).type === 'pool';
+          if (isPool) return 0;
+          
+          // Check if this is a rightmost merkle branch node based on position
+          const isFinalColumn = Math.abs(d.x0 - maxX) < 1;  // Using small epsilon for float comparison
+          return isFinalColumn ? (d.x1 - d.x0) : (d.x1 - d.x0) / 2;
+        })
         .attr("y", d => (d.y1 - d.y0) / 2)
         .attr("dy", "0.35em")
-        .attr("text-anchor", "middle")
-        .text(d => d.name)
-        .attr("font-size", "10px")
-        .attr("fill", "white") // Keep text white for better contrast on colored nodes
-        .attr("pointer-events", "none"); // Prevent text from interfering with interactions
+        .attr("text-anchor", d => {
+          const isPool = (d as any).type === 'pool';
+          if (isPool) return "start";
+          
+          // Right-align text for rightmost merkle branch nodes
+          const isFinalColumn = Math.abs(d.x0 - maxX) < 1;
+          return isFinalColumn ? "end" : "middle";
+        })
+        .text(d => formatNodeLabel(d))
+        .attr("font-size", "11px")
+        .attr("fill", "white")
+        .attr("pointer-events", "none");
       
       // Add status indicators
       svg.append("text")

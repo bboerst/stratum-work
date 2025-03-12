@@ -35,6 +35,7 @@ export interface StratumV1Event {
 export interface SankeyNode {
   name: string;
   type: 'pool' | 'branch';
+  branchIndex?: number;
 }
 
 export interface SankeyLink {
@@ -62,10 +63,10 @@ export class SankeyDataProcessor {
   /**
    * Get or create a node and return its index
    */
-  private getOrCreateNode(name: string, type: 'pool' | 'branch'): number {
+  private getOrCreateNode(name: string, type: 'pool' | 'branch', branchIndex?: number): number {
     if (!this.nodeIndex.has(name)) {
       this.nodeIndex.set(name, this.nodes.length);
-      this.nodes.push({ name, type });
+      this.nodes.push({ name, type, branchIndex });
     }
     return this.nodeIndex.get(name)!;
   }
@@ -174,7 +175,7 @@ export class SankeyDataProcessor {
     const poolNode = this.getOrCreateNode(event.poolName, 'pool');
     
     event.merkleBranches.forEach((branch, index) => {
-      const branchNode = this.getOrCreateNode(branch, 'branch');
+      const branchNode = this.getOrCreateNode(branch, 'branch', index);
       
       if (index === 0) {
         // Connect pool to first branch
@@ -215,14 +216,52 @@ export class SankeyDataProcessor {
    * Process a Stratum V1 event from the global data stream
    */
   public processStratumV1Event(event: StratumV1Event): void {
-    // Convert the Stratum V1 event to our internal format
-    const miningEvent: MiningEvent = {
-      poolName: event.data.pool_name,
-      merkleBranches: event.data.merkle_branches
-    };
+    const poolName = event.data.pool_name;
     
-    // Process the converted event
-    this.processEvent(miningEvent);
+    // Remove old connections if pool exists
+    if (this.lastPoolEvents.has(poolName)) {
+      this.removePoolConnections(poolName);
+    }
+
+    // Update with new branches
+    this.lastPoolEvents.set(poolName, [...event.data.merkle_branches]);
+    
+    // Process new branches
+    let previousBranch: string | null = null;
+    const poolNode = this.getOrCreateNode(poolName, 'pool');
+    
+    event.data.merkle_branches.forEach((branch, index) => {
+      const branchNode = this.getOrCreateNode(branch, 'branch', index);
+      
+      if (index === 0) {
+        // Connect pool to first branch
+        const connectionKey = `${poolNode}-${branchNode}`;
+        
+        // Check for cycles before adding
+        if (!this.wouldCreateCycle(poolNode, branchNode)) {
+          if (!this.activeConnections.has(connectionKey)) {
+            this.activeConnections.set(connectionKey, new Set([poolName]));
+          } else {
+            this.activeConnections.get(connectionKey)!.add(poolName);
+          }
+        }
+      } else if (previousBranch) {
+        // Connect previous branch to current branch
+        const prevBranchNode = this.getOrCreateNode(previousBranch, 'branch');
+        const connectionKey = `${prevBranchNode}-${branchNode}`;
+        
+        // Check for cycles before adding
+        if (!this.wouldCreateCycle(prevBranchNode, branchNode)) {
+          if (!this.activeConnections.has(connectionKey)) {
+            this.activeConnections.set(connectionKey, new Set([poolName]));
+          } else {
+            this.activeConnections.get(connectionKey)!.add(poolName);
+          }
+        }
+      }
+      
+      previousBranch = branch;
+    });
   }
 
   /**

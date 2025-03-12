@@ -7,6 +7,7 @@ import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDat
 import { eventSourceService } from "@/lib/eventSourceService";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
+import { useTheme } from "next-themes";
 
 interface SankeyDiagramProps {
   height: number;
@@ -23,6 +24,36 @@ export function SankeyDiagram({
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const { filterByType, paused } = useGlobalDataStream();
+  const { theme, resolvedTheme } = useTheme();
+  
+  // Theme-specific colors - only use these after initial render
+  const [colors, setColors] = useState({
+    background: '#ffffff',
+    text: '#1a202c',
+    poolNode: '#2563eb',
+    branchNode: '#7c3aed',
+    nodeStroke: '#2d3748',
+    link: 'rgba(100, 116, 139, 0.5)',
+    statusLive: '#48bb78',
+    statusPaused: '#ed8936',
+    error: '#f56565',
+  });
+  
+  // Update colors when theme changes
+  useEffect(() => {
+    const isDark = resolvedTheme === 'dark';
+    setColors({
+      background: isDark ? '#1e1e2f' : '#ffffff',
+      text: isDark ? '#e2e8f0' : '#1a202c',
+      poolNode: isDark ? '#3182ce' : '#2563eb',
+      branchNode: isDark ? '#9f7aea' : '#7c3aed',
+      nodeStroke: isDark ? '#4a5568' : '#2d3748',
+      link: isDark ? 'rgba(160, 174, 192, 0.5)' : 'rgba(100, 116, 139, 0.5)',
+      statusLive: isDark ? '#68d391' : '#48bb78',
+      statusPaused: isDark ? '#f6ad55' : '#ed8936',
+      error: isDark ? '#fc8181' : '#f56565',
+    });
+  }, [resolvedTheme]);
   
   // Get stratum V1 data from the global data stream if not provided via props
   const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
@@ -101,6 +132,7 @@ export function SankeyDiagram({
       .attr("x", width / 2)
       .attr("y", height / 2)
       .attr("text-anchor", "middle")
+      .attr("fill", colors.text)
       .text("No data available. Waiting for events...");
   };
   
@@ -147,16 +179,19 @@ export function SankeyDiagram({
       // Create the SVG elements
       const svg = d3.select(svgRef.current);
       
+      // Set background color via d3 after hydration
+      svg.style("background-color", colors.background);
+      
       // Add links
       svg.append("g")
         .selectAll("path")
         .data(links)
         .join("path")
         .attr("d", sankeyLinkHorizontal())
-        .attr("stroke", "#aaa")
+        .attr("stroke", colors.link)
         .attr("stroke-width", d => Math.max(1, d.width))
         .attr("fill", "none")
-        .attr("opacity", 0.5);
+        .attr("opacity", 0.7);
       
       // Add nodes
       const nodeGroup = svg.append("g")
@@ -169,8 +204,8 @@ export function SankeyDiagram({
       nodeGroup.append("rect")
         .attr("width", d => d.x1 - d.x0)
         .attr("height", d => d.y1 - d.y0)
-        .attr("fill", d => (d as any).type === 'pool' ? "#1f77b4" : "#ff7f0e")
-        .attr("stroke", "#000");
+        .attr("fill", d => (d as any).type === 'pool' ? colors.poolNode : colors.branchNode)
+        .attr("stroke", colors.nodeStroke);
       
       // Add node labels
       nodeGroup.append("text")
@@ -180,14 +215,15 @@ export function SankeyDiagram({
         .attr("text-anchor", "middle")
         .text(d => d.name)
         .attr("font-size", "10px")
-        .attr("fill", "white");
+        .attr("fill", "white") // Keep text white for better contrast on colored nodes
+        .attr("pointer-events", "none"); // Prevent text from interfering with interactions
       
       // Add status indicators
       svg.append("text")
         .attr("x", 10)
         .attr("y", 20)
         .attr("font-size", "12px")
-        .attr("fill", paused ? "orange" : "green")
+        .attr("fill", paused ? colors.statusPaused : colors.statusLive)
         .text(paused ? "Data stream paused" : "Live data stream");
       
       // Add data count indicator
@@ -195,7 +231,7 @@ export function SankeyDiagram({
         .attr("x", 10)
         .attr("y", 40)
         .attr("font-size", "12px")
-        .attr("fill", "#333")
+        .attr("fill", colors.text)
         .text(`Nodes: ${data.nodes.length}, Links: ${data.links.length}`);
       
     } catch (err) {
@@ -209,7 +245,7 @@ export function SankeyDiagram({
           .attr("x", width / 2)
           .attr("y", height / 2)
           .attr("text-anchor", "middle")
-          .attr("fill", "red")
+          .attr("fill", colors.error)
           .text(`Error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -242,6 +278,11 @@ export function SankeyDiagram({
     renderDiagram();
   }, [paused]);
   
+  // Re-render when theme/colors change
+  useEffect(() => {
+    renderDiagram();
+  }, [colors]);
+  
   // Connect to EventSource API
   useEffect(() => {
     try {
@@ -251,36 +292,44 @@ export function SankeyDiagram({
     } catch (err) {
       console.error("Error connecting to EventSource:", err);
       setError(`Error connecting to EventSource: ${err instanceof Error ? err.message : String(err)}`);
+      setIsConnected(false);
     }
     
-    // Clean up on unmount
+    // Initialize the diagram
+    initializeDiagram();
+    
+    // Cleanup
     return () => {
-      eventSourceService.offEvent(handleEvent);
+      try {
+        eventSourceService.offEvent(handleEvent);
+      } catch (err) {
+        console.error("Error disconnecting from EventSource:", err);
+      }
     };
   }, []);
   
-  // Initialize the diagram when the component mounts
-  useEffect(() => {
-    initializeDiagram();
-  }, []);
-  
   return (
-    <div className="relative w-full" ref={containerRef}>
+    <div 
+      ref={containerRef} 
+      className="w-full h-full relative bg-white dark:bg-gray-900 rounded-lg overflow-hidden"
+      style={{ minHeight: `${height}px` }}
+    >
       {error && (
-        <div className="absolute top-0 left-0 right-0 bg-red-100 border border-red-400 text-red-700 rounded">
-          <strong className="font-bold">Error: </strong>
-          <span className="block sm:inline">{error}</span>
+        <div className="absolute top-0 left-0 right-0 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-2 text-sm z-10">
+          {error}
         </div>
       )}
-      <div className="w-full">
-        <svg 
-          ref={svgRef} 
-          width="100%"
-          height={height}
-          className="border border-gray-300 rounded-lg bg-white w-full"
-          preserveAspectRatio="xMinYMin meet"
-        />
-      </div>
+      <svg 
+        ref={svgRef} 
+        width={width} 
+        height={height}
+        className="w-full h-full border border-gray-200 dark:border-gray-700 rounded-lg"
+      />
+      {!isConnected && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-4 rounded-lg z-10">
+          Connecting to data stream...
+        </div>
+      )}
     </div>
   );
 }

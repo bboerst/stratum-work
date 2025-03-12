@@ -3,6 +3,7 @@ import { StratumV1Data, StreamDataType } from '@/lib/types';
 import { SortedRow, SortConfig, SortDirection } from '@/types/tableTypes';
 import { formatCoinbaseRaw } from '@/utils/formatters';
 import { formatCoinbaseScriptASCII, computeCoinbaseOutputValue, computeFirstTransaction, computeCoinbaseOutputs, fetchFeeRate, clearCoinbaseFromCaches, isRequestInFlight, markRequestInFlight, clearRequestInFlight } from '@/utils/bitcoinUtils';
+import { sortRowsByKey } from '@/utils/sortUtils';
 
 // Constants for pagination
 const ITEMS_PER_PAGE = 50;
@@ -437,41 +438,8 @@ export function useTableData(
       // This ensures consistency between the UI and the actual sorting
       const direction = sortConfig ? sortConfig.direction : "desc" as SortDirection;
       
-      // Sort the entire dataset
-      const sortedAllData = [...allData].sort((a, b) => {
-        const aValue = a[key];
-        const bValue = b[key];
-        
-        if (aValue === undefined || aValue === null) return 1;
-        if (bValue === undefined || bValue === null) return -1;
-        
-        if (typeof aValue === 'number' && typeof bValue === 'number') {
-          return direction === "asc" ? aValue - bValue : bValue - aValue;
-        }
-        
-        // For date strings (like timestamp)
-        if (key === "timestamp") {
-          // Check if we're dealing with ISO date strings or hex timestamps
-          const aString = String(aValue);
-          const bString = String(bValue);
-          
-          if (aString.includes('-') && bString.includes('-')) {
-            // These are ISO date strings
-            const dateA = new Date(aString).getTime();
-            const dateB = new Date(bString).getTime();
-            return direction === "asc" ? dateA - dateB : dateB - dateA;
-          }
-          
-          // Otherwise, compare as strings
-          return direction === "asc" ? aString.localeCompare(bString) : bString.localeCompare(aString);
-        }
-        
-        // For other string values
-        const aString = String(aValue);
-        const bString = String(bValue);
-        
-        return direction === "asc" ? aString.localeCompare(bString) : bString.localeCompare(aString);
-      });
+      // Sort the entire dataset using our shared utility function
+      const sortedAllData = sortRowsByKey(allData, key, direction);
       
       // Reset pagination to show the first page
       setPage(1);

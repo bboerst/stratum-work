@@ -31,8 +31,8 @@ export function SankeyDiagram({
     background: '#ffffff',
     text: '#1a202c',
     poolNode: '#2563eb',
-    branchNode: '#7c3aed',
     nodeStroke: '#2d3748',
+    textStroke: '#000000',  // Add text stroke color
     link: 'rgba(100, 116, 139, 0.5)',
     statusLive: '#48bb78',
     statusPaused: '#ed8936',
@@ -46,14 +46,25 @@ export function SankeyDiagram({
       background: isDark ? '#1e1e2f' : '#ffffff',
       text: isDark ? '#e2e8f0' : '#1a202c',
       poolNode: isDark ? '#3182ce' : '#2563eb',
-      branchNode: isDark ? '#9f7aea' : '#7c3aed',
       nodeStroke: isDark ? '#4a5568' : '#2d3748',
+      textStroke: isDark ? '#000000' : '#000000',  // Keep black stroke in both themes
       link: isDark ? 'rgba(160, 174, 192, 0.5)' : 'rgba(100, 116, 139, 0.5)',
       statusLive: isDark ? '#68d391' : '#48bb78',
       statusPaused: isDark ? '#f6ad55' : '#ed8936',
       error: isDark ? '#fc8181' : '#f56565',
     });
   }, [resolvedTheme]);
+  
+  // Generate a color from a hash string
+  const getColorFromHash = (hash: string): string => {
+    // Use first 6 characters of the hash for color
+    const truncatedHash = hash.substring(0, 6).toLowerCase();
+    // Convert to HSL for better control over lightness
+    const hue = parseInt(truncatedHash.substring(0, 2), 16) * 360 / 255;
+    const saturation = 70; // Fixed saturation for consistency
+    const lightness = resolvedTheme === 'dark' ? 65 : 45; // Adjust lightness based on theme
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  };
   
   // Get stratum V1 data from the global data stream if not provided via props
   const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
@@ -205,7 +216,11 @@ export function SankeyDiagram({
       nodeGroup.append("rect")
         .attr("width", d => d.x1 - d.x0)
         .attr("height", d => d.y1 - d.y0)
-        .attr("fill", d => (d as any).type === 'pool' ? colors.poolNode : colors.branchNode)
+        .attr("fill", d => {
+          if ((d as any).type === 'pool') return colors.poolNode;
+          // Use hash-based color for merkle branch nodes
+          return getColorFromHash(d.name);
+        })
         .attr("stroke", colors.nodeStroke);
       
       // Format node label
@@ -242,6 +257,9 @@ export function SankeyDiagram({
         .text(d => formatNodeLabel(d))
         .attr("font-size", "11px")
         .attr("fill", "white")
+        .attr("stroke", colors.textStroke)
+        .attr("stroke-width", "1px")  // Increased to 1px for better visibility
+        .attr("paint-order", "stroke")
         .attr("pointer-events", "none");
       
       // Add status indicators

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Blocks from "../components/Blocks";
 import RealtimeTable from "../components/RealtimeTable";
+import RealtimeChart from "../components/RealtimeChart";
 import RealtimeTableMenu from "../components/RealtimeTableMenu";
 import { useGlobalMenu } from "../components/GlobalMenuContext";
 import { useGlobalDataStream } from "../lib/DataStreamContext";
@@ -73,6 +74,14 @@ export default function HomePage() {
           />
         </div>
       </header>
+      
+      <div className="px-4 mb-4" style={{ height: "400px" }}>
+        <RealtimeChart 
+          paused={paused}
+          filterBlockHeight={selectedBlock ?? undefined}
+        />
+      </div>
+      
       <RealtimeTable 
         paused={paused}
         showSettings={showSettings}

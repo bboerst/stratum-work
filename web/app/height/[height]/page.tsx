@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import RealtimeTable from "@/components/RealtimeTable";
+import RealtimeChart from "@/components/RealtimeChart";
 import Blocks from "@/components/Blocks";
 import RealtimeTableMenu from "@/components/RealtimeTableMenu";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
@@ -65,6 +66,14 @@ export default function HeightPage() {
           />
         </div>
       </header>
+      
+      <div className="px-4 mb-4" style={{ height: "400px" }}>
+        <RealtimeChart 
+          paused={paused}
+          filterBlockHeight={blockHeight ?? undefined}
+        />
+      </div>
+      
       <RealtimeTable 
         paused={paused}
         showSettings={showSettings}

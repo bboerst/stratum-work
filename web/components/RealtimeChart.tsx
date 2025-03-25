@@ -3,33 +3,16 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
+import { formatTimestamp } from "@/lib/utils";
 import { 
   ChartContainer, 
   ChartTooltip
 } from "@/components/ui/chart";
 import * as RechartsPrimitive from "recharts";
+import CustomTooltip from "./CustomTooltip";
 
 // For type safety with recharts domains
 type AxisDomain = number | string | ((value: number) => number);
-
-// Format numerical timestamp (could be hex-derived) for display
-const formatTimestamp = (timestamp: number) => {
-  try {
-    // Convert microseconds to milliseconds for Date
-    const date = new Date(timestamp / 1000);
-    
-    // Format as HH:MM:SS.mmm
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const seconds = date.getSeconds().toString().padStart(2, '0');
-    const milliseconds = date.getMilliseconds().toString().padStart(3, '0');
-    const microseconds = (timestamp % 1000).toString().padStart(3, '0');
-    
-    return `${hours}:${minutes}:${seconds}.${milliseconds}${microseconds}`;
-  } catch {
-    return String(timestamp); // Fallback
-  }
-};
 
 // Generate a consistent color from a string (pool name)
 const stringToColor = (str: string): string => {
@@ -57,66 +40,11 @@ interface ChartDataPoint {
   [key: string]: unknown;
 }
 
-interface CustomTooltipProps {
-  active?: boolean;
-  payload?: Array<{
-    payload: ChartDataPoint;
-  }>;
-}
-
-// Enhanced tooltip component
-const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="custom-tooltip rounded-md p-3 bg-black/85 text-white text-xs max-w-xs border border-gray-700 shadow-lg">
-        <h4 className="m-0 pb-1 mb-2 border-b border-gray-600 font-medium bg-gray-800 -mx-3 -mt-3 p-2 rounded-t-md">{data.poolName}</h4>
-        <table className="w-full">
-          <tbody>
-            <tr>
-              <td className="pr-3 py-0.5 font-semibold">Time:</td>
-              <td>{formatTimestamp(data.timestamp)}</td>
-            </tr>
-            <tr>
-              <td className="pr-3 py-0.5 font-semibold">Height:</td>
-              <td>{data.height || 'N/A'}</td>
-            </tr>
-            {data.version && (
-              <tr>
-                <td className="pr-3 py-0.5 font-semibold">Version:</td>
-                <td>{data.version}</td>
-              </tr>
-            )}
-            {data.clean_jobs !== undefined && (
-              <tr>
-                <td className="pr-3 py-0.5 font-semibold">Clean Jobs:</td>
-                <td>{data.clean_jobs.toString()}</td>
-              </tr>
-            )}
-            {data.prev_hash && (
-              <tr>
-                <td className="pr-3 py-0.5 font-semibold">Prev Hash:</td>
-                <td className="truncate" style={{ maxWidth: "160px" }}>{data.prev_hash}</td>
-              </tr>
-            )}
-            {data.nbits && (
-              <tr>
-                <td className="pr-3 py-0.5 font-semibold">nBits:</td>
-                <td>{data.nbits}</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-  return null;
-};
-
 interface RealtimeChartProps {
   paused?: boolean;
   filterBlockHeight?: number;
   height?: number;
+  maxPointsPerPool?: number; // New parameter for controlling points per pool
 }
 
 // Define pool colors map type
@@ -127,7 +55,8 @@ interface PoolColorsMap {
 export default function RealtimeChart({ 
   paused = false, 
   filterBlockHeight,
-  height = 200
+  height = 200,
+  maxPointsPerPool = 1 // Default to 1 point per pool for backward compatibility
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -139,6 +68,9 @@ export default function RealtimeChart({
   // Maps to track pool information
   const poolRankingsRef = useRef<Map<string, number>>(new Map());
   const poolColorsRef = useRef<PoolColorsMap>({});
+  
+  // Keep a history of data points for each pool
+  const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
   
   // Chart config for shadcn/ui chart
   const chartConfig = useMemo(() => {
@@ -181,7 +113,7 @@ export default function RealtimeChart({
     }
   }, []);
   
-  // Process data and keep only the latest data point per pool
+  // Process data and keep multiple data points per pool based on maxPointsPerPool
   const processData = useCallback((stratumData: StratumV1Data[]) => {
     // Filter by block height if needed
     let filteredData = stratumData;
@@ -236,21 +168,39 @@ export default function RealtimeChart({
       };
     });
     
-    // Keep only the latest data point for each pool
-    const latestPointByPool = new Map<string, ChartDataPoint>();
-    
-    processedData.forEach(dataPoint => {
-      const poolName = dataPoint.poolName;
-      const existingPoint = latestPointByPool.get(poolName);
-      
-      // If we don't have a point for this pool yet, or this one is newer, use it
-      if (!existingPoint || dataPoint.timestamp > existingPoint.timestamp) {
-        latestPointByPool.set(poolName, dataPoint);
+    // Update the history of data points for each pool
+    processedData.forEach(point => {
+      const poolName = point.poolName;
+      if (!poolDataHistoryRef.current.has(poolName)) {
+        poolDataHistoryRef.current.set(poolName, []);
       }
+      
+      const history = poolDataHistoryRef.current.get(poolName)!;
+      
+      // Only add the point if it has a new timestamp
+      if (!history.some(existing => existing.timestamp === point.timestamp)) {
+        history.push(point);
+      }
+      
+      // Sort by timestamp descending
+      history.sort((a, b) => b.timestamp - a.timestamp);
     });
     
-    // Convert map to array
-    return Array.from(latestPointByPool.values());
+    // Collect all the points to display from the history
+    const resultPoints: ChartDataPoint[] = [];
+    poolDataHistoryRef.current.forEach((history, poolName) => {
+      // Take the most recent maxPointsPerPool points
+      const pointsToShow = history.slice(0, maxPointsPerPool);
+      resultPoints.push(...pointsToShow);
+    });
+    
+    return resultPoints;
+  }, [filterBlockHeight, maxPointsPerPool]);
+  
+  // Reset pool data history when block height changes
+  useEffect(() => {
+    poolDataHistoryRef.current.clear();
+    setChartData([]);
   }, [filterBlockHeight]);
   
   // Fetch and update data from the global stream
@@ -266,12 +216,12 @@ export default function RealtimeChart({
     // Update pool information
     updatePoolInfo(stratumData);
     
-    // Process the data to get the latest point per pool
-    const latestDataPoints = processData(stratumData);
+    // Process the data to get the latest points per pool
+    const dataPoints = processData(stratumData);
     
     // Update the chart data if we have points
-    if (latestDataPoints.length > 0) {
-      setChartData(latestDataPoints);
+    if (dataPoints.length > 0) {
+      setChartData(dataPoints);
     }
     
   }, [filterByType, paused, updatePoolInfo, processData]);
@@ -300,57 +250,59 @@ export default function RealtimeChart({
   }, [chartData]);
 
   return (
-    <div className="w-full h-full flex flex-col">
-      <div className="flex-1 w-full min-h-0">
-        <ChartContainer className="h-full" config={chartConfig}>
-          <RechartsPrimitive.ScatterChart
-            width={700}
-            height={350}
-            margin={{ top: 20, right: 30, bottom: 30, left: 10 }}
-          >
-            <RechartsPrimitive.XAxis 
-              type="number"
-              dataKey="timestamp"
-              name="Time"
-              domain={xAxisDomain}
-              tickFormatter={formatTimestamp}
-              label={{ 
-                value: 'Time (HH:MM:SS.microsec)', 
-                position: 'insideBottom', 
-                offset: -5
-              }}
-              tick={{ fontSize: 10 }}
-              tickCount={6}
-            />
-            <RechartsPrimitive.YAxis 
-              type="number"
-              dataKey="poolIndex"
-              name="Pool"
-              domain={yAxisDomain}
-              tick={false}
-              axisLine={false}
-            />
-            <RechartsPrimitive.ZAxis 
-              type="number"
-              dataKey="z"
-              range={[60, 60]} // Larger dots for better visibility
-              name="Size"
-            />
-            <ChartTooltip 
-              content={<CustomTooltip />}
-            />
-            {chartData.map((entry) => (
-              <RechartsPrimitive.Scatter 
-                key={`scatter-${entry.poolName}`}
-                name={entry.poolName}
-                data={[entry]} 
-                fill={poolColorsRef.current[entry.poolName] || '#8884d8'}
-                shape="circle"
-                isAnimationActive={false}
-                fillOpacity={0.8}
+    <div className="w-full h-full">
+      <div className="w-full h-full">
+        <ChartContainer className="w-full h-full" config={chartConfig}>
+          <RechartsPrimitive.ResponsiveContainer width="100%" height="100%">
+            <RechartsPrimitive.ScatterChart
+              margin={{ top: 15, right: 15, bottom: 25, left: 5 }}
+            >
+              <RechartsPrimitive.XAxis 
+                type="number"
+                dataKey="timestamp"
+                name="Time"
+                domain={xAxisDomain}
+                tickFormatter={formatTimestamp}
+                label={{ 
+                  position: 'insideBottom', 
+                  offset: -5,
+                  fontSize: 10
+                }}
+                tick={{ fontSize: 8 }}
+                tickCount={4}
+                stroke="currentColor"
               />
-            ))}
-          </RechartsPrimitive.ScatterChart>
+              <RechartsPrimitive.YAxis 
+                type="number"
+                dataKey="poolIndex"
+                name="Pool"
+                domain={yAxisDomain}
+                tick={false}
+                axisLine={false}
+                stroke="currentColor"
+              />
+              <RechartsPrimitive.ZAxis 
+                type="number"
+                dataKey="z"
+                range={[40, 40]} // Slightly smaller dots for narrow containers
+                name="Size"
+              />
+              <ChartTooltip 
+                content={<CustomTooltip />}
+              />
+              {chartData.map((entry) => (
+                <RechartsPrimitive.Scatter 
+                  key={`scatter-${entry.poolName}-${entry.timestamp}`}
+                  name={entry.poolName}
+                  data={[entry]} 
+                  fill={poolColorsRef.current[entry.poolName] || '#8884d8'}
+                  shape="circle"
+                  isAnimationActive={false}
+                  fillOpacity={0.8}
+                />
+              ))}
+            </RechartsPrimitive.ScatterChart>
+          </RechartsPrimitive.ResponsiveContainer>
         </ChartContainer>
       </div>
     </div>

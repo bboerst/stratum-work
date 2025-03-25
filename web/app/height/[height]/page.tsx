@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import RealtimeTable from "@/components/RealtimeTable";
-import RealtimeChart from "@/components/RealtimeChart";
 import Blocks from "@/components/Blocks";
 import RealtimeTableMenu from "@/components/RealtimeTableMenu";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { useBlocks } from "@/lib/BlocksContext";
+import { useVisualization } from "@/components/VisualizationContext";
+import VisualizationPanel from "@/components/VisualizationPanel";
 
 export default function HeightPage() {
   const params = useParams();
@@ -20,6 +21,7 @@ export default function HeightPage() {
   const { setMenuContent } = useGlobalMenu();
   const { isConnected } = useGlobalDataStream();
   const { resetBlocksState } = useBlocks();
+  const { isPanelVisible } = useVisualization();
   
   // Set the menu content when the component mounts
   useEffect(() => {
@@ -56,9 +58,9 @@ export default function HeightPage() {
   };
 
   return (
-    <main className="min-h-screen bg-transparent">
-      <header className="p-4 flex items-center">
-        <div className="flex-1">
+    <main className="min-h-screen h-screen bg-transparent flex flex-col">
+      <header className="p-4 flex-shrink-0">
+        <div>
           <Blocks 
             onBlockClick={handleBlockClick}
             selectedBlockHeight={blockHeight}
@@ -67,19 +69,25 @@ export default function HeightPage() {
         </div>
       </header>
       
-      <div className="px-4 mb-4" style={{ height: "400px" }}>
-        <RealtimeChart 
-          paused={paused}
-          filterBlockHeight={blockHeight ?? undefined}
-        />
+      <div className="flex flex-1 overflow-hidden">
+        {/* Visualization Panel */}
+        {isPanelVisible && (
+          <VisualizationPanel 
+            paused={paused}
+            filterBlockHeight={blockHeight ?? undefined}
+          />
+        )}
+        
+        {/* Main Content */}
+        <div className="flex-1 overflow-auto">
+          <RealtimeTable 
+            paused={paused}
+            showSettings={showSettings}
+            onShowSettingsChange={setShowSettings}
+            filterBlockHeight={blockHeight ?? undefined}
+          />
+        </div>
       </div>
-      
-      <RealtimeTable 
-        paused={paused}
-        showSettings={showSettings}
-        onShowSettingsChange={setShowSettings}
-        filterBlockHeight={blockHeight ?? undefined}
-      />
     </main>
   );
 } 

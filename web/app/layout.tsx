@@ -7,15 +7,7 @@ import { GlobalMenu } from "@/components/GlobalMenu";
 import { GlobalMenuProvider } from "@/components/GlobalMenuContext";
 import { DataStreamProvider } from "@/lib/DataStreamContext";
 import { BlocksProvider } from "@/lib/BlocksContext";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import { VisualizationProvider } from "@/components/VisualizationContext";
 
 export const metadata: Metadata = {
   title: "Stratum Work",
@@ -27,18 +19,20 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body>
         <ThemeProvider attribute="class" defaultTheme="dark" storageKey="theme-default-dark">
           <DataStreamProvider>
             <BlocksProvider>
               <GlobalMenuProvider>
-                {/* Navigation will be present on all pages */}
-                <Navigation>
-                  <GlobalMenu />
-                </Navigation>
-                <div>
-                  {children}
-                </div>
+                <VisualizationProvider>
+                  {/* Navigation will be present on all pages */}
+                  <Navigation>
+                    <GlobalMenu />
+                  </Navigation>
+                  <div>
+                    {children}
+                  </div>
+                </VisualizationProvider>
               </GlobalMenuProvider>
             </BlocksProvider>
           </DataStreamProvider>

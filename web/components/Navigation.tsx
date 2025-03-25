@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { TableIcon } from "lucide-react";
 import NavItem from "./NavItem";
+import VisualizationToggle from "./VisualizationToggle";
 
 export default function Navigation({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
@@ -15,7 +16,7 @@ export default function Navigation({ children }: { children: React.ReactNode }) 
     <nav className="relative w-full z-10 bg-background">
       <div className="flex items-center justify-between h-16 px-4">
         <div className="flex items-center">
-          <span className="text-foreground mr-3 text-sm font-medium font-mono">Visualizations:</span>
+          <span className="text-foreground mr-3 text-sm font-medium">Visualizations:</span>
           <div className="flex items-center space-x-1">
             <NavItem 
               href="/"
@@ -42,7 +43,10 @@ export default function Navigation({ children }: { children: React.ReactNode }) 
             />
           </div>
         </div>
-        <div className="flex items-center">{children}</div>
+        <div className="flex items-center space-x-2">
+          <VisualizationToggle />
+          {children}
+        </div>
       </div>
     </nav>
   );

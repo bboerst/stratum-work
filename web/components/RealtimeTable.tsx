@@ -182,7 +182,7 @@ export default function RealtimeTable({
       />
 
       {/* The Table */}
-      <Table className="w-full table-fixed font-mono">
+      <Table className="w-full table-fixed">
         <RealtimeTableHeader 
           columnsVisible={columnsVisible}
           columnWidths={columnWidths}
@@ -222,7 +222,7 @@ export default function RealtimeTable({
       
       {/* Show waiting message if no rows */}
       {displayedRows.length === 0 && !isLoading && (
-        <div className="text-center text-black dark:text-white py-20 font-mono flex items-center justify-center min-h-[150px]">
+        <div className="text-center text-black dark:text-white py-20 flex items-center justify-center min-h-[150px]">
           <div>
             {isFiltering ? (
               <>

@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
-import { formatTimestamp } from "@/lib/utils";
 import { 
   ChartContainer, 
   ChartTooltip
@@ -26,6 +25,18 @@ const stringToColor = (str: string): string => {
   return `hsl(${h}, 70%, 50%)`;
 };
 
+// Format timestamp to microseconds
+const formatMicroseconds = (timestamp: number): string => {
+  // Get just the microseconds part
+  const date = new Date(timestamp);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const millis = date.getMilliseconds().toString().padStart(3, '0');
+  
+  return `${hours}:${minutes}:${seconds}.${millis}`;
+};
+
 interface ChartDataPoint {
   timestamp: number;
   poolName: string;
@@ -43,8 +54,7 @@ interface ChartDataPoint {
 interface RealtimeChartProps {
   paused?: boolean;
   filterBlockHeight?: number;
-  height?: number;
-  maxPointsPerPool?: number; // New parameter for controlling points per pool
+  timeWindow?: number; // Time window in seconds
 }
 
 // Define pool colors map type
@@ -55,15 +65,13 @@ interface PoolColorsMap {
 export default function RealtimeChart({ 
   paused = false, 
   filterBlockHeight,
-  height = 200,
-  maxPointsPerPool = 1 // Default to 1 point per pool for backward compatibility
+  timeWindow = 30 // Default to 30 seconds
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
   
   // State for chart data and visualization options
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  const [poolColors, setPoolColors] = useState<PoolColorsMap>({});
   
   // Maps to track pool information
   const poolRankingsRef = useRef<Map<string, number>>(new Map());
@@ -71,6 +79,9 @@ export default function RealtimeChart({
   
   // Keep a history of data points for each pool
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
+  
+  // Track the time range of the data for x-axis domain
+  const timeRangeRef = useRef<{ min: number, max: number }>({ min: 0, max: 0 });
   
   // Chart config for shadcn/ui chart
   const chartConfig = useMemo(() => {
@@ -108,12 +119,34 @@ export default function RealtimeChart({
       
       poolRankingsRef.current = rankings;
       poolColorsRef.current = colors;
-      
-      setPoolColors({...colors});
     }
   }, []);
   
-  // Process data and keep multiple data points per pool based on maxPointsPerPool
+  // Parse timestamp - collector uses hex(time.time_ns())[2:] format
+  const parseTimestamp = useCallback((timestampStr: string | number): number => {
+    if (typeof timestampStr === 'number') return timestampStr;
+    
+    try {
+      // First check if it's a valid date string
+      const dateTimestamp = new Date(timestampStr).getTime();
+      if (!isNaN(dateTimestamp)) {
+        return dateTimestamp;
+      }
+      
+      // Otherwise, parse as hexadecimal nanoseconds
+      // Remove '0x' prefix if present
+      const cleaned = timestampStr.replace(/^0x/, '');
+      // Parse the hex string to get nanoseconds
+      const nanoseconds = parseInt(cleaned, 16);
+      // Convert to milliseconds for chart display
+      return nanoseconds / 1000000;
+    } catch (e) {
+      console.error("Failed to parse timestamp:", timestampStr, e);
+      return Date.now(); // Fallback to current time
+    }
+  }, []);
+  
+  // Process data and filter by time window
   const processData = useCallback((stratumData: StratumV1Data[]) => {
     // Filter by block height if needed
     let filteredData = stratumData;
@@ -126,33 +159,23 @@ export default function RealtimeChart({
       }
     }
     
+    // Calculate the earliest timestamp to include (current time - time window)
+    const currentTimeMs = Date.now();
+    const timeWindowMs = timeWindow * 1000; // Convert seconds to milliseconds
+    const cutoffTimeMs = currentTimeMs - timeWindowMs;
+    
+    // Track min/max timestamps for domain calculation
+    let minTimestamp = Number.MAX_SAFE_INTEGER;
+    let maxTimestamp = 0;
+    
     // Transform the data for the chart
     const processedData = filteredData.map(item => {
-      // Handle the timestamp - it may be a hex string or ISO date string
-      let timestamp: number;
+      // Parse timestamp from the data
+      const timestamp = parseTimestamp(item.timestamp);
       
-      if (typeof item.timestamp === 'string') {
-        // First try parsing as ISO date
-        const dateTimestamp = new Date(item.timestamp).getTime();
-        
-        if (isNaN(dateTimestamp)) {
-          // If not a valid date, try parsing as hex
-          try {
-            // Remove '0x' prefix if present and convert to decimal
-            const cleaned = item.timestamp.replace(/^0x/, '');
-            // Parse the hex string 
-            timestamp = parseInt(cleaned, 16);
-          } catch {
-            timestamp = Date.now(); // Fallback to current time
-          }
-        } else {
-          // It was a valid date string
-          timestamp = dateTimestamp * 1000; // Convert ms to μs
-        }
-      } else {
-        // Use current time as fallback
-        timestamp = Date.now() * 1000;
-      }
+      // Update min/max for domain calculation
+      minTimestamp = Math.min(minTimestamp, timestamp);
+      maxTimestamp = Math.max(maxTimestamp, timestamp);
       
       return {
         timestamp,
@@ -167,6 +190,14 @@ export default function RealtimeChart({
         z: 1 // Fixed value for all points to ensure same size
       };
     });
+    
+    // Update time range reference if we have valid data
+    if (minTimestamp !== Number.MAX_SAFE_INTEGER) {
+      timeRangeRef.current = {
+        min: minTimestamp,
+        max: maxTimestamp
+      };
+    }
     
     // Update the history of data points for each pool
     processedData.forEach(point => {
@@ -186,16 +217,16 @@ export default function RealtimeChart({
       history.sort((a, b) => b.timestamp - a.timestamp);
     });
     
-    // Collect all the points to display from the history
+    // Collect all the points to display from the history within the time window
     const resultPoints: ChartDataPoint[] = [];
-    poolDataHistoryRef.current.forEach((history, poolName) => {
-      // Take the most recent maxPointsPerPool points
-      const pointsToShow = history.slice(0, maxPointsPerPool);
-      resultPoints.push(...pointsToShow);
+    poolDataHistoryRef.current.forEach((history) => {
+      // Filter to only include points within the time window
+      const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
+      resultPoints.push(...pointsInTimeWindow);
     });
     
     return resultPoints;
-  }, [filterBlockHeight, maxPointsPerPool]);
+  }, [filterBlockHeight, timeWindow, parseTimestamp]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -216,7 +247,7 @@ export default function RealtimeChart({
     // Update pool information
     updatePoolInfo(stratumData);
     
-    // Process the data to get the latest points per pool
+    // Process the data to get the points within time window
     const dataPoints = processData(stratumData);
     
     // Update the chart data if we have points
@@ -231,23 +262,22 @@ export default function RealtimeChart({
     return [0, Math.max(10, poolRankingsRef.current.size + 1)];
   }, []);
   
-  // Compute X-axis domain based on the timestamp range in the data
+  // Compute X-axis domain based on the time window and actual data
   const xAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
     if (chartData.length === 0) {
-      return [0, 1000000]; // Default domain when no data
+      // Default domain when no data
+      const currentTime = Date.now();
+      return [currentTime - (timeWindow * 1000), currentTime];
     }
     
-    // Find min and max timestamps
-    const timestamps = chartData.map(point => point.timestamp);
-    const minTime = Math.min(...timestamps);
-    const maxTime = Math.max(...timestamps);
+    // Use the time range from the data, but ensure it spans at most timeWindow seconds
+    const { min, max } = timeRangeRef.current;
+    const currentTime = Date.now();
+    const minTime = Math.max(min, currentTime - (timeWindow * 1000));
     
-    // Add padding to the domain
-    const range = maxTime - minTime;
-    const padding = Math.max(range * 0.2, 1000000); // At least 1 second of padding
-    
-    return [minTime - padding, maxTime + padding];
-  }, [chartData]);
+    // Make sure we always have a reasonable domain width
+    return [minTime, Math.max(max, minTime + 1000)];
+  }, [chartData, timeWindow]);
 
   return (
     <div className="w-full h-full">
@@ -262,7 +292,7 @@ export default function RealtimeChart({
                 dataKey="timestamp"
                 name="Time"
                 domain={xAxisDomain}
-                tickFormatter={formatTimestamp}
+                tickFormatter={formatMicroseconds}
                 label={{ 
                   position: 'insideBottom', 
                   offset: -5,

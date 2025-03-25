@@ -18,7 +18,7 @@ export default function VisualizationPanel({
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const [pointsPerPool, setPointsPerPool] = useState(1); // Default to 1 point per pool
+  const [timeWindow, setTimeWindow] = useState(30); // Default to 30 seconds
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -26,13 +26,33 @@ export default function VisualizationPanel({
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
 
-  // Increment/decrement points per pool
-  const incrementPointsPerPool = () => {
-    setPointsPerPool(prev => Math.min(prev + 1, 10)); // Cap at 10 points
+  // Increment/decrement time window
+  const incrementTimeWindow = () => {
+    setTimeWindow(prev => {
+      if (prev < 60) return prev + 15; // Increment by 15 seconds if < 1 minute
+      if (prev < 300) return prev + 60; // Increment by 1 minute if < 5 minutes
+      return prev + 300; // Increment by 5 minutes otherwise
+    });
   };
 
-  const decrementPointsPerPool = () => {
-    setPointsPerPool(prev => Math.max(prev - 1, 1)); // Minimum 1 point
+  const decrementTimeWindow = () => {
+    setTimeWindow(prev => {
+      if (prev <= 15) return 15; // Minimum 15 seconds
+      if (prev <= 60) return prev - 15; // Decrement by 15 seconds if <= 1 minute
+      if (prev <= 300) return prev - 60; // Decrement by 1 minute if <= 5 minutes
+      return prev - 300; // Decrement by 5 minutes otherwise
+    });
+  };
+
+  // Format time window for display
+  const formatTimeWindow = (seconds: number): string => {
+    if (seconds < 60) {
+      return `${seconds}s`;
+    } else if (seconds < 3600) {
+      return `${Math.floor(seconds / 60)}m`;
+    } else {
+      return `${Math.floor(seconds / 3600)}h`;
+    }
   };
 
   useEffect(() => {
@@ -107,17 +127,16 @@ export default function VisualizationPanel({
                 <div className="flex items-center space-x-1 text-xs">
                   <span className="mr-1">Show last:</span>
                   <button 
-                    onClick={decrementPointsPerPool}
+                    onClick={decrementTimeWindow}
                     className="p-1 rounded hover:bg-gray-700 text-gray-300" 
-                    disabled={pointsPerPool <= 1}
+                    disabled={timeWindow <= 15}
                   >
                     <MinusIcon size={14} />
                   </button>
-                  <span className="min-w-[18px] text-center">{pointsPerPool}</span>
+                  <span className="min-w-[36px] text-center">{formatTimeWindow(timeWindow)}</span>
                   <button 
-                    onClick={incrementPointsPerPool}
+                    onClick={incrementTimeWindow}
                     className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                    disabled={pointsPerPool >= 10}
                   >
                     <PlusIcon size={14} />
                   </button>
@@ -127,8 +146,7 @@ export default function VisualizationPanel({
                 <RealtimeChart 
                   paused={paused} 
                   filterBlockHeight={filterBlockHeight}
-                  height={290}
-                  maxPointsPerPool={pointsPerPool}
+                  timeWindow={timeWindow}
                 />
               </div>
             </div>

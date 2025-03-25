@@ -13,7 +13,7 @@ interface VisualizationContextType {
 const VisualizationContext = createContext<VisualizationContextType | undefined>(undefined);
 
 export function VisualizationProvider({ children }: { children: ReactNode }) {
-  const [isPanelVisible, setIsPanelVisible] = useState(false);
+  const [isPanelVisible, setIsPanelVisible] = useState(true);
   const [activeVisualizations, setActiveVisualizations] = useState<Set<string>>(new Set(["chart"])); // Default to chart active
 
   const togglePanelVisibility = () => {

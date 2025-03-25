@@ -4,11 +4,9 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { 
-  ChartContainer, 
-  ChartTooltip
+  ChartContainer
 } from "@/components/ui/chart";
 import * as RechartsPrimitive from "recharts";
-import CustomTooltip from "./CustomTooltip";
 
 // For type safety with recharts domains
 type AxisDomain = number | string | ((value: number) => number);
@@ -72,6 +70,10 @@ export default function RealtimeChart({
   
   // State for chart data and visualization options
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  
+  // Add state for hovering
+  const [hoveredPool, setHoveredPool] = useState<string | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
   // Maps to track pool information
   const poolRankingsRef = useRef<Map<string, number>>(new Map());
@@ -279,13 +281,39 @@ export default function RealtimeChart({
     return [minTime, Math.max(max, minTime + 1000)];
   }, [chartData, timeWindow]);
 
+  // Handle mouse events for highlighting
+  const handleMouseEnter = useCallback((data: ChartDataPoint) => {
+    setHoveredPool(data.poolName);
+    setHoveredPoint(data);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredPool(null);
+    setHoveredPoint(null);
+  }, []);
+
+  // Group chart data by pool name for easier rendering
+  const groupedChartData = useMemo(() => {
+    const grouped: Record<string, ChartDataPoint[]> = {};
+    
+    chartData.forEach(point => {
+      if (!grouped[point.poolName]) {
+        grouped[point.poolName] = [];
+      }
+      grouped[point.poolName].push(point);
+    });
+    
+    return grouped;
+  }, [chartData]);
+
   return (
-    <div className="w-full h-full">
-      <div className="w-full h-full">
+    <div className="w-full h-full relative">
+      <div className="w-full h-full" style={{ cursor: 'crosshair' }}>
         <ChartContainer className="w-full h-full" config={chartConfig}>
           <RechartsPrimitive.ResponsiveContainer width="100%" height="100%">
             <RechartsPrimitive.ScatterChart
               margin={{ top: 15, right: 15, bottom: 25, left: 5 }}
+              onMouseLeave={handleMouseLeave}
             >
               <RechartsPrimitive.XAxis 
                 type="number"
@@ -313,28 +341,77 @@ export default function RealtimeChart({
               />
               <RechartsPrimitive.ZAxis 
                 type="number"
-                dataKey="z"
-                range={[40, 40]} // Slightly smaller dots for narrow containers
+                range={[30, 60]} // Range from moderate to larger size 
                 name="Size"
               />
-              <ChartTooltip 
-                content={<CustomTooltip />}
+              {/* Add full crosshair only */}
+              <RechartsPrimitive.Tooltip 
+                cursor={{
+                  strokeDasharray: '3 3',
+                  stroke: 'rgba(200, 200, 200, 0.8)',
+                  strokeWidth: 1
+                }}
+                content={() => null}
+                position={{x: 0, y: 0}}
+                wrapperStyle={{ opacity: 0 }}
               />
-              {chartData.map((entry) => (
+              {/* Render normal-sized points for all data */}
+              {Object.entries(groupedChartData).map(([poolName, points]) => (
                 <RechartsPrimitive.Scatter 
-                  key={`scatter-${entry.poolName}-${entry.timestamp}`}
-                  name={entry.poolName}
-                  data={[entry]} 
-                  fill={poolColorsRef.current[entry.poolName] || '#8884d8'}
+                  key={`scatter-${poolName}`}
+                  name={poolName}
+                  data={hoveredPool === poolName ? [] : points} // Only show if not hovered
+                  fill={poolColorsRef.current[poolName] || '#8884d8'}
                   shape="circle"
                   isAnimationActive={false}
                   fillOpacity={0.8}
-                />
+                >
+                  {points.map((entry) => (
+                    <RechartsPrimitive.Cell 
+                      key={`cell-${entry.poolName}-${entry.timestamp}`} 
+                      onMouseEnter={() => handleMouseEnter(entry)}
+                      onMouseLeave={handleMouseLeave}
+                      style={{ cursor: 'crosshair' }}
+                    />
+                  ))}
+                </RechartsPrimitive.Scatter>
               ))}
+              
+              {/* Render larger points for hovered pool */}
+              {hoveredPool && (
+                <RechartsPrimitive.Scatter
+                  name={`${hoveredPool}-large`}
+                  data={groupedChartData[hoveredPool] || []}
+                  fill={poolColorsRef.current[hoveredPool] || '#8884d8'}
+                  shape="circle"
+                  isAnimationActive={false}
+                  fillOpacity={0.8}
+                  zAxisId={1}
+                >
+                  {(groupedChartData[hoveredPool] || []).map((entry) => (
+                    <RechartsPrimitive.Cell 
+                      key={`cell-large-${entry.poolName}-${entry.timestamp}`} 
+                      onMouseEnter={() => handleMouseEnter(entry)}
+                      style={{ cursor: 'crosshair' }}
+                    />
+                  ))}
+                </RechartsPrimitive.Scatter>
+              )}
             </RechartsPrimitive.ScatterChart>
           </RechartsPrimitive.ResponsiveContainer>
         </ChartContainer>
       </div>
+      
+      {/* Fixed tooltip at the bottom of the chart */}
+      {hoveredPoint && (
+        <div className="absolute bottom-2 right-2 text-xs font-medium text-right">
+          <span className="font-bold">{hoveredPoint.poolName}</span>
+          {" | "}
+          <span>Height: {hoveredPoint.height || 'N/A'}</span>
+          <br />
+          <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
+        </div>
+      )}
     </div>
   );
 } 

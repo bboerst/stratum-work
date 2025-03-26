@@ -1092,7 +1092,6 @@ Type: ${block.isRealtime ? 'Real-time' : 'Historical'}`}
           opacity: 0.9;
         }
         .selected-block {
-          transform: scale(1.1);
           z-index: 5;
           box-shadow: 0 0 10px 2px rgba(255, 165, 0, 0.8);
           background: rgb(196, 92, 21);

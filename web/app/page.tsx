@@ -78,14 +78,6 @@ export default function HomePage() {
       </header>
       
       <div className="flex flex-1 overflow-hidden">
-        {/* Visualization Panel */}
-        {isPanelVisible && (
-          <VisualizationPanel 
-            paused={paused}
-            filterBlockHeight={selectedBlock ?? undefined}
-          />
-        )}
-        
         {/* Main Content */}
         <div className="flex-1 overflow-auto">
           <RealtimeTable 
@@ -95,6 +87,14 @@ export default function HomePage() {
             filterBlockHeight={selectedBlock ?? undefined}
           />
         </div>
+        
+        {/* Visualization Panel */}
+        {isPanelVisible && (
+          <VisualizationPanel 
+            paused={paused}
+            filterBlockHeight={selectedBlock ?? undefined}
+          />
+        )}
       </div>
     </main>
   );

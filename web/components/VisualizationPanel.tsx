@@ -29,7 +29,7 @@ export default function VisualizationPanel({
   paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
-  const { isPanelVisible, isVisualizationActive } = useVisualization();
+  const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
@@ -73,7 +73,8 @@ export default function VisualizationPanel({
   // Throttled resize handler to improve performance
   const handleThrottledMouseMove = useCallback((e: MouseEvent) => {
     if (isDraggingRef.current) {
-      const delta = e.clientX - startXRef.current;
+      // Invert the delta since we're resizing from the left side now
+      const delta = startXRef.current - e.clientX;
       let newWidth = startWidthRef.current + delta;
       
       // Apply constraints
@@ -116,12 +117,10 @@ export default function VisualizationPanel({
     };
   }, [width, throttledMouseMove]);
 
-  // Memoized content to avoid unnecessary re-renders
-  const chartComponent = useCallback(() => {
-    if (!isVisualizationActive('chart')) return null;
-    
+  // Render the pool timing chart
+  const renderPoolTimingChart = useCallback(() => {
     return (
-      <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full">
+      <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full mb-4">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-medium">Timing</h3>
           <div className="flex items-center space-x-1 text-xs">
@@ -151,7 +150,7 @@ export default function VisualizationPanel({
         </div>
       </div>
     );
-  }, [isVisualizationActive, decrementTimeWindow, incrementTimeWindow, formatTimeWindow, timeWindow, paused, filterBlockHeight]);
+  }, [timeWindow, decrementTimeWindow, incrementTimeWindow, formatTimeWindow, paused, filterBlockHeight]);
 
   if (!isPanelVisible) {
     return null;
@@ -161,25 +160,28 @@ export default function VisualizationPanel({
     <div 
       ref={panelRef}
       className="h-full bg-background border-r border-border relative flex-shrink-0"
-      style={{ width: `${width}px` }}
+      style={{ width: `${width}px`, color: '#9d9d9d' }}
     >
+
+      {/* Resize handle */}
       <div 
         ref={resizeHandleRef}
-        className="absolute top-0 right-0 w-2 h-full bg-gray-500/25 cursor-ew-resize hover:bg-primary/50 active:bg-primary z-10 flex items-center justify-center"
-        style={{ transform: 'translateX(50%)' }}
+        className="absolute top-0 left-0 w-4 h-full cursor-ew-resize z-10 group flex items-center justify-center"
+        style={{ transform: 'translateX(-50%)' }}
       >
-        <div className="h-16 w-full flex flex-col justify-center items-center gap-1">
-          <div className="w-0.5 h-6 bg-gray-400"></div>
-          <div className="w-0.5 h-6 bg-gray-400"></div>
+        <div className="w-1 h-full bg-gray-700/60 group-hover:bg-gray-400">
+          {/* Resize grip indicator */}
+          <div className="absolute left-1/2 top-1/2 transform -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1.5">
+            <div className="w-1 h-8 rounded-full bg-gray-400 group-hover:bg-gray-400"></div>
+            <div className="w-1 h-8 rounded-full bg-gray-400 group-hover:bg-gray-400"></div>
+          </div>
         </div>
       </div>
       
-      <div className="p-4 h-full overflow-auto w-full viz-column-wrapper">
-        <div className="space-y-4 w-full">
-          {chartComponent()}
-          
-          {/* Future visualizations can be added here */}
-        </div>
+      {/* Visualization content */}
+      <div className="p-4 h-[calc(100%-60px)] overflow-auto w-full">
+        {/* Timing chart */}
+        {renderPoolTimingChart()}
       </div>
     </div>
   );

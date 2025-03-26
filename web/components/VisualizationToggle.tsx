@@ -2,25 +2,27 @@
 
 import React from "react";
 import { useVisualization } from "./VisualizationContext";
-import { BarChartIcon } from "lucide-react";
+import { BarChartIcon, ChevronRightIcon, ChevronLeftIcon } from "lucide-react";
 
 export default function VisualizationToggle() {
   const { isPanelVisible, togglePanelVisibility } = useVisualization();
   
-  const navItemBaseClasses = "flex items-center justify-center w-10 h-10 rounded-md transition-colors duration-200 relative";
-  const activeClasses = "text-white";
-  const inactiveClasses = "text-foreground hover:text-gray-600";
-  
   return (
     <button
       onClick={togglePanelVisibility}
-      className={`${navItemBaseClasses} ${isPanelVisible ? activeClasses : inactiveClasses}`}
-      title="Toggle Visualizations Panel"
+      className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 
+        ${isPanelVisible 
+          ? "bg-purple-900/80 text-white" 
+          : "bg-background text-foreground hover:bg-muted"}`}
+      aria-label={isPanelVisible ? "Hide analytics" : "Show analytics"}
     >
-      {isPanelVisible && <div className="absolute inset-0 bg-purple-800 rounded-md"></div>}
-      <div className="relative z-10">
-        <BarChartIcon className="h-5 w-5" />
-      </div>
+      <BarChartIcon className="h-5 w-5" />
+      <span className="text-sm font-medium">Analytics</span>
+      {isPanelVisible ? (
+        <ChevronRightIcon className="h-4 w-4" />
+      ) : (
+        <ChevronLeftIcon className="h-4 w-4" />
+      )}
     </button>
   );
 } 

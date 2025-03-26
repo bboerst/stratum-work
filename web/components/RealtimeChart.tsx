@@ -75,10 +75,14 @@ export default function RealtimeChart({
   const [hoveredPool, setHoveredPool] = useState<string | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
+  // Container ref for dimensions
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  
   // Use refs for animation values to prevent render loops
   const animatedDomainRef = useRef<[number, number]>([0, 0]);
-  // Need a state version to force re-renders
-  const [forceRender, setForceRender] = useState(0);
+  // Need a state version to force re-renders when needed
+  const [, setForceRender] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const animationRef = useRef<number | null>(null);
   // Track the last time we forced a render
@@ -99,6 +103,32 @@ export default function RealtimeChart({
   const isFirstLoadRef = useRef<boolean>(true);
   // Track last animation timestamp to throttle animations
   const lastAnimationTimeRef = useRef<number>(0);
+  
+  // Update dimensions when container size changes
+  useEffect(() => {
+    const currentContainer = containerRef.current;
+    if (!currentContainer) return;
+    
+    const updateDimensions = () => {
+      if (currentContainer) {
+        const { width, height } = currentContainer.getBoundingClientRect();
+        setDimensions({ width, height });
+      }
+    };
+    
+    // Initial update
+    updateDimensions();
+    
+    // Add resize listener
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(currentContainer);
+    
+    return () => {
+      if (currentContainer) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, []);
   
   // Helper to update the animated domain
   const updateAnimatedDomain = useCallback((newDomain: [number, number]) => {
@@ -451,103 +481,104 @@ export default function RealtimeChart({
       onMouseLeave={handleChartMouseLeave}
     >
       <div 
+        ref={containerRef}
         className="w-full h-full" 
         style={{ cursor: 'crosshair' }}
         onMouseLeave={handleChartMouseLeave}
       >
         <ChartContainer className="w-full h-full" config={chartConfig}>
-          <RechartsPrimitive.ResponsiveContainer width="100%" height="100%">
-            <RechartsPrimitive.ScatterChart
-              margin={{ top: 5, right: 5, bottom: 25, left: 5 }}
-              onMouseLeave={handleChartMouseLeave}
-            >
-              <RechartsPrimitive.XAxis 
-                type="number"
-                dataKey="timestamp"
-                name="Time"
-                domain={animatedDomainRef.current}
-                tickFormatter={formatMicroseconds}
-                label={{ 
-                  position: 'insideBottom', 
-                  offset: -5,
-                  fontSize: 10
-                }}
-                tick={{ fontSize: 8 }}
-                tickCount={4}
-                stroke="currentColor"
-              />
-              <RechartsPrimitive.YAxis 
-                type="number"
-                dataKey="poolIndex"
-                name="Pool"
-                domain={yAxisDomain}
-                tick={false}
-                axisLine={false}
-                stroke="currentColor"
-                width={0}
-              />
-              <RechartsPrimitive.ZAxis 
-                type="number"
-                range={[40, 80]} // Range from moderate to larger size 
-                name="Size"
-              />
-              {/* Add full crosshair only */}
-              <RechartsPrimitive.Tooltip 
-                cursor={{
-                  strokeDasharray: '3 3',
-                  stroke: 'rgba(200, 200, 200, 0.8)',
-                  strokeWidth: 1
-                }}
-                content={() => null}
-                position={{x: 0, y: 0}}
-                wrapperStyle={{ opacity: 0 }}
-                active={hoveredPoint !== null}
-              />
-              {/* Render normal-sized points for all data */}
-              {Object.entries(groupedChartData).map(([poolName, points]) => (
-                <RechartsPrimitive.Scatter 
-                  key={`scatter-${poolName}`}
-                  name={poolName}
-                  data={hoveredPool === poolName ? [] : points} // Only show if not hovered
-                  fill={poolColorsRef.current[poolName] || '#8884d8'}
-                  shape="circle"
-                  isAnimationActive={false}
-                  fillOpacity={0.8}
-                >
-                  {points.map((entry) => (
-                    <RechartsPrimitive.Cell 
-                      key={`cell-${entry.poolName}-${entry.timestamp}`} 
-                      onMouseEnter={() => handleMouseEnter(entry)}
-                      onMouseLeave={handleMouseLeave}
-                      style={{ cursor: 'crosshair' }}
-                    />
-                  ))}
-                </RechartsPrimitive.Scatter>
-              ))}
-              
-              {/* Render larger points for hovered pool */}
-              {hoveredPool && (
-                <RechartsPrimitive.Scatter
-                  name={`${hoveredPool}-large`}
-                  data={groupedChartData[hoveredPool] || []}
-                  fill={poolColorsRef.current[hoveredPool] || '#8884d8'}
-                  shape="circle"
-                  isAnimationActive={false}
-                  fillOpacity={0.8}
-                  zAxisId={1}
-                >
-                  {(groupedChartData[hoveredPool] || []).map((entry) => (
-                    <RechartsPrimitive.Cell 
-                      key={`cell-large-${entry.poolName}-${entry.timestamp}`} 
-                      onMouseEnter={() => handleMouseEnter(entry)}
-                      onMouseLeave={handleMouseLeave}
-                      style={{ cursor: 'crosshair' }}
-                    />
-                  ))}
-                </RechartsPrimitive.Scatter>
-              )}
-            </RechartsPrimitive.ScatterChart>
-          </RechartsPrimitive.ResponsiveContainer>
+          <RechartsPrimitive.ScatterChart
+            width={dimensions.width}
+            height={dimensions.height}
+            margin={{ top: 5, right: 15, bottom: 25, left: 5 }}
+            onMouseLeave={handleChartMouseLeave}
+          >
+            <RechartsPrimitive.XAxis 
+              type="number"
+              dataKey="timestamp"
+              name="Time"
+              domain={animatedDomainRef.current}
+              tickFormatter={formatMicroseconds}
+              label={{ 
+                position: 'insideBottom', 
+                offset: -5,
+                fontSize: 10
+              }}
+              tick={{ fontSize: 8 }}
+              tickCount={4}
+              stroke="currentColor"
+            />
+            <RechartsPrimitive.YAxis 
+              type="number"
+              dataKey="poolIndex"
+              name="Pool"
+              domain={yAxisDomain}
+              tick={false}
+              axisLine={false}
+              stroke="currentColor"
+              width={0}
+            />
+            <RechartsPrimitive.ZAxis 
+              type="number"
+              range={[40, 80]} // Range from moderate to larger size 
+              name="Size"
+            />
+            {/* Add full crosshair only */}
+            <RechartsPrimitive.Tooltip 
+              cursor={{
+                strokeDasharray: '3 3',
+                stroke: 'rgba(200, 200, 200, 0.8)',
+                strokeWidth: 1
+              }}
+              content={() => null}
+              position={{x: 0, y: 0}}
+              wrapperStyle={{ opacity: 0 }}
+              active={hoveredPoint !== null}
+            />
+            {/* Render normal-sized points for all data */}
+            {Object.entries(groupedChartData).map(([poolName, points]) => (
+              <RechartsPrimitive.Scatter 
+                key={`scatter-${poolName}`}
+                name={poolName}
+                data={hoveredPool === poolName ? [] : points} // Only show if not hovered
+                fill={poolColorsRef.current[poolName] || '#8884d8'}
+                shape="circle"
+                isAnimationActive={false}
+                fillOpacity={0.8}
+              >
+                {points.map((entry) => (
+                  <RechartsPrimitive.Cell 
+                    key={`cell-${entry.poolName}-${entry.timestamp}`} 
+                    onMouseEnter={() => handleMouseEnter(entry)}
+                    onMouseLeave={handleMouseLeave}
+                    style={{ cursor: 'crosshair' }}
+                  />
+                ))}
+              </RechartsPrimitive.Scatter>
+            ))}
+            
+            {/* Render larger points for hovered pool */}
+            {hoveredPool && (
+              <RechartsPrimitive.Scatter
+                name={`${hoveredPool}-large`}
+                data={groupedChartData[hoveredPool] || []}
+                fill={poolColorsRef.current[hoveredPool] || '#8884d8'}
+                shape="circle"
+                isAnimationActive={false}
+                fillOpacity={0.8}
+                zAxisId={1}
+              >
+                {(groupedChartData[hoveredPool] || []).map((entry) => (
+                  <RechartsPrimitive.Cell 
+                    key={`cell-large-${entry.poolName}-${entry.timestamp}`} 
+                    onMouseEnter={() => handleMouseEnter(entry)}
+                    onMouseLeave={handleMouseLeave}
+                    style={{ cursor: 'crosshair' }}
+                  />
+                ))}
+              </RechartsPrimitive.Scatter>
+            )}
+          </RechartsPrimitive.ScatterChart>
         </ChartContainer>
       </div>
       

@@ -75,6 +75,11 @@ export default function RealtimeChart({
   const [hoveredPool, setHoveredPool] = useState<string | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
+  // Add state for animation of x-axis domain
+  const [animatedDomain, setAnimatedDomain] = useState<[number, number]>([0, 0]);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const animationRef = useRef<number | null>(null);
+  
   // Maps to track pool information
   const poolRankingsRef = useRef<Map<string, number>>(new Map());
   const poolColorsRef = useRef<PoolColorsMap>({});
@@ -84,6 +89,10 @@ export default function RealtimeChart({
   
   // Track the time range of the data for x-axis domain
   const timeRangeRef = useRef<{ min: number, max: number }>({ min: 0, max: 0 });
+  // Store the previous domain for animation
+  const prevDomainRef = useRef<[number, number]>([0, 0]);
+  // Track if this is the first data load
+  const isFirstLoadRef = useRef<boolean>(true);
   
   // Chart config for shadcn/ui chart
   const chartConfig = useMemo(() => {
@@ -255,31 +264,97 @@ export default function RealtimeChart({
     // Update the chart data if we have points
     if (dataPoints.length > 0) {
       setChartData(dataPoints);
+      
+      // Find the newest timestamp
+      const newestTimestamp = Math.max(...dataPoints.map(p => p.timestamp));
+      
+      // If this is the first data load, just set the domain without animation
+      if (isFirstLoadRef.current) {
+        const initialDomain: [number, number] = [
+          newestTimestamp - (timeWindow * 1000),
+          newestTimestamp
+        ];
+        setAnimatedDomain(initialDomain);
+        prevDomainRef.current = initialDomain;
+        isFirstLoadRef.current = false;
+      } else {
+        // Otherwise, trigger animation to scroll to the left
+        const targetDomain: [number, number] = [
+          newestTimestamp - (timeWindow * 1000),
+          newestTimestamp
+        ];
+        
+        // Only animate if there's a significant change in the newest timestamp
+        if (Math.abs(targetDomain[1] - animatedDomain[1]) > 100) {
+          if (!isAnimating) {
+            startDomainAnimation(targetDomain);
+          }
+        }
+      }
     }
     
-  }, [filterByType, paused, updatePoolInfo, processData]);
+  }, [filterByType, paused, updatePoolInfo, processData, timeWindow, isAnimating]);
   
   // Compute Y-axis domain based on the number of pools
   const yAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
     return [0, Math.max(10, poolRankingsRef.current.size + 1)];
   }, []);
   
-  // Compute X-axis domain based on the time window and actual data
-  const xAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
-    if (chartData.length === 0) {
-      // Default domain when no data
-      const currentTime = Date.now();
-      return [currentTime - (timeWindow * 1000), currentTime];
+  // Handle animation of domain transition
+  const startDomainAnimation = useCallback((targetDomain: [number, number]) => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
     }
     
-    // Use the time range from the data, but ensure it spans at most timeWindow seconds
-    const { min, max } = timeRangeRef.current;
-    const currentTime = Date.now();
-    const minTime = Math.max(min, currentTime - (timeWindow * 1000));
+    setIsAnimating(true);
+    const startTime = performance.now();
+    const duration = 300; // Shorter duration for smoother feeling
+    const startDomain = [...animatedDomain] as [number, number];
     
-    // Make sure we always have a reasonable domain width
-    return [minTime, Math.max(max, minTime + 1000)];
-  }, [chartData, timeWindow]);
+    const animateFrame = (timestamp: number) => {
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Ease function: cubic bezier easing (ease-out)
+      const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+      const easedProgress = easeOut(progress);
+      
+      // Interpolate between start and target domain
+      const newDomain: [number, number] = [
+        startDomain[0] + (targetDomain[0] - startDomain[0]) * easedProgress,
+        startDomain[1] + (targetDomain[1] - startDomain[1]) * easedProgress
+      ];
+      
+      setAnimatedDomain(newDomain);
+      
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animateFrame);
+      } else {
+        setAnimatedDomain(targetDomain);
+        prevDomainRef.current = targetDomain;
+        setIsAnimating(false);
+        animationRef.current = null;
+      }
+    };
+    
+    animationRef.current = requestAnimationFrame(animateFrame);
+  }, [animatedDomain]);
+  
+  // Compute X-axis domain based on the time window and actual data
+  const xAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
+    // Return the animated domain directly - no computation here
+    // The domain is now controlled by the data update effect
+    return animatedDomain;
+  }, [animatedDomain]);
+  
+  // Clean up animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
 
   // Handle mouse events for highlighting
   const handleMouseEnter = useCallback((data: ChartDataPoint) => {
@@ -319,7 +394,7 @@ export default function RealtimeChart({
                 type="number"
                 dataKey="timestamp"
                 name="Time"
-                domain={xAxisDomain}
+                domain={animatedDomain}
                 tickFormatter={formatMicroseconds}
                 label={{ 
                   position: 'insideBottom', 

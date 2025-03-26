@@ -75,10 +75,14 @@ export default function RealtimeChart({
   const [hoveredPool, setHoveredPool] = useState<string | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
-  // Add state for animation of x-axis domain
-  const [animatedDomain, setAnimatedDomain] = useState<[number, number]>([0, 0]);
+  // Use refs for animation values to prevent render loops
+  const animatedDomainRef = useRef<[number, number]>([0, 0]);
+  // Need a state version to force re-renders
+  const [forceRender, setForceRender] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const animationRef = useRef<number | null>(null);
+  // Track the last time we forced a render
+  const lastRenderTimeRef = useRef<number>(0);
   
   // Maps to track pool information
   const poolRankingsRef = useRef<Map<string, number>>(new Map());
@@ -93,6 +97,25 @@ export default function RealtimeChart({
   const prevDomainRef = useRef<[number, number]>([0, 0]);
   // Track if this is the first data load
   const isFirstLoadRef = useRef<boolean>(true);
+  // Track last animation timestamp to throttle animations
+  const lastAnimationTimeRef = useRef<number>(0);
+  
+  // Helper to update the animated domain
+  const updateAnimatedDomain = useCallback((newDomain: [number, number]) => {
+    // Update the ref immediately
+    animatedDomainRef.current = newDomain;
+    
+    // Force a render but with intelligent frequency control based on animation state
+    const now = performance.now();
+    const timeSinceLastRender = now - lastRenderTimeRef.current;
+    
+    // During animations, limit to every 60ms (about 16fps) to avoid stuttering from too many renders
+    // For non-animations, always render to ensure smooth tracking
+    if (!isAnimating || timeSinceLastRender > 60) {
+      lastRenderTimeRef.current = now;
+      setForceRender(prev => prev + 1);
+    }
+  }, [isAnimating]);
   
   // Chart config for shadcn/ui chart
   const chartConfig = useMemo(() => {
@@ -108,6 +131,65 @@ export default function RealtimeChart({
     return config;
   }, []);
   
+  // Create a separate function to cancel animations
+  const cancelAnimation = useCallback(() => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    setIsAnimating(false);
+  }, []);
+  
+  // Handle animation of domain transition
+  const startDomainAnimation = useCallback((targetDomain: [number, number]) => {
+    // Cancel any existing animation first
+    cancelAnimation();
+    
+    setIsAnimating(true);
+    const startTime = performance.now();
+    
+    // Calculate the change size to adapt animation parameters
+    const domainChangeSize = Math.abs(targetDomain[1] - animatedDomainRef.current[1]);
+    
+    // Adapt duration based on change size - shorter for smaller changes
+    // This makes small changes feel snappier and large changes smooth
+    const duration = Math.min(Math.max(domainChangeSize / 4, 100), 300);
+    
+    const startDomain = [...animatedDomainRef.current] as [number, number];
+    
+    const animateFrame = (timestamp: number) => {
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Ease function: cubic bezier easing (ease-out)
+      // For small changes, use a more linear easing
+      const easing = domainChangeSize > 200 
+        ? (t: number) => 1 - Math.pow(1 - t, 3) // Cubic ease-out for large changes
+        : (t: number) => t * (2 - t);           // Quadratic ease-out for small changes
+      
+      const easedProgress = easing(progress);
+      
+      // Interpolate between start and target domain
+      const newDomain: [number, number] = [
+        startDomain[0] + (targetDomain[0] - startDomain[0]) * easedProgress,
+        startDomain[1] + (targetDomain[1] - startDomain[1]) * easedProgress
+      ];
+      
+      updateAnimatedDomain(newDomain);
+      
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animateFrame);
+      } else {
+        updateAnimatedDomain(targetDomain);
+        prevDomainRef.current = targetDomain;
+        setIsAnimating(false);
+        animationRef.current = null;
+      }
+    };
+    
+    animationRef.current = requestAnimationFrame(animateFrame);
+  }, [cancelAnimation, updateAnimatedDomain]);
+
   // Process pool colors and rankings
   const updatePoolInfo = useCallback((stratumData: StratumV1Data[]) => {
     const poolNames = new Set<string>();
@@ -157,6 +239,14 @@ export default function RealtimeChart({
     }
   }, []);
   
+  // Prune old data beyond the time window to prevent memory leaks
+  const pruneOldData = useCallback((cutoffTimeMs: number) => {
+    poolDataHistoryRef.current.forEach((history, poolName) => {
+      const prunedHistory = history.filter(point => point.timestamp >= cutoffTimeMs);
+      poolDataHistoryRef.current.set(poolName, prunedHistory);
+    });
+  }, []);
+  
   // Process data and filter by time window
   const processData = useCallback((stratumData: StratumV1Data[]) => {
     // Filter by block height if needed
@@ -174,6 +264,9 @@ export default function RealtimeChart({
     const currentTimeMs = Date.now();
     const timeWindowMs = timeWindow * 1000; // Convert seconds to milliseconds
     const cutoffTimeMs = currentTimeMs - timeWindowMs;
+    
+    // Prune old data to avoid memory growth
+    pruneOldData(cutoffTimeMs);
     
     // Track min/max timestamps for domain calculation
     let minTimestamp = Number.MAX_SAFE_INTEGER;
@@ -237,7 +330,7 @@ export default function RealtimeChart({
     });
     
     return resultPoints;
-  }, [filterBlockHeight, timeWindow, parseTimestamp]);
+  }, [filterBlockHeight, timeWindow, parseTimestamp, pruneOldData]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -274,7 +367,7 @@ export default function RealtimeChart({
           newestTimestamp - (timeWindow * 1000),
           newestTimestamp
         ];
-        setAnimatedDomain(initialDomain);
+        updateAnimatedDomain(initialDomain);
         prevDomainRef.current = initialDomain;
         isFirstLoadRef.current = false;
       } else {
@@ -284,77 +377,42 @@ export default function RealtimeChart({
           newestTimestamp
         ];
         
-        // Only animate if there's a significant change in the newest timestamp
-        if (Math.abs(targetDomain[1] - animatedDomain[1]) > 100) {
-          if (!isAnimating) {
+        // Calculate difference between current and target domains
+        const domainDiff = Math.abs(targetDomain[1] - animatedDomainRef.current[1]);
+        
+        // Get current time for throttling
+        const now = performance.now();
+        const timeSinceLastAnimation = now - lastAnimationTimeRef.current;
+        
+        // Always animate with different strategies based on change size
+        if (domainDiff > 100) {
+          // For larger changes, use full animation with minimum time between
+          if (timeSinceLastAnimation > 200 && !isAnimating) {
+            lastAnimationTimeRef.current = now;
             startDomainAnimation(targetDomain);
+          } else if (!isAnimating) {
+            // For rapid updates, still update the domain with minimal visual interruption
+            updateAnimatedDomain(targetDomain);
           }
+        } else if (domainDiff > 0) {
+          // For smaller changes, always update immediately without a delay
+          // This ensures smooth tracking of small time changes
+          updateAnimatedDomain(targetDomain);
         }
       }
     }
     
-  }, [filterByType, paused, updatePoolInfo, processData, timeWindow, isAnimating]);
+  }, [filterByType, paused, updatePoolInfo, processData, timeWindow, isAnimating, updateAnimatedDomain, startDomainAnimation]);
   
   // Compute Y-axis domain based on the number of pools
   const yAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
     return [0, Math.max(10, poolRankingsRef.current.size + 1)];
   }, []);
   
-  // Handle animation of domain transition
-  const startDomainAnimation = useCallback((targetDomain: [number, number]) => {
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-    }
-    
-    setIsAnimating(true);
-    const startTime = performance.now();
-    const duration = 300; // Shorter duration for smoother feeling
-    const startDomain = [...animatedDomain] as [number, number];
-    
-    const animateFrame = (timestamp: number) => {
-      const elapsed = timestamp - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      // Ease function: cubic bezier easing (ease-out)
-      const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
-      const easedProgress = easeOut(progress);
-      
-      // Interpolate between start and target domain
-      const newDomain: [number, number] = [
-        startDomain[0] + (targetDomain[0] - startDomain[0]) * easedProgress,
-        startDomain[1] + (targetDomain[1] - startDomain[1]) * easedProgress
-      ];
-      
-      setAnimatedDomain(newDomain);
-      
-      if (progress < 1) {
-        animationRef.current = requestAnimationFrame(animateFrame);
-      } else {
-        setAnimatedDomain(targetDomain);
-        prevDomainRef.current = targetDomain;
-        setIsAnimating(false);
-        animationRef.current = null;
-      }
-    };
-    
-    animationRef.current = requestAnimationFrame(animateFrame);
-  }, [animatedDomain]);
-  
-  // Compute X-axis domain based on the time window and actual data
-  const xAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
-    // Return the animated domain directly - no computation here
-    // The domain is now controlled by the data update effect
-    return animatedDomain;
-  }, [animatedDomain]);
-  
   // Clean up animation on unmount
   useEffect(() => {
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, []);
+    return cancelAnimation;
+  }, [cancelAnimation]);
 
   // Handle mouse events for highlighting
   const handleMouseEnter = useCallback((data: ChartDataPoint) => {
@@ -363,6 +421,12 @@ export default function RealtimeChart({
   }, []);
 
   const handleMouseLeave = useCallback(() => {
+    setHoveredPool(null);
+    setHoveredPoint(null);
+  }, []);
+
+  // Handle chart mouse leave events more aggressively
+  const handleChartMouseLeave = useCallback(() => {
     setHoveredPool(null);
     setHoveredPoint(null);
   }, []);
@@ -382,19 +446,26 @@ export default function RealtimeChart({
   }, [chartData]);
 
   return (
-    <div className="w-full h-full relative">
-      <div className="w-full h-full" style={{ cursor: 'crosshair' }}>
+    <div 
+      className="w-full h-full relative" 
+      onMouseLeave={handleChartMouseLeave}
+    >
+      <div 
+        className="w-full h-full" 
+        style={{ cursor: 'crosshair' }}
+        onMouseLeave={handleChartMouseLeave}
+      >
         <ChartContainer className="w-full h-full" config={chartConfig}>
           <RechartsPrimitive.ResponsiveContainer width="100%" height="100%">
             <RechartsPrimitive.ScatterChart
-              margin={{ top: 15, right: 15, bottom: 25, left: 5 }}
-              onMouseLeave={handleMouseLeave}
+              margin={{ top: 5, right: 5, bottom: 25, left: 5 }}
+              onMouseLeave={handleChartMouseLeave}
             >
               <RechartsPrimitive.XAxis 
                 type="number"
                 dataKey="timestamp"
                 name="Time"
-                domain={animatedDomain}
+                domain={animatedDomainRef.current}
                 tickFormatter={formatMicroseconds}
                 label={{ 
                   position: 'insideBottom', 
@@ -417,7 +488,7 @@ export default function RealtimeChart({
               />
               <RechartsPrimitive.ZAxis 
                 type="number"
-                range={[30, 60]} // Range from moderate to larger size 
+                range={[40, 80]} // Range from moderate to larger size 
                 name="Size"
               />
               {/* Add full crosshair only */}
@@ -430,6 +501,7 @@ export default function RealtimeChart({
                 content={() => null}
                 position={{x: 0, y: 0}}
                 wrapperStyle={{ opacity: 0 }}
+                active={hoveredPoint !== null}
               />
               {/* Render normal-sized points for all data */}
               {Object.entries(groupedChartData).map(([poolName, points]) => (
@@ -468,6 +540,7 @@ export default function RealtimeChart({
                     <RechartsPrimitive.Cell 
                       key={`cell-large-${entry.poolName}-${entry.timestamp}`} 
                       onMouseEnter={() => handleMouseEnter(entry)}
+                      onMouseLeave={handleMouseLeave}
                       style={{ cursor: 'crosshair' }}
                     />
                   ))}

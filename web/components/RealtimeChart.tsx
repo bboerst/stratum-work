@@ -338,6 +338,7 @@ export default function RealtimeChart({
                 tick={false}
                 axisLine={false}
                 stroke="currentColor"
+                width={0}
               />
               <RechartsPrimitive.ZAxis 
                 type="number"

@@ -1,15 +1,52 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
-import { 
-  ChartContainer
-} from "@/components/ui/chart";
-import * as RechartsPrimitive from "recharts";
 
-// For type safety with recharts domains
-type AxisDomain = number | string | ((value: number) => number);
+// Simple throttle implementation
+function createThrottle<T extends (...args: unknown[]) => unknown>(
+  func: T, 
+  wait: number
+): T & { cancel: () => void } {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let lastExecuted = 0;
+  let cancelled = false;
+  
+  // The throttled function
+  const throttled = function(...args: Parameters<T>) {
+    if (cancelled) return;
+    
+    const now = Date.now();
+    const remaining = wait - (now - lastExecuted);
+    
+    if (remaining <= 0 || remaining > wait) {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      lastExecuted = now;
+      func(...args);
+    } else if (!timeout) {
+      timeout = setTimeout(function() {
+        lastExecuted = Date.now();
+        timeout = null;
+        func(...args);
+      }, remaining);
+    }
+  } as T & { cancel: () => void };
+  
+  // Add cancel method
+  throttled.cancel = function() {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+    cancelled = true;
+  };
+  
+  return throttled;
+}
 
 // Generate a consistent color from a string (pool name)
 const stringToColor = (str: string): string => {
@@ -45,7 +82,6 @@ interface ChartDataPoint {
   prev_hash?: string;
   nbits?: string;
   ntime?: string;
-  z?: number;
   [key: string]: unknown;
 }
 
@@ -60,7 +96,8 @@ interface PoolColorsMap {
   [poolName: string]: string;
 }
 
-export default function RealtimeChart({ 
+// Chart renderer component base
+function RealtimeChartBase({ 
   paused = false, 
   filterBlockHeight,
   timeWindow = 30 // Default to 30 seconds
@@ -68,60 +105,241 @@ export default function RealtimeChart({
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
   
+  // Add useTransition for non-urgent UI updates
+  const [, startTransition] = useTransition();
+  
   // Local state for time window to enable changing it
   const [localTimeWindow, setLocalTimeWindow] = useState(timeWindow);
   
-  // State for chart data and visualization options
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  
-  // Add state for showing/hiding labels
+  // State for visualization options
   const [showLabels, setShowLabels] = useState(false); // Off by default
-  
-  // Add state for options menu
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
-  const optionsMenuRef = useRef<HTMLDivElement>(null);
-  
-  // Add state for hovering
-  const [hoveredPool, setHoveredPool] = useState<string | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
-  // Container ref for dimensions
+  // Refs for DOM elements and data
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const optionsMenuRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Keep track of dimensions and time domain
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [timeDomain, setTimeDomain] = useState<[number, number]>([0, 0]);
   
-  // Use refs for animation values to prevent render loops
-  const animatedDomainRef = useRef<[number, number]>([0, 0]);
-  // Need a state version to force re-renders when needed
-  const [, setForceRender] = useState(0);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const animationRef = useRef<number | null>(null);
-  // Track the last time we forced a render
-  const lastRenderTimeRef = useRef<number>(0);
-  
-  // Maps to track pool information
-  const poolRankingsRef = useRef<Map<string, number>>(new Map());
-  const poolColorsRef = useRef<PoolColorsMap>({});
-  
-  // Keep a history of data points for each pool
+  // Data storage
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [poolColors, setPoolColors] = useState<PoolColorsMap>({});
+  const [poolRankings, setPoolRankings] = useState<Map<string, number>>(new Map());
+  const [maxPoolCount, setMaxPoolCount] = useState<number>(10); // Track maximum pool count for stable scaling
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
+  const timeDomainRef = useRef<[number, number]>([0, 0]);
+  const localTimeWindowRef = useRef<number>(timeWindow);
+  const dimensionsRef = useRef(dimensions);
   
-  // Track the time range of the data for x-axis domain
-  const timeRangeRef = useRef<{ min: number, max: number }>({ min: 0, max: 0 });
-  // Store the previous domain for animation
-  const prevDomainRef = useRef<[number, number]>([0, 0]);
-  // Track if this is the first data load
-  const isFirstLoadRef = useRef<boolean>(true);
-  // Track last animation timestamp to throttle animations
-  const lastAnimationTimeRef = useRef<number>(0);
+  // Update refs when values change
+  useEffect(() => {
+    localTimeWindowRef.current = timeWindow;
+  }, [timeWindow]);
+
+  useEffect(() => {
+    timeDomainRef.current = timeDomain;
+  }, [timeDomain]);
   
+  useEffect(() => {
+    dimensionsRef.current = dimensions;
+  }, [dimensions]);
+  
+  // Draw the chart - implemented as a memoized function to allow use in dependencies
+  const drawChart = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Get pixel ratio for high-resolution displays
+    const pixelRatio = window.devicePixelRatio || 1;
+    ctx.resetTransform();
+    ctx.scale(pixelRatio, pixelRatio);
+    
+    // Clear the canvas
+    ctx.clearRect(0, 0, dimensions.width, dimensions.height);
+    
+    // Draw background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+    ctx.fillRect(0, 0, dimensions.width, dimensions.height);
+    
+    // Draw axes
+    ctx.strokeStyle = 'rgba(150, 150, 150, 0.3)';
+    ctx.lineWidth = 1;
+    
+    // Draw x-axis
+    ctx.beginPath();
+    ctx.moveTo(60, dimensions.height - 20);
+    ctx.lineTo(dimensions.width - 20, dimensions.height - 20);
+    ctx.stroke();
+    
+    // Draw y-axis
+    ctx.beginPath();
+    ctx.moveTo(60, 30);
+    ctx.lineTo(60, dimensions.height - 20);
+    ctx.stroke();
+    
+    // Get the current time domain from ref to avoid re-renders
+    const currentTimeDomain = timeDomainRef.current;
+    
+    // Skip if no data or invalid time domain
+    if (chartData.length === 0 || (currentTimeDomain[0] === 0 && currentTimeDomain[1] === 0)) {
+      // Draw empty chart message
+      ctx.fillStyle = 'rgba(150, 150, 150, 0.5)';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No data available', dimensions.width / 2, dimensions.height / 2);
+      return;
+    }
+    
+    // Helper functions for coordinate conversion
+    const timestampToPixel = (timestamp: number): number => {
+      const ratio = (timestamp - currentTimeDomain[0]) / (currentTimeDomain[1] - currentTimeDomain[0]);
+      return 60 + ratio * (dimensions.width - 80); // 60px left margin, 20px right margin
+    };
+    
+    const poolIndexToPixel = (index: number): number => {
+      // Use a fixed denominator based on maxPoolCount for stable scaling
+      // This ensures consistent vertical spacing even as new pools are added
+      const denominator = Math.max(maxPoolCount, 10) + 1;
+      const ratio = index / denominator;
+      return 30 + ratio * (dimensions.height - 50); // 30px top margin, 20px bottom margin
+    };
+    
+    // Draw x-axis tick marks and labels
+    const tickCount = 5;
+    const tickWidth = (dimensions.width - 80) / (tickCount - 1);
+    
+    ctx.fillStyle = 'rgba(150, 150, 150, 0.8)';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    
+    for (let i = 0; i < tickCount; i++) {
+      const x = 60 + i * tickWidth;
+      const timestamp = currentTimeDomain[0] + (i / (tickCount - 1)) * (currentTimeDomain[1] - currentTimeDomain[0]);
+      
+      // Draw tick mark
+      ctx.beginPath();
+      ctx.moveTo(x, dimensions.height - 20);
+      ctx.lineTo(x, dimensions.height - 15);
+      ctx.stroke();
+      
+      // Draw label
+      ctx.fillText(formatMicroseconds(timestamp), x, dimensions.height - 5);
+    }
+    
+    // Calculate point size based on canvas dimensions
+    const pointSize = Math.max(3, Math.min(6, dimensions.width / 150));
+    
+    // Group data by pool name
+    const groupedData = new Map<string, ChartDataPoint[]>();
+    chartData.forEach(point => {
+      if (!groupedData.has(point.poolName)) {
+        groupedData.set(point.poolName, []);
+      }
+      groupedData.get(point.poolName)!.push(point);
+    });
+    
+    // Draw data points for each pool
+    groupedData.forEach((points, poolName) => {
+      const isHovered = hoveredPoint?.poolName === poolName;
+      const color = poolColors[poolName] || 'rgba(136, 132, 216, 0.8)';
+      
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      
+      points.forEach(point => {
+        const x = timestampToPixel(point.timestamp);
+        const y = poolIndexToPixel(point.poolIndex);
+        
+        // Skip points outside the visible area
+        if (x < 60 || x > dimensions.width - 20 || y < 30 || y > dimensions.height - 20) {
+          return;
+        }
+        
+        // Draw the point
+        ctx.beginPath();
+        
+        // Larger points for hovered pool
+        const size = isHovered ? pointSize * 1.5 : pointSize;
+        
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw label if showLabels is true
+        if (showLabels) {
+          ctx.fillStyle = color;
+          ctx.font = '8px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText(poolName, x + 6, y + 3);
+          ctx.fillStyle = color; // Reset fill style for next point
+        }
+        
+        // Highlight if this is the exact hovered point
+        if (hoveredPoint && point.timestamp === hoveredPoint.timestamp && point.poolName === hoveredPoint.poolName) {
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(x, y, size + 5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      });
+    });
+    
+    // Draw crosshair if hovering
+    if (hoveredPoint) {
+      const x = timestampToPixel(hoveredPoint.timestamp);
+      const y = poolIndexToPixel(hoveredPoint.poolIndex);
+      
+      ctx.strokeStyle = 'rgba(200, 200, 200, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      
+      // Vertical line
+      ctx.beginPath();
+      ctx.moveTo(x, 30);
+      ctx.lineTo(x, dimensions.height - 20);
+      ctx.stroke();
+      
+      // Horizontal line
+      ctx.beginPath();
+      ctx.moveTo(60, y);
+      ctx.lineTo(dimensions.width - 20, y);
+      ctx.stroke();
+      
+      ctx.setLineDash([]); // Reset line dash
+    }
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount]);
+
+  // Draw the chart whenever relevant data changes
+  useEffect(() => {
+    drawChart();
+  }, [drawChart]);
+
   // Update dimensions when container size changes
   useEffect(() => {
     const currentContainer = containerRef.current;
     if (!currentContainer) return;
     
     const updateDimensions = () => {
-      if (currentContainer) {
-        const { width, height } = currentContainer.getBoundingClientRect();
+      if (!currentContainer || !canvasRef.current) return;
+      
+      const { width, height } = currentContainer.getBoundingClientRect();
+      
+      // Only update state if dimensions actually changed
+      if (width !== dimensionsRef.current.width || height !== dimensionsRef.current.height) {
+        // Update canvas size immediately without waiting for state update
+        const pixelRatio = window.devicePixelRatio || 1;
+        canvasRef.current.width = width * pixelRatio;
+        canvasRef.current.height = height * pixelRatio;
+        canvasRef.current.style.width = `${width}px`;
+        canvasRef.current.style.height = `${height}px`;
+        
+        // Update state (will trigger drawChart via dependency)
         setDimensions({ width, height });
       }
     };
@@ -130,7 +348,11 @@ export default function RealtimeChart({
     updateDimensions();
     
     // Add resize listener
-    const resizeObserver = new ResizeObserver(updateDimensions);
+    const resizeObserver = new ResizeObserver(() => {
+      // Use requestAnimationFrame to throttle updates
+      requestAnimationFrame(updateDimensions);
+    });
+    
     resizeObserver.observe(currentContainer);
     
     return () => {
@@ -138,122 +360,7 @@ export default function RealtimeChart({
         resizeObserver.disconnect();
       }
     };
-  }, []);
-  
-  // Helper to update the animated domain
-  const updateAnimatedDomain = useCallback((newDomain: [number, number]) => {
-    // Update the ref immediately
-    animatedDomainRef.current = newDomain;
-    
-    // Force a render but with intelligent frequency control based on animation state
-    const now = performance.now();
-    const timeSinceLastRender = now - lastRenderTimeRef.current;
-    
-    // During animations, limit to every 60ms (about 16fps) to avoid stuttering from too many renders
-    // For non-animations, always render to ensure smooth tracking
-    if (!isAnimating || timeSinceLastRender > 60) {
-      lastRenderTimeRef.current = now;
-      setForceRender(prev => prev + 1);
-    }
-  }, [isAnimating]);
-  
-  // Chart config for shadcn/ui chart
-  const chartConfig = useMemo(() => {
-    const config: Record<string, { color: string, label: string }> = {};
-    
-    Object.entries(poolColorsRef.current).forEach(([name, color]) => {
-      config[name] = {
-        color,
-        label: name
-      };
-    });
-    
-    return config;
-  }, []);
-  
-  // Create a separate function to cancel animations
-  const cancelAnimation = useCallback(() => {
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
-    setIsAnimating(false);
-  }, []);
-  
-  // Handle animation of domain transition
-  const startDomainAnimation = useCallback((targetDomain: [number, number]) => {
-    // Cancel any existing animation first
-    cancelAnimation();
-    
-    setIsAnimating(true);
-    const startTime = performance.now();
-    
-    // Calculate the change size to adapt animation parameters
-    const domainChangeSize = Math.abs(targetDomain[1] - animatedDomainRef.current[1]);
-    
-    // Adapt duration based on change size - shorter for smaller changes
-    // This makes small changes feel snappier and large changes smooth
-    const duration = Math.min(Math.max(domainChangeSize / 4, 100), 300);
-    
-    const startDomain = [...animatedDomainRef.current] as [number, number];
-    
-    const animateFrame = (timestamp: number) => {
-      const elapsed = timestamp - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      // Ease function: cubic bezier easing (ease-out)
-      // For small changes, use a more linear easing
-      const easing = domainChangeSize > 200 
-        ? (t: number) => 1 - Math.pow(1 - t, 3) // Cubic ease-out for large changes
-        : (t: number) => t * (2 - t);           // Quadratic ease-out for small changes
-      
-      const easedProgress = easing(progress);
-      
-      // Interpolate between start and target domain
-      const newDomain: [number, number] = [
-        startDomain[0] + (targetDomain[0] - startDomain[0]) * easedProgress,
-        startDomain[1] + (targetDomain[1] - startDomain[1]) * easedProgress
-      ];
-      
-      updateAnimatedDomain(newDomain);
-      
-      if (progress < 1) {
-        animationRef.current = requestAnimationFrame(animateFrame);
-      } else {
-        updateAnimatedDomain(targetDomain);
-        prevDomainRef.current = targetDomain;
-        setIsAnimating(false);
-        animationRef.current = null;
-      }
-    };
-    
-    animationRef.current = requestAnimationFrame(animateFrame);
-  }, [cancelAnimation, updateAnimatedDomain]);
-
-  // Process pool colors and rankings
-  const updatePoolInfo = useCallback((stratumData: StratumV1Data[]) => {
-    const poolNames = new Set<string>();
-    stratumData.forEach(item => {
-      if (item.pool_name) {
-        poolNames.add(item.pool_name);
-      }
-    });
-    
-    // Update rankings and colors if we have new pools
-    const existingPoolsCount = poolRankingsRef.current.size;
-    if (poolNames.size > existingPoolsCount) {
-      const rankings = new Map<string, number>();
-      const colors: PoolColorsMap = {};
-      
-      Array.from(poolNames).sort().forEach((name, idx) => {
-        rankings.set(name, idx + 1);
-        colors[name] = stringToColor(name);
-      });
-      
-      poolRankingsRef.current = rankings;
-      poolColorsRef.current = colors;
-    }
-  }, []);
+  }, []); // Empty dependency array - this effect should only run once
   
   // Parse timestamp - collector uses hex(time.time_ns())[2:] format
   const parseTimestamp = useCallback((timestampStr: string | number): number => {
@@ -302,11 +409,26 @@ export default function RealtimeChart({
     
     // Calculate the earliest timestamp to include (current time - time window)
     const currentTimeMs = Date.now();
-    const timeWindowMs = localTimeWindow * 1000; // Convert seconds to milliseconds
+    const timeWindowMs = localTimeWindowRef.current * 1000; // Convert seconds to milliseconds
     const cutoffTimeMs = currentTimeMs - timeWindowMs;
     
     // Prune old data to avoid memory growth
     pruneOldData(cutoffTimeMs);
+    
+    // Collect pool names to assign colors and rankings
+    const poolNames = new Set<string>();
+    filteredData.forEach(item => {
+      if (item.pool_name) {
+        poolNames.add(item.pool_name);
+      }
+    });
+    
+    // Return early information for state updates
+    const poolInfo = {
+      poolNames: Array.from(poolNames),
+      needsUpdate: poolNames.size > poolRankings.size,
+      cutoffTimeMs
+    };
     
     // Track min/max timestamps for domain calculation
     let minTimestamp = Number.MAX_SAFE_INTEGER;
@@ -324,24 +446,15 @@ export default function RealtimeChart({
       return {
         timestamp,
         poolName: item.pool_name || 'Unknown',
-        poolIndex: poolRankingsRef.current.get(item.pool_name || 'Unknown') || 0,
+        poolIndex: poolRankings.get(item.pool_name || 'Unknown') || 0,
         height: item.height,
         version: item.version,
         clean_jobs: item.clean_jobs,
         prev_hash: item.prev_hash,
         nbits: item.nbits,
-        ntime: item.ntime,
-        z: 1 // Fixed value for all points to ensure same size
+        ntime: item.ntime
       };
     });
-    
-    // Update time range reference if we have valid data
-    if (minTimestamp !== Number.MAX_SAFE_INTEGER) {
-      timeRangeRef.current = {
-        min: minTimestamp,
-        max: maxTimestamp
-      };
-    }
     
     // Update the history of data points for each pool
     processedData.forEach(point => {
@@ -369,8 +482,18 @@ export default function RealtimeChart({
       resultPoints.push(...pointsInTimeWindow);
     });
     
-    return resultPoints;
-  }, [filterBlockHeight, localTimeWindow, parseTimestamp, pruneOldData]);
+    // Return domain information
+    const domainInfo = {
+      hasValidDomain: minTimestamp !== Number.MAX_SAFE_INTEGER,
+      newestTimestamp: Math.max(maxTimestamp, Date.now()),
+    };
+    
+    return {
+      points: resultPoints,
+      poolInfo,
+      domainInfo
+    };
+  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -382,108 +505,115 @@ export default function RealtimeChart({
   useEffect(() => {
     if (paused) return;
     
-    // Get stratum updates from the stream
-    const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
-    if (stratumUpdates.length === 0) return;
-    
-    const stratumData = stratumUpdates.map(item => item.data as StratumV1Data);
-    
-    // Update pool information
-    updatePoolInfo(stratumData);
-    
-    // Process the data to get the points within time window
-    const dataPoints = processData(stratumData);
-    
-    // Update the chart data if we have points
-    if (dataPoints.length > 0) {
-      setChartData(dataPoints);
+    // Create a throttled update function to limit the frequency of updates
+    const throttledUpdate = createThrottle(() => {
+      // Get stratum updates from the stream
+      const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
+      if (stratumUpdates.length === 0) return;
       
-      // Find the newest timestamp
-      const newestTimestamp = Math.max(...dataPoints.map(p => p.timestamp));
+      const stratumData = stratumUpdates.map(item => item.data as StratumV1Data);
       
-      // If this is the first data load, just set the domain without animation
-      if (isFirstLoadRef.current) {
-        const initialDomain: [number, number] = [
-          newestTimestamp - (localTimeWindow * 1000),
-          newestTimestamp
-        ];
-        updateAnimatedDomain(initialDomain);
-        prevDomainRef.current = initialDomain;
-        isFirstLoadRef.current = false;
-      } else {
-        // Otherwise, trigger animation to scroll to the left
-        const targetDomain: [number, number] = [
-          newestTimestamp - (localTimeWindow * 1000),
-          newestTimestamp
-        ];
+      // Process the data to get the points within time window
+      const result = processData(stratumData);
+      
+      // Handle pool rankings and colors updates
+      if (result.poolInfo.needsUpdate) {
+        const rankings = new Map<string, number>();
+        const colors: PoolColorsMap = {};
         
-        // Calculate difference between current and target domains
-        const domainDiff = Math.abs(targetDomain[1] - animatedDomainRef.current[1]);
+        result.poolInfo.poolNames.sort().forEach((name, idx) => {
+          rankings.set(name, idx + 1);
+          colors[name] = stringToColor(name);
+        });
         
-        // Get current time for throttling
-        const now = performance.now();
-        const timeSinceLastAnimation = now - lastAnimationTimeRef.current;
+        // Update state
+        setPoolRankings(rankings);
+        setPoolColors(colors);
         
-        // Always animate with different strategies based on change size
-        if (domainDiff > 100) {
-          // For larger changes, use full animation with minimum time between
-          if (timeSinceLastAnimation > 200 && !isAnimating) {
-            lastAnimationTimeRef.current = now;
-            startDomainAnimation(targetDomain);
-          } else if (!isAnimating) {
-            // For rapid updates, still update the domain with minimal visual interruption
-            updateAnimatedDomain(targetDomain);
-          }
-        } else if (domainDiff > 0) {
-          // For smaller changes, always update immediately without a delay
-          // This ensures smooth tracking of small time changes
-          updateAnimatedDomain(targetDomain);
-        }
+        // Update max pool count to ensure consistent vertical scaling
+        setMaxPoolCount(prev => Math.max(prev, result.poolInfo.poolNames.length));
       }
-    }
+      
+      // Update time domain if we have valid data
+      if (result.domainInfo.hasValidDomain) {
+        const newDomain: [number, number] = [
+          result.domainInfo.newestTimestamp - (localTimeWindowRef.current * 1000),
+          result.domainInfo.newestTimestamp
+        ];
+        // Store in ref first
+        timeDomainRef.current = newDomain;
+        // Update state (for UI rendering)
+        setTimeDomain(newDomain);
+      }
+      
+      // Update the chart data if we have points
+      if (result.points.length > 0) {
+        // Use startTransition to make this a lower priority update
+        startTransition(() => {
+          setChartData(result.points);
+        });
+      }
+    }, 1000); // Throttle to max 1 update per second for better performance
     
-  }, [filterByType, paused, updatePoolInfo, processData, localTimeWindow, isAnimating, updateAnimatedDomain, startDomainAnimation]);
+    // Execute the throttled function
+    throttledUpdate();
+    
+    // Return cleanup function to cancel any pending throttled calls
+    return () => {
+      throttledUpdate.cancel();
+    };
+  }, [filterByType, paused, processData, startTransition]);
   
-  // Compute Y-axis domain based on the number of pools
-  const yAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
-    return [0, Math.max(10, poolRankingsRef.current.size + 1)];
-  }, []);
-  
-  // Clean up animation on unmount
-  useEffect(() => {
-    return cancelAnimation;
-  }, [cancelAnimation]);
-
-  // Handle mouse events for highlighting
-  const handleMouseEnter = useCallback((data: ChartDataPoint) => {
-    setHoveredPool(data.poolName);
-    setHoveredPoint(data);
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setHoveredPool(null);
-    setHoveredPoint(null);
-  }, []);
-
-  // Handle chart mouse leave events more aggressively
-  const handleChartMouseLeave = useCallback(() => {
-    setHoveredPool(null);
-    setHoveredPoint(null);
-  }, []);
-
-  // Group chart data by pool name for easier rendering
-  const groupedChartData = useMemo(() => {
-    const grouped: Record<string, ChartDataPoint[]> = {};
+  // Handle canvas mouse events
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Find the closest point
+    let closestPoint: ChartDataPoint | null = null;
+    let minDistance = Infinity;
+    
+    // Get current time domain from ref
+    const currentTimeDomain = timeDomainRef.current;
+    
+    // Skip hover detection if no time domain
+    if (currentTimeDomain[0] === 0 && currentTimeDomain[1] === 0) return;
+    
+    // Helper functions for coordinate conversion - must be consistent with drawChart
+    const timestampToPixel = (timestamp: number): number => {
+      const ratio = (timestamp - currentTimeDomain[0]) / (currentTimeDomain[1] - currentTimeDomain[0]);
+      return 60 + ratio * (dimensions.width - 80); // 60px left margin, 20px right margin
+    };
+    
+    const poolIndexToPixel = (index: number): number => {
+      // Use a fixed denominator based on maxPoolCount for stable scaling
+      // This ensures consistent vertical spacing even as new pools are added
+      const denominator = Math.max(maxPoolCount, 10) + 1;
+      const ratio = index / denominator;
+      return 30 + ratio * (dimensions.height - 50); // 30px top margin, 20px bottom margin
+    };
     
     chartData.forEach(point => {
-      if (!grouped[point.poolName]) {
-        grouped[point.poolName] = [];
+      const pointX = timestampToPixel(point.timestamp);
+      const pointY = poolIndexToPixel(point.poolIndex);
+      
+      const distance = Math.sqrt(Math.pow(pointX - x, 2) + Math.pow(pointY - y, 2));
+      if (distance < minDistance && distance < 20) { // 20px tolerance
+        minDistance = distance;
+        closestPoint = point;
       }
-      grouped[point.poolName].push(point);
     });
     
-    return grouped;
-  }, [chartData]);
+    setHoveredPoint(closestPoint);
+  }, [chartData, dimensions, maxPoolCount]);
+  
+  const handleCanvasMouseLeave = useCallback(() => {
+    setHoveredPoint(null);
+  }, []);
   
   // Handle outside click to close options menu
   useEffect(() => {
@@ -498,28 +628,23 @@ export default function RealtimeChart({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
-
+  
   // Toggle options menu
   const toggleOptionsMenu = useCallback(() => {
     setShowOptionsMenu(prev => !prev);
   }, []);
-
+  
   // Handle time window adjustment
   const adjustTimeWindow = useCallback((change: number) => {
     const newWindow = Math.max(5, Math.min(300, localTimeWindow + change)); // Limit between 5s and 5min
     setLocalTimeWindow(newWindow);
+    localTimeWindowRef.current = newWindow;
   }, [localTimeWindow]);
-
-  // Use localTimeWindow for chart rendering
-  useEffect(() => {
-    // When the timeWindow prop changes, update our local state
-    setLocalTimeWindow(timeWindow);
-  }, [timeWindow]);
-
+  
   return (
     <div 
       className="w-full h-full relative" 
-      onMouseLeave={handleChartMouseLeave}
+      onMouseLeave={handleCanvasMouseLeave}
     >
       {/* Chart header with title and options */}
       <div className="flex justify-between items-center mb-2">
@@ -583,131 +708,13 @@ export default function RealtimeChart({
         ref={containerRef}
         className="w-full h-[calc(100%-24px)]" 
         style={{ cursor: 'crosshair' }}
-        onMouseLeave={handleChartMouseLeave}
       >
-        <ChartContainer className="w-full h-full" config={chartConfig}>
-          <RechartsPrimitive.ScatterChart
-            width={dimensions.width}
-            height={dimensions.height}
-            margin={{ top: 5, right: 15, bottom: 25, left: 5 }}
-            onMouseLeave={handleChartMouseLeave}
-          >
-            <RechartsPrimitive.XAxis 
-              type="number"
-              dataKey="timestamp"
-              name="Time"
-              domain={animatedDomainRef.current}
-              tickFormatter={formatMicroseconds}
-              label={{ 
-                position: 'insideBottom', 
-                offset: -5,
-                fontSize: 10
-              }}
-              tick={{ fontSize: 8 }}
-              tickCount={4}
-              stroke="currentColor"
-            />
-            <RechartsPrimitive.YAxis 
-              type="number"
-              dataKey="poolIndex"
-              name="Pool"
-              domain={yAxisDomain}
-              tick={false}
-              axisLine={false}
-              stroke="currentColor"
-              width={0}
-            />
-            <RechartsPrimitive.ZAxis 
-              type="number"
-              range={[40, 80]} // Range from moderate to larger size 
-              name="Size"
-            />
-            {/* Add full crosshair only */}
-            <RechartsPrimitive.Tooltip 
-              cursor={{
-                strokeDasharray: '3 3',
-                stroke: 'rgba(200, 200, 200, 0.8)',
-                strokeWidth: 1
-              }}
-              content={() => null}
-              position={{x: 0, y: 0}}
-              wrapperStyle={{ opacity: 0 }}
-              active={hoveredPoint !== null}
-            />
-            {/* Render normal-sized points for all data */}
-            {Object.entries(groupedChartData).map(([poolName, points]) => (
-              <RechartsPrimitive.Scatter 
-                key={`scatter-${poolName}`}
-                name={poolName}
-                data={hoveredPool === poolName ? [] : points} // Only show if not hovered
-                fill={poolColorsRef.current[poolName] || '#8884d8'}
-                shape="circle"
-                isAnimationActive={false}
-                fillOpacity={0.8}
-                label={showLabels ? {
-                  position: "right",
-                  offset: 2,
-                  fontSize: 8,
-                  fill: poolColorsRef.current[poolName] || "currentColor",
-                  opacity: 0.6,
-                  dataKey: "poolName"
-                } : undefined}
-              >
-                {points.map((entry) => (
-                  <RechartsPrimitive.Cell 
-                    key={`cell-${entry.poolName}-${entry.timestamp}`} 
-                    onMouseEnter={() => handleMouseEnter(entry)}
-                    onMouseLeave={handleMouseLeave}
-                    style={{ cursor: 'crosshair' }}
-                  />
-                ))}
-              </RechartsPrimitive.Scatter>
-            ))}
-            
-            {/* Render larger points for hovered pool */}
-            {hoveredPool && (
-              <RechartsPrimitive.Scatter
-                name={`${hoveredPool}-large`}
-                data={groupedChartData[hoveredPool] || []}
-                fill={poolColorsRef.current[hoveredPool] || '#8884d8'}
-                shape="circle"
-                isAnimationActive={false}
-                fillOpacity={0.8}
-                zAxisId={1}
-                label={showLabels ? {
-                  position: "right",
-                  offset: 2,
-                  fontSize: 8,
-                  fill: poolColorsRef.current[hoveredPool] || "currentColor",
-                  opacity: 0.6,
-                  dataKey: "poolName"
-                } : undefined}
-              >
-                {(groupedChartData[hoveredPool] || []).map((entry) => (
-                  <RechartsPrimitive.Cell 
-                    key={`cell-large-${entry.poolName}-${entry.timestamp}`} 
-                    onMouseEnter={() => handleMouseEnter(entry)}
-                    onMouseLeave={handleMouseLeave}
-                    style={{ cursor: 'crosshair' }}
-                  />
-                ))}
-              </RechartsPrimitive.Scatter>
-            )}
-            
-            {/* Highlight the currently hovered point with a reference dot */}
-            {hoveredPoint && (
-              <RechartsPrimitive.ReferenceDot
-                x={hoveredPoint.timestamp}
-                y={hoveredPoint.poolIndex}
-                r={8}
-                stroke={poolColorsRef.current[hoveredPoint.poolName] || "currentColor"}
-                strokeWidth={2}
-                fill="transparent"
-                isFront={true}
-              />
-            )}
-          </RechartsPrimitive.ScatterChart>
-        </ChartContainer>
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full"
+          onMouseMove={handleCanvasMouseMove}
+          onMouseLeave={handleCanvasMouseLeave}
+        />
       </div>
       
       {/* Fixed tooltip at the bottom of the chart */}
@@ -722,4 +729,9 @@ export default function RealtimeChart({
       )}
     </div>
   );
-} 
+}
+
+// Wrap with React.memo to prevent unnecessary re-renders
+const RealtimeChart = React.memo(RealtimeChartBase);
+
+export default RealtimeChart; 

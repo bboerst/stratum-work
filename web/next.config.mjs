@@ -17,11 +17,14 @@ const nextConfig = {
   
   // Development configuration
   ...(isDev && {
-    webpack: (config) => {
-      config.watchOptions = {
-        poll: 1000,
-        aggregateTimeout: 300,
-      };
+    webpack: (config, { dev }) => {
+      if (dev) {
+        config.devtool = 'eval-source-map';
+        config.watchOptions = {
+          poll: 1000,
+          aggregateTimeout: 300,
+        };
+      }
       return config;
     },
   }),

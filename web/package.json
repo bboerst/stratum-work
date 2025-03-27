@@ -15,7 +15,6 @@
     "@prisma/client": "^6.4.1",
     "@radix-ui/react-tooltip": "^1.1.8",
     "@types/lru-cache": "^7.10.9",
-    "@types/recharts": "^1.8.29",
     "amqplib": "^0.10.5",
     "autoprefixer": "^10.4.20",
     "axios": "^1.8.1",
@@ -29,7 +28,6 @@
     "prisma": "^6.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.15.1",
     "shadcn-ui": "^0.9.5",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7"

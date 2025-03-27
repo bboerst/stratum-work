@@ -3,10 +3,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useVisualization } from './VisualizationContext';
 import RealtimeChart from './RealtimeChart';
-import { PlusIcon, MinusIcon } from 'lucide-react';
 
-// Updated throttle helper function with correct typing
-function throttle<T extends (e: MouseEvent) => void>(
+// Improved throttle helper function with correct typing and better performance
+function createThrottle<T extends (e: MouseEvent) => void>(
   func: T,
   limit: number
 ): T {
@@ -33,42 +32,13 @@ export default function VisualizationPanel({
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const [timeWindow, setTimeWindow] = useState(30); // Default to 30 seconds
+  const timeWindow = 30; // Default to 30 seconds
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
-
-  // Increment/decrement time window
-  const incrementTimeWindow = useCallback(() => {
-    setTimeWindow(prev => {
-      if (prev < 60) return prev + 15; // Increment by 15 seconds if < 1 minute
-      if (prev < 300) return prev + 60; // Increment by 1 minute if < 5 minutes
-      return prev + 300; // Increment by 5 minutes otherwise
-    });
-  }, []);
-
-  const decrementTimeWindow = useCallback(() => {
-    setTimeWindow(prev => {
-      if (prev <= 15) return 15; // Minimum 15 seconds
-      if (prev <= 60) return prev - 15; // Decrement by 15 seconds if <= 1 minute
-      if (prev <= 300) return prev - 60; // Decrement by 1 minute if <= 5 minutes
-      return prev - 300; // Decrement by 5 minutes otherwise
-    });
-  }, []);
-
-  // Format time window for display
-  const formatTimeWindow = useCallback((seconds: number): string => {
-    if (seconds < 60) {
-      return `${seconds}s`;
-    } else if (seconds < 3600) {
-      return `${Math.floor(seconds / 60)}m`;
-    } else {
-      return `${Math.floor(seconds / 3600)}h`;
-    }
-  }, []);
 
   // Throttled resize handler to improve performance
   const handleThrottledMouseMove = useCallback((e: MouseEvent) => {
@@ -85,7 +55,7 @@ export default function VisualizationPanel({
   }, []);
   
   // Apply throttling outside of useCallback to avoid dependency issues
-  const throttledMouseMove = throttle(handleThrottledMouseMove, 16); // Approximately 60fps
+  const throttledMouseMove = createThrottle(handleThrottledMouseMove, 16); // Approximately 60fps
 
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {

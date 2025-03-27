@@ -68,8 +68,18 @@ export default function RealtimeChart({
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
   
+  // Local state for time window to enable changing it
+  const [localTimeWindow, setLocalTimeWindow] = useState(timeWindow);
+  
   // State for chart data and visualization options
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  
+  // Add state for showing/hiding labels
+  const [showLabels, setShowLabels] = useState(false); // Off by default
+  
+  // Add state for options menu
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const optionsMenuRef = useRef<HTMLDivElement>(null);
   
   // Add state for hovering
   const [hoveredPool, setHoveredPool] = useState<string | null>(null);
@@ -292,7 +302,7 @@ export default function RealtimeChart({
     
     // Calculate the earliest timestamp to include (current time - time window)
     const currentTimeMs = Date.now();
-    const timeWindowMs = timeWindow * 1000; // Convert seconds to milliseconds
+    const timeWindowMs = localTimeWindow * 1000; // Convert seconds to milliseconds
     const cutoffTimeMs = currentTimeMs - timeWindowMs;
     
     // Prune old data to avoid memory growth
@@ -360,7 +370,7 @@ export default function RealtimeChart({
     });
     
     return resultPoints;
-  }, [filterBlockHeight, timeWindow, parseTimestamp, pruneOldData]);
+  }, [filterBlockHeight, localTimeWindow, parseTimestamp, pruneOldData]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -394,7 +404,7 @@ export default function RealtimeChart({
       // If this is the first data load, just set the domain without animation
       if (isFirstLoadRef.current) {
         const initialDomain: [number, number] = [
-          newestTimestamp - (timeWindow * 1000),
+          newestTimestamp - (localTimeWindow * 1000),
           newestTimestamp
         ];
         updateAnimatedDomain(initialDomain);
@@ -403,7 +413,7 @@ export default function RealtimeChart({
       } else {
         // Otherwise, trigger animation to scroll to the left
         const targetDomain: [number, number] = [
-          newestTimestamp - (timeWindow * 1000),
+          newestTimestamp - (localTimeWindow * 1000),
           newestTimestamp
         ];
         
@@ -432,7 +442,7 @@ export default function RealtimeChart({
       }
     }
     
-  }, [filterByType, paused, updatePoolInfo, processData, timeWindow, isAnimating, updateAnimatedDomain, startDomainAnimation]);
+  }, [filterByType, paused, updatePoolInfo, processData, localTimeWindow, isAnimating, updateAnimatedDomain, startDomainAnimation]);
   
   // Compute Y-axis domain based on the number of pools
   const yAxisDomain = useMemo((): [AxisDomain, AxisDomain] => {
@@ -474,15 +484,104 @@ export default function RealtimeChart({
     
     return grouped;
   }, [chartData]);
+  
+  // Handle outside click to close options menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (optionsMenuRef.current && !optionsMenuRef.current.contains(event.target as Node)) {
+        setShowOptionsMenu(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Toggle options menu
+  const toggleOptionsMenu = useCallback(() => {
+    setShowOptionsMenu(prev => !prev);
+  }, []);
+
+  // Handle time window adjustment
+  const adjustTimeWindow = useCallback((change: number) => {
+    const newWindow = Math.max(5, Math.min(300, localTimeWindow + change)); // Limit between 5s and 5min
+    setLocalTimeWindow(newWindow);
+  }, [localTimeWindow]);
+
+  // Use localTimeWindow for chart rendering
+  useEffect(() => {
+    // When the timeWindow prop changes, update our local state
+    setLocalTimeWindow(timeWindow);
+  }, [timeWindow]);
 
   return (
     <div 
       className="w-full h-full relative" 
       onMouseLeave={handleChartMouseLeave}
     >
+      {/* Chart header with title and options */}
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-medium">Timing</h3>
+        
+        {/* Options menu */}
+        <div 
+          ref={optionsMenuRef}
+        >
+          <button 
+            onClick={toggleOptionsMenu}
+            className="bg-opacity-20 bg-black dark:bg-white dark:bg-opacity-20 text-[10px] px-1.5 py-0.5 rounded"
+          >
+            Options
+          </button>
+          
+          {showOptionsMenu && (
+            <div className="absolute right-0 mt-1 w-48 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 p-2 z-10">
+              <div className="space-y-3">
+                {/* Show last time control */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Show last:</span>
+                  <div className="flex items-center space-x-2">
+                    <button 
+                      onClick={() => adjustTimeWindow(-15)} 
+                      className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                    >
+                      −
+                    </button>
+                    <span className="text-xs w-8 text-center">{localTimeWindow}s</span>
+                    <button 
+                      onClick={() => adjustTimeWindow(15)} 
+                      className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Show labels toggle */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Show labels:</span>
+                  <button
+                    onClick={() => setShowLabels(prev => !prev)}
+                    className={`px-2 py-1 text-xs rounded ${
+                      showLabels
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-200 dark:bg-gray-700'
+                    }`}
+                  >
+                    {showLabels ? "On" : "Off"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      
       <div 
         ref={containerRef}
-        className="w-full h-full" 
+        className="w-full h-[calc(100%-24px)]" 
         style={{ cursor: 'crosshair' }}
         onMouseLeave={handleChartMouseLeave}
       >
@@ -545,6 +644,14 @@ export default function RealtimeChart({
                 shape="circle"
                 isAnimationActive={false}
                 fillOpacity={0.8}
+                label={showLabels ? {
+                  position: "right",
+                  offset: 2,
+                  fontSize: 8,
+                  fill: poolColorsRef.current[poolName] || "currentColor",
+                  opacity: 0.6,
+                  dataKey: "poolName"
+                } : undefined}
               >
                 {points.map((entry) => (
                   <RechartsPrimitive.Cell 
@@ -567,6 +674,14 @@ export default function RealtimeChart({
                 isAnimationActive={false}
                 fillOpacity={0.8}
                 zAxisId={1}
+                label={showLabels ? {
+                  position: "right",
+                  offset: 2,
+                  fontSize: 8,
+                  fill: poolColorsRef.current[hoveredPool] || "currentColor",
+                  opacity: 0.6,
+                  dataKey: "poolName"
+                } : undefined}
               >
                 {(groupedChartData[hoveredPool] || []).map((entry) => (
                   <RechartsPrimitive.Cell 
@@ -577,6 +692,19 @@ export default function RealtimeChart({
                   />
                 ))}
               </RechartsPrimitive.Scatter>
+            )}
+            
+            {/* Highlight the currently hovered point with a reference dot */}
+            {hoveredPoint && (
+              <RechartsPrimitive.ReferenceDot
+                x={hoveredPoint.timestamp}
+                y={hoveredPoint.poolIndex}
+                r={8}
+                stroke={poolColorsRef.current[hoveredPoint.poolName] || "currentColor"}
+                strokeWidth={2}
+                fill="transparent"
+                isFront={true}
+              />
             )}
           </RechartsPrimitive.ScatterChart>
         </ChartContainer>

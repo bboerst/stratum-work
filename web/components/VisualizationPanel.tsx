@@ -121,38 +121,21 @@ export default function VisualizationPanel({
   const renderPoolTimingChart = useCallback(() => {
     return (
       <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full mb-4">
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-sm font-medium">Timing</h3>
-          <div className="flex items-center space-x-1 text-xs">
-            <span className="mr-1">Show last:</span>
-            <button 
-              onClick={decrementTimeWindow}
-              className="p-1 rounded hover:bg-gray-700 text-gray-300" 
-              disabled={timeWindow <= 15}
-            >
-              <MinusIcon size={14} />
-            </button>
-            <span className="min-w-[36px] text-center">{formatTimeWindow(timeWindow)}</span>
-            <button 
-              onClick={incrementTimeWindow}
-              className="p-1 rounded hover:bg-gray-700 text-gray-300"
-            >
-              <PlusIcon size={14} />
-            </button>
-          </div>
-        </div>
-        <div className="w-full h-[290px]">
-          <RealtimeChart 
-            paused={paused} 
-            filterBlockHeight={filterBlockHeight}
-            timeWindow={timeWindow}
-          />
-        </div>
+        <RealtimeChart 
+          paused={paused} 
+          filterBlockHeight={filterBlockHeight}
+          timeWindow={timeWindow}
+        />
       </div>
     );
-  }, [timeWindow, decrementTimeWindow, incrementTimeWindow, formatTimeWindow, paused, filterBlockHeight]);
+  }, [timeWindow, paused, filterBlockHeight]);
 
-  if (!isPanelVisible) {
+  // Check if we should hide the panel for historical blocks
+  // When filterBlockHeight exists and is not -1, it's a historical block
+  const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
+
+  // Don't render if panel is toggled off or if viewing a historical block
+  if (!isPanelVisible || isHistoricalBlock) {
     return null;
   }
 

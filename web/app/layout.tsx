@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import Navigation from "@/components/Navigation";
 import { GlobalMenu } from "@/components/GlobalMenu";
 import { GlobalMenuProvider } from "@/components/GlobalMenuContext";
 import { DataStreamProvider } from "@/lib/DataStreamContext";
 import { BlocksProvider } from "@/lib/BlocksContext";
 import { VisualizationProvider } from "@/components/VisualizationContext";
+import ClientNavigation from "@/components/ClientNavigation";
 
 export const metadata: Metadata = {
   title: "Stratum Work",
@@ -24,10 +24,10 @@ export default function RootLayout({
             <BlocksProvider>
               <GlobalMenuProvider>
                 <VisualizationProvider>
-                  {/* Navigation will be present on all pages */}
-                  <Navigation>
+                  {/* ClientNavigation handles passing the blockHeight to Navigation */}
+                  <ClientNavigation>
                     <GlobalMenu />
-                  </Navigation>
+                  </ClientNavigation>
                   <div>
                     {children}
                   </div>

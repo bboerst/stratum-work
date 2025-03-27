@@ -174,14 +174,8 @@ function RealtimeChartBase({
     
     // Draw x-axis
     ctx.beginPath();
-    ctx.moveTo(60, dimensions.height - 20);
+    ctx.moveTo(20, dimensions.height - 20);
     ctx.lineTo(dimensions.width - 20, dimensions.height - 20);
-    ctx.stroke();
-    
-    // Draw y-axis
-    ctx.beginPath();
-    ctx.moveTo(60, 30);
-    ctx.lineTo(60, dimensions.height - 20);
     ctx.stroke();
     
     // Get the current time domain from ref to avoid re-renders
@@ -200,7 +194,7 @@ function RealtimeChartBase({
     // Helper functions for coordinate conversion
     const timestampToPixel = (timestamp: number): number => {
       const ratio = (timestamp - currentTimeDomain[0]) / (currentTimeDomain[1] - currentTimeDomain[0]);
-      return 60 + ratio * (dimensions.width - 80); // 60px left margin, 20px right margin
+      return 20 + ratio * (dimensions.width - 40); // 20px left margin, 20px right margin
     };
     
     const poolIndexToPixel = (index: number): number => {
@@ -213,14 +207,14 @@ function RealtimeChartBase({
     
     // Draw x-axis tick marks and labels
     const tickCount = 5;
-    const tickWidth = (dimensions.width - 80) / (tickCount - 1);
+    const tickWidth = (dimensions.width - 40) / (tickCount - 1);
     
     ctx.fillStyle = 'rgba(150, 150, 150, 0.8)';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     
     for (let i = 0; i < tickCount; i++) {
-      const x = 60 + i * tickWidth;
+      const x = 20 + i * tickWidth;
       const timestamp = currentTimeDomain[0] + (i / (tickCount - 1)) * (currentTimeDomain[1] - currentTimeDomain[0]);
       
       // Draw tick mark
@@ -258,7 +252,7 @@ function RealtimeChartBase({
         const y = poolIndexToPixel(point.poolIndex);
         
         // Skip points outside the visible area
-        if (x < 60 || x > dimensions.width - 20 || y < 30 || y > dimensions.height - 20) {
+        if (x < 20 || x > dimensions.width - 20 || y < 30 || y > dimensions.height - 20) {
           return;
         }
         
@@ -307,7 +301,7 @@ function RealtimeChartBase({
       
       // Horizontal line
       ctx.beginPath();
-      ctx.moveTo(60, y);
+      ctx.moveTo(20, y);
       ctx.lineTo(dimensions.width - 20, y);
       ctx.stroke();
       
@@ -423,10 +417,30 @@ function RealtimeChartBase({
       }
     });
     
+    // Initialize pool rankings if they don't exist or have changed
+    const currentPoolNames = Array.from(poolNames);
+    const needsRankingUpdate = currentPoolNames.length > poolRankings.size || 
+      currentPoolNames.some(name => !poolRankings.has(name));
+    
+    // Immediately update rankings instead of returning a needsUpdate flag
+    if (needsRankingUpdate) {
+      const rankings = new Map<string, number>();
+      const colors: PoolColorsMap = {};
+      
+      currentPoolNames.sort().forEach((name, idx) => {
+        rankings.set(name, idx + 1);
+        colors[name] = stringToColor(name);
+      });
+      
+      // Update state synchronously to ensure correct initial render
+      setPoolRankings(rankings);
+      setPoolColors(colors);
+      setMaxPoolCount(Math.max(maxPoolCount, currentPoolNames.length));
+    }
+    
     // Return early information for state updates
     const poolInfo = {
-      poolNames: Array.from(poolNames),
-      needsUpdate: poolNames.size > poolRankings.size,
+      poolNames: currentPoolNames,
       cutoffTimeMs
     };
     
@@ -443,10 +457,15 @@ function RealtimeChartBase({
       minTimestamp = Math.min(minTimestamp, timestamp);
       maxTimestamp = Math.max(maxTimestamp, timestamp);
       
+      // Use current rankings or default to an evenly distributed value if not yet available
+      const poolName = item.pool_name || 'Unknown';
+      const poolIndex = poolRankings.get(poolName) || 
+        (currentPoolNames.indexOf(poolName) + 1) || 1;
+      
       return {
         timestamp,
-        poolName: item.pool_name || 'Unknown',
-        poolIndex: poolRankings.get(item.pool_name || 'Unknown') || 0,
+        poolName,
+        poolIndex,
         height: item.height,
         version: item.version,
         clean_jobs: item.clean_jobs,
@@ -493,7 +512,7 @@ function RealtimeChartBase({
       poolInfo,
       domainInfo
     };
-  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData]);
+  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData, maxPoolCount]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -515,24 +534,6 @@ function RealtimeChartBase({
       
       // Process the data to get the points within time window
       const result = processData(stratumData);
-      
-      // Handle pool rankings and colors updates
-      if (result.poolInfo.needsUpdate) {
-        const rankings = new Map<string, number>();
-        const colors: PoolColorsMap = {};
-        
-        result.poolInfo.poolNames.sort().forEach((name, idx) => {
-          rankings.set(name, idx + 1);
-          colors[name] = stringToColor(name);
-        });
-        
-        // Update state
-        setPoolRankings(rankings);
-        setPoolColors(colors);
-        
-        // Update max pool count to ensure consistent vertical scaling
-        setMaxPoolCount(prev => Math.max(prev, result.poolInfo.poolNames.length));
-      }
       
       // Update time domain if we have valid data
       if (result.domainInfo.hasValidDomain) {
@@ -586,7 +587,7 @@ function RealtimeChartBase({
     // Helper functions for coordinate conversion - must be consistent with drawChart
     const timestampToPixel = (timestamp: number): number => {
       const ratio = (timestamp - currentTimeDomain[0]) / (currentTimeDomain[1] - currentTimeDomain[0]);
-      return 60 + ratio * (dimensions.width - 80); // 60px left margin, 20px right margin
+      return 20 + ratio * (dimensions.width - 40); // 20px left margin, 20px right margin
     };
     
     const poolIndexToPixel = (index: number): number => {

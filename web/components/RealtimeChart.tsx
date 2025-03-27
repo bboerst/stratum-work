@@ -712,7 +712,7 @@ export default function RealtimeChart({
       
       {/* Fixed tooltip at the bottom of the chart */}
       {hoveredPoint && (
-        <div className="absolute bottom-2 right-2 text-xs font-medium text-right">
+        <div className="absolute bottom-1 right-2 text-[9px] font-medium text-right bg-black/70 dark:bg-gray-800/90 p-1 rounded shadow-sm z-10">
           <span className="font-bold">{hoveredPoint.poolName}</span>
           {" | "}
           <span>Height: {hoveredPoint.height || 'N/A'}</span>

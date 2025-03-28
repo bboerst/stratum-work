@@ -124,7 +124,7 @@ export function useColumnResizing() {
 export function useSorting(isFiltering: boolean) {
   // Default sort configurations
   const DEFAULT_REALTIME_SORT: SortConfig = { key: "coinbaseOutputValue", direction: "desc" };
-  const DEFAULT_HISTORICAL_SORT: SortConfig = { key: "timestamp", direction: "desc" };
+  const DEFAULT_HISTORICAL_SORT: SortConfig = { key: "timestamp", direction: "asc" };
   
   // State for the sort configuration
   const [sortConfig, setSortConfig] = useState<SortConfig>(DEFAULT_REALTIME_SORT);

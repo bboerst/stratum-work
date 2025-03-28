@@ -120,11 +120,6 @@ function RealtimeChartBase({
     ? (pointSize || CHART_POINT_SIZES.HISTORICAL) 
     : (pointSize || CHART_POINT_SIZES.REALTIME);
   
-  // Log point size for debugging (remove this in production)
-  useEffect(() => {
-    console.log(`RealtimeChart point size: ${basePointSize} (historical: ${isHistoricalBlock})`);
-  }, [basePointSize, isHistoricalBlock]);
-  
   // Add useTransition for non-urgent UI updates
   const [, startTransition] = useTransition();
   

@@ -60,9 +60,6 @@ export default function RealtimeTable({
     // Only update when viewing a historical block
     if (filterBlockHeight && filterBlockHeight > 0) {
       if (filteredData && filteredData.length > 0) {
-        // Add debug logging
-        console.log(`RealtimeTable: Updating historical data for block ${filterBlockHeight} with ${filteredData.length} items`);
-        
         // Store the filtered data in the historical data context
         setHistoricalData(filteredData);
         setIsHistoricalDataLoaded(true);
@@ -71,10 +68,6 @@ export default function RealtimeTable({
         // Make sure the first record has a valid timestamp and we can parse it
         if (filteredData[0]?.timestamp) {
           const timestampStr = filteredData[0].timestamp;
-          console.log('First timestamp in historical data:', timestampStr);
-          
-          // Don't try to parse it directly as a date string - just acknowledge that data is present
-          console.log('Historical data timestamp format:', typeof timestampStr);
           
           // For debugging, try to parse as hexadecimal if it's a string
           if (typeof timestampStr === 'string') {
@@ -85,22 +78,15 @@ export default function RealtimeTable({
               const nanoseconds = parseInt(cleaned, 16);
               // Convert to milliseconds and create a date
               const milliseconds = nanoseconds / 1000000;
-              const date = new Date(milliseconds);
-              console.log('Parsed as hex timestamp:', date.toISOString());
             } catch (e) {
               console.error('Failed to parse as hex timestamp:', e);
             }
           }
         }
-      } else if (isLoading) {
-        console.log(`RealtimeTable: Still loading data for block ${filterBlockHeight}`);
-      } else {
-        console.log(`RealtimeTable: No filtered data available for block ${filterBlockHeight}`);
       }
     } else {
       // If not viewing a historical block, clear the historical data
       if (currentHistoricalHeight !== null) {
-        console.log('RealtimeTable: Clearing historical data');
         clearHistoricalData();
       }
     }

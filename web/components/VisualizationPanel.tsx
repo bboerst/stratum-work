@@ -34,11 +34,17 @@ export default function VisualizationPanel({
   const maxWidth = 800; // Maximum width
   const timeWindow = 30; // Default to 30 seconds
   
+  // Define point size for real-time visualization
+  const POINT_SIZE = 4;
+  
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+
+  // Check if we're in historical mode (viewing a specific historical block)
+  const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
 
   // Throttled resize handler to improve performance
   const handleThrottledMouseMove = useCallback((e: MouseEvent) => {
@@ -90,22 +96,24 @@ export default function VisualizationPanel({
   // Render the pool timing chart
   const renderPoolTimingChart = useCallback(() => {
     return (
-      <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full mb-4">
+      <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full">
         <RealtimeChart 
           paused={paused} 
           filterBlockHeight={filterBlockHeight}
           timeWindow={timeWindow}
+          pointSize={POINT_SIZE}
         />
       </div>
     );
-  }, [timeWindow, paused, filterBlockHeight]);
+  }, [timeWindow, paused, filterBlockHeight, POINT_SIZE]);
 
-  // Check if we should hide the panel for historical blocks
-  // When filterBlockHeight exists and is not -1, it's a historical block
-  const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
+  // Don't render visualization panel if toggled off
+  if (!isPanelVisible) {
+    return null;
+  }
 
-  // Don't render if panel is toggled off or if viewing a historical block
-  if (!isPanelVisible || isHistoricalBlock) {
+  // For historical blocks, don't render the side panel
+  if (isHistoricalBlock) {
     return null;
   }
 
@@ -132,7 +140,7 @@ export default function VisualizationPanel({
       </div>
       
       {/* Visualization content */}
-      <div className="p-4 h-[calc(100%-60px)] overflow-auto w-full">
+      <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
         {/* Timing chart */}
         {renderPoolTimingChart()}
       </div>

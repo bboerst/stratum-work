@@ -466,6 +466,7 @@ export function useTableData(
     feeRateMap,
     loadMore,
     hasMore,
-    handleSort
+    handleSort,
+    filteredData
   };
 } 

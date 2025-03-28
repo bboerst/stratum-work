@@ -22,12 +22,12 @@ export default function VisualizationToggle({ blockHeight }: VisualizationToggle
       onClick={togglePanelVisibility}
       className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 
         ${isPanelVisible 
-          ? "bg-purple-900/80 text-white" 
+          ? "pause-button" 
           : "bg-background text-foreground hover:bg-muted"}`}
-      aria-label={isPanelVisible ? "Hide analytics" : "Show analytics"}
+      aria-label={isPanelVisible ? "Hide analytics panel" : "Show analytics panel"}
     >
       <BarChartIcon className="h-5 w-5" />
-      <span className="text-sm font-medium">Analytics</span>
+      <span className="text-sm font-medium">Analytics Panel</span>
       {isPanelVisible ? (
         <ChevronRightIcon className="h-4 w-4" />
       ) : (

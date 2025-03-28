@@ -65,23 +65,9 @@ export default function RealtimeTable({
         setIsHistoricalDataLoaded(true);
         setCurrentHistoricalHeight(filterBlockHeight);
         
-        // Make sure the first record has a valid timestamp and we can parse it
+        // Make sure the first record has a valid timestamp
         if (filteredData[0]?.timestamp) {
-          const timestampStr = filteredData[0].timestamp;
-          
-          // For debugging, try to parse as hexadecimal if it's a string
-          if (typeof timestampStr === 'string') {
-            try {
-              // Try to parse as hexadecimal nanoseconds (for collector format)
-              const cleaned = timestampStr.replace(/^0x/, '');
-              // Parse the hex string to get nanoseconds
-              const nanoseconds = parseInt(cleaned, 16);
-              // Convert to milliseconds and create a date
-              const milliseconds = nanoseconds / 1000000;
-            } catch (e) {
-              console.error('Failed to parse as hex timestamp:', e);
-            }
-          }
+          // Valid timestamp exists
         }
       }
     } else {

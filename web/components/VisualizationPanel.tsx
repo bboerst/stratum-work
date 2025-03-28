@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useVisualization } from './VisualizationContext';
 import RealtimeChart from './RealtimeChart';
+import { CHART_POINT_SIZES } from '@/lib/constants';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -33,9 +34,6 @@ export default function VisualizationPanel({
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
   const timeWindow = 30; // Default to 30 seconds
-  
-  // Define point size for real-time visualization
-  const POINT_SIZE = 4;
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -101,11 +99,11 @@ export default function VisualizationPanel({
           paused={paused} 
           filterBlockHeight={filterBlockHeight}
           timeWindow={timeWindow}
-          pointSize={POINT_SIZE}
+          pointSize={CHART_POINT_SIZES.REALTIME}
         />
       </div>
     );
-  }, [timeWindow, paused, filterBlockHeight, POINT_SIZE]);
+  }, [timeWindow, paused, filterBlockHeight]);
 
   // Don't render visualization panel if toggled off
   if (!isPanelVisible) {

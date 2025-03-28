@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useTransition } from "
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
+import { CHART_POINT_SIZES } from "@/lib/constants";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -114,12 +115,10 @@ function RealtimeChartBase({
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
   
-  // Define point size constants
-  const HISTORICAL_POINT_SIZE = 3;
-  const REALTIME_POINT_SIZE = pointSize || 4;
-  
-  // Define point size based on mode
-  const basePointSize = isHistoricalBlock ? HISTORICAL_POINT_SIZE : REALTIME_POINT_SIZE;
+  // Define point size based on mode and props
+  const basePointSize = isHistoricalBlock 
+    ? (pointSize || CHART_POINT_SIZES.HISTORICAL) 
+    : (pointSize || CHART_POINT_SIZES.REALTIME);
   
   // Log point size for debugging (remove this in production)
   useEffect(() => {
@@ -337,7 +336,7 @@ function RealtimeChartBase({
         ctx.beginPath();
         
         // Larger points for hovered pool
-        const size = isHovered ? basePointSize * 1.5 : basePointSize;
+        const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
         
         ctx.arc(x, y, size, 0, Math.PI * 2);
         ctx.fill();
@@ -650,8 +649,8 @@ function RealtimeChartBase({
       return margin.top + ratio * availableHeight;
     };
     
-    // Use basePointSize defined at component level
-    const hoverTolerance = basePointSize * 2; // Reduced from 4 to 2 for more precise detection
+    // Use constants for hover tolerance
+    const hoverTolerance = basePointSize * CHART_POINT_SIZES.HOVER_TOLERANCE_MULTIPLIER;
     
     chartData.forEach(point => {
       const pointX = timestampToPixel(point.timestamp);

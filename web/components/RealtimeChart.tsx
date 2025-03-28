@@ -110,7 +110,7 @@ function RealtimeChartBase({
   const { filterByType } = useGlobalDataStream();
   
   // Get historical data from context
-  const { historicalData, isHistoricalDataLoaded, currentHistoricalHeight } = useHistoricalData();
+  const { historicalData, isHistoricalDataLoaded } = useHistoricalData();
   
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
@@ -157,7 +157,7 @@ function RealtimeChartBase({
   const dimensionsRef = useRef(dimensions);
   
   // Track if we've already loaded historical data for a given block height
-  const [historicalDataLoaded, setHistoricalDataLoaded] = useState<boolean>(false);
+  const [, setHistoricalDataLoaded] = useState(false);
   const currentBlockHeightRef = useRef<number | undefined>(filterBlockHeight);
   
   // Reset the historical data loaded flag when the block height changes
@@ -198,7 +198,7 @@ function RealtimeChartBase({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    // Get pixel ratio for high-resolution displays
+    // Get pixel ratio and use it directly
     const pixelRatio = window.devicePixelRatio || 1;
     ctx.resetTransform();
     ctx.scale(pixelRatio, pixelRatio);
@@ -214,7 +214,7 @@ function RealtimeChartBase({
       ctx.textAlign = 'center';
       
       // Special message for historical blocks with no data
-      if (isHistoricalBlock && historicalDataLoaded) {
+      if (isHistoricalBlock && isHistoricalDataLoaded) {
         ctx.fillText('No data available for this block', dimensions.width / 2, dimensions.height / 2);
       } else {
         ctx.fillText('No data available', dimensions.width / 2, dimensions.height / 2);
@@ -246,7 +246,6 @@ function RealtimeChartBase({
     const timestamps = chartData.map(point => point.timestamp);
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
-    const timeRange = maxTime - minTime > 0 ? maxTime - minTime : 1000;
     
     // If we don't have a valid time domain from data stream, use the min/max from the data
     const currentTimeDomain = timeDomainRef.current;
@@ -389,7 +388,7 @@ function RealtimeChartBase({
       
       ctx.setLineDash([]); // Reset line dash
     }
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, historicalDataLoaded, stringToColor, basePointSize]);
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -582,7 +581,6 @@ function RealtimeChartBase({
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const pixelRatio = window.devicePixelRatio || 1;
     
     // Calculate mouse position accounting for pixel ratio and canvas scaling
     const x = (e.clientX - rect.left);
@@ -885,7 +883,7 @@ function RealtimeChartBase({
         maxTimestamp
       }
     };
-  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData, maxPoolCount, isHistoricalBlock, stringToColor, allPoolNames, poolColors]);
+  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData, maxPoolCount, isHistoricalBlock, allPoolNames, poolColors]);
   
   // Reset pool data history when block height changes
   useEffect(() => {

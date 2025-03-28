@@ -23,6 +23,28 @@ export function useColumnVisibility() {
     coinbaseOutputValue: true,
   });
 
+  // Load visibility settings from local storage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("columnsVisible");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as { [key: string]: boolean };
+          setColumnsVisible((prev) => ({ ...prev, ...parsed }));
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+  }, []);
+
+  // Save visibility settings to local storage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("columnsVisible", JSON.stringify(columnsVisible));
+    }
+  }, [columnsVisible]);
+
   const toggleColumn = useCallback((colKey: string) => {
     setColumnsVisible((prev) => ({ ...prev, [colKey]: !prev[colKey] }));
   }, []);

@@ -11,19 +11,21 @@ import { useTheme } from "next-themes";
 
 interface SankeyDiagramProps {
   height: number;
-  data?: any[]; // Optional data prop
+  data?: any[];
+  showLabels?: boolean;
 }
 
-export function SankeyDiagram({ 
+export default function SankeyDiagram({ 
   height,
-  data = [] // Default to empty array
+  data = [], 
+  showLabels = false,
 }: SankeyDiagramProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState<number>(1000); // Default width
+  const [width, setWidth] = useState<number>(1000); 
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const { filterByType, paused } = useGlobalDataStream();
+  const { filterByType, paused, setPaused } = useGlobalDataStream();
   const { theme, resolvedTheme } = useTheme();
   
   // Theme-specific colors - only use these after initial render
@@ -32,7 +34,7 @@ export function SankeyDiagram({
     text: '#1a202c',
     poolNode: '#2563eb',
     nodeStroke: '#2d3748',
-    textStroke: '#000000',  // Add text stroke color
+    textStroke: '#000000',  
     link: 'rgba(100, 116, 139, 0.5)',
     statusLive: '#48bb78',
     statusPaused: '#ed8936',
@@ -47,7 +49,7 @@ export function SankeyDiagram({
       text: isDark ? '#e2e8f0' : '#1a202c',
       poolNode: isDark ? '#3182ce' : '#2563eb',
       nodeStroke: isDark ? '#4a5568' : '#2d3748',
-      textStroke: isDark ? '#000000' : '#000000',  // Keep black stroke in both themes
+      textStroke: isDark ? '#000000' : '#000000',  
       link: isDark ? 'rgba(160, 174, 192, 0.5)' : 'rgba(100, 116, 139, 0.5)',
       statusLive: isDark ? '#68d391' : '#48bb78',
       statusPaused: isDark ? '#f6ad55' : '#ed8936',
@@ -61,8 +63,8 @@ export function SankeyDiagram({
     const truncatedHash = hash.substring(0, 6).toLowerCase();
     // Convert to HSL for better control over lightness
     const hue = parseInt(truncatedHash.substring(0, 2), 16) * 360 / 255;
-    const saturation = 70; // Fixed saturation for consistency
-    const lightness = resolvedTheme === 'dark' ? 65 : 45; // Adjust lightness based on theme
+    const saturation = 70; 
+    const lightness = resolvedTheme === 'dark' ? 65 : 45; 
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
   };
   
@@ -168,9 +170,9 @@ export function SankeyDiagram({
       // Create the Sankey generator - cast to any to avoid TypeScript errors
       const sankeyGenerator = sankey() as any;
       sankeyGenerator
-        .nodeWidth(20)  // Increased from 15 to accommodate labels better
-        .nodePadding(15)  // Increased from 10 for better spacing
-        .extent([[1, 5], [width - 1, height - 5]]);  // Remove left margin
+        .nodeWidth(20)  
+        .nodePadding(15)  
+        .extent([[1, 5], [width - 1, height - 5]]);  
       
       // Convert our data format to D3's expected format
       const sankeyData = {
@@ -210,7 +212,7 @@ export function SankeyDiagram({
       // Create a tooltip div that is hidden by default
       const tooltip = d3.select(containerRef.current)
         .append("div")
-        .attr("class", "sankey-tooltip") // Add a class for easier selection/removal
+        .attr("class", "sankey-tooltip") 
         .style("position", "absolute")
         .style("visibility", "hidden")
         .style("background-color", "rgba(0, 0, 0, 0.8)")
@@ -370,6 +372,38 @@ export function SankeyDiagram({
         .attr("fill", colors.text)
         .text(`Nodes: ${data.nodes.length}, Links: ${data.links.length}`);
       
+      // Add node labels if enabled
+      if (showLabels) {
+        // Use individual text elements for each node for better visibility
+        nodeGroup.each(function(d: any) {
+          // Skip if no data or dimensions
+          if (!d || d.x0 === undefined || d.y0 === undefined) return;
+          
+          const nodeWidth = (d.x1 || 0) - (d.x0 || 0);
+          const nodeHeight = (d.y1 || 0) - (d.y0 || 0);
+          
+          // Skip nodes too small to show text
+          if (nodeWidth < 10 || nodeHeight < 10) return;
+          
+          // Get label text
+          const label = formatNodeLabel(d);
+          
+          // Create text element
+          d3.select(this)
+            .append("text")
+            .attr("x", nodeWidth / 2)
+            .attr("y", nodeHeight / 2 + 4) 
+            .attr("text-anchor", "middle")
+            .attr("dominant-baseline", "middle")
+            .attr("fill", "white") 
+            .attr("font-size", "11px")
+            .attr("font-weight", "600")
+            .attr("pointer-events", "none") 
+            .attr("text-shadow", "0px 0px 3px rgba(0,0,0,0.7)") 
+            .text(label);
+        });
+      }
+      
     } catch (err) {
       console.error("Error rendering diagram:", err);
       setError(`Error rendering diagram: ${err instanceof Error ? err.message : String(err)}`);
@@ -461,6 +495,7 @@ export function SankeyDiagram({
           {error}
         </div>
       )}
+      
       <svg 
         ref={svgRef} 
         width={width} 

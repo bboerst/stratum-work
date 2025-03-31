@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { sankey, sankeyLinkHorizontal, SankeyNode as D3SankeyNode, SankeyLink as D3SankeyLink } from "d3-sankey";
+import { sankey, sankeyLinkHorizontal } from "d3-sankey";
 import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
 import { eventSourceService } from "@/lib/eventSourceService";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
@@ -155,8 +155,9 @@ export function SankeyDiagram({
       // Get data from the processor
       const data = sankeyDataProcessor.getSankeyData();
       
-      // Clear the SVG
+      // Clear the SVG and remove any existing tooltips
       d3.select(svgRef.current).selectAll("*").remove();
+      d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
       
       // Check if we have data to render
       if (data.nodes.length === 0) {
@@ -164,8 +165,9 @@ export function SankeyDiagram({
         return;
       }
       
-      // Create the Sankey generator
-      const sankeyGenerator = sankey<D3SankeyNode, D3SankeyLink>()
+      // Create the Sankey generator - cast to any to avoid TypeScript errors
+      const sankeyGenerator = sankey() as any;
+      sankeyGenerator
         .nodeWidth(20)  // Increased from 15 to accommodate labels better
         .nodePadding(15)  // Increased from 10 for better spacing
         .extent([[1, 5], [width - 1, height - 5]]);  // Remove left margin
@@ -185,8 +187,8 @@ export function SankeyDiagram({
         }))
       };
       
-      // Generate the layout
-      const { nodes, links } = sankeyGenerator(sankeyData);
+      // Generate the layout - cast to any to avoid TypeScript errors
+      const { nodes, links } = sankeyGenerator(sankeyData) as any;
       
       // Create the SVG elements
       const svg = d3.select(svgRef.current);
@@ -199,29 +201,26 @@ export function SankeyDiagram({
         .selectAll("path")
         .data(links)
         .join("path")
-        .attr("d", sankeyLinkHorizontal())
+        .attr("d", sankeyLinkHorizontal() as any)
         .attr("stroke", colors.link)
-        .attr("stroke-width", d => Math.max(1, d.width))
+        .attr("stroke-width", (d: any) => Math.max(1, d.width))
         .attr("fill", "none")
         .attr("opacity", 0.7);
       
-      // Add nodes
-      const nodeGroup = svg.append("g")
-        .selectAll("g")
-        .data(nodes)
-        .join("g")
-        .attr("transform", d => `translate(${d.x0},${d.y0})`);
-      
-      // Add node rectangles
-      nodeGroup.append("rect")
-        .attr("width", d => d.x1 - d.x0)
-        .attr("height", d => d.y1 - d.y0)
-        .attr("fill", d => {
-          if ((d as any).type === 'pool') return colors.poolNode;
-          // Use hash-based color for merkle branch nodes
-          return getColorFromHash(d.name);
-        })
-        .attr("stroke", colors.nodeStroke);
+      // Create a tooltip div that is hidden by default
+      const tooltip = d3.select(containerRef.current)
+        .append("div")
+        .attr("class", "sankey-tooltip") // Add a class for easier selection/removal
+        .style("position", "absolute")
+        .style("visibility", "hidden")
+        .style("background-color", "rgba(0, 0, 0, 0.8)")
+        .style("color", "white")
+        .style("padding", "5px 10px")
+        .style("border-radius", "4px")
+        .style("font-size", "12px")
+        .style("pointer-events", "none")
+        .style("z-index", "100")
+        .style("transition", "0.2s opacity");
       
       // Format node label
       const formatNodeLabel = (node: any): string => {
@@ -231,36 +230,92 @@ export function SankeyDiagram({
         return `MB${node.branchIndex}-${hashStart}`;
       };
       
+      // Find pools that use this node
+      const findConnectedPools = (node: any): string[] => {
+        // For pool nodes, there are no "used by pools" (they are pools themselves)
+        if (node.type === 'pool') return [];
+        
+        // For branch nodes, find all pools that use this branch
+        const connectedPools = new Set<string>();
+        
+        // Check all links for connections to this node
+        links.forEach((link: any) => {
+          // This node could be either source or target in the link
+          if (link.source.index === node.index || link.target.index === node.index) {
+            // Get the source and target indices from the link
+            const sourceIdx = link.source.index;
+            const targetIdx = link.target.index;
+            
+            // Get pools from sankey processor
+            const pools = sankeyDataProcessor.getPoolsForConnection(sourceIdx, targetIdx);
+            pools.forEach((pool: string) => connectedPools.add(pool));
+          }
+        });
+        
+        return Array.from(connectedPools).sort();
+      };
+      
       // Find the rightmost x position to identify final column
-      const maxX = Math.max(...nodes.map(n => n.x0));
-
-      // Add node labels
-      nodeGroup.append("text")
-        .attr("x", d => {
-          const isPool = (d as any).type === 'pool';
-          if (isPool) return 0;
-          
-          // Check if this is a rightmost merkle branch node based on position
-          const isFinalColumn = Math.abs(d.x0 - maxX) < 1;  // Using small epsilon for float comparison
-          return isFinalColumn ? (d.x1 - d.x0) : (d.x1 - d.x0) / 2;
+      const maxX = Math.max(...nodes.map((n: any) => n.x0 || 0));
+      
+      // Add nodes
+      const nodeGroup = svg.append("g")
+        .selectAll("g")
+        .data(nodes)
+        .join("g")
+        .attr("transform", (d: any) => `translate(${d.x0 || 0},${d.y0 || 0})`);
+      
+      // Add node rectangles with hover functionality
+      nodeGroup.append("rect")
+        .attr("width", (d: any) => (d.x1 || 0) - (d.x0 || 0))
+        .attr("height", (d: any) => (d.y1 || 0) - (d.y0 || 0))
+        .attr("fill", (d: any) => {
+          if (d.type === 'pool') return colors.poolNode;
+          // Use hash-based color for merkle branch nodes
+          return getColorFromHash(d.name);
         })
-        .attr("y", d => (d.y1 - d.y0) / 2)
-        .attr("dy", "0.35em")
-        .attr("text-anchor", d => {
-          const isPool = (d as any).type === 'pool';
-          if (isPool) return "start";
+        .attr("stroke", colors.nodeStroke)
+        .attr("cursor", "pointer")
+        .on("mouseover", function(event: MouseEvent, d: any) {
+          const label = formatNodeLabel(d);
           
-          // Right-align text for rightmost merkle branch nodes
-          const isFinalColumn = Math.abs(d.x0 - maxX) < 1;
-          return isFinalColumn ? "end" : "middle";
+          // Find pools connected to this node
+          const connectedPools = findConnectedPools(d);
+          
+          // Create tooltip content
+          let tooltipContent = `<div style="font-weight: bold;">${label}</div>`;
+          
+          // Add pool list if there are any
+          if (connectedPools.length > 0) {
+            tooltipContent += `<div style="margin-top: 5px;">Used by pools:</div>`;
+            tooltipContent += `<ul style="margin: 2px 0 0 -25px; padding-left: 20px;">`;
+            connectedPools.forEach(pool => {
+              tooltipContent += `<li>${pool}</li>`;
+            });
+            tooltipContent += `</ul>`;
+          }
+          
+          tooltip
+            .style("visibility", "visible")
+            .style("opacity", 1)
+            .html(tooltipContent);
+            
+          const [x, y] = d3.pointer(event, containerRef.current);
+          tooltip
+            .style("left", `${x + 10}px`)
+            .style("top", `${y - 25}px`);
         })
-        .text(d => formatNodeLabel(d))
-        .attr("font-size", "11px")
-        .attr("fill", "white")
-        .attr("stroke", colors.textStroke)
-        .attr("stroke-width", "1px")  // Increased to 1px for better visibility
-        .attr("paint-order", "stroke")
-        .attr("pointer-events", "none");
+        .on("mousemove", function(event: MouseEvent) {
+          const [x, y] = d3.pointer(event, containerRef.current);
+          tooltip
+            .style("left", `${x + 10}px`)
+            .style("top", `${y - 25}px`);
+        })
+        .on("mouseout", function() {
+          tooltip
+            .style("visibility", "hidden")
+            .style("opacity", 0);
+        });
       
       // Add status indicators
       svg.append("text")
@@ -313,17 +368,23 @@ export function SankeyDiagram({
     if (stratumV1Data.length > 0) {
       // Reset data processor first
       sankeyDataProcessor.reset();
+      // First remove any lingering tooltips
+      d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
       processRealData();
     }
   }, [stratumV1Data, paused]);
   
   // Re-render when paused state changes
   useEffect(() => {
+    // Ensure tooltips are cleared when paused state changes
+    d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
     renderDiagram();
   }, [paused]);
   
   // Re-render when theme/colors change
   useEffect(() => {
+    // Ensure tooltips are cleared when colors change
+    d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
     renderDiagram();
   }, [colors]);
   

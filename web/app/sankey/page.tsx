@@ -8,7 +8,8 @@ import SankeyDiagram from "@/components/SankeyDiagram";
 export default function SankeyPage() {
   const { filterByType, paused, setPaused } = useGlobalDataStream();
   const [refreshKey, setRefreshKey] = useState<number>(0);
-  const [showLabels, setShowLabels] = useState(false); // Add state for labels toggle
+  const [showLabels, setShowLabels] = useState(false);
+  const [nodeLinkCounts, setNodeLinkCounts] = useState({ nodes: 0, links: 0 });
   
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
@@ -40,10 +41,11 @@ export default function SankeyPage() {
             <div className="flex justify-between items-center">
               <div>
                 <p className="text-sm text-gray-700 dark:text-gray-300">
-                  <strong>Status:</strong> {paused ? 'Paused' : 'Live'}
-                </p>
-                <p className="text-sm text-gray-700 dark:text-gray-300">
                   <strong>Available Events:</strong> {stratumV1Data.length}
+                  <span className="mx-4"></span>
+                  <strong>Nodes:</strong> {nodeLinkCounts.nodes}
+                  <span className="mx-4"></span>
+                  <strong>Links:</strong> {nodeLinkCounts.links}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -75,6 +77,7 @@ export default function SankeyPage() {
             height={600}
             data={stratumV1Data}
             showLabels={showLabels}
+            onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}
           />
           
           {/* Keeping the raw data display for reference */}

@@ -18,6 +18,28 @@ export async function GET(request: NextRequest) {
       let consumer: Replies.Consume | undefined;
       let queueName = '';
 
+      // Helper function to safely enqueue data to the controller
+      const safeEnqueue = (data: string) => {
+        if (isControllerClosed || cleanupInitiated) return false;
+        
+        try {
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+          return true;
+        } catch (err) {
+          console.error('Error enqueueing data:', err);
+          if (err instanceof Error) {
+            lastError = err;
+            // If the controller is closed, mark it as such and initiate cleanup
+            if (err.message.includes('Controller is already closed') || 
+                err.message.includes('Invalid state')) {
+              isControllerClosed = true;
+              cleanup();
+            }
+          }
+          return false;
+        }
+      };
+
       // Clean up function
       const cleanup = async () => {
         if (cleanupInitiated) return; // Prevent multiple cleanup attempts
@@ -83,17 +105,13 @@ export async function GET(request: NextRequest) {
 
           try {
             const data = msg.content.toString();
-            // Send an SSE event (each message preceded by "data:")
-            controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            // Send an SSE event using the safe enqueue method
+            safeEnqueue(data);
             channel?.ack(msg);
           } catch (err) {
             console.error('Error processing message:', err);
             if (err instanceof Error) {
               lastError = err;
-              if (err.message.includes('Controller is already closed') || 
-                  err.message.includes('Invalid state')) {
-                cleanup();
-              }
             }
             // Always try to acknowledge the message to prevent it from being requeued
             channel?.ack(msg);
@@ -107,7 +125,9 @@ export async function GET(request: NextRequest) {
         });
 
         // Send an initial message to confirm connection
-        controller.enqueue(encoder.encode('data: {"type":"connection","status":"connected"}\n\n'));
+        if (!safeEnqueue('{"type":"connection","status":"connected"}')) {
+          throw new Error('Failed to send initial connection message');
+        }
       } catch (err) {
         console.error('Error setting up stream:', err);
         if (err instanceof Error) {

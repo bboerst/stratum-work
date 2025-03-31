@@ -42,10 +42,12 @@ export default function RealtimeTableRowComponent({
       {columnsVisible.prev_hash && (
         <TableCell
           style={{ width: columnWidths.prev_hash }}
-          className="p-1 truncate"
+          className="p-1"
           title={formatPrevBlockHash(row.prev_hash)}
         >
-          {formatPrevBlockHash(row.prev_hash)}
+          <div className="w-full overflow-hidden text-ellipsis whitespace-nowrap" style={{ direction: 'rtl' }}>
+            {formatPrevBlockHash(row.prev_hash)}
+          </div>
         </TableCell>
       )}
       

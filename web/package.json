@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",
+    "@radix-ui/react-tooltip": "^1.1.8",
     "@types/lru-cache": "^7.10.9",
     "amqplib": "^0.10.5",
     "autoprefixer": "^10.4.20",

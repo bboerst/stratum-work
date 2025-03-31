@@ -42,7 +42,7 @@ export default function SankeyPage() {
           <details className="mt-6">
             <summary className="cursor-pointer font-medium text-gray-700 mb-2">Show Raw Data</summary>
             <textarea
-              className="w-full h-[300px] font-mono text-sm p-4 border border-gray-300 rounded-lg"
+              className="w-full h-[300px] text-sm p-4 border border-gray-300 rounded-lg"
               value={stratumV1Data.map(data => JSON.stringify(data, null, 2)).join('\n\n')}
               readOnly
             />

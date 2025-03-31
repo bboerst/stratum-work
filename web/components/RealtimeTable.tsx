@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Table, TableBody } from "@/components/ui/table";
 import { StratumV1Data, StreamDataType } from "@/lib/types";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { SortedRow, RealtimeTableProps, SortDirection } from "@/types/tableTypes";
 import { useColumnVisibility, useColumnResizing, useSorting, usePagination } from "@/hooks/useTableState";
 import { useTableData } from "@/hooks/useTableData";
@@ -22,6 +23,15 @@ export default function RealtimeTable({
   
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
+  
+  // Get historical data context
+  const { 
+    setHistoricalData, 
+    setIsHistoricalDataLoaded, 
+    setCurrentHistoricalHeight,
+    currentHistoricalHeight,
+    clearHistoricalData
+  } = useHistoricalData();
   
   // Filter for only Stratum V1 data
   const stratumV1Data = useMemo(() => {
@@ -41,8 +51,32 @@ export default function RealtimeTable({
     isFiltering,
     hasMore,
     loadMore,
-    handleSort: tableDataHandleSort
+    handleSort: tableDataHandleSort,
+    filteredData
   } = useTableData(stratumV1Data, paused, filterBlockHeight);
+  
+  // Update historical data context when filtered data changes
+  useEffect(() => {
+    // Only update when viewing a historical block
+    if (filterBlockHeight && filterBlockHeight > 0) {
+      if (filteredData && filteredData.length > 0) {
+        // Store the filtered data in the historical data context
+        setHistoricalData(filteredData);
+        setIsHistoricalDataLoaded(true);
+        setCurrentHistoricalHeight(filterBlockHeight);
+        
+        // Make sure the first record has a valid timestamp
+        if (filteredData[0]?.timestamp) {
+          // Valid timestamp exists
+        }
+      }
+    } else {
+      // If not viewing a historical block, clear the historical data
+      if (currentHistoricalHeight !== null) {
+        clearHistoricalData();
+      }
+    }
+  }, [filteredData, filterBlockHeight, setHistoricalData, setIsHistoricalDataLoaded, setCurrentHistoricalHeight, currentHistoricalHeight, clearHistoricalData, isLoading]);
   
   // Initialize sorting
   const { 
@@ -182,7 +216,7 @@ export default function RealtimeTable({
       />
 
       {/* The Table */}
-      <Table className="w-full table-fixed font-mono">
+      <Table className="w-full table-fixed">
         <RealtimeTableHeader 
           columnsVisible={columnsVisible}
           columnWidths={columnWidths}
@@ -222,7 +256,7 @@ export default function RealtimeTable({
       
       {/* Show waiting message if no rows */}
       {displayedRows.length === 0 && !isLoading && (
-        <div className="text-center text-black dark:text-white py-20 font-mono flex items-center justify-center min-h-[150px]">
+        <div className="text-center text-black dark:text-white py-20 flex items-center justify-center min-h-[150px]">
           <div>
             {isFiltering ? (
               <>

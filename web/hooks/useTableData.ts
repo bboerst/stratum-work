@@ -214,9 +214,9 @@ export function useTableData(
               };
             });
             
-            // Sort the data by timestamp descending (most recent first)
+            // Sort the data by timestamp ascending (oldest first)
             const sortedData = [...processedData].sort((a, b) => {
-              return b.timestamp.localeCompare(a.timestamp);
+              return a.timestamp.localeCompare(b.timestamp);
             });
             
             // Store the processed data for pagination
@@ -466,6 +466,7 @@ export function useTableData(
     feeRateMap,
     loadMore,
     hasMore,
-    handleSort
+    handleSort,
+    filteredData
   };
 } 

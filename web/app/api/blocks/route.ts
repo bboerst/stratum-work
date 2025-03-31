@@ -22,9 +22,24 @@ export async function GET(request: NextRequest) {
     // Return the data structure as is since it already matches what the frontend expects
     return NextResponse.json(data);
   } catch (error: Error | unknown) {
+    console.error('Error in blocks API route:', error);
+    
+    // More detailed error information
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : '';
+    
+    // Log the detailed error for server-side debugging
+    console.error(`Detailed error in /api/blocks: ${errorMessage}\n${errorStack}`);
+    
+    // Return a more informative error response
     return NextResponse.json(
-      { error: 'Server error', details: errorMessage },
+      { 
+        error: 'Server error', 
+        details: errorMessage,
+        code: 'BLOCKS_API_ERROR',
+        // Include stack trace in development only
+        ...(process.env.NODE_ENV !== 'production' ? { stack: errorStack } : {})
+      },
       { status: 500 }
     );
   }

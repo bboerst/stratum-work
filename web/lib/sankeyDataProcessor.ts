@@ -268,21 +268,29 @@ export class SankeyDataProcessor {
    * Generate Sankey data for visualization
    */
   public getSankeyData(): SankeyData {
+    // Convert to the format expected by the Sankey diagram
+    const nodes = [...this.nodes];
     const links: SankeyLink[] = [];
     
-    this.activeConnections.forEach((sources, connection) => {
-      const [sourceIdx, targetIdx] = connection.split('-');
+    this.activeConnections.forEach((pools, key) => {
+      const [source, target] = key.split('-').map(Number);
       links.push({
-        source: parseInt(sourceIdx),
-        target: parseInt(targetIdx),
-        value: sources.size // Number of pools using this connection
+        source, 
+        target,
+        value: pools.size,
       });
     });
-
-    return { 
-      nodes: [...this.nodes], 
-      links 
-    };
+    
+    return { nodes, links };
+  }
+  
+  /**
+   * Get the pools that are using a specific connection
+   */
+  public getPoolsForConnection(sourceId: number, targetId: number): string[] {
+    const connectionKey = `${sourceId}-${targetId}`;
+    const pools = this.activeConnections.get(connectionKey);
+    return pools ? Array.from(pools) : [];
   }
 
   /**

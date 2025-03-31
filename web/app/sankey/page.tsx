@@ -3,11 +3,12 @@
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
 import { useMemo, useState, useCallback } from "react";
-import { SankeyDiagram } from "@/components/SankeyDiagram";
+import SankeyDiagram from "@/components/SankeyDiagram";
 
 export default function SankeyPage() {
   const { filterByType, paused, setPaused } = useGlobalDataStream();
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const [showLabels, setShowLabels] = useState(false); // Add state for labels toggle
   
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
@@ -45,12 +46,27 @@ export default function SankeyPage() {
                   <strong>Available Events:</strong> {stratumV1Data.length}
                 </p>
               </div>
-              <button 
-                className={`rounded-md text-sm font-medium ${paused ? 'bg-green-500' : 'bg-amber-500'} text-white px-4 py-2`}
-                onClick={handleTogglePause}
-              >
-                {paused ? 'Resume' : 'Pause'}
-              </button>
+              <div className="flex gap-2">
+                {/* Show/Hide Labels Button */}
+                <button 
+                  className={`rounded-md text-sm font-medium ${
+                    showLabels 
+                      ? 'bg-blue-500 hover:bg-blue-600' 
+                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600'
+                  } ${showLabels ? 'text-white' : 'text-gray-800 dark:text-gray-200'} px-4 py-2`}
+                  onClick={() => setShowLabels(!showLabels)}
+                >
+                  {showLabels ? 'Hide Labels' : 'Show Labels'}
+                </button>
+                
+                {/* Pause/Resume Button */}
+                <button 
+                  className={`rounded-md text-sm font-medium ${paused ? 'bg-green-500' : 'bg-amber-500'} text-white px-4 py-2`}
+                  onClick={handleTogglePause}
+                >
+                  {paused ? 'Resume' : 'Pause'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -58,6 +74,7 @@ export default function SankeyPage() {
             key={refreshKey}
             height={600}
             data={stratumV1Data}
+            showLabels={showLabels}
           />
           
           {/* Keeping the raw data display for reference */}

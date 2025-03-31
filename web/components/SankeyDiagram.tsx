@@ -289,7 +289,7 @@ export function SankeyDiagram({
           if (connectedPools.length > 0) {
             tooltipContent += `<div style="margin-top: 5px;">Used by pools:</div>`;
             tooltipContent += `<ul style="margin: 2px 0 0 -25px; padding-left: 20px;">`;
-            connectedPools.forEach(pool => {
+            connectedPools.forEach((pool: string) => {
               tooltipContent += `<li>${pool}</li>`;
             });
             tooltipContent += `</ul>`;
@@ -300,22 +300,59 @@ export function SankeyDiagram({
             .style("opacity", 1)
             .html(tooltipContent);
             
-          const [x, y] = d3.pointer(event, containerRef.current);
-          tooltip
-            .style("left", `${x + 10}px`)
-            .style("top", `${y - 25}px`);
+          // Position the tooltip with smart boundary detection
+          positionTooltip(event);
         })
         .on("mousemove", function(event: MouseEvent) {
-          const [x, y] = d3.pointer(event, containerRef.current);
-          tooltip
-            .style("left", `${x + 10}px`)
-            .style("top", `${y - 25}px`);
+          // Update tooltip position with smart boundary detection
+          positionTooltip(event);
         })
         .on("mouseout", function() {
           tooltip
             .style("visibility", "hidden")
             .style("opacity", 0);
         });
+      
+      // Function to position tooltip with boundary detection
+      function positionTooltip(event: MouseEvent) {
+        const [x, y] = d3.pointer(event, containerRef.current);
+        
+        // Get container and tooltip dimensions
+        const containerRect = containerRef.current?.getBoundingClientRect();
+        if (!containerRect) return;
+        
+        // Show the tooltip to calculate its dimensions
+        tooltip.style("visibility", "visible");
+        const tooltipRect = tooltip.node()?.getBoundingClientRect();
+        if (!tooltipRect) return;
+        
+        // Default offset
+        let xOffset = 10;
+        let yOffset = -25;
+        
+        // Check if tooltip would go off the right edge
+        if (x + xOffset + tooltipRect.width > containerRect.width) {
+          // Position to the left of the cursor instead
+          xOffset = -tooltipRect.width - 10;
+        }
+        
+        // Check if tooltip would go off the bottom edge
+        if (y + yOffset + tooltipRect.height > containerRect.height) {
+          // Position above the cursor, or at least fully in view
+          yOffset = -Math.min(y, tooltipRect.height + 10);
+        }
+        
+        // Check if tooltip would go off the top edge
+        if (y + yOffset < 0) {
+          // Position below the cursor
+          yOffset = 10;
+        }
+        
+        // Apply the calculated position
+        tooltip
+          .style("left", `${x + xOffset}px`)
+          .style("top", `${y + yOffset}px`);
+      }
       
       // Add status indicators
       svg.append("text")

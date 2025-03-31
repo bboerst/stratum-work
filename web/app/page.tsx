@@ -77,8 +77,6 @@ export default function HomePage() {
         </div>
       </header>
       
-      {/* Remove RealtimeChart for home page - we only want it in the visualization panel */}
-      
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 overflow-auto">

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { sankey, sankeyLinkHorizontal } from "d3-sankey";
+import { sankey, sankeyLinkHorizontal, sankeyLeft } from "d3-sankey";
 import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
 import { eventSourceService } from "@/lib/eventSourceService";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
@@ -13,12 +13,14 @@ interface SankeyDiagramProps {
   height: number;
   data?: any[];
   showLabels?: boolean;
+  onDataRendered?: (nodeCount: number, linkCount: number) => void;
 }
 
 export default function SankeyDiagram({ 
   height,
   data = [], 
   showLabels = false,
+  onDataRendered,
 }: SankeyDiagramProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -118,16 +120,23 @@ export default function SankeyDiagram({
   
   // Process data from the global data stream
   const processRealData = () => {
+    console.log("Processing data:", stratumV1Data.length, "events");
     try {
-      console.log("Processing data:", stratumV1Data);
-      // Process each event
-      stratumV1Data.forEach((event: StratumV1Event) => {
-        sankeyDataProcessor.processStratumV1Event(event);
+      if (stratumV1Data.length === 0) return;
+
+      // Process the data for Sankey diagram
+      stratumV1Data.forEach(event => {
+        try {
+          sankeyDataProcessor.processStratumV1Event(event);
+        } catch (err) {
+          console.error("Error processing event:", err);
+        }
       });
+
+      // Render the diagram with the processed data
       renderDiagram();
-      setIsConnected(true);
     } catch (err) {
-      console.error("Error processing data:", err);
+      console.error("Error processing real data:", err);
       setError(`Error processing data: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
@@ -151,14 +160,16 @@ export default function SankeyDiagram({
   
   // Render the Sankey diagram
   const renderDiagram = () => {
-    if (!svgRef.current) return;
-    
     try {
+      // Clear previous rendering
+      if (svgRef.current) {
+        d3.select(svgRef.current).selectAll("*").remove();
+      }
+      
       // Get data from the processor
       const data = sankeyDataProcessor.getSankeyData();
       
-      // Clear the SVG and remove any existing tooltips
-      d3.select(svgRef.current).selectAll("*").remove();
+      // Remove any existing tooltips (but don't clear SVG again since we just did)
       d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
       
       // Check if we have data to render
@@ -172,8 +183,9 @@ export default function SankeyDiagram({
       sankeyGenerator
         .nodeWidth(20)  
         .nodePadding(15)  
-        .extent([[1, 5], [width - 1, height - 5]]);  
-      
+        .extent([[5, 10], [width - 5, height - 10]])  // Provide more room on top and bottom
+        .nodeAlign(sankeyLeft);  // Use left alignment for more natural depth
+        
       // Convert our data format to D3's expected format
       const sankeyData = {
         nodes: data.nodes.map((node, i) => ({
@@ -191,6 +203,11 @@ export default function SankeyDiagram({
       
       // Generate the layout - cast to any to avoid TypeScript errors
       const { nodes, links } = sankeyGenerator(sankeyData) as any;
+      
+      // Notify parent component about node/link counts
+      if (onDataRendered && data.nodes && data.links) {
+        onDataRendered(data.nodes.length, data.links.length);
+      }
       
       // Create the SVG elements
       const svg = d3.select(svgRef.current);
@@ -220,16 +237,15 @@ export default function SankeyDiagram({
         .style("padding", "5px 10px")
         .style("border-radius", "4px")
         .style("font-size", "12px")
-        .style("pointer-events", "none")
+        .style("pointer-events", "auto")
         .style("z-index", "100")
         .style("transition", "0.2s opacity");
       
       // Format node label
       const formatNodeLabel = (node: any): string => {
         if (node.type === 'pool') return node.name;
-        // For merkle branches, format as MB{index}-{first 6 chars}
-        const hashStart = node.name.substring(0, 6).toLowerCase();
-        return `MB${node.branchIndex}-${hashStart}`;
+        // For merkle branches, just show the hash part without the MB prefix
+        return node.name.substring(0, 6).toLowerCase();
       };
       
       // Find pools that use this node
@@ -278,6 +294,25 @@ export default function SankeyDiagram({
         })
         .attr("stroke", colors.nodeStroke)
         .attr("cursor", "pointer")
+        .on("click", function(event: MouseEvent, d: any) {
+          // Only copy for merkle branch nodes, not pool nodes
+          if (d.type !== 'pool') {
+            const fullHash = d.name.toLowerCase();
+            navigator.clipboard.writeText(fullHash).then(() => {
+              // Provide visual feedback that hash was copied
+              d3.select(this)
+                .attr("stroke", "#00ff00") // Green stroke for visual feedback
+                .attr("stroke-width", 2);
+              
+              // Reset after a short delay
+              setTimeout(() => {
+                d3.select(this)
+                  .attr("stroke", colors.nodeStroke)
+                  .attr("stroke-width", 1);
+              }, 1000);
+            });
+          }
+        })
         .on("mouseover", function(event: MouseEvent, d: any) {
           const label = formatNodeLabel(d);
           
@@ -285,16 +320,34 @@ export default function SankeyDiagram({
           const connectedPools = findConnectedPools(d);
           
           // Create tooltip content
-          let tooltipContent = `<div style="font-weight: bold;">${label}</div>`;
+          let tooltipContent = '';
+          
+          if (d.type === 'pool') {
+            tooltipContent = `<div style="font-weight: bold;">${label}</div>`;
+          } else {
+            // For Merkle branches, show formatted content with indentation
+            const fullHash = d.name.toLowerCase();
+            const hashStart = fullHash.substring(0, 6);
+            
+            tooltipContent = `
+              <div style="font-weight: bold;">
+                Merkle Branch ${d.branchIndex}:<br>
+                <div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
+                  <span style="margin-right: 4px;">&gt;</span> ${hashStart}
+                </div>
+                <div style="font-size: 10px; margin-top: 2px; opacity: 0.8;">(Click to copy full hash)</div>
+              </div>
+            `;
+          }
           
           // Add pool list if there are any
           if (connectedPools.length > 0) {
-            tooltipContent += `<div style="margin-top: 5px;">Used by pools:</div>`;
-            tooltipContent += `<ul style="margin: 2px 0 0 -25px; padding-left: 20px;">`;
+            tooltipContent += `<div style="margin-top: 8px; font-weight: bold;">Pool Connections:</div>`;
             connectedPools.forEach((pool: string) => {
-              tooltipContent += `<li>${pool}</li>`;
+              tooltipContent += `<div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
+                <span style="margin-right: 4px;">-</span> ${pool}
+              </div>`;
             });
-            tooltipContent += `</ul>`;
           }
           
           tooltip
@@ -356,21 +409,8 @@ export default function SankeyDiagram({
           .style("top", `${y + yOffset}px`);
       }
       
-      // Add status indicators
-      svg.append("text")
-        .attr("x", 10)
-        .attr("y", 20)
-        .attr("font-size", "12px")
-        .attr("fill", paused ? colors.statusPaused : colors.statusLive)
-        .text(paused ? "Data stream paused" : "Live data stream");
-      
-      // Add data count indicator
-      svg.append("text")
-        .attr("x", 10)
-        .attr("y", 40)
-        .attr("font-size", "12px")
-        .attr("fill", colors.text)
-        .text(`Nodes: ${data.nodes.length}, Links: ${data.links.length}`);
+      // Debug info - add this temporarily
+      console.log(`Rendering ${nodes.length} nodes and ${links.length} links`);
       
       // Add node labels if enabled
       if (showLabels) {
@@ -388,18 +428,42 @@ export default function SankeyDiagram({
           // Get label text
           const label = formatNodeLabel(d);
           
+          // Detect if this is a left-edge or right-edge node
+          const isLeftEdge = d.x0 < 30; // Node is within 30px of the left edge
+          const isRightEdge = d.x1 > width - 30; // Node is within 30px of the right edge
+          
+          // Calculate position and text-anchor based on node position
+          let xPosition, textAnchor, padding;
+          
+          if (isLeftEdge) {
+            // For left edge nodes, position text inside the node with padding and align left
+            xPosition = 5; // 5px padding from left edge of node
+            textAnchor = "start";
+          } else if (isRightEdge) {
+            // For right edge nodes, position text inside the node with padding and align right
+            xPosition = nodeWidth - 5; // 5px padding from right edge of node
+            textAnchor = "end";
+          } else {
+            // For center nodes, keep centered
+            xPosition = nodeWidth / 2;
+            textAnchor = "middle";
+          }
+          
           // Create text element
           d3.select(this)
             .append("text")
-            .attr("x", nodeWidth / 2)
-            .attr("y", nodeHeight / 2 + 4) 
-            .attr("text-anchor", "middle")
+            .attr("x", xPosition)
+            .attr("y", nodeHeight / 2 + 4) // +4 for better vertical centering
+            .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
-            .attr("fill", "white") 
+            .attr("fill", "white") // White text for better contrast on colored nodes
+            .attr("stroke", "black") // Add black stroke
+            .attr("stroke-width", "0.5px") // Thin stroke width
+            .attr("paint-order", "stroke") // Draw stroke behind text
             .attr("font-size", "11px")
             .attr("font-weight", "600")
-            .attr("pointer-events", "none") 
-            .attr("text-shadow", "0px 0px 3px rgba(0,0,0,0.7)") 
+            .attr("pointer-events", "none") // Prevent interfering with node click/hover events
+            .attr("text-shadow", "0px 0px 3px rgba(0,0,0,0.7)") // Text shadow for better readability
             .text(label);
         });
       }
@@ -421,21 +485,8 @@ export default function SankeyDiagram({
     }
   };
   
-  // Handle events from the EventSource
-  const handleEvent = (event: any) => {
-    try {
-      if (paused) return;
-      sankeyDataProcessor.processEvent(event);
-      renderDiagram();
-    } catch (err) {
-      console.error("Error processing event:", err);
-      setError(`Error processing event: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  
   // Process global data stream events when they change
   useEffect(() => {
-    if (paused) return;
     if (stratumV1Data.length > 0) {
       // Reset data processor first
       sankeyDataProcessor.reset();
@@ -443,7 +494,7 @@ export default function SankeyDiagram({
       d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
       processRealData();
     }
-  }, [stratumV1Data, paused]);
+  }, [stratumV1Data]);
   
   // Re-render when paused state changes
   useEffect(() => {
@@ -452,12 +503,29 @@ export default function SankeyDiagram({
     renderDiagram();
   }, [paused]);
   
+  // Re-render when showLabels changes
+  useEffect(() => {
+    renderDiagram();
+  }, [showLabels]);
+  
   // Re-render when theme/colors change
   useEffect(() => {
     // Ensure tooltips are cleared when colors change
     d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
     renderDiagram();
   }, [colors]);
+  
+  // Handle events from the EventSource
+  const handleEvent = (event: any) => {
+    try {
+      if (paused) return;
+      sankeyDataProcessor.processStratumV1Event(event);
+      renderDiagram();
+    } catch (err) {
+      console.error("Error processing event:", err);
+      setError(`Error processing event: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
   
   // Connect to EventSource API
   useEffect(() => {
@@ -488,7 +556,7 @@ export default function SankeyDiagram({
     <div 
       ref={containerRef} 
       className="w-full h-full relative bg-white dark:bg-gray-900 rounded-lg overflow-hidden"
-      style={{ minHeight: `${height}px` }}
+      style={{ height: `${height}px` }} 
     >
       {error && (
         <div className="absolute top-0 left-0 right-0 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-2 text-sm z-10">
@@ -501,6 +569,7 @@ export default function SankeyDiagram({
         width={width} 
         height={height}
         className="w-full h-full border border-gray-200 dark:border-gray-700 rounded-lg"
+        style={{ display: 'block' }} 
       />
       {!isConnected && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-4 rounded-lg z-10">

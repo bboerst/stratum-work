@@ -138,13 +138,13 @@ To simplify local development and testing, you can use `docker-compose` to run a
 	- Start RabbitMQ, MongoDB, and your configured collectors.
 	- Start the web application.
 
-    Once everything is running, the web application should be accessible at http://localhost:8000.
+    Once everything is running, the web application should be accessible at http://localhost:3000.
 
-4. **View Logs**:
+5. **View Logs**:
 
     As everything starts, you can see logs in the terminal where you ran docker-compose up.These logs will show connections to pools,RabbitMQ events, and requests to the webapp.
 
-5. **Stop the services**:
+6. **Stop the services**:
 
     To stop and remove the containers, press `Ctrl + C` in your terminal. To remove containers, networks, and images created by docker-compose, run:
 

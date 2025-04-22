@@ -1,5 +1,9 @@
 import { prisma } from './prisma';
 
+// Read environment variable and convert to boolean
+// Default to true if the variable is not set
+const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? 'true').toLowerCase() === 'true';
+
 // Define a type for the mining pool that matches the frontend expectation
 interface MiningPool {
   id: number;
@@ -104,6 +108,11 @@ function formatMiningPool(poolData: Record<string, unknown> | null | undefined):
  * @returns Blocks and pagination info
  */
 export async function getBlocks(n: number = 20, before?: number, height?: number, after?: number) {
+  if (!enableHistoricalData) {
+    console.log('Historical data is disabled. Skipping fetch for blocks.');
+    return { blocks: [], has_more: false, next_height: null };
+  }
+
   try {
     // If after is provided, fetch blocks after that height
     if (after !== undefined) {
@@ -353,6 +362,11 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
  * @returns Block or null if not found
  */
 export async function getBlockByHeight(height: number) {
+  if (!enableHistoricalData) {
+    console.log(`Historical data is disabled. Skipping fetch for block height ${height}.`);
+    return null;
+  }
+
   try {
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     const result = await prisma.$runCommandRaw({
@@ -439,6 +453,11 @@ export async function getBlockByHeight(height: number) {
  * @returns Block or null if not found
  */
 export async function getBlockByHash(blockHash: string) {
+  if (!enableHistoricalData) {
+    console.log(`Historical data is disabled. Skipping fetch for block hash ${blockHash}.`);
+    return null;
+  }
+
   try {
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     const result = await prisma.$runCommandRaw({
@@ -524,9 +543,19 @@ export async function getBlockByHash(blockHash: string) {
  * @returns The highest block or null if none exist
  */
 export async function getHighestBlock() {
-  return prisma.block.findFirst({
-    orderBy: { height: 'desc' },
-  });
+  if (!enableHistoricalData) {
+    console.log('Historical data is disabled. Skipping fetch for highest block.');
+    return null;
+  }
+
+  try {
+    return prisma.block.findFirst({
+      orderBy: { height: 'desc' },
+    });
+  } catch (error) {
+    console.error('Error fetching highest block:', error);
+    return null;
+  }
 }
 
 /**
@@ -534,7 +563,17 @@ export async function getHighestBlock() {
  * @returns The lowest block or null if none exist
  */
 export async function getLowestBlock() {
-  return prisma.block.findFirst({
-    orderBy: { height: 'asc' },
-  });
+  if (!enableHistoricalData) {
+    console.log('Historical data is disabled. Skipping fetch for lowest block.');
+    return null;
+  }
+
+  try {
+    return prisma.block.findFirst({
+      orderBy: { height: 'asc' },
+    });
+  } catch (error) {
+    console.error('Error fetching lowest block:', error);
+    return null;
+  }
 } 

@@ -57,6 +57,11 @@ export function formatNtime(ntimeHex: string): string {
   }
 }
 
+// Format nbits hex string (just return hex for now, maybe add difficulty calc later)
+export function formatNbits(nbitsHex?: string): string {
+  return nbitsHex ? `0x${nbitsHex}` : "N/A";
+}
+
 // Format timestamp as human-readable time
 export function formatTimeReceived(tsHex: string): string {
   try {

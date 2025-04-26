@@ -1,12 +1,39 @@
-import { StratumV1Data } from "@/lib/types";
+import { CoinbaseOutputDetail, AuxPowData } from "@/utils/bitcoinUtils";
 
 // Enhanced row with derived fields
-export interface SortedRow extends StratumV1Data {
+export interface SortedRow {
+  // Fields from StratumV1Data (excluding coinbase_outputs)
+  pool_name: string;
+  timestamp: string; // ISO string format from collector
+  job_id: string;
+  height: number;
+  prev_hash: string;
+  version: string;
+  coinbase1: string;
+  coinbase2: string;
+  extranonce1: string;
+  extranonce2_length: number;
+  clean_jobs: boolean | string;
+  first_transaction: string;
+  fee_rate: number | string;
+  merkle_branches: string[];
+  merkle_branch_colors?: string[];
+  nbits?: string;
+  ntime?: string;
+
+  // Derived/added fields
   coinbaseRaw: string;
   coinbaseScriptASCII: string;
   coinbaseOutputValue: number;
-  feeRateComputed: number | string;
-  coinbase_outputs: { address: string; value: number }[];
+  feeRateComputed: number | string; // Potentially updated fee rate
+  coinbase_outputs: CoinbaseOutputDetail[]; // Use the detailed type
+  auxPowData?: AuxPowData | null; // Added AuxPOW data
+  coinbaseHeight?: number | null; // Added height parsed from coinbase scriptSig
+  // Added other coinbase tx details
+  txVersion?: number;
+  inputSequence?: number;
+  txLocktime?: number;
+  witnessCommitmentNonce?: string | null;
 }
 
 // Sort direction type

@@ -6,16 +6,17 @@ import { BarChartIcon, ChevronRightIcon, ChevronLeftIcon } from "lucide-react";
 
 interface VisualizationToggleProps {
   blockHeight?: number | null;
+  isTemplatePage?: boolean;
 }
 
-export default function VisualizationToggle({ blockHeight }: VisualizationToggleProps) {
+export default function VisualizationToggle({ blockHeight, isTemplatePage }: VisualizationToggleProps) {
   const { isPanelVisible, togglePanelVisibility } = useVisualization();
   
-  // Hide toggle for historical blocks (any block that isn't the "being-mined" block with height -1)
+  // Hide toggle for historical blocks or the template page
   const isHistoricalBlock = blockHeight !== undefined && blockHeight !== null && blockHeight !== -1;
   
-  // Return null instead of rendering the button when viewing a historical block
-  if (isHistoricalBlock) return null;
+  // Return null instead of rendering the button when viewing a historical block or template page
+  if (isHistoricalBlock || isTemplatePage) return null;
   
   return (
     <button

@@ -1,25 +1,10 @@
 "use client";
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
 import { useBlocks } from "@/lib/BlocksContext";
-
-interface MiningPool {
-  id: number;
-  name: string;
-  link?: string;
-  slug?: string;
-  match_type?: string;
-  identification_method?: 'address' | 'tag';
-}
-
-export interface Block { 
-  height: number; 
-  block_hash: string; 
-  timestamp: number;
-  mining_pool?: MiningPool;
-  isRealtime?: boolean; // Flag to indicate if this block came from real-time updates
-}
+import { Block } from '../types/blockTypes';
+import { BlockItem } from '@/components/BlockItem'; // Use named import
 
 interface BlocksProps { 
   onBlockClick?: (height: number) => void;
@@ -701,25 +686,28 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     }
   }, [filterByType, setBlocks, pendingBlockHeights, selectedBlockHeight]);
 
-  // Create pending blocks for the current block being mined
-  const blocksToDisplay = [...blocks];
-  
-  if (currentBlockHeight && currentBlockHeight > 0) {
-    // Create pending blocks for future blocks, but NOT the current height
-    // since that's shown in the dedicated "being-mined" block
-    const pendingBlocks: Block[] = Array.from(pendingBlockHeights)
-      .filter(height => !blocks.some(b => b.height === height) && height !== currentBlockHeight)
-      .map(height => ({
-        height,
-        block_hash: 'pending',
-        timestamp: Math.floor(Date.now() / 1000),
-        isRealtime: true // Mark pending blocks as real-time
-      }));
-    
-    // Add pending blocks and sort everything by height
-    blocksToDisplay.push(...pendingBlocks);
-    blocksToDisplay.sort((a, b) => b.height - a.height);
-  }
+  // Memoize the calculation of the blocks to display
+  const blocksToDisplay = useMemo(() => {
+    const displayList = [...blocks];
+
+    if (currentBlockHeight && currentBlockHeight > 0) {
+      // Create pending blocks for future blocks, but NOT the current height
+      // since that's shown in the dedicated "being-mined" block
+      const pendingBlocks: Block[] = Array.from(pendingBlockHeights)
+        .filter(height => !blocks.some(b => b.height === height) && height !== currentBlockHeight)
+        .map(height => ({
+          height,
+          block_hash: 'pending',
+          timestamp: Math.floor(Date.now() / 1000),
+          isRealtime: true // Mark pending blocks as real-time
+        }));
+      
+      // Add pending blocks and sort everything by height
+      displayList.push(...pendingBlocks);
+      displayList.sort((a, b) => b.height - a.height);
+    }
+    return displayList;
+  }, [blocks, pendingBlockHeights, currentBlockHeight]); // Dependencies for useMemo
 
   // Load blocks for a specific height only once
   useEffect(() => {
@@ -827,8 +815,9 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     }
   }, [selectedBlockHeight]);
 
-  // Handle block click
-  const handleBlockClick = (block: Block) => {
+  // Make sure handleBlockClick uses useCallback or is stable
+  // It seems okay already based on its definition around line 714
+  const handleBlockClick = useCallback((block: Block) => {
     // Enable auto-scrolling for user clicks
     setShouldAutoScroll(true);
     
@@ -886,7 +875,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     if (onBlockClick) {
       onBlockClick(block.height);
     }
-  };
+  }, [onBlockClick, setShouldAutoScroll, resetBlocksState, setPendingBlockHeights, setIsLoading, setError, setBlocks]); // Add dependencies for useCallback
 
   // Update blocks ref when blocks change
   useEffect(() => {
@@ -971,29 +960,12 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
             </div>
             
             {blocksToDisplay.map((block) => (
-              <div
-                key={block.height}
-                data-block-height={block.height}
-                className={`block-3d shrink-0 ${
-                  selectedBlockHeight === block.height ? 'selected-block' : ''
-                } ${block.block_hash === 'pending' ? 'pending-block' : ''} ${
-                  block.isRealtime ? 'realtime-block' : 'historical-block'
-                }`}
-                title={block.block_hash === 'pending' 
-                  ? `Block ${block.height} - Waiting for data...`
-                  : `Block ${block.height}
-Mined by: ${block.mining_pool?.name || '?'}
-Hash: ${block.block_hash}
-Type: ${block.isRealtime ? 'Real-time' : 'Historical'}`}
-                onClick={() => block.block_hash !== 'pending' && handleBlockClick(block)}
-              >
-                <div className="flex flex-col items-center justify-center w-full px-2">
-                  <span className="text-base font-bold">{block.height}</span>
-                  <span className="text-[10px] opacity-75 truncate max-w-[80px] text-center">
-                    {block.block_hash === 'pending' ? '~receiving~' : block.mining_pool?.name || '?'}
-                  </span>
-                </div>
-              </div>
+              <BlockItem
+                key={block.height} // Keep the key here for React's list diffing
+                block={block}
+                selectedBlockHeight={selectedBlockHeight ?? null}
+                handleBlockClick={handleBlockClick}
+              />
             ))}
 
             {/* Loading indicator and intersection observer target for older blocks */}
@@ -1014,7 +986,7 @@ Type: ${block.isRealtime ? 'Real-time' : 'Historical'}`}
         <div className="absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-white dark:from-black to-transparent" />
       </div>
 
-      <style jsx>{`
+      <style jsx global>{`
         .blocks-container::-webkit-scrollbar {
           display: none;
         }

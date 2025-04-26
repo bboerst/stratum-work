@@ -60,13 +60,41 @@ export default function RealtimeTable({
     // Only update when viewing a historical block
     if (filterBlockHeight && filterBlockHeight > 0) {
       if (filteredData && filteredData.length > 0) {
-        // Store the filtered data in the historical data context
-        setHistoricalData(filteredData);
+        // Map SortedRow[] back to StratumV1Data[] for the context
+        const historicalStratumData: StratumV1Data[] = filteredData.map(row => ({
+          pool_name: row.pool_name,
+          timestamp: row.timestamp,
+          job_id: row.job_id,
+          height: row.height,
+          prev_hash: row.prev_hash,
+          version: row.version,
+          coinbase1: row.coinbase1,
+          coinbase2: row.coinbase2,
+          merkle_branches: row.merkle_branches,
+          nbits: row.nbits || '', // Ensure nbits is a string, handle potential undefined
+          ntime: row.ntime || '', // Ensure ntime is a string, handle potential undefined
+          clean_jobs: row.clean_jobs,
+          extranonce1: row.extranonce1,
+          extranonce2_length: row.extranonce2_length,
+          // Map coinbase_outputs carefully, handling potential undefined address
+          coinbase_outputs: row.coinbase_outputs
+            .filter(output => output.address !== undefined) // Filter out outputs without an address
+            .map(output => ({
+              address: output.address!, // Use non-null assertion as we filtered undefined
+              value: output.value,
+            })),
+          first_transaction: row.first_transaction, // Assuming this exists on SortedRow
+          fee_rate: row.fee_rate, // Assuming this exists on SortedRow
+          merkle_branch_colors: row.merkle_branch_colors // Assuming this exists on SortedRow
+        }));
+        
+        // Store the mapped data in the historical data context
+        setHistoricalData(historicalStratumData);
         setIsHistoricalDataLoaded(true);
         setCurrentHistoricalHeight(filterBlockHeight);
         
         // Make sure the first record has a valid timestamp
-        if (filteredData[0]?.timestamp) {
+        if (historicalStratumData[0]?.timestamp) {
           // Valid timestamp exists
         }
       }
@@ -141,22 +169,15 @@ export default function RealtimeTable({
     }
   }, [isFiltering, visibleRows, rows, sortData]);
   
-  // Handle block height click
-  const handleBlockClick = useCallback((height: number) => {
-    // Special case for the being-mined block (height -1)
-    if (height === -1) {
-      // Navigate to the root URL for the being-mined block using client-side navigation
-      router.push('/');
-      return;
-    }
-    
-    // Regular case for historical blocks
-    if (height > 0) {
+  // Handle pool name click
+  const handlePoolClick = useCallback((poolName: string) => {
+    if (poolName) {
       // Use Next.js router for client-side navigation
-      router.push(`/height/${height}`);
+      // Encode the pool name to handle special characters in URLs
+      router.push(`/template/${encodeURIComponent(poolName)}`);
     }
   }, [router]);
-  
+
   // Add an effect to handle block changes
   useEffect(() => {
     // This effect detects when a new block is found
@@ -233,7 +254,7 @@ export default function RealtimeTable({
               row={row}
               columnsVisible={columnsVisible}
               columnWidths={columnWidths}
-              handleBlockClick={handleBlockClick}
+              handlePoolClick={handlePoolClick}
             />
           ))}
           

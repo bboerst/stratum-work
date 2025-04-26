@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, ReactNode, useState } from "react";
 import { useDataStream } from "./useDataStream";
-import { StreamData, StreamDataType } from "./types";
+import { StreamData, StreamDataType, StratumV1Data } from "./types";
 
 interface DataStreamContextType {
   data: StreamData[];
@@ -13,6 +13,7 @@ interface DataStreamContextType {
   filterByType: (type: StreamDataType) => StreamData[];
   setDataTypes: (types: StreamDataType[]) => void;
   activeDataTypes: StreamDataType[];
+  latestMessagesByPool: { [poolName: string]: StratumV1Data };
 }
 
 const DataStreamContext = createContext<DataStreamContextType | undefined>(undefined);
@@ -33,7 +34,8 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     setPaused,
     paused,
     setDataTypes,
-    activeDataTypes: dataTypes
+    activeDataTypes: dataTypes,
+    latestMessagesByPool: dataStream.latestMessagesByPool
   };
 
   return (

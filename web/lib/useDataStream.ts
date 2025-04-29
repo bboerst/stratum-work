@@ -15,6 +15,7 @@ interface UseDataStreamResult {
   isConnected: boolean;
   clearData: () => void;
   filterByType: (type: StreamDataType) => StreamData[];
+  latestMessagesByPool: { [poolName: string]: StratumV1Data };
 }
 
 /**
@@ -33,6 +34,7 @@ export function useDataStream({
 }: UseDataStreamOptions = {}): UseDataStreamResult {
   const [data, setData] = useState<StreamData[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [latestMessagesByPool, setLatestMessagesByPool] = useState<{ [poolName: string]: StratumV1Data }>({});
   
   // Add useTransition for non-urgent updates
   const [, startTransition] = useTransition();
@@ -75,47 +77,65 @@ export function useDataStream({
       
       // Check if the data is in the new format (has a type field)
       // or the old format (direct StratumV1Data)
-      let newData: StreamData;
+      let newData: StreamData | null = null;
+      let stratumData: StratumV1Data | null = null;
       
       if ('type' in parsedData) {
         // New format - already has type field
         newData = parsedData as StreamData;
+        if (newData.type === StreamDataType.STRATUM_V1) {
+            stratumData = newData.data as StratumV1Data;
+        }
       } else if ('pool_name' in parsedData) {
         // Old format - StratumV1Data
         // Convert to new format
+        stratumData = parsedData as StratumV1Data;
         newData = {
           type: StreamDataType.STRATUM_V1,
-          id: parsedData._id || `stratum-${Date.now()}`,
-          timestamp: parsedData.timestamp,
-          data: parsedData as StratumV1Data
+          // Safely access _id if it exists and has a value, otherwise generate fallback
+          id: (stratumData && typeof stratumData === 'object' && '_id' in stratumData && (stratumData as { _id?: string })._id)
+              ? (stratumData as { _id: string })._id // Assert as string here since we checked it exists
+              : `${stratumData.pool_name}-${stratumData.timestamp}`,
+          timestamp: stratumData.timestamp,
+          data: stratumData
         };
       } else {
         // Unknown format
         return;
       }
+
+      // If it was StratumV1 data, update the latest message for that pool
+      if (stratumData && stratumData.pool_name) {
+        startTransition(() => {
+             setLatestMessagesByPool(prev => ({
+                ...prev,
+                [stratumData!.pool_name]: stratumData!
+             }));
+        });
+      }
       
-      // Process the new data immediately
+      // Process the new data immediately for the main data array
       startTransition(() => {
         setData((prev) => {
           let filteredData = [...prev];
           
-          if (newData.type === StreamDataType.STRATUM_V1) {
+          if (newData!.type === StreamDataType.STRATUM_V1) {
             // For Stratum data, we replace existing entries with the same pool_name and height
             filteredData = filteredData.filter(item => 
               !(item.type === StreamDataType.STRATUM_V1 && 
-                item.data.pool_name === newData.data.pool_name &&
-                item.data.height === newData.data.height)
+                item.data.pool_name === (newData!.data as StratumV1Data).pool_name &&
+                item.data.height === (newData!.data as StratumV1Data).height)
             );
-          } else if (newData.type === StreamDataType.BLOCK) {
+          } else if (newData!.type === StreamDataType.BLOCK) {
             // For Block data, we replace existing entries with the same hash
             filteredData = filteredData.filter(item => 
               !(item.type === StreamDataType.BLOCK && 
-                item.data.hash === newData.data.hash)
+                item.data.hash === newData!.data.hash)
             );
           }
           
           // Add the new data
-          filteredData.push(newData);
+          filteredData.push(newData!);
           
           // Limit how many rows we keep
           return filteredData.slice(-maxItemsRef.current);
@@ -182,5 +202,5 @@ export function useDataStream({
     };
   }, [endpoint, initialReconnectFrequency, maxReconnectFrequency, processMessage]);
 
-  return { data, isConnected, clearData, filterByType };
+  return { data, isConnected, clearData, filterByType, latestMessagesByPool };
 } 

@@ -17,6 +17,7 @@ from queue import Queue
 from contextlib import contextmanager
 from threading import Lock
 import random
+from distutils.util import strtobool
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -26,6 +27,15 @@ logging.basicConfig(
 logger = logging.getLogger("backend")
 
 # --- Configuration (parameterized via environment variables) ---
+ENABLE_HISTORICAL_DATA_STR = os.getenv('ENABLE_HISTORICAL_DATA', 'true')
+try:
+    ENABLE_HISTORICAL_DATA = bool(strtobool(ENABLE_HISTORICAL_DATA_STR))
+except ValueError:
+    logger.error(f"Invalid value for ENABLE_HISTORICAL_DATA: {ENABLE_HISTORICAL_DATA_STR}. Defaulting to True.")
+    ENABLE_HISTORICAL_DATA = True
+
+logger.info(f"Historical data feature enabled: {ENABLE_HISTORICAL_DATA}")
+
 RPC_USER = os.getenv("BITCOIN_RPC_USER", "user")
 RPC_PASSWORD = os.getenv("BITCOIN_RPC_PASSWORD", "password")
 RPC_HOST = os.getenv("BITCOIN_RPC_HOST", "localhost")
@@ -78,15 +88,31 @@ def create_rpc_connection():
 
 bitcoin_rpc = create_rpc_connection()
 
-try:
-    mongo_client = MongoClient(MONGO_URL, username=MONGO_USER, password=MONGO_PASSWORD)
-    db = mongo_client[MONGO_DB]
-    blocks_coll = db.blocks
-    pools_coll = db.pools
-    logger.info("Connected to MongoDB at %s", MONGO_URL)
-except Exception as e:
-    logger.error("Error connecting to MongoDB: %s", e)
-    raise
+mongo_client = None
+db = None
+blocks_coll = None
+pools_coll = None
+
+if ENABLE_HISTORICAL_DATA:
+    logger.info("Historical data enabled, attempting to connect to MongoDB...")
+    try:
+        mongo_client = MongoClient(MONGO_URL, username=MONGO_USER, password=MONGO_PASSWORD)
+        # Verify connection
+        mongo_client.admin.command('ping') 
+        db = mongo_client[MONGO_DB]
+        blocks_coll = db.blocks
+        pools_coll = db.pools
+        logger.info("Successfully connected to MongoDB at %s", MONGO_URL)
+    except Exception as e:
+        logger.error("Error connecting to MongoDB: %s. Historical data features will be disabled.", e)
+        # Ensure all are None if connection fails
+        mongo_client = None 
+        db = None
+        blocks_coll = None
+        pools_coll = None
+        ENABLE_HISTORICAL_DATA = False # Explicitly disable if connection fails
+else:
+    logger.info("Historical data disabled, skipping MongoDB connection.")
 
 # --- RabbitMQ Connection Management ---
 class RabbitMQManager:

@@ -28,6 +28,7 @@ services:
       - rabbitmq
       - mongodb
     environment:
+      ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: mquser
@@ -123,6 +124,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
       CORS_ORIGINS: "http://localhost:3000"
       ENVIRONMENT: ${ENVIRONMENT:-development}
       RABBITMQ_HOST: rabbitmq
@@ -149,8 +151,9 @@ services:
     # Comment out the host network mode to use the default bridge network
     # network_mode: host
     environment:
-      BITCOIN_RPC_USER: "your_rpc_user"
-      BITCOIN_RPC_PASSWORD: "your_rpc_password"
+      ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
+      BITCOIN_RPC_USER: "rpc_user"
+      BITCOIN_RPC_PASSWORD: "rpc_password"
       BITCOIN_RPC_HOST: "host.docker.internal"
       BITCOIN_RPC_PORT: "8332"
       BITCOIN_ZMQ_BLOCK: "tcp://host.docker.internal:28332"

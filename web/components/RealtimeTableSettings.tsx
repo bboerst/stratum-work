@@ -58,7 +58,7 @@ export default function RealtimeTableSettings({
   return (
     <div
       ref={settingsRef}
-      className="settings-dropdown fixed bg-white dark:bg-[#1e1e2f] border border-gray-300 dark:border-gray-700 shadow-md rounded p-2 z-50"
+      className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded p-2 z-50"
       style={{ 
         top: '60px', // Position below the header
         right: '20px' // Position from the right edge

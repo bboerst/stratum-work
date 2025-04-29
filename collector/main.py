@@ -1,11 +1,13 @@
 import argparse
 import json
 import logging
+import os
 import socket
 import sys
 import time
 import uuid
 from datetime import datetime
+from distutils.util import strtobool
 from urllib.parse import urlparse
 import select
 
@@ -17,7 +19,7 @@ import socks
 LOG = logging.getLogger()
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, enable_historical_data, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
@@ -32,6 +34,7 @@ class Watcher:
         self.db_name = db_name
         self.db_username = db_username
         self.db_password = db_password
+        self.enable_historical_data = enable_historical_data
         self.purl = self.parse_url(url)
         self.extranonce1 = None
         self.extranonce2_length = -1
@@ -207,7 +210,11 @@ class Watcher:
                 if "method" in n and n["method"] == "mining.notify":
                     LOG.info("Received mining.notify message")
                     document = create_notification_document(n, self.pool_name, self.extranonce1, self.extranonce2_length, event_time)
-                    insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                    if self.enable_historical_data:
+                        LOG.info("Historical data enabled, inserting notification to DB")
+                        insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+                    else:
+                        LOG.info("Historical data disabled, skipping DB insert")
                     self.publish_to_rabbitmq(document)
                 if keep_alive and time.time() - last_subscribe_time > 480:
                     LOG.info("Keep-alive interval reached")
@@ -322,12 +329,14 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
     return document
 
 def insert_notification(document, db_url, db_name, db_username, db_password):
-    client = MongoClient(db_url, username=db_username, password=db_password)
+    LOG.debug(f"Attempting to insert document into MongoDB: {document}")
+    client = MongoClient(f"mongodb://{db_username}:{db_password}@{db_url}")
     db = client[db_name]
-    collection = db.mining_notify
-
-    collection.insert_one(document)
+    collection = db["notifications"]
+    result = collection.insert_one(document)
+    LOG.info(f"Inserted document with id {result.inserted_id}")
     client.close()
+    LOG.debug("MongoDB connection closed")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -356,16 +365,16 @@ def main():
         "-re", "--rabbitmq-exchange", default="mining_notify_exchange", help="The name of the RabbitMQ exchange (default: mining_notify_exchange)"
     )
     parser.add_argument(
-        "-d", "--db-url", default="mongodb://localhost:27017", help="The URL of the MongoDB database (default: mongodb://localhost:27017)"
+        "-d", "--db-url", default="localhost", help="MongoDB server URL"
     )
     parser.add_argument(
-        "-dn", "--db-name", required=True, help="The name of the MongoDB database"
+        "-dn", "--db-name", default="stratum-logger", help="MongoDB database name"
     )
     parser.add_argument(
-        "-du", "--db-username", required=True, help="The username for MongoDB authentication"
+        "-du", "--db-username", required=True, help="MongoDB username"
     )
     parser.add_argument(
-        "-dp", "--db-password", required=True, help="The password for MongoDB authentication"
+        "-dp", "--db-password", required=True, help="MongoDB password"
     )
     parser.add_argument(
         "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
@@ -391,11 +400,25 @@ def main():
     )
     args = parser.parse_args()
 
+    # Read env var for historical data
+    enable_historical_data_str = os.getenv('ENABLE_HISTORICAL_DATA', 'true')
+    try:
+        enable_historical_data = bool(strtobool(enable_historical_data_str))
+    except ValueError:
+        LOG.error(f"Invalid value for ENABLE_HISTORICAL_DATA: {enable_historical_data_str}. Defaulting to True.")
+        enable_historical_data = True
+
+    log_level = getattr(logging, args.log_level.upper(), None)
+    if not isinstance(log_level, int):
+        raise ValueError(f"Invalid log level: {args.log_level}")
+
     logging.basicConfig(
         stream=sys.stdout,
         format="%(asctime)s %(levelname)s: %(message)s",
-        level=getattr(logging, args.log_level),
+        level=log_level,
     )
+    LOG.info(f"Logging level set to {args.log_level.upper()}")
+    LOG.info(f"Historical data feature enabled: {enable_historical_data}")
 
     if args.enable_stratum_client:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -411,6 +434,7 @@ def main():
                     args.url, args.userpass, args.pool_name,
                     args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange,
                     args.db_url, args.db_name, args.db_username, args.db_password,
+                    enable_historical_data,
                     args.use_proxy, args.proxy_host, args.proxy_port,
                     enable_stratum_client=True, stratum_client_port=args.stratum_client_port
                 )
@@ -439,6 +463,7 @@ def main():
                 args.url, args.userpass, args.pool_name,
                 args.rabbitmq_host, args.rabbitmq_port, args.rabbitmq_username, args.rabbitmq_password, args.rabbitmq_exchange,
                 args.db_url, args.db_name, args.db_username, args.db_password,
+                enable_historical_data,
                 args.use_proxy, args.proxy_host, args.proxy_port,
                 enable_stratum_client=False
             )

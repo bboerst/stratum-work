@@ -2,7 +2,18 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { StratumV1Data, StreamDataType } from '@/lib/types';
 import { SortedRow, SortConfig, SortDirection } from '@/types/tableTypes';
 import { formatCoinbaseRaw } from '@/utils/formatters';
-import { formatCoinbaseScriptASCII, computeCoinbaseOutputValue, computeFirstTransaction, computeCoinbaseOutputs, fetchFeeRate, clearCoinbaseFromCaches, isRequestInFlight, markRequestInFlight, clearRequestInFlight } from '@/utils/bitcoinUtils';
+import { 
+    //formatCoinbaseScriptASCII, // No longer needed directly here 
+    computeCoinbaseOutputValue, 
+    computeFirstTransaction, 
+    computeCoinbaseOutputs, 
+    fetchFeeRate, 
+    clearCoinbaseFromCaches, 
+    isRequestInFlight, 
+    markRequestInFlight, 
+    clearRequestInFlight,
+    getFormattedCoinbaseAsciiTag // Import the correct function
+} from '@/utils/bitcoinUtils';
 import { sortRowsByKey } from '@/utils/sortUtils';
 
 // Constants for pagination
@@ -103,7 +114,12 @@ export function useTableData(
         row.coinbase2
       );
       const coinbase_outputs = computeCoinbaseOutputs(coinbaseRaw);
-      const coinbaseScriptASCII = formatCoinbaseScriptASCII(coinbaseRaw);
+      const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
+        row.coinbase1,
+        row.extranonce1,
+        row.extranonce2_length,
+        row.coinbase2
+      );
       const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
       const computedFirstTx = computeFirstTransaction(row.merkle_branches);
 
@@ -202,12 +218,19 @@ export function useTableData(
                 item.extranonce2_length,
                 item.coinbase2
               );
+              const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
+                item.coinbase1,
+                item.extranonce1,
+                item.extranonce2_length,
+                item.coinbase2
+              );
+              const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
 
               return {
                 ...item,
                 first_transaction: firstTx,
                 coinbaseRaw,
-                coinbaseScriptASCII: formatCoinbaseScriptASCII(coinbaseRaw),
+                coinbaseScriptASCII,
                 coinbaseOutputValue: computeCoinbaseOutputValue(coinbaseRaw),
                 feeRateComputed: firstTx && firstTx !== "empty block" ? "fetching..." : "N/A",
                 coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),

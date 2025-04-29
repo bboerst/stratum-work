@@ -3,37 +3,42 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
+import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
 
 interface RealtimeTableRowProps {
   row: SortedRow;
   columnsVisible: { [key: string]: boolean };
   columnWidths: { [key: string]: number };
-  handleBlockClick: (height: number) => void;
+  handlePoolClick: (poolName: string) => void;
 }
 
 export default function RealtimeTableRowComponent({
   row,
   columnsVisible,
   columnWidths,
-  handleBlockClick
+  handlePoolClick
 }: RealtimeTableRowProps) {
   return (
-    <TableRow className="hover:bg-gray-200 dark:hover:bg-gray-800">
+    <TableRow 
+      className="hover:bg-[hsl(var(--muted))] cursor-pointer"
+      onClick={() => handlePoolClick(row.pool_name)}
+    >
       {columnsVisible.pool_name && (
         <TableCell
           style={{ width: columnWidths.pool_name }}
           className="p-1 truncate"
           title={row.pool_name}
         >
-          {row.pool_name}
+          <div className="flex items-center justify-between">
+            <span>{row.pool_name}</span>
+          </div>
         </TableCell>
       )}
       
       {columnsVisible.height && (
         <TableCell
           style={{ width: columnWidths.height }}
-          className="p-1 truncate cursor-pointer hover:text-blue-500"
-          onClick={() => handleBlockClick(row.height)}
+          className="p-1 truncate"
         >
           {row.height}
         </TableCell>
@@ -82,6 +87,7 @@ export default function RealtimeTableRowComponent({
               rel="noopener noreferrer"
               className="text-blue-500 underline"
               title={row.first_transaction}
+              onClick={(e) => e.stopPropagation()}
             >
               {row.first_transaction}
             </a>
@@ -124,7 +130,6 @@ export default function RealtimeTableRowComponent({
         <TableCell
           style={{ width: columnWidths.coinbaseRaw }}
           className="p-1 truncate"
-          title={row.coinbaseRaw}
         >
           {row.coinbaseRaw}
         </TableCell>
@@ -179,30 +184,23 @@ export default function RealtimeTableRowComponent({
       {columnsVisible.coinbase_outputs && (
         <TableCell
           className="p-1 truncate text-black"
-          title={
-            row.coinbase_outputs && row.coinbase_outputs.length
-              ? row.coinbase_outputs
-                  .filter((o) => !o.address.includes("nulldata"))
-                  .map((o) => `${o.address}:${o.value.toFixed(8)}`)
-                  .join(" | ")
-              : "N/A"
-          }
           style={{
             ...{
               width: columnWidths.coinbase_outputs,
             },
             backgroundColor: generateColorFromOutputs(
-              row.coinbase_outputs || []
+              (row.coinbase_outputs || []).filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
             ),
             border: `1px solid ${generateColorFromOutputs(
-              row.coinbase_outputs || []
+              (row.coinbase_outputs || []).filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
             )}`,
           }}
         >
           {row.coinbase_outputs && row.coinbase_outputs.length
             ? row.coinbase_outputs
+                .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
                 .filter((o) => !o.address.includes("nulldata"))
-                .map((o) => `${o.address}:${o.value.toFixed(8)}`)
+                .map((o) => `${o.address!}:${o.value.toFixed(8)}`)
                 .join(" | ")
             : "N/A"}
         </TableCell>
@@ -215,7 +213,7 @@ export default function RealtimeTableRowComponent({
         >
           {isNaN(row.coinbaseOutputValue)
             ? "N/A"
-            : row.coinbaseOutputValue.toFixed(8)}
+            : (row.coinbaseOutputValue / 100000000).toFixed(8)}
         </TableCell>
       )}
     </TableRow>

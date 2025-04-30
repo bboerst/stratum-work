@@ -63,18 +63,41 @@ export function formatNbits(nbitsHex?: string): string {
 }
 
 // Format timestamp as human-readable time
-export function formatTimeReceived(tsHex: string): string {
+export function formatTimeReceived(ts: string): string {
+  // First, try parsing as hex nanoseconds
   try {
-    const ns = BigInt("0x" + tsHex)
-    const ms = Number(ns / BigInt(1000000))
-    const date = new Date(ms)
-    const hh = date.getHours().toString().padStart(2, "0")
-    const mm = date.getMinutes().toString().padStart(2, "0")
-    const ss = date.getSeconds().toString().padStart(2, "0")
-    const msec = date.getMilliseconds().toString().padStart(3, "0")
-    return `${hh}:${mm}:${ss}.${msec}`
-  } catch {
-    return "Invalid time"
+    const ns = BigInt("0x" + ts);
+    const ms = Number(ns / BigInt(1000000));
+    const date = new Date(ms);
+    // Check if the resulting date is valid before formatting
+    if (isNaN(date.getTime())) {
+      throw new Error("Invalid date from hex");
+    }
+    const hh = date.getHours().toString().padStart(2, "0");
+    const mm = date.getMinutes().toString().padStart(2, "0");
+    const ss = date.getSeconds().toString().padStart(2, "0");
+    const msec = date.getMilliseconds().toString().padStart(3, "0");
+    return `${hh}:${mm}:${ss}.${msec}`;
+  } catch (hexError) {
+    // If hex parsing fails, try parsing as an ISO-like date string
+    try {
+      // The old format might look like "2024-12-10T01:30:46.002175"
+      // Adding 'Z' assumes the old format was UTC
+      const date = new Date(ts + (ts.includes('T') && !ts.endsWith('Z') ? 'Z' : '')); 
+      
+      if (isNaN(date.getTime())) {
+        throw new Error("Invalid date from string");
+      }
+      const hh = date.getUTCHours().toString().padStart(2, "0"); // Use UTC hours
+      const mm = date.getUTCMinutes().toString().padStart(2, "0"); // Use UTC minutes
+      const ss = date.getUTCSeconds().toString().padStart(2, "0"); // Use UTC seconds
+      const msec = date.getUTCMilliseconds().toString().padStart(3, "0"); // Use UTC milliseconds
+      return `${hh}:${mm}:${ss}.${msec}`;
+    } catch (stringError) {
+      // If both attempts fail, return "Invalid time"
+      console.error(`Error formatting timestamp "${ts}":`, hexError, stringError);
+      return "Invalid time";
+    }
   }
 }
 

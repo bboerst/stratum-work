@@ -1,5 +1,6 @@
 import React from 'react';
 import { TableCell, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
@@ -196,13 +197,36 @@ export default function RealtimeTableRowComponent({
             )}`,
           }}
         >
-          {row.coinbase_outputs && row.coinbase_outputs.length
-            ? row.coinbase_outputs
-                .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
-                .filter((o) => !o.address.includes("nulldata"))
-                .map((o) => `${o.address!}:${o.value.toFixed(8)}`)
-                .join(" | ")
-            : "N/A"}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  {row.coinbase_outputs && row.coinbase_outputs.length
+                    ? row.coinbase_outputs
+                        .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
+                        .filter((o) => !o.address.includes("nulldata"))
+                        .map((o) => `${o.address!}:${o.value.toFixed(8)}`)
+                        .join(" | ")
+                    : "N/A"}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="bg-background text-foreground border rounded shadow-lg p-2 max-w-xs break-words">
+                {row.coinbase_outputs && row.coinbase_outputs.length > 0 ? (
+                  row.coinbase_outputs
+                    .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)
+                    .map((output, index) => (
+                      <div key={index} className="text-xs mb-1">
+                        <span className="font-semibold">Address:</span> {output.address}
+                        <br />
+                        <span className="font-semibold">Value:</span> {(output.value / 100000000).toFixed(8)} BTC
+                      </div>
+                    ))
+                ) : (
+                  <p>No coinbase outputs found.</p>
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </TableCell>
       )}
       

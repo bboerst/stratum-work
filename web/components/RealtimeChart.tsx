@@ -2,19 +2,9 @@
 
 import React, { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType, StratumV1Data, CoinbaseOutput } from "@/lib/types";
+import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { CHART_POINT_SIZES } from "@/lib/constants";
-import {
-    computeCoinbaseOutputs,
-    decodeCoinbaseScriptSigInfo,
-    CoinbaseScriptSigInfo,
-    getCoinbaseTxDetails,
-    CoinbaseTxDetails,
-    getFormattedCoinbaseAsciiTag,
-    computeCoinbaseOutputValue,
-    getTransaction
-} from "@/utils/bitcoinUtils";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -94,28 +84,8 @@ interface ChartDataPoint {
   prev_hash?: string;
   nbits?: string;
   ntime?: string;
-  changeType?: ChangeCategory;
-  changedOpReturnProtocol?: string;
   [key: string]: unknown;
 }
-
-// Define more specific change categories
-type ChangeCategory =
-  | 'op_return_rsk_changed'
-  | 'op_return_coredao_changed'
-  | 'op_return_other_known_protocol_changed'
-  | 'op_return_unknown_protocol_changed'
-  | 'op_return_structure_changed'
-  | 'auxpow_changed'
-  | 'coinbase_script_tag_changed'
-  | 'coinbase_height_changed'
-  | 'witness_commitment_changed'
-  | 'merkle_tx_update'
-  | 'coinbase_outputs_structure_changed'
-  | 'coinbase_fixed_fields_changed'
-  | 'stratum_header_fields_changed'
-  | 'clean_jobs_changed'
-  | 'no_significant_change';
 
 interface RealtimeChartProps {
   paused?: boolean;
@@ -127,16 +97,6 @@ interface RealtimeChartProps {
 // Define pool colors map type
 interface PoolColorsMap {
   [poolName: string]: string;
-}
-
-interface PoolState {
-  stratumData: StratumV1Data;
-  coinbaseRaw: string;
-  coinbaseOutputs: CoinbaseOutput[];
-  scriptSigInfo: CoinbaseScriptSigInfo | null;
-  txDetails: CoinbaseTxDetails | null;
-  coinbaseOutputValue: number | undefined;
-  coinbaseAsciiTag: string | null;
 }
 
 // Chart renderer component base
@@ -190,7 +150,6 @@ function RealtimeChartBase({
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
   const dimensionsRef = useRef(dimensions);
-  const lastPoolStatesRef = useRef<Map<string, PoolState>>(new Map());
   
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
@@ -381,105 +340,6 @@ function RealtimeChartBase({
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
         ctx.stroke();
         ctx.strokeStyle = color; // Reset stroke style
-        
-        // Visual indication for changed data
-        if (point.changeType) {
-          const originalLineWidth = ctx.lineWidth;
-          const originalStrokeStyle = ctx.strokeStyle;
-
-          // Define styles for each change type
-          // Color scheme: RSK (lime), Other OP_RETURN (cyan), AuxPoW (magenta),
-          // Script Tag (purple), Height (teal), Witness (orange),
-          // Merkle/Tx Update (gold), Outputs Structure (pink), Fixed Fields (blue),
-          // Stratum Header (red), Clean Jobs (gray)
-          let changeColor = 'yellow'; // Default for 'other_field_changed' from previous version
-          let outlineThicknessMultiplier = 0.4;
-          let outlineRadiusMultiplier = 0.4;
-
-          switch (point.changeType) {
-              case 'op_return_rsk_changed':
-                  changeColor = 'lime'; 
-                  outlineThicknessMultiplier = 0.8;
-                  outlineRadiusMultiplier = 0.8;
-                  break;
-              case 'op_return_coredao_changed':
-                  changeColor = '#00E5FF'; // Bright Cyan for CoreDAO
-                  outlineThicknessMultiplier = 0.7;
-                  outlineRadiusMultiplier = 0.7;
-                  break;
-              case 'op_return_other_known_protocol_changed':
-                  changeColor = '#FFD740'; // Amber/Orange for other known protocols
-                  outlineThicknessMultiplier = 0.6;
-                  outlineRadiusMultiplier = 0.6;
-                  break;
-              case 'op_return_unknown_protocol_changed':
-                  changeColor = '#BDBDBD'; // Grey for unknown protocol OP_RETURN changes
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'op_return_structure_changed':
-                  changeColor = '#FF80AB'; // Pink for OP_RETURN structure changes
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'auxpow_changed':
-                  changeColor = '#E91E63'; // Magenta
-                  outlineThicknessMultiplier = 0.6;
-                  outlineRadiusMultiplier = 0.6;
-                  break;
-              case 'coinbase_script_tag_changed':
-                  changeColor = '#9C27B0'; // Purple
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'coinbase_height_changed':
-                  changeColor = '#009688'; // Teal
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'witness_commitment_changed':
-                  changeColor = '#FF9800'; // Orange
-                  outlineThicknessMultiplier = 0.6;
-                  outlineRadiusMultiplier = 0.6;
-                  break;
-              case 'merkle_tx_update':
-                  changeColor = '#FFC107'; // Gold/Amber
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'coinbase_outputs_structure_changed':
-                  changeColor = '#F48FB1'; // Light Pink
-                  outlineThicknessMultiplier = 0.5;
-                  outlineRadiusMultiplier = 0.5;
-                  break;
-              case 'coinbase_fixed_fields_changed':
-                  changeColor = '#2196F3'; // Blue
-                  outlineThicknessMultiplier = 0.4;
-                  outlineRadiusMultiplier = 0.4;
-                  break;
-              case 'stratum_header_fields_changed':
-                  changeColor = '#f44336'; // Red
-                  outlineThicknessMultiplier = 0.4;
-                  outlineRadiusMultiplier = 0.4;
-                  break;
-              case 'clean_jobs_changed':
-                  changeColor = '#9E9E9E'; // Grey
-                  outlineThicknessMultiplier = 0.3;
-                  outlineRadiusMultiplier = 0.3;
-                  break;
-              // Default case handles 'other_field_changed' if it were still used, or new unstyled types
-          }
-
-          if (point.changeType !== 'no_significant_change') {
-              ctx.strokeStyle = changeColor;
-              ctx.lineWidth = basePointSize > 2 ? basePointSize * outlineThicknessMultiplier : Math.max(1, outlineThicknessMultiplier * 1.5);
-              ctx.beginPath();
-              ctx.arc(x, y, size + basePointSize * outlineRadiusMultiplier, 0, Math.PI * 2);
-              ctx.stroke();
-          }
-
-          ctx.lineWidth = originalLineWidth;
-        }
         
         // Draw label if showLabels is true
         if (showLabels) {
@@ -834,16 +694,6 @@ function RealtimeChartBase({
     localTimeWindowRef.current = newWindow;
   }, [localTimeWindow]);
   
-  // Helper to identify RSK OP_RETURN outputs
-  const isRskOpReturnOutput = (output: CoinbaseOutput): boolean => {
-    if (output.type === 'nulldata' && output.decodedData?.dataHex) {
-      // RSKBLOCK: hex is 52534b424c4f434b3a
-      // Check if the dataHex (converted to uppercase for case-insensitivity) includes "RSKBLOCK:"
-      return output.decodedData.dataHex.toUpperCase().includes('52534B424C4F434B3A');
-    }
-    return false;
-  };
-  
   // Process data and filter by time window
   const processData = useCallback((stratumData: StratumV1Data[]) => {
     // Filter by block height if needed
@@ -951,245 +801,19 @@ function RealtimeChartBase({
     
     // Transform the data for the chart
     const processedData = filteredData.map(item => {
-      const poolName = item.pool_name || 'Unknown';
-      const lastKnownPoolState = lastPoolStatesRef.current.get(poolName);
-
-      // Construct current coinbase raw string
-      let currentCoinbaseRaw = "";
-      if (item.coinbase1 && item.coinbase2 && item.extranonce1 !== undefined && typeof item.extranonce2_length === 'number') {
-          currentCoinbaseRaw = item.coinbase1 + item.extranonce1 + '00'.repeat(item.extranonce2_length) + item.coinbase2;
-      }
-      
-      // Parse current coinbase data
-      let currentScriptSigInfo: CoinbaseScriptSigInfo | null = null;
-      let currentTxDetails: CoinbaseTxDetails | null = null;
-      let currentCoinbaseOutputs: CoinbaseOutput[] = [];
-      let currentCoinbaseOutputValue: number | undefined = undefined;
-      let currentAsciiTag: string | null = null;
-
-      if (currentCoinbaseRaw) {
-        try {
-          const tx = getTransaction(currentCoinbaseRaw); // Re-decode for scriptSig info
-          if (tx.ins && tx.ins.length > 0) {
-            currentScriptSigInfo = decodeCoinbaseScriptSigInfo(tx.ins[0].script);
-          }
-          currentTxDetails = getCoinbaseTxDetails(currentCoinbaseRaw);
-          currentCoinbaseOutputs = computeCoinbaseOutputs(currentCoinbaseRaw);
-          currentCoinbaseOutputValue = computeCoinbaseOutputValue(currentCoinbaseRaw);
-          currentAsciiTag = getFormattedCoinbaseAsciiTag(
-            item.coinbase1, item.extranonce1, item.extranonce2_length, item.coinbase2
-          );
-        } catch (e) {
-          console.warn(`Error parsing coinbase for ${poolName} in chart:`, e);
-          // Ensure a consistent state if parsing fails
-          currentScriptSigInfo = null;
-          currentTxDetails = null;
-          currentCoinbaseOutputs = [];
-          currentCoinbaseOutputValue = undefined;
-          currentAsciiTag = null;
-        }
-      }
-      
-      // For debugging:
-      // console.log(`[${poolName}] Current Raw CB: ${currentCoinbaseRaw}`);
-      // if(currentScriptSigInfo) console.log(`[${poolName}] Current ScriptSig:`, currentScriptSigInfo);
-      // if(currentTxDetails) console.log(`[${poolName}] Current TxDetails:`, currentTxDetails);
-      // if(currentCoinbaseOutputs.length > 0) console.log(`[${poolName}] Current Outputs:`, currentCoinbaseOutputs);
-      // console.log(`[${poolName}] Current Output Value: ${currentCoinbaseOutputValue}`);
-      // console.log(`[${poolName}] Current ASCII Tag: ${currentAsciiTag}`);
-
-      let currentChangeType: ChangeCategory = 'no_significant_change';
-      let processedPointAdditions: Partial<ChartDataPoint> = {};
-
-      if (lastKnownPoolState) {
-        const prevState = lastKnownPoolState;
-        let opReturnChangeDetected = false;
-
-        // --- Start Debugging Logs ---
-        console.log(`[${poolName}] --- Change Detection Cycle ---`);
-        console.log(`[${poolName}] Prev State Exists:`, !!prevState);
-        // To prevent overly verbose logs, selectively log parts of prev state if needed
-        // console.log(`[${poolName}] Prev ScriptSig Height:`, prevState.scriptSigInfo?.height);
-        // console.log(`[${poolName}] Prev RSK OP_RETURNs:`, prevState.coinbaseOutputs.filter(isRskOpReturnOutput).map(o => o.decodedData?.dataHex));
-        
-        console.log(`[${poolName}] Current Merkle Branches:`, item.merkle_branches);
-        console.log(`[${poolName}] Prev Merkle Branches:`, prevState.stratumData.merkle_branches);
-        console.log(`[${poolName}] Current Output Value: ${currentCoinbaseOutputValue}`);
-        console.log(`[${poolName}] Prev Output Value: ${prevState.coinbaseOutputValue}`);
-        console.log(`[${poolName}] Current ScriptSigInfo:`, currentScriptSigInfo);
-        console.log(`[${poolName}] Prev ScriptSigInfo:`, prevState.scriptSigInfo);
-        console.log(`[${poolName}] Current TxDetails:`, currentTxDetails);
-        console.log(`[${poolName}] Prev TxDetails:`, prevState.txDetails);
-        console.log(`[${poolName}] Current Coinbase Outputs Count:`, currentCoinbaseOutputs.length);
-        console.log(`[${poolName}] Prev Coinbase Outputs Count:`, prevState.coinbaseOutputs.length);
-        // --- End Debugging Logs ---
-
-        // Helper to get OP_RETURNs by protocol
-        const getOpReturnsByProtocol = (outputs: CoinbaseOutput[]) => {
-          const map = new Map<string, string[]>();
-          outputs.filter(o => o.type === 'nulldata' && o.decodedData).forEach(o => {
-            const protocol = o.decodedData!.protocol || 'Unknown';
-            const dataHex = o.decodedData!.dataHex || '';
-            if (!map.has(protocol)) map.set(protocol, []);
-            map.get(protocol)!.push(dataHex);
-            map.get(protocol)!.sort(); // Sort for consistent comparison
-          });
-          return map;
-        };
-
-        const currentOpReturnsMap = getOpReturnsByProtocol(currentCoinbaseOutputs);
-        const prevOpReturnsMap = getOpReturnsByProtocol(prevState.coinbaseOutputs);
-
-        // 1. RSK OP_RETURN data change
-        const currentRskHex = (currentOpReturnsMap.get('RSK') || []).join(',');
-        const prevRskHex = (prevOpReturnsMap.get('RSK') || []).join(',');
-        if (currentRskHex !== prevRskHex) {
-          currentChangeType = 'op_return_rsk_changed';
-          opReturnChangeDetected = true;
-        }
-
-        // 2. CoreDAO OP_RETURN data change
-        if (!opReturnChangeDetected) {
-          const currentCoreDaoHex = (currentOpReturnsMap.get('CoreDAO') || []).join(',');
-          const prevCoreDaoHex = (prevOpReturnsMap.get('CoreDAO') || []).join(',');
-          if (currentCoreDaoHex !== prevCoreDaoHex) {
-            currentChangeType = 'op_return_coredao_changed';
-            opReturnChangeDetected = true;
-          }
-        }
-
-        // 3. Other Known Protocol OP_RETURN data change
-        if (!opReturnChangeDetected) {
-          const allProtocols = new Set([...currentOpReturnsMap.keys(), ...prevOpReturnsMap.keys()]);
-          for (const protocol of allProtocols) {
-            if (protocol === 'RSK' || protocol === 'CoreDAO' || protocol === 'Unknown') continue;
-            const currentProtoHex = (currentOpReturnsMap.get(protocol) || []).join(',');
-            const prevProtoHex = (prevOpReturnsMap.get(protocol) || []).join(',');
-            if (currentProtoHex !== prevProtoHex) {
-              currentChangeType = 'op_return_other_known_protocol_changed';
-              processedPointAdditions.changedOpReturnProtocol = protocol; 
-              opReturnChangeDetected = true;
-              break;
-            }
-          }
-        }
-        
-        // 4. Unknown Protocol OP_RETURN data change
-        if (!opReturnChangeDetected) {
-          const currentUnknownHex = (currentOpReturnsMap.get('Unknown') || []).join(',');
-          const prevUnknownHex = (prevOpReturnsMap.get('Unknown') || []).join(',');
-          if (currentUnknownHex !== prevUnknownHex) {
-            currentChangeType = 'op_return_unknown_protocol_changed';
-            opReturnChangeDetected = true;
-          }
-        }
-
-        // 5. OP_RETURN Structure Change (if no specific data change detected yet for OP_RETURNs)
-        // This checks if the set of protocols or number of OP_RETURNs per protocol changed.
-        if (!opReturnChangeDetected) {
-            const currentProtocolsSorted = Array.from(currentOpReturnsMap.keys()).sort().join(',');
-            const prevProtocolsSorted = Array.from(prevOpReturnsMap.keys()).sort().join(',');
-            let structureChanged = currentProtocolsSorted !== prevProtocolsSorted;
-            if (!structureChanged) { // If protocols are same, check counts/scripts of non-data parts
-                 // Simplified: check if raw coinbaseoutput hex for nulldata changed if protocols are same but datahex matched above
-                 const currentOpScripts = currentCoinbaseOutputs.filter(o => o.type === 'nulldata').map(o=>o.hex).sort().join(',');
-                 const prevOpScripts = prevState.coinbaseOutputs.filter(o => o.type === 'nulldata').map(o=>o.hex).sort().join(',');
-                 if(currentOpScripts !== prevOpScripts) {
-                    // This implies a change in OP_RETURN script itself, not just decoded data if data was same.
-                    // Or an OP_RETURN was added/removed that didn't fall into other categories.
-                    structureChanged = true;
-                 }
-            }
-            if (structureChanged) {
-                currentChangeType = 'op_return_structure_changed';
-                opReturnChangeDetected = true;
-            }
-        }
-
-        // Chain other checks only if no OP_RETURN change was detected
-        if (!opReturnChangeDetected) {
-            // 3. AuxPoW Change (original numbering, now after OP_RETURN checks)
-            if (JSON.stringify(currentScriptSigInfo?.auxPowData) !== JSON.stringify(prevState.scriptSigInfo?.auxPowData)) {
-                currentChangeType = 'auxpow_changed';
-            }
-            // 4. Coinbase Script Tag Change 
-            else if (currentAsciiTag !== prevState.coinbaseAsciiTag) {
-                 currentChangeType = 'coinbase_script_tag_changed';
-            }
-            // 5. Coinbase Height Change
-            else if (currentScriptSigInfo?.height !== prevState.scriptSigInfo?.height) {
-                currentChangeType = 'coinbase_height_changed';
-            }
-            // 6. Witness Commitment Change
-            else if (currentTxDetails?.witnessCommitmentNonce !== prevState.txDetails?.witnessCommitmentNonce) {
-                currentChangeType = 'witness_commitment_changed';
-            }
-            // 7. Merkle/Transaction Update
-            else {
-                const merkleChanged = JSON.stringify(item.merkle_branches) !== JSON.stringify(prevState.stratumData.merkle_branches);
-                const outputValueChanged = currentCoinbaseOutputValue !== prevState.coinbaseOutputValue;
-                const scriptSigStable = JSON.stringify(currentScriptSigInfo) === JSON.stringify(prevState.scriptSigInfo);
-                const txDetailsStable = currentTxDetails?.txVersion === prevState.txDetails?.txVersion &&
-                                      currentTxDetails?.inputSequence === prevState.txDetails?.inputSequence &&
-                                      currentTxDetails?.txLocktime === prevState.txDetails?.txLocktime;
-                // For merkle_tx_update, we expect OP_RETURNs to be stable (or changes already caught)
-                // So, we only check if the *non-data* parts of OP_RETURN scripts are stable if any exist.
-                const opReturnScriptsStable = currentCoinbaseOutputs
-                    .filter(o => o.type === 'nulldata')
-                    .map(o => o.hex) // compare raw script hex for nulldata outputs
-                    .sort().join(',') === prevState.coinbaseOutputs
-                    .filter(o => o.type === 'nulldata')
-                    .map(o => o.hex)
-                    .sort().join(',');
-                
-                const otherOutputScriptsStable = 
-                    currentCoinbaseOutputs.filter(o => o.type !== 'nulldata').length === prevState.coinbaseOutputs.filter(o => o.type !== 'nulldata').length &&
-                    currentCoinbaseOutputs.filter(o => o.type !== 'nulldata').every((out, i) => {
-                        const prevOut = prevState.coinbaseOutputs.filter(p => p.type !== 'nulldata')[i];
-                        return prevOut && out.type === prevOut.type && 
-                               (out.type === 'address' ? out.address === prevOut.address : true) && 
-                               out.hex === prevOut.hex;
-                    });
-
-                if (merkleChanged && outputValueChanged && scriptSigStable && txDetailsStable && opReturnScriptsStable && otherOutputScriptsStable) {
-                    currentChangeType = 'merkle_tx_update';
-                }
-                // 8. Coinbase Outputs Structure Change (general, if not merkle_tx_update)
-                else if (JSON.stringify(currentCoinbaseOutputs.map(o => ({ type: o.type, script: o.hex, value: o.value })).sort((a,b) => (a.script||'').localeCompare(b.script||''))) !== 
-                         JSON.stringify(prevState.coinbaseOutputs.map(o => ({ type: o.type, script: o.hex, value: o.value })).sort((a,b) => (a.script||'').localeCompare(b.script||'')))) {
-                    currentChangeType = 'coinbase_outputs_structure_changed';
-                }
-                // 9. Coinbase Fixed Fields Change
-                else if (currentTxDetails?.txVersion !== prevState.txDetails?.txVersion ||
-                    currentTxDetails?.inputSequence !== prevState.txDetails?.inputSequence ||
-                    currentTxDetails?.txLocktime !== prevState.txDetails?.txLocktime) {
-                    currentChangeType = 'coinbase_fixed_fields_changed';
-                }
-                // 10. Stratum Header Fields Change
-                else {
-                    const stratumFields: (keyof StratumV1Data)[] = ['version', 'prev_hash', 'nbits', 'ntime'];
-                    for (const key of stratumFields) {
-                        if (item[key] !== prevState.stratumData[key]) {
-                            currentChangeType = 'stratum_header_fields_changed';
-                            break;
-                        }
-                    }
-                    // 11. Clean Jobs Change (lowest priority if nothing else changed)
-                    if (currentChangeType === 'no_significant_change' && item.clean_jobs !== prevState.stratumData.clean_jobs) {
-                        currentChangeType = 'clean_jobs_changed';
-                    }
-                }
-            }
-        }
-      }
-      
-      console.log(`[${poolName}] Final ChangeType: ${currentChangeType}`, processedPointAdditions.changedOpReturnProtocol ? `(${processedPointAdditions.changedOpReturnProtocol})` : '');
-
+      // Parse timestamp from the data
       const timestamp = parseTimestamp(item.timestamp);
-      const poolIndex = poolRankings.get(poolName) || (currentPoolNames.indexOf(poolName) + 1) || 1;
-
-      // Data to be returned for the point, poolIndex will be added after state update
-      const pointDataShell = {
+      
+      // Update min/max for domain calculation
+      minTimestamp = Math.min(minTimestamp, timestamp);
+      maxTimestamp = Math.max(maxTimestamp, timestamp);
+      
+      // Use current rankings or default to an evenly distributed value
+      const poolName = item.pool_name || 'Unknown';
+      const poolIndex = poolRankings.get(poolName) || 
+        (currentPoolNames.indexOf(poolName) + 1) || 1;
+      
+      return {
         timestamp,
         poolName,
         poolIndex,
@@ -1198,33 +822,7 @@ function RealtimeChartBase({
         clean_jobs: item.clean_jobs,
         prev_hash: item.prev_hash,
         nbits: item.nbits,
-        ntime: item.ntime,
-        changeType: currentChangeType,
-        ...processedPointAdditions // Spread additional properties like changedOpReturnProtocol
-      };
-
-      // Update last known state for this pool
-      const newPoolState: PoolState = {
-        stratumData: item,
-        coinbaseRaw: currentCoinbaseRaw,
-        coinbaseOutputs: currentCoinbaseOutputs,
-        scriptSigInfo: currentScriptSigInfo,
-        txDetails: currentTxDetails,
-        coinbaseOutputValue: currentCoinbaseOutputValue,
-        coinbaseAsciiTag: currentAsciiTag
-      };
-
-      // Update min/max for domain calculation
-      minTimestamp = Math.min(minTimestamp, timestamp);
-      maxTimestamp = Math.max(maxTimestamp, timestamp);
-      
-      // Use current rankings or default to an evenly distributed value
-      // const poolIndex = poolRankings.get(poolName) || 
-      //   (currentPoolNames.indexOf(poolName) + 1) || 1;
-      
-      return {
-        ...pointDataShell,
-        poolIndex // Now correctly defined in scope
+        ntime: item.ntime
       };
     });
     
@@ -1285,7 +883,6 @@ function RealtimeChartBase({
   // Reset pool data history when block height changes
   useEffect(() => {
     poolDataHistoryRef.current.clear();
-    lastPoolStatesRef.current.clear();
     setChartData([]);
   }, [filterBlockHeight]);
   
@@ -1427,32 +1024,6 @@ function RealtimeChartBase({
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
           <br />
           <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
-          {hoveredPoint.changeType && hoveredPoint.changeType !== 'no_significant_change' && (
-            <>
-              <br />
-              <span style={{ color: hoveredPoint.changeType === 'op_return_rsk_changed' ? 'lime' : 
-                                   hoveredPoint.changeType === 'op_return_coredao_changed' ? '#00E5FF' :
-                                   hoveredPoint.changeType === 'op_return_other_known_protocol_changed' ? '#FFD740' :
-                                   hoveredPoint.changeType === 'op_return_unknown_protocol_changed' ? '#BDBDBD' :
-                                   hoveredPoint.changeType === 'op_return_structure_changed' ? '#FF80AB' :
-                                   hoveredPoint.changeType === 'auxpow_changed' ? '#E91E63' :
-                                   hoveredPoint.changeType === 'coinbase_script_tag_changed' ? '#9C27B0' :
-                                   hoveredPoint.changeType === 'coinbase_height_changed' ? '#009688' :
-                                   hoveredPoint.changeType === 'witness_commitment_changed' ? '#FF9800' :
-                                   hoveredPoint.changeType === 'merkle_tx_update' ? '#FFC107' :
-                                   hoveredPoint.changeType === 'coinbase_outputs_structure_changed' ? '#F48FB1' :
-                                   hoveredPoint.changeType === 'coinbase_fixed_fields_changed' ? '#2196F3' :
-                                   hoveredPoint.changeType === 'stratum_header_fields_changed' ? '#f44336' :
-                                   hoveredPoint.changeType === 'clean_jobs_changed' ? '#9E9E9E' : 'yellow' // Default fallback
-                                 }}>
-                Change: {
-                  hoveredPoint.changeType === 'op_return_other_known_protocol_changed' && hoveredPoint.changedOpReturnProtocol 
-                    ? `OP_RETURN ${hoveredPoint.changedOpReturnProtocol} Data`
-                    : hoveredPoint.changeType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                }
-              </span>
-            </>
-          )}
         </div>
       )}
     </div>

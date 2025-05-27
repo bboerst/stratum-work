@@ -10,7 +10,7 @@ interface HistoricalChartWrapperProps {
 
 export default function HistoricalChartWrapper({ blockHeight }: HistoricalChartWrapperProps) {
   return (
-    <div className="w-full border border-border rounded-md px-2 py-0 bg-card h-[200px] mb-2">
+    <div className="w-full h-full">
       <div className="h-full">
         <RealtimeChart 
           paused={false} // We actually need this to be false to trigger data loading

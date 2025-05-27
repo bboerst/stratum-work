@@ -10,6 +10,7 @@ import { useBlocks } from "@/lib/BlocksContext";
 import { useVisualization } from "@/components/VisualizationContext";
 import VisualizationPanel from "@/components/VisualizationPanel";
 import HistoricalChartWrapper from "@/components/HistoricalChartWrapper";
+import HistoricalPoolTiming from "@/components/HistoricalPoolTiming";
 
 export default function HeightPage() {
   const params = useParams();
@@ -70,16 +71,21 @@ export default function HeightPage() {
         </div>
       </header>
       
-      {/* Use HistoricalChartWrapper instead of RealtimeChart for historical data */}
-      {blockHeight !== null && blockHeight > 0 && (
-        <div className="px-4 h-[210px]">
-          <HistoricalChartWrapper blockHeight={blockHeight} />
-        </div>
-      )}
-      
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 overflow-auto">
+          {blockHeight !== null && blockHeight > 0 && (
+            <div className="px-4">
+              <HistoricalPoolTiming blockHeight={blockHeight} />
+            </div>
+          )}
+          
+          {blockHeight !== null && blockHeight > 0 && (
+            <div className="px-4 h-[210px]">
+              <HistoricalChartWrapper blockHeight={blockHeight} />
+            </div>
+          )}
+
           <RealtimeTable 
             paused={paused}
             showSettings={showSettings}

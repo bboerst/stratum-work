@@ -2,7 +2,7 @@ import { prisma } from './prisma';
 
 // Read environment variable and convert to boolean
 // Default to true if the variable is not set
-const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? 'true').toLowerCase() === 'true';
+export const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? 'true').toLowerCase() === 'true';
 
 // Define a type for the mining pool that matches the frontend expectation
 interface MiningPool {

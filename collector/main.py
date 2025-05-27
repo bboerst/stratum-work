@@ -332,7 +332,7 @@ def insert_notification(document, db_url, db_name, db_username, db_password):
     LOG.debug(f"Attempting to insert document into MongoDB: {document}")
     client = MongoClient(f"mongodb://{db_username}:{db_password}@{db_url}")
     db = client[db_name]
-    collection = db["notifications"]
+    collection = db["mining_notify"]
     result = collection.insert_one(document)
     LOG.info(f"Inserted document with id {result.inserted_id}")
     client.close()

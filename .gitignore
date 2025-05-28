@@ -1,4 +1,22 @@
-
 helm-charts/values*_collector.yaml
 *.pyc
-.aider*
+
+# Terraform variable files
+terraform/terraform.tfvars
+*.tfvars
+
+# Terraform state files
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Crash log files
+crash.log
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

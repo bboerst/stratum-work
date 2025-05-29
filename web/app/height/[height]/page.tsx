@@ -80,12 +80,12 @@ export default function HeightPage() {
             </div>
           )}
           
-          {blockHeight !== null && blockHeight > 0 && (
-            <div className="px-4 h-[210px]">
-              <HistoricalChartWrapper blockHeight={blockHeight} />
-            </div>
-          )}
-
+      {blockHeight !== null && blockHeight > 0 && (
+        <div className="px-4 h-[210px]">
+          <HistoricalChartWrapper blockHeight={blockHeight} />
+        </div>
+      )}
+      
           <RealtimeTable 
             paused={paused}
             showSettings={showSettings}

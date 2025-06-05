@@ -23,7 +23,7 @@ export default function SankeyPage() {
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
         <h1 className="text-2xl font-bold mb-6">Mining Data Flow Visualization</h1>
-        <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-md text-blue-800">
+        <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-md text-blue-800 dark:text-blue-200">
             This Sankey diagram shows the flow of data from mining pools to their merkle branches.
             The width of each link represents the number of connections between nodes.
             {paused && (
@@ -33,15 +33,15 @@ export default function SankeyPage() {
             )}
           </div>
         {/* Sankey Diagram visualization */}
-        <div className="w-full border border-gray-300 rounded-lg p-4 bg-gray-50">
+        <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
           {/* Data status information */}
-          <div id="sankey-status" className="mb-4 p-3 bg-gray-100 border border-gray-300 rounded-md">
+          <div id="sankey-status" className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md">
             <div className="flex justify-between items-center">
               <div>
-                <p className="text-sm text-gray-700">
+                <p className="text-sm text-gray-700 dark:text-gray-300">
                   <strong>Status:</strong> {paused ? 'Paused' : 'Live'}
                 </p>
-                <p className="text-sm text-gray-700">
+                <p className="text-sm text-gray-700 dark:text-gray-300">
                   <strong>Available Events:</strong> {stratumV1Data.length}
                 </p>
               </div>
@@ -62,7 +62,7 @@ export default function SankeyPage() {
           
           {/* Keeping the raw data display for reference */}
           <details className="mt-6">
-            <summary className="cursor-pointer font-medium text-gray-700 mb-2">Show Raw Data</summary>
+            <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-300 mb-2">Show Raw Data</summary>
             <textarea
               className="w-full h-[300px] text-sm p-4 border border-gray-300 rounded-lg"
               value={stratumV1Data.map(data => JSON.stringify(data, null, 2)).join('\n\n')}

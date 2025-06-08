@@ -268,20 +268,47 @@ export class SankeyDataProcessor {
    * Generate Sankey data for visualization
    */
   public getSankeyData(): SankeyData {
-    // Convert to the format expected by the Sankey diagram
-    const nodes = [...this.nodes];
-    const links: SankeyLink[] = [];
+    // Find all nodes that have active connections
+    const activeNodeIndices = new Set<number>();
     
-    this.activeConnections.forEach((pools, key) => {
+    // Collect all node indices that appear in at least one connection
+    this.activeConnections.forEach((_, key) => {
       const [source, target] = key.split('-').map(Number);
+      activeNodeIndices.add(source);
+      activeNodeIndices.add(target);
+    });
+    
+    // Filter nodes to only include those with active connections
+    const filteredNodes: SankeyNode[] = [];
+    const oldToNewIndices = new Map<number, number>(); // Map to track index changes
+    
+    // Build the filtered nodes array and index mapping
+    this.nodes.forEach((node, oldIndex) => {
+      if (activeNodeIndices.has(oldIndex)) {
+        oldToNewIndices.set(oldIndex, filteredNodes.length);
+        filteredNodes.push(node);
+      }
+    });
+    
+    // Create links with updated indices
+    const links: SankeyLink[] = [];
+    this.activeConnections.forEach((pools, key) => {
+      const [oldSource, oldTarget] = key.split('-').map(Number);
+      // Use the new indices
       links.push({
-        source, 
-        target,
+        source: oldToNewIndices.get(oldSource)!, 
+        target: oldToNewIndices.get(oldTarget)!,
         value: pools.size,
       });
     });
     
-    return { nodes, links };
+    // Log node reduction info if we filtered out any nodes
+    if (this.nodes.length !== filteredNodes.length) {
+      console.log(`Filtered out ${this.nodes.length - filteredNodes.length} unused nodes. ` +
+                  `Reduced from ${this.nodes.length} to ${filteredNodes.length} nodes.`);
+    }
+    
+    return { nodes: filteredNodes, links };
   }
   
   /**

@@ -319,6 +319,98 @@ export class SankeyDataProcessor {
     const pools = this.activeConnections.get(connectionKey);
     return pools ? Array.from(pools) : [];
   }
+  
+  /**
+   * Get the last merkle branch for each pool
+   * @returns Map of pool names to their last merkle branch names
+   */
+  public getLastMerkleBranchesForPools(): Map<string, string> {
+    const lastBranches = new Map<string, string>();
+    
+    // Log all the pool events we're tracking
+    console.log(`Processing ${this.lastPoolEvents.size} pool events for label rendering`);
+    
+    // Store all branch names for reference and debugging
+    const allBranchNodes = new Set<string>();
+    this.nodes.forEach(node => {
+      if (node.type === 'branch') {
+        allBranchNodes.add(node.name);
+      }
+    });
+    console.log(`Total branch nodes in the system: ${allBranchNodes.size}`);
+    
+    this.lastPoolEvents.forEach((branches, poolName) => {
+      if (branches.length > 0) {
+        // Last branch is the last element in the array
+        const lastBranch = branches[branches.length - 1];
+        
+        // Verify the branch exists in our nodes
+        if (this.nodeIndex.has(lastBranch)) {
+          lastBranches.set(poolName, lastBranch);
+          console.log(`Pool ${poolName}: last branch = ${lastBranch} (verified in nodes)`);
+        } else {
+          // Try to find a matching node with different case
+          let foundMatch = false;
+          const lowerLastBranch = lastBranch.toLowerCase();
+          
+          for (const [nodeName, nodeId] of this.nodeIndex.entries()) {
+            if (nodeName.toLowerCase() === lowerLastBranch && this.nodes[nodeId].type === 'branch') {
+              // Use the actual case from the node index for better matching
+              lastBranches.set(poolName, nodeName);
+              console.log(`Pool ${poolName}: last branch = ${lastBranch} (case-insensitive match to ${nodeName})`);
+              foundMatch = true;
+              break;
+            }
+          }
+          
+          if (!foundMatch) {
+            // If we still couldn't find a match, use any branch from this pool as a fallback
+            for (let i = branches.length - 1; i >= 0; i--) {
+              const altBranch = branches[i];
+              if (this.nodeIndex.has(altBranch)) {
+                lastBranches.set(poolName, altBranch);
+                console.log(`Pool ${poolName}: using alternative branch = ${altBranch} (last branch ${lastBranch} not found)`);
+                foundMatch = true;
+                break;
+              }
+            }
+            
+            if (!foundMatch) {
+              console.warn(`Pool ${poolName}: could not find any matching branch node for branches: ${branches.join(', ')}`);
+            }
+          }
+        }
+      } else {
+        console.warn(`Pool ${poolName} has no merkle branches`);
+      }
+    });
+    
+    console.log(`Found ${lastBranches.size} pools with last branches out of ${this.lastPoolEvents.size} total pools`);
+    
+    // Ensure we have data to work with
+    if (lastBranches.size === 0) {
+      console.warn('No pools with last branches found. This may indicate an issue with data processing.');
+      
+      // Emergency fallback - directly map pools to any branch node
+      this.lastPoolEvents.forEach((_, poolName) => {
+        // Find any connection from this pool
+        for (const [connectionKey, pools] of this.activeConnections.entries()) {
+          if (pools.has(poolName)) {
+            const [sourceId, targetId] = connectionKey.split('-').map(id => parseInt(id));
+            const targetNode = this.nodes[targetId];
+            
+            if (targetNode && targetNode.type === 'branch') {
+              lastBranches.set(poolName, targetNode.name);
+              console.log(`EMERGENCY FALLBACK: Pool ${poolName} mapped to branch ${targetNode.name} via connection`);
+              break;
+            }
+          }
+        }
+      });
+    }
+    
+    return lastBranches;
+  }
 
   /**
    * Reset all data

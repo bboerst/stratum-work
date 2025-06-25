@@ -258,24 +258,20 @@ export default function SankeyDiagram({
         // For pool nodes, there are no "used by pools" (they are pools themselves)
         if (node.type === 'pool') return [];
         
-        // For branch nodes, find all pools that use this branch
-        const connectedPools = new Set<string>();
-        
-        // Check all links for connections to this node
-        links.forEach((link: any) => {
-          // This node could be either source or target in the link
-          if (link.source.index === node.index || link.target.index === node.index) {
-            // Get the source and target indices from the link
-            const sourceIdx = link.source.index;
-            const targetIdx = link.target.index;
-            
-            // Get pools from sankey processor
-            const pools = sankeyDataProcessor.getPoolsForConnection(sourceIdx, targetIdx);
-            pools.forEach((pool: string) => connectedPools.add(pool));
+        // For branch nodes, get all pools that use this merkle branch
+        if (node.type === 'branch') {
+          try {
+            // Use the comprehensive method we added to data processor
+            // This checks both direct links and pool-to-branch relationships
+            const poolsUsingBranch = sankeyDataProcessor.getPoolsUsingMerkleBranch(node.name);
+            return poolsUsingBranch; // Already sorted in the method
+          } catch (error) {
+            console.error('Error finding connected pools:', error);
+            return [];
           }
-        });
+        }
         
-        return Array.from(connectedPools).sort();
+        return [];
       };
       
       // Function to identify the last merkle branch for each pool using direct data from SankeyDataProcessor
@@ -402,14 +398,17 @@ export default function SankeyDiagram({
             `;
           }
           
-          // Add pool list if there are any
-          if (connectedPools.length > 0) {
-            tooltipContent += `<div style="margin-top: 8px; font-weight: bold;">Pool Connections:</div>`;
-            connectedPools.forEach((pool: string) => {
-              tooltipContent += `<div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
-                <span style="margin-right: 4px;">-</span> ${pool}
-              </div>`;
-            });
+          // Only add pool connections section for branch nodes if there are actual connections
+          if (d.type === 'branch') {
+            if (connectedPools.length > 0) {
+              tooltipContent += `<div style="margin-top: 8px; font-weight: bold;">Pool Connections:</div>`;
+              // Display all connected pools
+              connectedPools.forEach((pool: string) => {
+                tooltipContent += `<div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
+                  <span style="margin-right: 4px;">-</span> ${pool}
+                </div>`;
+              });
+            }
           }
           
           tooltip

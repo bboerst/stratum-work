@@ -319,6 +319,51 @@ export class SankeyDataProcessor {
     const pools = this.activeConnections.get(connectionKey);
     return pools ? Array.from(pools) : [];
   }
+
+  /**
+   * Get all pools that use a specific merkle branch
+   * This is more comprehensive than just checking direct links
+   */
+  public getPoolsUsingMerkleBranch(merkleBranchId: string): string[] {
+    const connectedPools = new Set<string>();
+    
+    try {
+      // First, find the node index that matches this merkle branch name
+      let branchNodeIndex = -1;
+      for (let i = 0; i < this.nodes.length; i++) {
+        const node = this.nodes[i];
+        if (node.type === 'branch' && node.name.toLowerCase() === merkleBranchId.toLowerCase()) {
+          branchNodeIndex = i;
+          break;
+        }
+      }
+      
+      if (branchNodeIndex >= 0) {
+        // Check all active connections for this node
+        this.activeConnections.forEach((pools, connectionKey) => {
+          // Connection keys are in format "sourceId-targetId"
+          const [sourceId, targetId] = connectionKey.split('-').map(Number);
+          
+          // If this branch appears in the connection, add all pools using it
+          if (sourceId === branchNodeIndex || targetId === branchNodeIndex) {
+            pools.forEach(pool => connectedPools.add(pool));
+          }
+        });
+      }
+      
+      // Also check if any pools have this as their last merkle branch
+      const lastBranchesForPools = this.getLastMerkleBranchesForPools();
+      lastBranchesForPools.forEach((branchName, poolName) => {
+        if (branchName.toLowerCase() === merkleBranchId.toLowerCase()) {
+          connectedPools.add(poolName);
+        }
+      });
+    } catch (error) {
+      console.error('Error finding pools using merkle branch:', error);
+    }
+    
+    return Array.from(connectedPools).sort();
+  }
   
   /**
    * Get the last merkle branch for each pool

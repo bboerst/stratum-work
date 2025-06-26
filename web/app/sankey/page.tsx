@@ -2,25 +2,59 @@
 
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useEffect } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
+import { useGlobalMenu } from "@/components/GlobalMenuContext";
+import SankeyMenu from "@/components/SankeyMenu";
 
 export default function SankeyPage() {
-  const { filterByType, paused, setPaused } = useGlobalDataStream();
+  // Local state
   const [refreshKey, setRefreshKey] = useState<number>(0);
-  const [showLabels, setShowLabels] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
   const [nodeLinkCounts, setNodeLinkCounts] = useState({ nodes: 0, links: 0 });
+  
+  // Global state
+  const { filterByType } = useGlobalDataStream();
+  const { setMenuContent } = useGlobalMenu();
+  
+  // Local pause state - we want to manage this locally since it's specific to the Sankey diagram
+  const [localPaused, setLocalPaused] = useState(false);
   
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
     return filterByType(StreamDataType.STRATUM_V1);
   }, [filterByType]);
   
-  // Toggle pause state
-  const handleTogglePause = useCallback(() => {
-    setPaused(!paused);
-  }, [paused, setPaused]);
+  // Effect to force refresh the diagram if needed
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // Only refresh if not paused
+      if (!localPaused) {
+        setRefreshKey(prev => prev + 1);
+      }
+    }, 10000); // Refresh every 10 seconds when not paused
+    
+    return () => clearInterval(timer);
+  }, [localPaused]);
+  
+  // Set the menu content when the component mounts
+  useEffect(() => {
+    setMenuContent(
+      <SankeyMenu
+        paused={localPaused}
+        setPaused={setLocalPaused}
+        showSettings={showSettings}
+        setShowSettings={setShowSettings}
+        showLabels={showLabels}
+        setShowLabels={setShowLabels}
+      />
+    );
 
+    // Clean up when the component unmounts
+    return () => setMenuContent(null);
+  }, [localPaused, showSettings, showLabels, setMenuContent]);
+  
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
@@ -28,9 +62,9 @@ export default function SankeyPage() {
         <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-md text-blue-800 dark:text-blue-200">
             This Sankey diagram shows the flow of data from mining pools to their merkle branches.
             The width of each link represents the number of connections between nodes.
-            {paused && (
+            {localPaused && (
               <div className="mt-2 font-bold">
-                ⚠️ Data stream is currently paused. Click the Resume button to see live updates.
+                ⚠️ Diagram updates are currently paused. Click the Resume button to see live updates.
               </div>
             )}
           </div>
@@ -38,37 +72,14 @@ export default function SankeyPage() {
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
           {/* Data status information */}
           <div id="sankey-status" className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  <strong>Available Events:</strong> {stratumV1Data.length}
-                  <span className="mx-4"></span>
-                  <strong>Nodes:</strong> {nodeLinkCounts.nodes}
-                  <span className="mx-4"></span>
-                  <strong>Links:</strong> {nodeLinkCounts.links}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {/* Show/Hide Labels Button */}
-                <button 
-                  className={`rounded-md text-sm font-medium ${
-                    showLabels 
-                      ? 'bg-blue-500 hover:bg-blue-600' 
-                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600'
-                  } ${showLabels ? 'text-white' : 'text-gray-800 dark:text-gray-200'} px-4 py-2`}
-                  onClick={() => setShowLabels(!showLabels)}
-                >
-                  {showLabels ? 'Hide Labels' : 'Show Labels'}
-                </button>
-                
-                {/* Pause/Resume Button */}
-                <button 
-                  className={`rounded-md text-sm font-medium ${paused ? 'bg-green-500' : 'bg-amber-500'} text-white px-4 py-2`}
-                  onClick={handleTogglePause}
-                >
-                  {paused ? 'Resume' : 'Pause'}
-                </button>
-              </div>
+            <div className="flex items-center">
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                <strong>Available Events:</strong> {stratumV1Data.length}
+                <span className="mx-4"></span>
+                <strong>Nodes:</strong> {nodeLinkCounts.nodes}
+                <span className="mx-4"></span>
+                <strong>Links:</strong> {nodeLinkCounts.links}
+              </p>
             </div>
           </div>
 

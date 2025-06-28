@@ -1041,7 +1041,7 @@ export default function SankeyDiagram({
         className="w-full h-full border border-gray-200 dark:border-gray-700 rounded-lg"
         style={{ display: 'block' }} 
       />
-      {!isConnected && (
+      {!isConnected && stratumV1Data.length === 0 && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-4 rounded-lg z-10">
           Connecting to data stream...
         </div>

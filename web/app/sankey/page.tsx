@@ -13,6 +13,12 @@ export default function SankeyPage() {
   const [showLabels, setShowLabels] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [nodeLinkCounts, setNodeLinkCounts] = useState({ nodes: 0, links: 0 });
+  const [showRawEvents, setShowRawEvents] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('sankeyShowRawEvents') === 'true';
+    }
+    return false;
+  });
   const [showStatus, setShowStatus] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('sankeyShowStatus') === 'true';
@@ -32,12 +38,13 @@ export default function SankeyPage() {
     return filterByType(StreamDataType.STRATUM_V1);
   }, [filterByType]);
   
-  // Persist showStatus to localStorage
+  // Persist showStatus and showRawEvents to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('sankeyShowStatus', String(showStatus));
+      localStorage.setItem('sankeyShowRawEvents', String(showRawEvents));
     }
-  }, [showStatus]);
+  }, [showStatus, showRawEvents]);
 
   // Effect to force refresh the diagram if needed
   useEffect(() => {
@@ -63,12 +70,14 @@ export default function SankeyPage() {
         setShowLabels={setShowLabels}
         showStatus={showStatus}
         setShowStatus={setShowStatus}
+        showRawEvents={showRawEvents}
+        setShowRawEvents={setShowRawEvents}
       />
     );
 
     // Clean up when the component unmounts
     return () => setMenuContent(null);
-  }, [localPaused, showSettings, showLabels, showStatus, setMenuContent]);
+  }, [localPaused, showSettings, showLabels, showStatus, showRawEvents, setMenuContent]);
   
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
@@ -107,15 +116,16 @@ export default function SankeyPage() {
             </div>
           )}
           
-          {/* Keeping the raw data display for reference */}
-          <details className="mt-6">
-            <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-300 mb-2">Show Raw Data</summary>
-            <textarea
-              className="w-full h-[300px] text-sm p-4 border border-gray-300 rounded-lg"
-              value={stratumV1Data.map(data => JSON.stringify(data, null, 2)).join('\n\n')}
-              readOnly
-            />
-          </details>
+          {/* Raw data display */}
+          {showRawEvents && (
+            <div className="mt-6">
+              <textarea
+                className="w-full h-[300px] text-sm p-4 border border-gray-300 rounded-lg"
+                value={stratumV1Data.map(data => JSON.stringify(data, null, 2)).join('\n\n')}
+                readOnly
+              />
+            </div>
+          )}
         </div>
       </div>
     </main>

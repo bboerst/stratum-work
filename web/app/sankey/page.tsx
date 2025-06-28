@@ -27,11 +27,16 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { filterByType } = useGlobalDataStream();
+  const { filterByType, paused: globalPaused, setPaused: setGlobalPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
   
   // Local pause state - we want to manage this locally since it's specific to the Sankey diagram
   const [localPaused, setLocalPaused] = useState(false);
+  
+  // Keep local pause state in sync with global pause state
+  useEffect(() => {
+    setGlobalPaused(localPaused);
+  }, [localPaused, setGlobalPaused]);
   
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {

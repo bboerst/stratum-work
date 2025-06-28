@@ -34,7 +34,8 @@ export default function SankeyMenu({
 
   // Handle the pause toggle
   const handlePauseToggle = () => {
-    setPaused(!paused);
+    // Explicitly set to the opposite boolean value to ensure state update is captured
+    setPaused(paused === true ? false : true);
   };
 
   // Auto-hide settings panel if clicked outside

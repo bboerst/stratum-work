@@ -13,6 +13,12 @@ export default function SankeyPage() {
   const [showLabels, setShowLabels] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [nodeLinkCounts, setNodeLinkCounts] = useState({ nodes: 0, links: 0 });
+  const [showStatus, setShowStatus] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('sankeyShowStatus') === 'true';
+    }
+    return false;
+  });
   
   // Global state
   const { filterByType } = useGlobalDataStream();
@@ -26,6 +32,13 @@ export default function SankeyPage() {
     return filterByType(StreamDataType.STRATUM_V1);
   }, [filterByType]);
   
+  // Persist showStatus to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sankeyShowStatus', String(showStatus));
+    }
+  }, [showStatus]);
+
   // Effect to force refresh the diagram if needed
   useEffect(() => {
     const timer = setInterval(() => {
@@ -48,12 +61,14 @@ export default function SankeyPage() {
         setShowSettings={setShowSettings}
         showLabels={showLabels}
         setShowLabels={setShowLabels}
+        showStatus={showStatus}
+        setShowStatus={setShowStatus}
       />
     );
 
     // Clean up when the component unmounts
     return () => setMenuContent(null);
-  }, [localPaused, showSettings, showLabels, setMenuContent]);
+  }, [localPaused, showSettings, showLabels, showStatus, setMenuContent]);
   
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
@@ -70,9 +85,18 @@ export default function SankeyPage() {
           </div>
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
-          {/* Data status information */}
-          <div id="sankey-status" className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md">
-            <div className="flex items-center">
+                
+          <SankeyDiagram 
+            key={refreshKey}
+            height={600}
+            data={stratumV1Data}
+            showLabels={showLabels}
+            onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}
+          />
+
+{/* Data status below diagram */}
+          {showStatus && (
+            <div id="sankey-status-bottom" className="mt-4 p-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md">
               <p className="text-sm text-gray-700 dark:text-gray-300">
                 <strong>Available Events:</strong> {stratumV1Data.length}
                 <span className="mx-4"></span>
@@ -81,15 +105,7 @@ export default function SankeyPage() {
                 <strong>Links:</strong> {nodeLinkCounts.links}
               </p>
             </div>
-          </div>
-
-          <SankeyDiagram 
-            key={refreshKey}
-            height={600}
-            data={stratumV1Data}
-            showLabels={showLabels}
-            onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}
-          />
+          )}
           
           {/* Keeping the raw data display for reference */}
           <details className="mt-6">

@@ -11,6 +11,9 @@ interface SankeyMenuProps {
   showLabels: boolean;
   setShowLabels: (value: boolean | ((prev: boolean) => boolean)) => void;
   showStatus: boolean;
+  showRawEvents: boolean;
+  setShowRawEvents: (value: boolean | ((prev: boolean) => boolean)) => void;
+
   setShowStatus: (value: boolean | ((prev: boolean) => boolean)) => void;
 }
 
@@ -23,6 +26,8 @@ export default function SankeyMenu({
   setShowLabels,
   showStatus,
   setShowStatus,
+  showRawEvents,
+  setShowRawEvents,
 }: SankeyMenuProps) {
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -157,6 +162,16 @@ export default function SankeyMenu({
               onChange={() => setShowStatus(!showStatus)}
             />
             Show Node & Link counts
+          </label>
+
+          <label className="block text-sm mt-1">
+            <input
+              type="checkbox"
+              className="mr-1"
+              checked={showRawEvents}
+              onChange={() => setShowRawEvents(!showRawEvents)}
+            />
+            Show Raw Events
           </label>
         </div>
       )}

@@ -9,7 +9,6 @@ import SankeyMenu from "@/components/SankeyMenu";
 
 export default function SankeyPage() {
   // Local state
-  const [refreshKey, setRefreshKey] = useState<number>(0);
   const [showLabels, setShowLabels] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [nodeLinkCounts, setNodeLinkCounts] = useState({ nodes: 0, links: 0 });
@@ -27,7 +26,7 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { filterByType, paused: globalPaused, setPaused: setGlobalPaused } = useGlobalDataStream();
+  const { filterByType, data, paused: globalPaused, setPaused: setGlobalPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
   
   // Local pause state - we want to manage this locally since it's specific to the Sankey diagram
@@ -41,7 +40,7 @@ export default function SankeyPage() {
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
     return filterByType(StreamDataType.STRATUM_V1);
-  }, [filterByType]);
+  }, [filterByType, data]);
   
   // Persist showStatus and showRawEvents to localStorage
   useEffect(() => {
@@ -51,17 +50,6 @@ export default function SankeyPage() {
     }
   }, [showStatus, showRawEvents]);
 
-  // Effect to force refresh the diagram if needed
-  useEffect(() => {
-    const timer = setInterval(() => {
-      // Only refresh if not paused
-      if (!localPaused) {
-        setRefreshKey(prev => prev + 1);
-      }
-    }, 10000); // Refresh every 10 seconds when not paused
-    
-    return () => clearInterval(timer);
-  }, [localPaused]);
   
   // Set the menu content when the component mounts
   useEffect(() => {
@@ -79,8 +67,6 @@ export default function SankeyPage() {
         setShowRawEvents={setShowRawEvents}
       />
     );
-
-    // Clean up when the component unmounts
     return () => setMenuContent(null);
   }, [localPaused, showSettings, showLabels, showStatus, showRawEvents, setMenuContent]);
   
@@ -101,7 +87,7 @@ export default function SankeyPage() {
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 
           <SankeyDiagram 
-            key={refreshKey}
+            
             height={600}
             data={stratumV1Data}
             showLabels={showLabels}

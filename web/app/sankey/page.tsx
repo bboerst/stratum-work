@@ -88,7 +88,7 @@ export default function SankeyPage() {
                 
           <SankeyDiagram 
             
-            height={600}
+            height={700}
             data={stratumV1Data}
             showLabels={showLabels}
             onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}

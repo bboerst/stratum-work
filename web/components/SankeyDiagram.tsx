@@ -42,6 +42,8 @@ export default function SankeyDiagram({
     statusPaused: '#ed8936',
     error: '#f56565',
     poolLabel: '#ff9500', // Color for pool labels next to last merkle branches
+    gridLine: 'rgba(100, 116, 139, 0.3)', // Grid line color for merkle branch indicators
+    gridText: 'rgba(26, 32, 44, 0.8)', // Grid text color for branch labels
   });
   
   // Update colors when theme changes
@@ -58,6 +60,8 @@ export default function SankeyDiagram({
       statusPaused: isDark ? '#f6ad55' : '#ed8936',
       error: isDark ? '#fc8181' : '#f56565',
       poolLabel: isDark ? '#ff9d4d' : '#ff8000', // Brighter in dark mode, slightly darker in light mode
+      gridLine: isDark ? 'rgba(160, 174, 192, 0.3)' : 'rgba(100, 116, 139, 0.3)', // Grid line color for merkle branch indicators
+      gridText: isDark ? 'rgba(226, 232, 240, 0.8)' : 'rgba(26, 32, 44, 0.8)', // Grid text color for branch labels
     });
   }, [resolvedTheme]);
   
@@ -185,10 +189,12 @@ export default function SankeyDiagram({
       
       // Create the Sankey generator - cast to any to avoid TypeScript errors
       const sankeyGenerator = sankey() as any;
+      const topPadding = 60;
+      const bottomPadding = 60;
       sankeyGenerator
         .nodeWidth(20)  
         .nodePadding(15)  
-        .extent([[5, 10], [width - poolLabelPadding, height - 10]])  // Reserve space on the right for pool labels
+        .extent([[5, topPadding], [width - poolLabelPadding, height - bottomPadding]])  // Reserve space on the right for pool labels
         .nodeAlign(sankeyLeft);  // Use left alignment for more natural depth
         
       // Convert our data format to D3's expected format
@@ -219,6 +225,51 @@ export default function SankeyDiagram({
       
       // Set background color via d3 after hydration
       svg.style("background-color", colors.background);
+      
+      // Find the maximum branch index to determine how many grid lines to draw
+      const maxBranchIndex = Math.max(...nodes.map((node: any) => node.branchIndex || 0));
+      
+      // Calculate the horizontal spacing for grid lines
+      const gridGroup = svg.append("g").attr("class", "merkle-branch-grid");
+      
+      // Add grid lines for each branch index
+      for (let i = 0; i <= maxBranchIndex; i++) {
+        // Find all nodes with this branch index
+        const branchNodes = nodes.filter((node: any) => node.branchIndex === i);
+        
+        if (branchNodes.length > 0) {
+          // Calculate average x position for this branch
+          const avgX = d3.mean(branchNodes, (d: any) => (d.x0 + d.x1) / 2);
+          
+          if (avgX !== undefined) {
+            // Add vertical grid line
+            gridGroup.append("line")
+              .attr("x1", avgX)
+              .attr("y1", 0)
+              .attr("x2", avgX)
+              .attr("y2", height)
+              .attr("stroke", colors.gridLine)
+              .attr("stroke-dasharray", "3,3")
+              .attr("stroke-width", 1);
+            
+            // Add branch label at the top
+            const labelWidth = width / (maxBranchIndex + 1) * 0.8; // 80% of available width per column
+            
+            // Adjust label text based on available space
+            const labelText = labelWidth < 100 ? `MB ${i}` : `Merkle Branch ${i}`;
+            
+            gridGroup.append("text")
+              .attr("x", avgX)
+              .attr("y", 20) // Position at top with some padding
+              .attr("text-anchor", "middle")
+              .attr("fill", colors.gridText)
+              .attr("font-size", "12px")
+              .attr("font-weight", 500)
+              .text(labelText);
+          }
+        }
+      }
+      
       
       // Add links
       svg.append("g")

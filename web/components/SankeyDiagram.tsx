@@ -186,15 +186,35 @@ export default function SankeyDiagram({
       
       // Calculate right padding to accommodate pool labels
       const poolLabelPadding = 150; // Allocate more space for pool labels on the right
+
+      // --- Dynamic left offset based on widest pool name ---
+      let maxPoolNameWidth = 0;
+      if (typeof window !== 'undefined') {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.font = '600 14px sans-serif'; // Match pool node label font
+          data.nodes.forEach(node => {
+            if (node.type === 'pool') {
+              const metrics = ctx.measureText(node.name);
+              if (metrics.width > maxPoolNameWidth) {
+                maxPoolNameWidth = metrics.width;
+              }
+            }
+          });
+        }
+      }
+      const leftOffset = Math.ceil(maxPoolNameWidth * 0.35) + 10; // 10px padding
       
       // Create the Sankey generator - cast to any to avoid TypeScript errors
       const sankeyGenerator = sankey() as any;
       const topPadding = 60;
       const bottomPadding = 60;
+      const rightExtent = width - poolLabelPadding + leftOffset / 2; // add half the offset to allow some extra space
       sankeyGenerator
         .nodeWidth(20)  
         .nodePadding(15)  
-        .extent([[5, topPadding], [width - poolLabelPadding, height - bottomPadding]])  // Reserve space on the right for pool labels
+        .extent([[5 + leftOffset, topPadding], [rightExtent, height - bottomPadding]])  // Reserve space on the right for pool labels
         .nodeAlign(sankeyLeft);  // Use left alignment for more natural depth
         
       // Convert our data format to D3's expected format
@@ -253,7 +273,7 @@ export default function SankeyDiagram({
               .attr("stroke-width", 1);
             
             // Add branch label at the top
-            const labelWidth = width / (maxBranchIndex + 1) * 0.8; // 80% of available width per column
+            const labelWidth = (width - leftOffset) / (maxBranchIndex + 1) * 0.8;
             
             // Adjust label text based on available space
             const labelText = labelWidth < 100 ? `MB ${i}` : `Merkle Branch ${i}`;

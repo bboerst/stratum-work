@@ -139,10 +139,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
   }
 
   return (
-    <div className="p-4 mb-4 ring-1 ring-gray-300 dark:ring-gray-700 rounded-lg">
-      <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
-        First Template Timing
-      </h3>
+    <div className="p-4">
       <ul className="space-y-0">
         {timingData.map((item, index) => {
           const relativeTimeNs = item.relativeTimeNs ?? 0;

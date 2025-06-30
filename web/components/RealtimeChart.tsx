@@ -58,6 +58,34 @@ function createThrottle<T extends (...args: unknown[]) => unknown>(
   return throttled;
 }
 
+// Convert HSL color to RGB format for better canvas compatibility
+const hslToRgb = (hslString: string): string => {
+  // Parse HSL string like "hsl(120, 70%, 50%)"
+  const match = hslString.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+  if (!match) return hslString; // Return original if not HSL format
+  
+  const h = parseInt(match[1]) / 360;
+  const s = parseInt(match[2]) / 100;
+  const l = parseInt(match[3]) / 100;
+  
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+  const g = Math.round(hue2rgb(p, q, h) * 255);
+  const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+  
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
 // Generate a consistent color from a string (pool name)
 const stringToColor = (str: string): string => {
   let hash = 0;
@@ -68,6 +96,27 @@ const stringToColor = (str: string): string => {
   // Convert to HSL with fixed saturation and lightness for better visibility
   const h = Math.abs(hash % 360);
   return `hsl(${h}, 70%, 50%)`;
+};
+
+// Determine if a color is light or dark to choose appropriate text color
+const getContrastingTextColor = (backgroundColor: string): string => {
+  // Parse HSL color (format: "hsl(h, s%, l%)")
+  const hslMatch = backgroundColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+  if (hslMatch) {
+    const hue = parseInt(hslMatch[1], 10);
+    
+    // Since all colors have 50% lightness, determine based on hue
+    // Yellow/lime/cyan hues (45-195 degrees) appear brighter, use black text
+    // Red/magenta/blue hues appear darker, use white text
+    if (hue >= 45 && hue <= 195) {
+      return '#000000';
+    } else {
+      return '#ffffff';
+    }
+  }
+  
+  // Fallback for other color formats - use white as default
+  return '#ffffff';
 };
 
 // Format timestamp to microseconds
@@ -337,7 +386,8 @@ function RealtimeChartBase({
         }
         
         // Check if we should draw a change indicator or regular point
-        const hasChangeInfo = point.changeDisplay && point.changeDisplay.length > 0;
+        // Draw larger circles for any detected changes, even if untracked (empty changeDisplay)
+        const hasChangeInfo = point.changeInfo && point.changeInfo.hasChanges;
         
         // Calculate size for both cases
         const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
@@ -347,13 +397,15 @@ function RealtimeChartBase({
           const text = point.changeDisplay || '';
           const circleRadius = size * 1.8; // Balanced circle size for readability
           
-          // Use black text for all circles
-          const textColor = '#000000';
+          // Use contrasting text color based on background
+          const textColor = getContrastingTextColor(color);
           
           // Draw colored background circle
+          // Convert HSL to RGB since canvas might not support HSL properly
+          const rgbColor = hslToRgb(color);
           ctx.beginPath();
           ctx.arc(x, y, circleRadius, 0, Math.PI * 2);
-          ctx.fillStyle = color;
+          ctx.fillStyle = rgbColor;
           ctx.fill();
           
           // Draw subtle border
@@ -383,9 +435,10 @@ function RealtimeChartBase({
           ctx.fillText(text, x, y);
         } else {
           // Draw regular circle point
+          const rgbColor = hslToRgb(color);
           ctx.beginPath();
           ctx.arc(x, y, size, 0, Math.PI * 2);
-          ctx.fillStyle = color;
+          ctx.fillStyle = rgbColor;
           ctx.fill();
           
           // Add a subtle outline for better visibility against dark backgrounds
@@ -545,8 +598,7 @@ function RealtimeChartBase({
       const nanoseconds = parseInt(cleaned, 16);
       // Convert to milliseconds for chart display
       return nanoseconds / 1000000;
-    } catch (e) {
-      console.error("Failed to parse timestamp:", timestampStr, e);
+    } catch {
       return Date.now(); // Fallback to current time
     }
   }, [isHistoricalBlock]);
@@ -595,8 +647,8 @@ function RealtimeChartBase({
             nbits: record.nbits,
             ntime: record.ntime,
           });
-        } catch (e) {
-          console.error("Failed to process record:", record, e);
+        } catch {
+          // Skip failed records silently
         }
       });
       
@@ -895,6 +947,7 @@ function RealtimeChartBase({
       const changeInfo = detectTemplateChanges(item, coinbaseOutputs, auxPowData);
       const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
       
+      
       return {
         timestamp,
         poolName,
@@ -921,8 +974,16 @@ function RealtimeChartBase({
         
         const history = poolDataHistoryRef.current.get(poolName)!;
         
-        // Only add the point if it has a new timestamp
-        if (!history.some(existing => existing.timestamp === point.timestamp)) {
+        // Create a more robust unique key to prevent infinite loops
+        const pointKey = `${point.poolName}-${point.timestamp}-${point.changeDisplay}`;
+        
+        // Check if we already have this exact point
+        const isDuplicate = history.some(existing => {
+          const existingKey = `${existing.poolName}-${existing.timestamp}-${existing.changeDisplay}`;
+          return existingKey === pointKey;
+        });
+        
+        if (!isDuplicate) {
           history.push(point);
         }
         
@@ -937,6 +998,7 @@ function RealtimeChartBase({
         const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
         resultPoints.push(...pointsInTimeWindow);
       });
+      
       
       // Return domain information and filtered points
       return {
@@ -962,7 +1024,7 @@ function RealtimeChartBase({
         maxTimestamp
       }
     };
-  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData, maxPoolCount, isHistoricalBlock, allPoolNames, poolColors]);
+  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -973,7 +1035,9 @@ function RealtimeChartBase({
   // Fetch and update data from the global stream or historical data
   useEffect(() => {
     // Don't fetch if paused
-    if (paused) return;
+    if (paused) {
+      return;
+    }
     
     // We'll handle historical data with the direct approach above
     // Only fetch real-time data in this effect
@@ -982,7 +1046,9 @@ function RealtimeChartBase({
       const throttledUpdate = createThrottle(() => {
         // Get stratum updates from the stream
         const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
-        if (stratumUpdates.length === 0) return;
+        if (stratumUpdates.length === 0) {
+          return;
+        }
         
         const stratumData = stratumUpdates.map(item => item.data as StratumV1Data);
         
@@ -1020,7 +1086,7 @@ function RealtimeChartBase({
         throttledUpdate.cancel();
       };
     }
-  }, [filterByType, paused, processData, startTransition, isHistoricalBlock]);
+  }, [filterByType, paused, isHistoricalBlock, processData]);
   
   return (
     <div 

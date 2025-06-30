@@ -31,6 +31,10 @@ interface ProcessedTemplate {
   syscoinHash?: string;
   merkleBranches: string[];
   cleanJobs: boolean | string;
+  prevHash: string;
+  version: string;
+  nbits?: string;
+  ntime?: string;
 }
 
 // Cache for processed templates to avoid re-processing
@@ -39,6 +43,7 @@ const MAX_TEMPLATE_CACHE_SIZE = 100;
 
 // Cache for last template per pool to enable comparison
 const lastTemplateByPool = new Map<string, ProcessedTemplate>();
+
 
 function extractRskHash(coinbaseOutputs?: CoinbaseOutputDetail[]): string | undefined {
   if (!coinbaseOutputs) return undefined;
@@ -85,7 +90,11 @@ function processTemplate(
     auxPowHash: extractAuxPowHash(auxPowData),
     syscoinHash: extractSyscoinHash(coinbaseOutputs),
     merkleBranches: [...data.merkle_branches],
-    cleanJobs: data.clean_jobs
+    cleanJobs: data.clean_jobs,
+    prevHash: data.prev_hash,
+    version: data.version,
+    nbits: data.nbits,
+    ntime: data.ntime
   };
   
   // Manage cache size
@@ -105,40 +114,74 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
   return a.every((val, index) => val === b[index]);
 }
 
+// Cache for processed change detection results to prevent duplicate processing
+const changeDetectionCache = new Map<string, TemplateChangeResult>();
+const MAX_CHANGE_DETECTION_CACHE_SIZE = 200;
+
 export function detectTemplateChanges(
   data: StratumV1Data,
   coinbaseOutputs?: CoinbaseOutputDetail[],
   auxPowData?: AuxPowData | null
 ): TemplateChangeResult {
+  // Create a unique key for this specific data point to prevent duplicate processing
+  const changeDetectionKey = `${data.pool_name}-${data.job_id}-${data.height}-${data.timestamp}`;
+  
+  // Return cached result if we've already processed this exact data point
+  if (changeDetectionCache.has(changeDetectionKey)) {
+    return changeDetectionCache.get(changeDetectionKey)!;
+  }
+  
   const currentTemplate = processTemplate(data, coinbaseOutputs, auxPowData);
   const lastTemplate = lastTemplateByPool.get(data.pool_name);
   
-  // Store current template as the last template for this pool
-  lastTemplateByPool.set(data.pool_name, currentTemplate);
-  
-  // If no previous template, this is the first one (no changes to detect)
+  // If no previous template, this is the first one (show large circle but no change indicators)
   if (!lastTemplate) {
-    return {
-      hasChanges: false,
+    // Store current template as the last template for this pool
+    lastTemplateByPool.set(data.pool_name, currentTemplate);
+    const result = {
+      hasChanges: true, // Always show large circles
       changeTypes: [],
       changeDetails: {}
     };
+    
+    // Cache the result and manage cache size
+    if (changeDetectionCache.size >= MAX_CHANGE_DETECTION_CACHE_SIZE) {
+      const firstKey = changeDetectionCache.keys().next().value;
+      if (firstKey !== undefined) {
+        changeDetectionCache.delete(firstKey);
+      }
+    }
+    changeDetectionCache.set(changeDetectionKey, result);
+    return result;
   }
   
-  // Skip comparison if it's the same job ID (duplicate message)
+  // For duplicate job IDs, still show large circles but no change indicators
   if (lastTemplate.jobId === currentTemplate.jobId) {
-    return {
-      hasChanges: false,
+    // Update the stored template even for duplicates to prevent stale comparisons
+    lastTemplateByPool.set(data.pool_name, currentTemplate);
+    const result = {
+      hasChanges: true, // Always show large circles
       changeTypes: [],
       changeDetails: {}
     };
+    
+    // Cache the result and manage cache size
+    if (changeDetectionCache.size >= MAX_CHANGE_DETECTION_CACHE_SIZE) {
+      const firstKey = changeDetectionCache.keys().next().value;
+      if (firstKey !== undefined) {
+        changeDetectionCache.delete(firstKey);
+      }
+    }
+    changeDetectionCache.set(changeDetectionKey, result);
+    return result;
   }
   
   const changeTypes: TemplateChangeType[] = [];
   const changeDetails: TemplateChangeResult['changeDetails'] = {};
   
-  // Check RSK hash changes
-  if (lastTemplate.rskHash !== currentTemplate.rskHash) {
+  // Check RSK hash changes - only if both values are defined or one changes from/to defined
+  if ((lastTemplate.rskHash || currentTemplate.rskHash) && 
+      lastTemplate.rskHash !== currentTemplate.rskHash) {
     changeTypes.push(TemplateChangeType.RSK_HASH);
     changeDetails.rskHash = {
       old: lastTemplate.rskHash,
@@ -146,8 +189,9 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check AuxPOW hash changes
-  if (lastTemplate.auxPowHash !== currentTemplate.auxPowHash) {
+  // Check AuxPOW hash changes - only if both values are defined or one changes from/to defined
+  if ((lastTemplate.auxPowHash || currentTemplate.auxPowHash) && 
+      lastTemplate.auxPowHash !== currentTemplate.auxPowHash) {
     changeTypes.push(TemplateChangeType.AUXPOW_HASH);
     changeDetails.auxPowHash = {
       old: lastTemplate.auxPowHash,
@@ -155,8 +199,9 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check Syscoin hash changes
-  if (lastTemplate.syscoinHash !== currentTemplate.syscoinHash) {
+  // Check Syscoin hash changes - only if both values are defined or one changes from/to defined
+  if ((lastTemplate.syscoinHash || currentTemplate.syscoinHash) && 
+      lastTemplate.syscoinHash !== currentTemplate.syscoinHash) {
     changeTypes.push(TemplateChangeType.SYSCOIN_HASH);
     changeDetails.syscoinHash = {
       old: lastTemplate.syscoinHash,
@@ -173,8 +218,8 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check clean jobs changes
-  if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs) {
+  // Check clean jobs changes - only track when clean jobs becomes true
+  if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs && currentTemplate.cleanJobs === true) {
     changeTypes.push(TemplateChangeType.CLEAN_JOBS);
     changeDetails.cleanJobs = {
       old: lastTemplate.cleanJobs,
@@ -182,15 +227,28 @@ export function detectTemplateChanges(
     };
   }
   
-  return {
-    hasChanges: changeTypes.length > 0,
+  // Store current template as the last template for this pool (after all comparisons)
+  lastTemplateByPool.set(data.pool_name, currentTemplate);
+  
+  const result = {
+    hasChanges: true, // Always true if we reach here (different job ID means template changed)
     changeTypes,
     changeDetails
   };
+  
+  // Cache the result and manage cache size
+  if (changeDetectionCache.size >= MAX_CHANGE_DETECTION_CACHE_SIZE) {
+    const firstKey = changeDetectionCache.keys().next().value;
+    if (firstKey !== undefined) {
+      changeDetectionCache.delete(firstKey);
+    }
+  }
+  changeDetectionCache.set(changeDetectionKey, result);
+  return result;
 }
 
 export function getChangeTypeDisplay(changeTypes: TemplateChangeType[]): string {
-  if (changeTypes.length === 0) return 'U'; // 'U' for Unknown/Untracked changes
+  if (changeTypes.length === 0) return ''; // Empty string for untracked changes (will show empty circle)
   if (changeTypes.length === 1) return changeTypes[0];
   
   // For multiple changes, combine them
@@ -221,4 +279,5 @@ export function getChangeTypeDescription(changeType: TemplateChangeType): string
 export function clearTemplateCache(): void {
   templateCache.clear();
   lastTemplateByPool.clear();
+  changeDetectionCache.clear();
 }

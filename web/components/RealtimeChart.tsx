@@ -5,6 +5,15 @@ import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { CHART_POINT_SIZES } from "@/lib/constants";
+import { 
+  detectTemplateChanges, 
+  getChangeTypeDisplay, 
+  getChangeTypeDescription,
+  TemplateChangeType,
+  TemplateChangeResult 
+} from "@/utils/templateChangeDetection";
+import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo } from "@/utils/bitcoinUtils";
+import { formatCoinbaseRaw } from "@/utils/formatters";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -84,6 +93,8 @@ interface ChartDataPoint {
   prev_hash?: string;
   nbits?: string;
   ntime?: string;
+  changeInfo?: TemplateChangeResult;
+  changeDisplay?: string;
   [key: string]: unknown;
 }
 
@@ -326,20 +337,46 @@ function RealtimeChartBase({
           return;
         }
         
-        // Draw the point
-        ctx.beginPath();
+        // Check if we should draw a change indicator or regular point
+        const hasChangeInfo = point.changeDisplay && point.changeDisplay.length > 0;
         
-        // Larger points for hovered pool
+        // Calculate size for both cases
         const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
         
-        ctx.arc(x, y, size, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Add a subtle outline for better visibility against dark backgrounds
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.stroke();
-        ctx.strokeStyle = color; // Reset stroke style
+        if (hasChangeInfo) {
+          // Draw change indicator letter(s)
+          ctx.fillStyle = color;
+          ctx.font = `${Math.max(8, basePointSize)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          
+          // Draw background circle for better readability
+          ctx.beginPath();
+          const bgSize = size * 1.2;
+          ctx.arc(x, y, bgSize, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fill();
+          
+          // Draw border
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          
+          // Draw the change letter(s)
+          ctx.fillStyle = color;
+          ctx.fillText(point.changeDisplay, x, y);
+        } else {
+          // Draw regular point
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Add a subtle outline for better visibility against dark backgrounds
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+          ctx.stroke();
+          ctx.strokeStyle = color; // Reset stroke style
+        }
         
         // Draw label if showLabels is true
         if (showLabels) {
@@ -813,6 +850,20 @@ function RealtimeChartBase({
       const poolIndex = poolRankings.get(poolName) || 
         (currentPoolNames.indexOf(poolName) + 1) || 1;
       
+      // Compute coinbase data needed for change detection
+      const coinbaseRaw = formatCoinbaseRaw(
+        item.coinbase1,
+        item.extranonce1,
+        item.extranonce2_length,
+        item.coinbase2
+      );
+      const coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
+      const auxPowData = computeCoinbaseScriptSigInfo(coinbaseRaw)?.auxPowData;
+      
+      // Detect template changes
+      const changeInfo = detectTemplateChanges(item, coinbaseOutputs, auxPowData);
+      const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
+      
       return {
         timestamp,
         poolName,
@@ -822,7 +873,9 @@ function RealtimeChartBase({
         clean_jobs: item.clean_jobs,
         prev_hash: item.prev_hash,
         nbits: item.nbits,
-        ntime: item.ntime
+        ntime: item.ntime,
+        changeInfo,
+        changeDisplay
       };
     });
     
@@ -996,6 +1049,17 @@ function RealtimeChartBase({
                       {showLabels ? "On" : "Off"}
                     </button>
                   </div>
+                  
+                  {/* Change indicator legend */}
+                  <div className="border-t pt-2 mt-2">
+                    <div className="text-xs font-medium mb-1">Change Indicators:</div>
+                    <div className="text-[10px] space-y-0.5">
+                      <div><span className="font-mono font-bold">R</span> - RSK hash</div>
+                      <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
+                      <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
+                      <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1024,6 +1088,16 @@ function RealtimeChartBase({
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
           <br />
           <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
+          {hoveredPoint.changeInfo && hoveredPoint.changeInfo.hasChanges && (
+            <>
+              <br />
+              <span className="text-orange-300">
+                Changes: {hoveredPoint.changeInfo.changeTypes.map(type => 
+                  getChangeTypeDescription(type)
+                ).join(', ')}
+              </span>
+            </>
+          )}
         </div>
       )}
     </div>

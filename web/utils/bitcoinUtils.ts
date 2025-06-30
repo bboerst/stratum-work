@@ -604,6 +604,29 @@ export function decodeCoinbaseScriptSigInfo(scriptSig: Buffer): CoinbaseScriptSi
   };
 }
 
+// Wrapper function to get coinbase scriptSig info from coinbaseRaw
+export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScriptSigInfo {
+  try {
+    const tx = getTransaction(coinbaseRaw);
+    if (!tx.ins || tx.ins.length === 0) {
+      return {
+        height: null,
+        auxPowData: null,
+        remainingScriptHex: ""
+      };
+    }
+    const scriptSigBuffer = tx.ins[0].script;
+    return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
+  } catch (error) {
+    console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    return {
+      height: null,
+      auxPowData: null,
+      remainingScriptHex: ""
+    };
+  }
+}
+
 // Function to get other coinbase transaction details
 export function getCoinbaseTxDetails(coinbaseRaw: string): CoinbaseTxDetails {
   const tx = getTransaction(coinbaseRaw);

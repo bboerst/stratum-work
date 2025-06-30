@@ -7,8 +7,9 @@ import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDat
 import { eventSourceService } from "@/lib/eventSourceService";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
-import { useTheme } from "next-themes";
-import { getMerkleColor } from '@/utils/colorUtils';
+import { useSankeyColors } from '@/hooks/useSankeyColors';
+import { getBranchColor } from '@/utils/sankeyColors';
+import { useTheme } from 'next-themes';
 
 interface SankeyDiagramProps {
   height: number;
@@ -29,42 +30,11 @@ export default function SankeyDiagram({
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const { filterByType, paused, setPaused } = useGlobalDataStream();
-  const { theme, resolvedTheme } = useTheme();
+  // Use our custom hook for Sankey colors
+  const colors = useSankeyColors();
   
-  // Theme-specific colors - only use these after initial render
-  const [colors, setColors] = useState({
-    background: '#ffffff',
-    text: '#1a202c',
-    poolNode: '#2563eb',
-    nodeStroke: '#2d3748',
-    textStroke: '#000000',  
-    link: 'rgba(100, 116, 139, 0.5)',
-    statusLive: '#48bb78',
-    statusPaused: '#ed8936',
-    error: '#f56565',
-    poolLabel: '#ff9500', // Color for pool labels next to last merkle branches
-    gridLine: 'rgba(100, 116, 139, 0.3)', // Grid line color for merkle branch indicators
-    gridText: 'rgba(26, 32, 44, 0.8)', // Grid text color for branch labels
-  });
-  
-  // Update colors when theme changes
-  useEffect(() => {
-    const isDark = resolvedTheme === 'dark';
-    setColors({
-      background: isDark ? '#1e1e2f' : '#ffffff',
-      text: isDark ? '#e2e8f0' : '#1a202c',
-      poolNode: isDark ? '#3182ce' : '#2563eb',
-      nodeStroke: isDark ? '#4a5568' : '#2d3748',
-      textStroke: isDark ? '#000000' : '#000000',  
-      link: isDark ? 'rgba(160, 174, 192, 0.5)' : 'rgba(100, 116, 139, 0.5)',
-      statusLive: isDark ? '#68d391' : '#48bb78',
-      statusPaused: isDark ? '#f6ad55' : '#ed8936',
-      error: isDark ? '#fc8181' : '#f56565',
-      poolLabel: isDark ? '#ff9d4d' : '#ff8000', // Brighter in dark mode, slightly darker in light mode
-      gridLine: isDark ? 'rgba(160, 174, 192, 0.3)' : 'rgba(100, 116, 139, 0.3)', // Grid line color for merkle branch indicators
-      gridText: isDark ? 'rgba(226, 232, 240, 0.8)' : 'rgba(26, 32, 44, 0.8)', // Grid text color for branch labels
-    });
-  }, [resolvedTheme]);
+  // Access theme for conditional rendering if needed
+  const { theme } = useTheme();
     
   // Get stratum V1 data from the global data stream if not provided via props
   const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
@@ -409,7 +379,7 @@ export default function SankeyDiagram({
         .attr("fill", (d: any) => {
           if (d.type === 'pool') return colors.poolNode;
           // Use the utility function to get a consistent color with caching
-          return getMerkleColor(d.name);
+          return getBranchColor(d.name);
         })
         .attr("stroke", colors.nodeStroke)
         .attr("cursor", "pointer")

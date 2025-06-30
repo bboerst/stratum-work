@@ -8,6 +8,7 @@ import { eventSourceService } from "@/lib/eventSourceService";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
 import { useTheme } from "next-themes";
+import { getMerkleColor } from '@/utils/colorUtils';
 
 interface SankeyDiagramProps {
   height: number;
@@ -64,18 +65,7 @@ export default function SankeyDiagram({
       gridText: isDark ? 'rgba(226, 232, 240, 0.8)' : 'rgba(26, 32, 44, 0.8)', // Grid text color for branch labels
     });
   }, [resolvedTheme]);
-  
-  // Generate a color from a hash string
-  const getColorFromHash = (hash: string): string => {
-    // Use first 6 characters of the hash for color
-    const truncatedHash = hash.substring(0, 6).toLowerCase();
-    // Convert to HSL for better control over lightness
-    const hue = parseInt(truncatedHash.substring(0, 2), 16) * 360 / 255;
-    const saturation = 70; 
-    const lightness = resolvedTheme === 'dark' ? 65 : 45; 
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-  };
-  
+    
   // Get stratum V1 data from the global data stream if not provided via props
   const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
   
@@ -418,8 +408,8 @@ export default function SankeyDiagram({
         .attr("height", (d: any) => (d.y1 || 0) - (d.y0 || 0))
         .attr("fill", (d: any) => {
           if (d.type === 'pool') return colors.poolNode;
-          // Use hash-based color for merkle branch nodes
-          return getColorFromHash(d.name);
+          // Use the utility function to get a consistent color with caching
+          return getMerkleColor(d.name);
         })
         .attr("stroke", colors.nodeStroke)
         .attr("cursor", "pointer")
@@ -514,7 +504,7 @@ export default function SankeyDiagram({
         const allPoolNames = Array.from(poolToLastBranchMap.keys());
         console.log('Attempting to render labels for pools:', allPoolNames);
         
-        // Create mapping from branch name to node index
+        // Create mapping from branch name to node index for quick lookups
         const branchNameToNodeIndex = new Map<string, number>();
         nodes.forEach((node: any, index: number) => {
           if (node.type === 'branch') {

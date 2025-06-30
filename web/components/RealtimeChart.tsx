@@ -9,7 +9,6 @@ import {
   detectTemplateChanges, 
   getChangeTypeDisplay, 
   getChangeTypeDescription,
-  TemplateChangeType,
   TemplateChangeResult 
 } from "@/utils/templateChangeDetection";
 import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo } from "@/utils/bitcoinUtils";
@@ -344,31 +343,49 @@ function RealtimeChartBase({
         const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
         
         if (hasChangeInfo) {
-          // Draw change indicator letter(s)
-          ctx.fillStyle = color;
-          ctx.font = `${Math.max(8, basePointSize)}px monospace`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
+          // Draw change indicator letter(s) in fixed-size circle
+          const text = point.changeDisplay || '';
+          const circleRadius = size * 1.8; // Balanced circle size for readability
           
-          // Draw background circle for better readability
+          // Use black text for all circles
+          const textColor = '#000000';
+          
+          // Draw colored background circle
           ctx.beginPath();
-          const bgSize = size * 1.2;
-          ctx.arc(x, y, bgSize, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.arc(x, y, circleRadius, 0, Math.PI * 2);
+          ctx.fillStyle = color;
           ctx.fill();
           
-          // Draw border
-          ctx.strokeStyle = color;
+          // Draw subtle border
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
           ctx.lineWidth = 1;
           ctx.stroke();
           
-          // Draw the change letter(s)
-          ctx.fillStyle = color;
-          ctx.fillText(point.changeDisplay, x, y);
+          // Auto-adjust font size to fit text in circle - start with larger font
+          let fontSize = Math.max(10, basePointSize + 2); // Start with larger font size
+          ctx.font = `${fontSize}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          
+          // Measure text and scale down font if needed
+          let textMetrics = ctx.measureText(text);
+          const maxTextWidth = circleRadius * 1.4; // Leave some padding (diameter * 0.7)
+          
+          // Scale down font size if text is too wide, but don't go below 8px
+          while (textMetrics.width > maxTextWidth && fontSize > 8) {
+            fontSize--;
+            ctx.font = `${fontSize}px monospace`;
+            textMetrics = ctx.measureText(text);
+          }
+          
+          // Draw text with appropriate color
+          ctx.fillStyle = textColor;
+          ctx.fillText(text, x, y);
         } else {
-          // Draw regular point
+          // Draw regular circle point
           ctx.beginPath();
           ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fillStyle = color;
           ctx.fill();
           
           // Add a subtle outline for better visibility against dark backgrounds
@@ -383,16 +400,30 @@ function RealtimeChartBase({
           ctx.fillStyle = color;
           ctx.font = '9px sans-serif';
           ctx.textAlign = 'left';
-          ctx.fillText(poolName, x + 6, y + 3);
+          // Position label to the right of the circle, accounting for circle size
+          const labelOffset = hasChangeInfo ? size * 1.8 + 4 : size + 4;
+          ctx.fillText(poolName, x + labelOffset, y + 3);
           ctx.fillStyle = color; // Reset fill style for next point
         }
         
         // Highlight if this is the exact hovered point
         if (hoveredPoint && point.timestamp === hoveredPoint.timestamp && point.poolName === hoveredPoint.poolName) {
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(x, y, size + 3, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          
+          if (hasChangeInfo) {
+            // For change indicators, use fixed circle size
+            const highlightRadius = size * 1.8 + 3; // Same as change indicator circle + highlight border
+            ctx.beginPath();
+            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            // For regular points
+            const highlightRadius = size + 3;
+            ctx.beginPath();
+            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         }
       });
     });
@@ -1049,17 +1080,6 @@ function RealtimeChartBase({
                       {showLabels ? "On" : "Off"}
                     </button>
                   </div>
-                  
-                  {/* Change indicator legend */}
-                  <div className="border-t pt-2 mt-2">
-                    <div className="text-xs font-medium mb-1">Change Indicators:</div>
-                    <div className="text-[10px] space-y-0.5">
-                      <div><span className="font-mono font-bold">R</span> - RSK hash</div>
-                      <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
-                      <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
-                      <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
@@ -1088,18 +1108,38 @@ function RealtimeChartBase({
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
           <br />
           <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
-          {hoveredPoint.changeInfo && hoveredPoint.changeInfo.hasChanges && (
+          {hoveredPoint.changeDisplay && (
             <>
               <br />
               <span className="text-orange-300">
-                Changes: {hoveredPoint.changeInfo.changeTypes.map(type => 
-                  getChangeTypeDescription(type)
-                ).join(', ')}
+                Changes: {hoveredPoint.changeDisplay === 'U' 
+                  ? 'Untracked template changes' 
+                  : (hoveredPoint.changeInfo?.changeTypes.map(type => 
+                      getChangeTypeDescription(type)
+                    ).join(', ') || 'Template updated')
+                }
               </span>
             </>
           )}
         </div>
       )}
+      
+      {/* Change indicators legend in footer */}
+      <div className="absolute bottom-1 left-2 group">
+        <div className="text-[9px] text-gray-500 dark:text-gray-400 cursor-help">
+          Legend
+        </div>
+        <div className="absolute bottom-4 left-0 hidden group-hover:block bg-black/90 dark:bg-gray-800/95 text-white p-2 rounded shadow-lg z-20 whitespace-nowrap">
+          <div className="text-[10px] space-y-0.5">
+            <div><span className="font-mono font-bold">R</span> - RSK hash</div>
+            <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
+            <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
+            <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
+            <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
+            <div><span className="font-mono font-bold">U</span> - Untracked changes</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

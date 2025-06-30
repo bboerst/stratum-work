@@ -6,6 +6,7 @@ export enum TemplateChangeType {
   AUXPOW_HASH = 'A', 
   MERKLE_BRANCHES = 'M',
   SYSCOIN_HASH = 'S',
+  CLEAN_JOBS = 'C',
   OTHER = 'O'
 }
 
@@ -17,6 +18,7 @@ export interface TemplateChangeResult {
     auxPowHash?: { old?: string; new?: string };
     syscoinHash?: { old?: string; new?: string };
     merkleBranches?: { old: string[]; new: string[] };
+    cleanJobs?: { old: boolean | string; new: boolean | string };
   };
 }
 
@@ -28,6 +30,7 @@ interface ProcessedTemplate {
   auxPowHash?: string;
   syscoinHash?: string;
   merkleBranches: string[];
+  cleanJobs: boolean | string;
 }
 
 // Cache for processed templates to avoid re-processing
@@ -81,7 +84,8 @@ function processTemplate(
     rskHash: extractRskHash(coinbaseOutputs),
     auxPowHash: extractAuxPowHash(auxPowData),
     syscoinHash: extractSyscoinHash(coinbaseOutputs),
-    merkleBranches: [...data.merkle_branches]
+    merkleBranches: [...data.merkle_branches],
+    cleanJobs: data.clean_jobs
   };
   
   // Manage cache size
@@ -169,6 +173,15 @@ export function detectTemplateChanges(
     };
   }
   
+  // Check clean jobs changes
+  if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs) {
+    changeTypes.push(TemplateChangeType.CLEAN_JOBS);
+    changeDetails.cleanJobs = {
+      old: lastTemplate.cleanJobs,
+      new: currentTemplate.cleanJobs
+    };
+  }
+  
   return {
     hasChanges: changeTypes.length > 0,
     changeTypes,
@@ -177,7 +190,7 @@ export function detectTemplateChanges(
 }
 
 export function getChangeTypeDisplay(changeTypes: TemplateChangeType[]): string {
-  if (changeTypes.length === 0) return '';
+  if (changeTypes.length === 0) return 'U'; // 'U' for Unknown/Untracked changes
   if (changeTypes.length === 1) return changeTypes[0];
   
   // For multiple changes, combine them
@@ -195,6 +208,8 @@ export function getChangeTypeDescription(changeType: TemplateChangeType): string
       return 'Transaction merkle branches changed';
     case TemplateChangeType.SYSCOIN_HASH:
       return 'Syscoin merge mining hash updated';
+    case TemplateChangeType.CLEAN_JOBS:
+      return 'Clean jobs flag changed';
     case TemplateChangeType.OTHER:
       return 'Other template changes';
     default:

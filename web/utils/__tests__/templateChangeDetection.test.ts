@@ -95,6 +95,25 @@ describe('Template Change Detection', () => {
     expect(result.changeDetails.merkleBranches?.new).toEqual(['branch1', 'branch3']);
   });
 
+  test('should detect clean jobs changes', () => {
+    // First template
+    detectTemplateChanges(mockStratumData, mockCoinbaseOutputs);
+    
+    // Second template with different clean jobs
+    const newData = { 
+      ...mockStratumData, 
+      job_id: 'job2',
+      clean_jobs: false // Changed from true to false
+    };
+    
+    const result = detectTemplateChanges(newData, mockCoinbaseOutputs);
+    
+    expect(result.hasChanges).toBe(true);
+    expect(result.changeTypes).toContain(TemplateChangeType.CLEAN_JOBS);
+    expect(result.changeDetails.cleanJobs?.old).toBe(true);
+    expect(result.changeDetails.cleanJobs?.new).toBe(false);
+  });
+
   test('should detect multiple changes', () => {
     // First template
     detectTemplateChanges(mockStratumData, mockCoinbaseOutputs);
@@ -118,7 +137,8 @@ describe('Template Change Detection', () => {
     const newData = { 
       ...mockStratumData, 
       job_id: 'job2',
-      merkle_branches: ['branch1', 'branch3'] // Different merkle branches
+      merkle_branches: ['branch1', 'branch3'], // Different merkle branches
+      clean_jobs: false // Different clean jobs
     };
     
     const result = detectTemplateChanges(newData, newOutputs);
@@ -126,6 +146,7 @@ describe('Template Change Detection', () => {
     expect(result.hasChanges).toBe(true);
     expect(result.changeTypes).toContain(TemplateChangeType.RSK_HASH);
     expect(result.changeTypes).toContain(TemplateChangeType.MERKLE_BRANCHES);
+    expect(result.changeTypes).toContain(TemplateChangeType.CLEAN_JOBS);
   });
 
   test('should ignore duplicate job IDs', () => {

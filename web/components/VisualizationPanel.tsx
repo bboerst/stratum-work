@@ -33,7 +33,7 @@ export default function VisualizationPanel({
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const timeWindow = 30; // Default to 30 seconds
+  const timeWindow = 15; // Default to 15 seconds
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -94,7 +94,7 @@ export default function VisualizationPanel({
   // Render the pool timing chart
   const renderPoolTimingChart = useCallback(() => {
     return (
-      <div className="border border-border rounded-md p-2 bg-card h-[320px] w-full">
+      <div className="border border-border rounded-md p-2 bg-card h-[550px] w-full">
         <RealtimeChart 
           paused={paused} 
           filterBlockHeight={filterBlockHeight}

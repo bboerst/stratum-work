@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
+import { SankeyColors } from '../utils/sankeyColors';
 import { sankey, sankeyLinkHorizontal, sankeyLeft } from "d3-sankey";
 import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
 import { eventSourceService } from "@/lib/eventSourceService";
@@ -10,6 +11,7 @@ import { StreamDataType } from "@/lib/types";
 import { useSankeyColors } from '@/hooks/useSankeyColors';
 import { getBranchColor } from '@/utils/sankeyColors';
 import { useTheme } from 'next-themes';
+import SankeyTooltip, { TooltipData } from './sankey/SankeyTooltip';
 
 interface SankeyDiagramProps {
   height: number;
@@ -29,6 +31,8 @@ export default function SankeyDiagram({
   const [width, setWidth] = useState<number>(1000); 
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [tooltipData, setTooltipData] = useState<TooltipData>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const { filterByType, paused, setPaused } = useGlobalDataStream();
   // Use our custom hook for Sankey colors
   const colors = useSankeyColors();
@@ -136,7 +140,36 @@ export default function SankeyDiagram({
       const data = sankeyDataProcessor.getSankeyData();
       
       // Remove any existing tooltips (but don't clear SVG again since we just did)
-      d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
+      setTooltipData(null);
+      setTooltipPosition(null);
+      
+      // Format node label
+      const formatNodeLabel = (node: any): string => {
+        if (node.type === 'pool') return node.name;
+        // For merkle branches, just show the hash part without the MB prefix
+        return node.name.substring(0, 6).toLowerCase();
+      };
+      
+      // Find pools that use this node
+      const findConnectedPools = (node: any): string[] => {
+        // For pool nodes, there are no "used by pools" (they are pools themselves)
+        if (node.type === 'pool') return [];
+        
+        // For branch nodes, get all pools that use this merkle branch
+        if (node.type === 'branch') {
+          try {
+            // Use the comprehensive method we added to data processor
+            // This checks both direct links and pool-to-branch relationships
+            const poolsUsingBranch = sankeyDataProcessor.getPoolsUsingMerkleBranch(node.name);
+            return poolsUsingBranch; // Already sorted in the method
+          } catch (error) {
+            console.error('Error finding connected pools:', error);
+            return [];
+          }
+        }
+        
+        return [];
+      };
       
       // Check if we have data to render
       if (data.nodes.length === 0) {
@@ -262,49 +295,6 @@ export default function SankeyDiagram({
         .attr("fill", "none")
         .attr("opacity", 0.7);
       
-      // Create a tooltip div that is hidden by default
-      const tooltip = d3.select(containerRef.current)
-        .append("div")
-        .attr("class", "sankey-tooltip") 
-        .style("position", "absolute")
-        .style("visibility", "hidden")
-        .style("background-color", "rgba(0, 0, 0, 0.8)")
-        .style("color", "white")
-        .style("padding", "5px 10px")
-        .style("border-radius", "4px")
-        .style("font-size", "12px")
-        .style("pointer-events", "auto")
-        .style("z-index", "100")
-        .style("transition", "0.2s opacity");
-      
-      // Format node label
-      const formatNodeLabel = (node: any): string => {
-        if (node.type === 'pool') return node.name;
-        // For merkle branches, just show the hash part without the MB prefix
-        return node.name.substring(0, 6).toLowerCase();
-      };
-      
-      // Find pools that use this node
-      const findConnectedPools = (node: any): string[] => {
-        // For pool nodes, there are no "used by pools" (they are pools themselves)
-        if (node.type === 'pool') return [];
-        
-        // For branch nodes, get all pools that use this merkle branch
-        if (node.type === 'branch') {
-          try {
-            // Use the comprehensive method we added to data processor
-            // This checks both direct links and pool-to-branch relationships
-            const poolsUsingBranch = sankeyDataProcessor.getPoolsUsingMerkleBranch(node.name);
-            return poolsUsingBranch; // Already sorted in the method
-          } catch (error) {
-            console.error('Error finding connected pools:', error);
-            return [];
-          }
-        }
-        
-        return [];
-      };
-      
       // Function to identify the last merkle branch for each pool using direct data from SankeyDataProcessor
       const findLastBranchesForPools = (): Map<number, string[]> => {
         const branchesToPools = new Map<number, string[]>();
@@ -408,56 +398,34 @@ export default function SankeyDiagram({
           // Find pools connected to this node
           const connectedPools = findConnectedPools(d);
           
-          // Create tooltip content
-          let tooltipContent = '';
-          
+          // Create tooltip data for SankeyTooltip component
           if (d.type === 'pool') {
-            tooltipContent = `<div style="font-weight: bold;">${label}</div>`;
-          } else {
-            // For Merkle branches, show formatted content with indentation
-            const fullHash = d.name.toLowerCase();
-            const hashStart = fullHash.substring(0, 6);
-            
-            tooltipContent = `
-              <div style="font-weight: bold;">
-                Merkle Branch ${d.branchIndex}:<br>
-                <div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
-                  <span style="margin-right: 4px;">&gt;</span> ${hashStart}
-                </div>
-                <div style="font-size: 10px; margin-top: 2px; opacity: 0.8;">(Click to copy full hash)</div>
-              </div>
-            `;
+            setTooltipData({
+              type: 'pool',
+              name: d.name,
+              label: label
+            });
+          } else { // branch type
+            setTooltipData({
+              type: 'branch',
+              name: d.name,
+              branchIndex: d.branchIndex,
+              connectedPools: connectedPools
+            });
           }
           
-          // Only add pool connections section for branch nodes if there are actual connections
-          if (d.type === 'branch') {
-            if (connectedPools.length > 0) {
-              tooltipContent += `<div style="margin-top: 8px; font-weight: bold;">Pool Connections:</div>`;
-              // Display all connected pools
-              connectedPools.forEach((pool: string) => {
-                tooltipContent += `<div style="padding-left: 10px; display: flex; align-items: center; margin: 2px 0;">
-                  <span style="margin-right: 4px;">-</span> ${pool}
-                </div>`;
-              });
-            }
-          }
-          
-          tooltip
-            .style("visibility", "visible")
-            .style("opacity", 1)
-            .html(tooltipContent);
-            
-          // Position the tooltip with smart boundary detection
-          positionTooltip(event);
+          // Set tooltip position from mouse event
+          const [x, y] = d3.pointer(event, containerRef.current);
+          setTooltipPosition({ x, y });
         })
         .on("mousemove", function(event: MouseEvent) {
-          // Update tooltip position with smart boundary detection
-          positionTooltip(event);
+          // Update tooltip position with mouse movement
+          const [x, y] = d3.pointer(event, containerRef.current);
+          setTooltipPosition({ x, y });
         })
         .on("mouseout", function() {
-          tooltip
-            .style("visibility", "hidden")
-            .style("opacity", 0);
+          setTooltipData(null);
+          setTooltipPosition(null);
         });
       
       // Render pool labels next to the respective last merkle branch nodes
@@ -649,50 +617,6 @@ export default function SankeyDiagram({
         return <>{poolLabels}</>;
       };
       
-      // Function to position tooltip with boundary detection
-      function positionTooltip(event: MouseEvent) {
-        const [x, y] = d3.pointer(event, containerRef.current);
-        
-        // Get container and tooltip dimensions
-        const containerRect = containerRef.current?.getBoundingClientRect();
-        if (!containerRect) return;
-        
-        // Show the tooltip to calculate its dimensions
-        tooltip.style("visibility", "visible");
-        const tooltipRect = tooltip.node()?.getBoundingClientRect();
-        if (!tooltipRect) return;
-        
-        // Default offset
-        let xOffset = 10;
-        let yOffset = -25;
-        
-        // Check if tooltip would go off the right edge
-        if (x + xOffset + tooltipRect.width > containerRect.width) {
-          // Position to the left of the cursor instead
-          xOffset = -tooltipRect.width - 10;
-        }
-        
-        // Check if tooltip would go off the bottom edge
-        if (y + yOffset + tooltipRect.height > containerRect.height) {
-          // Position above the cursor, or at least fully in view
-          yOffset = -Math.min(y, tooltipRect.height + 10);
-        }
-        
-        // Check if tooltip would go off the top edge
-        if (y + yOffset < 0) {
-          // Position below the cursor
-          yOffset = 10;
-        }
-        
-        // Apply the calculated position
-        tooltip
-          .style("left", `${x + xOffset}px`)
-          .style("top", `${y + yOffset}px`);
-      }
-      
-      // Debug info - add this temporarily
-      console.log(`Rendering ${nodes.length} nodes and ${links.length} links`);
-      
       // Add node labels if enabled
       if (showLabels) {
         // Use individual text elements for each node for better visibility
@@ -740,7 +664,7 @@ export default function SankeyDiagram({
             .attr("fill", "white") // White text for better contrast on colored nodes
             .attr("stroke", "black") // Add black stroke
             .attr("stroke-width", "0.5px") // Thin stroke width
-            .attr("paint-order", "stroke") // Draw stroke behind text
+            .attr("paint-order", "stroke")
             .attr("font-size", "11px")
             .attr("font-weight", "600")
             .attr("pointer-events", "none") // Prevent interfering with node click/hover events
@@ -985,8 +909,9 @@ export default function SankeyDiagram({
     if (stratumV1Data.length > 0) {
       // Reset data processor first
       sankeyDataProcessor.reset();
-      // First remove any lingering tooltips
-      d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
+      // Clear any tooltips
+      setTooltipData(null);
+      setTooltipPosition(null);
       processRealData();
     }
   }, [stratumV1Data]);
@@ -994,7 +919,8 @@ export default function SankeyDiagram({
   // Re-render when paused state changes
   useEffect(() => {
     // Ensure tooltips are cleared when paused state changes
-    d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
+    setTooltipData(null);
+    setTooltipPosition(null);
     // Preserve the showLabels state when re-rendering due to paused state changes
     renderDiagram();
   }, [paused]);
@@ -1007,7 +933,8 @@ export default function SankeyDiagram({
   // Re-render when theme/colors change
   useEffect(() => {
     // Ensure tooltips are cleared when colors change
-    d3.select(containerRef.current).selectAll(".sankey-tooltip").remove();
+    setTooltipData(null);
+    setTooltipPosition(null);
     renderDiagram();
   }, [colors]);
   
@@ -1077,6 +1004,13 @@ export default function SankeyDiagram({
           Connecting to data stream...
         </div>
       )}
+      {/* Render the SankeyTooltip component */}
+      <SankeyTooltip 
+        data={tooltipData}
+        position={tooltipPosition}
+        containerRef={containerRef as React.RefObject<HTMLDivElement>}
+        colors={colors}
+      />
     </div>
   );
 }

@@ -1,17 +1,16 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback, useTransition } from "react";
+import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { CHART_POINT_SIZES } from "@/lib/constants";
 import { 
   detectTemplateChanges, 
-  getChangeTypeDisplay, 
-  getChangeTypeDescription,
+  getChangeTypeDisplay,
   TemplateChangeResult 
 } from "@/utils/templateChangeDetection";
-import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo } from "@/utils/bitcoinUtils";
+import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo, getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 import { formatCoinbaseRaw } from "@/utils/formatters";
 
 // Simple throttle implementation
@@ -143,14 +142,19 @@ interface ChartDataPoint {
   ntime?: string;
   changeInfo?: TemplateChangeResult;
   changeDisplay?: string;
+  asciiTag?: string;
   [key: string]: unknown;
 }
+
 
 interface RealtimeChartProps {
   paused?: boolean;
   filterBlockHeight?: number;
   timeWindow?: number; // Time window in seconds
   pointSize?: number; // Size of data points in pixels
+  hideHeader?: boolean; // Hide the title and options
+  showLabels?: boolean; // Show labels for data points
+  showPoolNames?: boolean; // Show static pool names column on the right
 }
 
 // Define pool colors map type
@@ -163,7 +167,10 @@ function RealtimeChartBase({
   paused = false, 
   filterBlockHeight,
   timeWindow = 30, // Default to 30 seconds
-  pointSize
+  pointSize,
+  hideHeader = false,
+  showLabels: propShowLabels,
+  showPoolNames = false
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -174,11 +181,6 @@ function RealtimeChartBase({
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
   
-  // Define point size based on mode and props
-  const basePointSize = isHistoricalBlock 
-    ? (pointSize || CHART_POINT_SIZES.HISTORICAL) 
-    : (pointSize || CHART_POINT_SIZES.REALTIME);
-  
   // Add useTransition for non-urgent UI updates
   const [, startTransition] = useTransition();
   
@@ -186,7 +188,10 @@ function RealtimeChartBase({
   const [localTimeWindow, setLocalTimeWindow] = useState(timeWindow);
   
   // State for visualization options
-  const [showLabels, setShowLabels] = useState(false); // Off by default
+  const [localShowLabels, setLocalShowLabels] = useState(false); // Off by default
+  
+  // Use prop if provided, otherwise use local state
+  const showLabels = propShowLabels !== undefined ? propShowLabels : localShowLabels;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
@@ -205,6 +210,29 @@ function RealtimeChartBase({
   const [poolRankings, setPoolRankings] = useState<Map<string, number>>(new Map());
   const [allPoolNames, setAllPoolNames] = useState<string[]>([]); // Track all pools we've ever seen
   const [maxPoolCount, setMaxPoolCount] = useState<number>(10); // Track maximum pool count for stable scaling
+  
+  // Define point size based on mode and props with dynamic sizing
+  const basePointSize = useMemo(() => {
+    if (pointSize) {
+      // Use provided pointSize if specified
+      return pointSize;
+    }
+    
+    // Get the number of pools for dynamic calculation
+    const poolCount = Math.max(allPoolNames.length, maxPoolCount, 5);
+    const availableHeight = dimensions.height - 60; // Account for margins (top: 30, bottom: 20, extra padding)
+    
+    // Calculate maximum point size that prevents overlap
+    // Each pool should have at least enough space for a circle plus some padding
+    const maxPointSize = Math.floor(availableHeight / poolCount / 3.5); // Divide by 3.5 for balanced spacing between circles
+    
+    // Set reasonable bounds: minimum 2px, maximum 12px
+    const dynamicSize = Math.max(2, Math.min(12, maxPointSize));
+    
+    return isHistoricalBlock 
+      ? Math.min(dynamicSize, CHART_POINT_SIZES.HISTORICAL) 
+      : dynamicSize;
+  }, [pointSize, allPoolNames.length, maxPoolCount, dimensions.height, isHistoricalBlock]);
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
@@ -213,6 +241,7 @@ function RealtimeChartBase({
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
   const currentBlockHeightRef = useRef<number | undefined>(filterBlockHeight);
+  
   
   // Reset the historical data loaded flag when the block height changes
   useEffect(() => {
@@ -277,7 +306,9 @@ function RealtimeChartBase({
     }
 
     // Calculate margin and available area
-    const margin = { top: 10, right: 20, bottom: 20, left: 20 };
+    // Add extra right margin for pool names if enabled
+    const poolNamesWidth = showPoolNames ? 180 : 0;
+    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -433,6 +464,7 @@ function RealtimeChartBase({
           // Draw text with appropriate color
           ctx.fillStyle = textColor;
           ctx.fillText(text, x, y);
+          
         } else {
           // Draw regular circle point
           const rgbColor = hslToRgb(color);
@@ -504,7 +536,142 @@ function RealtimeChartBase({
       
       ctx.setLineDash([]); // Reset line dash
     }
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames]);
+    
+    // Draw pool names on the right side if enabled
+    if (showPoolNames && stablePoolNames.length > 0) {
+      // Draw vertical separator line
+      const separatorX = dimensions.width - poolNamesWidth;
+      ctx.strokeStyle = 'rgba(150, 150, 150, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(separatorX, margin.top);
+      ctx.lineTo(separatorX, dimensions.height - margin.bottom);
+      ctx.stroke();
+      
+      // Calculate row height for horizontal separators
+      const denominator = Math.max(stablePoolNames.length, maxPoolCount, 10);
+      const rowHeight = availableHeight / denominator;
+      
+      // Draw horizontal row separator lines between pools
+      ctx.strokeStyle = 'rgba(150, 150, 150, 0.2)'; // Slightly more visible for row separation
+      ctx.lineWidth = 1;
+      for (let i = 1; i < stablePoolNames.length; i++) {
+        // Position line at the boundary between rows (halfway between pool centers)
+        const y = margin.top + (i * rowHeight) - (rowHeight / 2);
+        ctx.beginPath();
+        // Draw separator line only in the chart area (not extending into pool names section)
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(separatorX, y);
+        ctx.stroke();
+      }
+      
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      
+      const poolNamesX = separatorX + 10; // 10px padding from the separator line
+      
+      // Set font size proportional to row height (about 40% of row height, with min/max bounds)
+      const fontSize = Math.max(10, Math.min(18, Math.floor(rowHeight * 0.4)));
+      ctx.font = `${fontSize}px monospace`;
+      
+      stablePoolNames.forEach((poolName, index) => {
+        const y = poolIndexToPixel(index, poolName);
+        const color = poolColors[poolName] || stringToColor(poolName);
+        const rgbColor = hslToRgb(color);
+        
+        // Calculate background width extending to right edge with padding
+        const rightPadding = 10;
+        const backgroundWidth = dimensions.width - (poolNamesX - 2) - rightPadding;
+        
+        // Draw colored background rectangle extending full row height and to right edge
+        ctx.fillStyle = rgbColor;
+        ctx.fillRect(poolNamesX - 2, y - rowHeight/2, backgroundWidth, rowHeight);
+        
+        // Draw pool name with contrasting text color and left padding
+        const textColor = getContrastingTextColor(color);
+        const textPadding = 8; // Left padding for the text
+        const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
+        
+        // Get ASCII tag for this pool (from latest data point)
+        const poolDataPoints = chartData.filter(point => point.poolName === poolName);
+        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        const asciiTag = latestPoint?.asciiTag || '';
+        
+        // Draw pool name
+        let poolNameText = poolName;
+        const poolNameWidth = ctx.measureText(poolNameText).width;
+        
+        if (poolNameWidth > maxTextWidth) {
+          // Binary search to find the longest pool name that fits with ellipsis
+          let start = 0;
+          let end = poolName.length;
+          
+          while (start < end) {
+            const mid = Math.floor((start + end + 1) / 2);
+            const testText = poolName.substring(0, mid) + '...';
+            const testWidth = ctx.measureText(testText).width;
+            
+            if (testWidth <= maxTextWidth) {
+              start = mid;
+            } else {
+              end = mid - 1;
+            }
+          }
+          
+          poolNameText = poolName.substring(0, start) + '...';
+        }
+        
+        // Calculate positions for pool name and ASCII tag
+        const poolNameY = y - (asciiTag ? rowHeight * 0.15 : 0); // Move up slightly if ASCII tag exists
+        const asciiTagY = y + rowHeight * 0.25; // Position ASCII tag below pool name
+        
+        // Draw pool name
+        ctx.fillStyle = textColor;
+        ctx.fillText(poolNameText, poolNamesX + textPadding, poolNameY);
+        
+        // Draw ASCII tag on new line if it exists
+        if (asciiTag) {
+          // Use smaller font for ASCII tag
+          const originalFont = ctx.font;
+          const smallerFontSize = Math.max(8, Math.floor(fontSize * 0.75));
+          ctx.font = `${smallerFontSize}px monospace`;
+          
+          // Truncate ASCII tag if too long
+          let asciiDisplayText = asciiTag;
+          const asciiTextWidth = ctx.measureText(asciiDisplayText).width;
+          
+          if (asciiTextWidth > maxTextWidth) {
+            // Binary search to find the longest ASCII tag that fits with ellipsis
+            let start = 0;
+            let end = asciiTag.length;
+            
+            while (start < end) {
+              const mid = Math.floor((start + end + 1) / 2);
+              const testText = asciiTag.substring(0, mid) + '...';
+              const testWidth = ctx.measureText(testText).width;
+              
+              if (testWidth <= maxTextWidth) {
+                start = mid;
+              } else {
+                end = mid - 1;
+              }
+            }
+            
+            asciiDisplayText = asciiTag.substring(0, start) + '...';
+          }
+          
+          // Draw ASCII tag with slightly dimmed color
+          const dimmedTextColor = textColor === '#000000' ? '#666666' : '#cccccc';
+          ctx.fillStyle = dimmedTextColor;
+          ctx.fillText(asciiDisplayText, poolNamesX + textPadding, asciiTagY);
+          
+          // Restore original font
+          ctx.font = originalFont;
+        }
+      });
+    }
+    
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -636,6 +803,16 @@ function RealtimeChartBase({
           const poolName = record.pool_name || 'unknown';
           const poolIndex = poolNames.indexOf(poolName) + 1; // +1 to avoid 0 index
           
+          // Get ASCII tag for historical data
+          const asciiTag = record.coinbase1 && record.extranonce1 && record.extranonce2_length !== undefined && record.coinbase2
+            ? getFormattedCoinbaseAsciiTag(
+                record.coinbase1,
+                record.extranonce1,
+                record.extranonce2_length,
+                record.coinbase2
+              )
+            : '';
+
           points.push({
             timestamp,
             poolName,
@@ -646,6 +823,7 @@ function RealtimeChartBase({
             prev_hash: record.prev_hash,
             nbits: record.nbits,
             ntime: record.ntime,
+            asciiTag,
           });
         } catch {
           // Skip failed records silently
@@ -712,7 +890,8 @@ function RealtimeChartBase({
     }
     
     // Calculate margins (must match drawChart exactly)
-    const margin =  { top: 10, right: 20, bottom: 20, left: 20 };
+    const poolNamesWidth = showPoolNames ? 180 : 0;
+    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -782,7 +961,7 @@ function RealtimeChartBase({
     });
     
     setHoveredPoint(closestPoint);
-  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize]);
+  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, showPoolNames]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
@@ -947,6 +1126,13 @@ function RealtimeChartBase({
       const changeInfo = detectTemplateChanges(item, coinbaseOutputs, auxPowData);
       const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
       
+      // Get ASCII tag from coinbase script sig
+      const asciiTag = getFormattedCoinbaseAsciiTag(
+        item.coinbase1,
+        item.extranonce1,
+        item.extranonce2_length,
+        item.coinbase2
+      );
       
       return {
         timestamp,
@@ -959,7 +1145,8 @@ function RealtimeChartBase({
         nbits: item.nbits,
         ntime: item.ntime,
         changeInfo,
-        changeDisplay
+        changeDisplay,
+        asciiTag
       };
     });
     
@@ -1094,7 +1281,7 @@ function RealtimeChartBase({
       onMouseLeave={handleCanvasMouseLeave}
     >
       {/* Chart header with title and options - only show for non-historical blocks */}
-      {!isHistoricalBlock && (
+      {!isHistoricalBlock && !hideHeader && (
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-medium">Timing</h3>
           
@@ -1136,7 +1323,7 @@ function RealtimeChartBase({
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium">Show labels:</span>
                     <button
-                      onClick={() => setShowLabels(prev => !prev)}
+                      onClick={() => setLocalShowLabels(prev => !prev)}
                       className={`px-2 py-1 text-xs rounded ${
                         showLabels
                           ? 'bg-blue-500 text-white'
@@ -1155,12 +1342,12 @@ function RealtimeChartBase({
       
       <div 
         ref={containerRef}
-        className={`w-full ${isHistoricalBlock ? 'h-full' : 'h-[calc(100%-24px)]'}`}
+        className={`w-full ${isHistoricalBlock || hideHeader ? 'h-full' : 'h-[calc(100%-24px)]'}`}
         style={{ cursor: 'crosshair' }}
       >
         <canvas
           ref={canvasRef}
-          className="w-full h-full"
+          className="w-full h-full bg-transparent"
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         />
@@ -1174,24 +1361,70 @@ function RealtimeChartBase({
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
           <br />
           <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
-          {hoveredPoint.changeDisplay && (
+          {hoveredPoint.changeInfo?.changeDetails && (
             <>
               <br />
-              <span className="text-orange-300">
-                Changes: {hoveredPoint.changeDisplay === 'U' 
-                  ? 'Untracked template changes' 
-                  : (hoveredPoint.changeInfo?.changeTypes.map(type => 
-                      getChangeTypeDescription(type)
-                    ).join(', ') || 'Template updated')
-                }
-              </span>
+              <div className="text-[8px] text-gray-300 mt-1 whitespace-nowrap">
+                {hoveredPoint.changeInfo.changeDetails.rskHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">RSK Old: {hoveredPoint.changeInfo.changeDetails.rskHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">RSK New: {hoveredPoint.changeInfo.changeDetails.rskHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.auxPowHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Old: {hoveredPoint.changeInfo.changeDetails.auxPowHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW New: {hoveredPoint.changeInfo.changeDetails.auxPowHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.merkleBranches && (
+                  <div className="mb-1">
+                    <div className="text-blue-300 whitespace-nowrap overflow-hidden">Merkle branches changed</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.syscoinHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Syscoin Old: {hoveredPoint.changeInfo.changeDetails.syscoinHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Syscoin New: {hoveredPoint.changeInfo.changeDetails.syscoinHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.cleanJobs && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Clean Jobs Old: {String(hoveredPoint.changeInfo.changeDetails.cleanJobs.old)}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Clean Jobs New: {String(hoveredPoint.changeInfo.changeDetails.cleanJobs.new)}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.prevHash != null && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Prev Hash Old: {hoveredPoint.changeInfo.changeDetails.prevHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Prev Hash New: {hoveredPoint.changeInfo.changeDetails.prevHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.height != null && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Height Old: {hoveredPoint.changeInfo.changeDetails.height.old}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Height New: {hoveredPoint.changeInfo.changeDetails.height.new}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.otherChanges && hoveredPoint.changeInfo.changeDetails.otherChanges.length > 0 && (
+                  <div className="mb-1">
+                    <div className="text-yellow-300 font-semibold mb-1">Other Changes:</div>
+                    {hoveredPoint.changeInfo.changeDetails.otherChanges.map((change, index) => (
+                      <div key={index} className="mb-1">
+                        <div className="text-red-300 whitespace-nowrap overflow-hidden">{change.field} Old: {String(change.old)}</div>
+                        <div className="text-green-300 whitespace-nowrap overflow-hidden">{change.field} New: {String(change.new)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
       )}
       
       {/* Change indicators legend in footer */}
-      <div className="absolute bottom-1 left-2 group">
+      <div className="absolute bottom-6 left-2 group">
         <div className="text-[9px] text-gray-500 dark:text-gray-400 cursor-help">
           Legend
         </div>
@@ -1202,7 +1435,10 @@ function RealtimeChartBase({
             <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
             <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
             <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
-            <div><span className="font-mono font-bold">U</span> - Untracked changes</div>
+            <div><span className="font-mono font-bold">P</span> - Prev hash</div>
+            <div><span className="font-mono font-bold">H</span> - Height</div>
+            <div><span className="font-mono font-bold">O</span> - Other changes</div>
+            <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate template</div>
           </div>
         </div>
       </div>

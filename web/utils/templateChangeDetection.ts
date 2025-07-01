@@ -7,6 +7,8 @@ export enum TemplateChangeType {
   MERKLE_BRANCHES = 'M',
   SYSCOIN_HASH = 'S',
   CLEAN_JOBS = 'C',
+  PREV_HASH = 'P',
+  HEIGHT = 'H',
   OTHER = 'O'
 }
 
@@ -19,6 +21,9 @@ export interface TemplateChangeResult {
     syscoinHash?: { old?: string; new?: string };
     merkleBranches?: { old: string[]; new: string[] };
     cleanJobs?: { old: boolean | string; new: boolean | string };
+    prevHash?: { old: string; new: string };
+    height?: { old: number; new: number };
+    otherChanges?: Array<{ field: string; old: any; new: any }>;
   };
 }
 
@@ -227,6 +232,54 @@ export function detectTemplateChanges(
     };
   }
   
+  // Check prev hash changes
+  if (lastTemplate.prevHash !== currentTemplate.prevHash) {
+    changeTypes.push(TemplateChangeType.PREV_HASH);
+    changeDetails.prevHash = {
+      old: lastTemplate.prevHash,
+      new: currentTemplate.prevHash
+    };
+  }
+  
+  // Check height changes
+  if (lastTemplate.height !== currentTemplate.height) {
+    changeTypes.push(TemplateChangeType.HEIGHT);
+    changeDetails.height = {
+      old: lastTemplate.height,
+      new: currentTemplate.height
+    };
+  }
+  
+  // Detect other template changes not covered by specific tracked types
+  const otherChanges: Array<{ field: string; old: any; new: any }> = [];
+  
+  // Check all fields for changes (except those already tracked above)
+  const fieldsToCheck = [
+    { field: 'version', old: lastTemplate.version, new: currentTemplate.version },
+    { field: 'nbits', old: lastTemplate.nbits, new: currentTemplate.nbits },
+    { field: 'ntime', old: lastTemplate.ntime, new: currentTemplate.ntime }
+  ];
+  
+  // Add clean jobs changes if not already tracked (when it's not becoming true)
+  if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs && currentTemplate.cleanJobs !== true) {
+    fieldsToCheck.push({ field: 'cleanJobs', old: lastTemplate.cleanJobs as any, new: currentTemplate.cleanJobs as any });
+  }
+  
+  fieldsToCheck.forEach(({ field, old, new: newVal }) => {
+    if (old !== newVal) {
+      otherChanges.push({ field, old, new: newVal });
+    }
+  });
+  
+  // Add other changes to details if any exist
+  if (otherChanges.length > 0) {
+    changeDetails.otherChanges = otherChanges;
+    // Add OTHER type if no other specific changes were detected
+    if (changeTypes.length === 0) {
+      changeTypes.push(TemplateChangeType.OTHER);
+    }
+  }
+  
   // Store current template as the last template for this pool (after all comparisons)
   lastTemplateByPool.set(data.pool_name, currentTemplate);
   
@@ -268,6 +321,10 @@ export function getChangeTypeDescription(changeType: TemplateChangeType): string
       return 'Syscoin merge mining hash updated';
     case TemplateChangeType.CLEAN_JOBS:
       return 'Clean jobs flag changed';
+    case TemplateChangeType.PREV_HASH:
+      return 'Previous block hash changed';
+    case TemplateChangeType.HEIGHT:
+      return 'Block height changed';
     case TemplateChangeType.OTHER:
       return 'Other template changes';
     default:

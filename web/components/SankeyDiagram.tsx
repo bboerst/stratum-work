@@ -13,6 +13,7 @@ import { useTheme } from 'next-themes';
 import { useSankeyLayout } from "@/hooks/useSankeyLayout";
 import SankeyTooltip, { TooltipData } from './sankey/SankeyTooltip';
 import SankeyPoolLabels from './sankey/SankeyPoolLabels';
+import SankeyStates from './sankey/SankeyStates';
 
 interface SankeyDiagramProps {
   height: number;
@@ -76,10 +77,8 @@ export default function SankeyDiagram({
       // Process real data if available
       if (stratumV1Data.length > 0) {
         processRealData();
-      } else {
-        // Display "no data" message
-        renderEmptyDiagram();
       }
+      // Note: SankeyStates component handles empty state display
       
       // Clear any previous errors
       setError(null);
@@ -110,23 +109,6 @@ export default function SankeyDiagram({
       console.error("Error processing real data:", err);
       setError(`Error processing data: ${err instanceof Error ? err.message : String(err)}`);
     }
-  };
-  
-  // Render an empty diagram with a message
-  const renderEmptyDiagram = () => {
-    if (!svgRef.current) return;
-    
-    // Clear the SVG
-    d3.select(svgRef.current).selectAll("*").remove();
-    
-    // Display a message if no data
-    d3.select(svgRef.current)
-      .append("text")
-      .attr("x", width / 2)
-      .attr("y", height / 2)
-      .attr("text-anchor", "middle")
-      .attr("fill", colors.text)
-      .text("No data available. Waiting for events...");
   };
   
   // Render the Sankey diagram
@@ -174,7 +156,7 @@ export default function SankeyDiagram({
       
       // Check if we have data to render
       if (data.nodes.length === 0) {
-        renderEmptyDiagram();
+        // SankeyStates component handles empty state display
         return;
       }
       
@@ -562,11 +544,16 @@ export default function SankeyDiagram({
       className="w-full h-full relative bg-white dark:bg-gray-900 rounded-lg overflow-hidden"
       style={{ height: `${height}px` }} 
     >
-      {error && (
-        <div className="absolute top-0 left-0 right-0 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-2 text-sm z-10">
-          {error}
-        </div>
-      )}
+      {/* Handle error, empty, and connection states */}
+      <SankeyStates
+        error={error}
+        isConnected={isConnected}
+        hasData={stratumV1Data.length > 0}
+        svgRef={svgRef}
+        width={width}
+        height={height}
+        colors={colors}
+      />
       
       <svg 
         ref={svgRef} 
@@ -575,11 +562,7 @@ export default function SankeyDiagram({
         className="w-full h-full border border-gray-200 dark:border-gray-700 rounded-lg"
         style={{ display: 'block' }} 
       />
-      {!isConnected && stratumV1Data.length === 0 && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-4 rounded-lg z-10">
-          Connecting to data stream...
-        </div>
-      )}
+      
       {/* Render the SankeyTooltip component */}
       <SankeyTooltip 
         data={tooltipData}

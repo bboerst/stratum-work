@@ -48,6 +48,10 @@
     --pause-bg: rgb(240,240,240);
     --pause-border: rgb(200,200,200);
     --pause-color: #000;
+    
+    /* Navigation */
+    --nav-active-bg: rgb(66, 66, 66);
+    --nav-active-color: rgb(240, 240, 240);
   }
 
   .dark {
@@ -81,6 +85,10 @@
     --pause-bg: rgb(40,40,40);
     --pause-border: rgb(94,94,94);
     --pause-color: #fff;
+    
+    /* Navigation */
+    --nav-active-bg: rgb(66, 66, 66);
+    --nav-active-color: rgb(240, 240, 240);
   }
 
   .light {
@@ -174,5 +182,12 @@
 
   .dark .flash-update {
     animation-name: flash-dark; 
+  }
+  
+  /* Navigation active state */
+  .nav-active {
+    background-color: var(--nav-active-bg);
+    color: var(--nav-active-color);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
   }
 }

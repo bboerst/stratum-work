@@ -64,6 +64,9 @@ export interface AuxPowData {
 // Cache for coinbase outputs - Updated Type
 const coinbaseOutputsCache = new Map<string, CoinbaseOutputDetail[]>();
 
+// Cache for output script address decoding to prevent expensive fromOutputScript calls
+const outputScriptAddressCache = new Map<string, string | null>();
+
 // Interface for decoded Coinbase ScriptSig info
 export interface CoinbaseScriptSigInfo {
   height?: number | null;
@@ -351,11 +354,35 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
         const scriptHex = scriptBytes.toString('hex');
         outputDetail.hex = scriptHex; // Always store full script hex for OP_RETURN/Unknown
 
-        try {
-          const addr = address.fromOutputScript(scriptBytes, networks.bitcoin);
-          outputDetail.type = 'address';
-          outputDetail.address = addr;
-        } catch (addrError) {
+        // Check cache first for expensive address decoding
+        let cachedAddress = outputScriptAddressCache.get(scriptHex);
+        
+        if (cachedAddress !== undefined) {
+          // Cache hit - use cached result
+          if (cachedAddress !== null) {
+            outputDetail.type = 'address';
+            outputDetail.address = cachedAddress;
+          } else {
+            // Cached null means this script doesn't decode to an address
+            processNonAddressScript();
+          }
+        } else {
+          // Cache miss - perform expensive operation and cache result
+          try {
+            const addr = address.fromOutputScript(scriptBytes, networks.bitcoin);
+            outputDetail.type = 'address';
+            outputDetail.address = addr;
+            // Cache the successful result
+            manageCache(outputScriptAddressCache, scriptHex, addr);
+          } catch (addrError) {
+            // Cache the failed result as null to avoid repeated expensive calls
+            manageCache(outputScriptAddressCache, scriptHex, null);
+            processNonAddressScript();
+          }
+        }
+        
+        // Helper function to process non-address scripts (OP_RETURN, unknown, etc.)
+        function processNonAddressScript() {
           // Check for OP_RETURN (0x6a)
           if (scriptBytes.length > 0 && scriptBytes[0] === 0x6a) { 
             outputDetail.type = 'nulldata';
@@ -429,6 +456,7 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
             outputDetail.type = 'unknown';
           }
         }
+        
         return outputDetail as CoinbaseOutputDetail;
       });
       manageCache(coinbaseOutputsCache, coinbaseRaw, outputs);
@@ -477,6 +505,8 @@ export function clearCoinbaseFromCaches(coinbaseRaw: string): void {
   coinbaseOutputsCache.delete(coinbaseRaw);
   coinbaseScriptAsciiCache.delete(coinbaseRaw);
   coinbaseOutputValueCache.delete(coinbaseRaw);
+  // Note: outputScriptAddressCache is not cleared here as it's keyed by script hex,
+  // not coinbase raw, and should persist across different coinbase transactions
 }
 
 // Check if a request is in flight
@@ -602,6 +632,29 @@ export function decodeCoinbaseScriptSigInfo(scriptSig: Buffer): CoinbaseScriptSi
     auxPowData,
     remainingScriptHex
   };
+}
+
+// Wrapper function to get coinbase scriptSig info from coinbaseRaw
+export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScriptSigInfo {
+  try {
+    const tx = getTransaction(coinbaseRaw);
+    if (!tx.ins || tx.ins.length === 0) {
+      return {
+        height: null,
+        auxPowData: null,
+        remainingScriptHex: ""
+      };
+    }
+    const scriptSigBuffer = tx.ins[0].script;
+    return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
+  } catch (error) {
+    console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    return {
+      height: null,
+      auxPowData: null,
+      remainingScriptHex: ""
+    };
+  }
 }
 
 // Function to get other coinbase transaction details

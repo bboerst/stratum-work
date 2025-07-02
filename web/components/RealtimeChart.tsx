@@ -1,10 +1,17 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback, useTransition } from "react";
+import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { CHART_POINT_SIZES } from "@/lib/constants";
+import { 
+  detectTemplateChanges, 
+  getChangeTypeDisplay,
+  TemplateChangeResult 
+} from "@/utils/templateChangeDetection";
+import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo, getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
+import { formatCoinbaseRaw } from "@/utils/formatters";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -50,6 +57,34 @@ function createThrottle<T extends (...args: unknown[]) => unknown>(
   return throttled;
 }
 
+// Convert HSL color to RGB format for better canvas compatibility
+const hslToRgb = (hslString: string): string => {
+  // Parse HSL string like "hsl(120, 70%, 50%)"
+  const match = hslString.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+  if (!match) return hslString; // Return original if not HSL format
+  
+  const h = parseInt(match[1]) / 360;
+  const s = parseInt(match[2]) / 100;
+  const l = parseInt(match[3]) / 100;
+  
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+  const g = Math.round(hue2rgb(p, q, h) * 255);
+  const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+  
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
 // Generate a consistent color from a string (pool name)
 const stringToColor = (str: string): string => {
   let hash = 0;
@@ -60,6 +95,27 @@ const stringToColor = (str: string): string => {
   // Convert to HSL with fixed saturation and lightness for better visibility
   const h = Math.abs(hash % 360);
   return `hsl(${h}, 70%, 50%)`;
+};
+
+// Determine if a color is light or dark to choose appropriate text color
+const getContrastingTextColor = (backgroundColor: string): string => {
+  // Parse HSL color (format: "hsl(h, s%, l%)")
+  const hslMatch = backgroundColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+  if (hslMatch) {
+    const hue = parseInt(hslMatch[1], 10);
+    
+    // Since all colors have 50% lightness, determine based on hue
+    // Yellow/lime/cyan hues (45-195 degrees) appear brighter, use black text
+    // Red/magenta/blue hues appear darker, use white text
+    if (hue >= 45 && hue <= 195) {
+      return '#000000';
+    } else {
+      return '#ffffff';
+    }
+  }
+  
+  // Fallback for other color formats - use white as default
+  return '#ffffff';
 };
 
 // Format timestamp to microseconds
@@ -84,14 +140,21 @@ interface ChartDataPoint {
   prev_hash?: string;
   nbits?: string;
   ntime?: string;
+  changeInfo?: TemplateChangeResult;
+  changeDisplay?: string;
+  asciiTag?: string;
   [key: string]: unknown;
 }
+
 
 interface RealtimeChartProps {
   paused?: boolean;
   filterBlockHeight?: number;
   timeWindow?: number; // Time window in seconds
   pointSize?: number; // Size of data points in pixels
+  hideHeader?: boolean; // Hide the title and options
+  showLabels?: boolean; // Show labels for data points
+  showPoolNames?: boolean; // Show static pool names column on the right
 }
 
 // Define pool colors map type
@@ -104,7 +167,10 @@ function RealtimeChartBase({
   paused = false, 
   filterBlockHeight,
   timeWindow = 30, // Default to 30 seconds
-  pointSize
+  pointSize,
+  hideHeader = false,
+  showLabels: propShowLabels,
+  showPoolNames = false
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -115,11 +181,6 @@ function RealtimeChartBase({
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
   
-  // Define point size based on mode and props
-  const basePointSize = isHistoricalBlock 
-    ? (pointSize || CHART_POINT_SIZES.HISTORICAL) 
-    : (pointSize || CHART_POINT_SIZES.REALTIME);
-  
   // Add useTransition for non-urgent UI updates
   const [, startTransition] = useTransition();
   
@@ -127,7 +188,10 @@ function RealtimeChartBase({
   const [localTimeWindow, setLocalTimeWindow] = useState(timeWindow);
   
   // State for visualization options
-  const [showLabels, setShowLabels] = useState(false); // Off by default
+  const [localShowLabels, setLocalShowLabels] = useState(false); // Off by default
+  
+  // Use prop if provided, otherwise use local state
+  const showLabels = propShowLabels !== undefined ? propShowLabels : localShowLabels;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
@@ -146,6 +210,29 @@ function RealtimeChartBase({
   const [poolRankings, setPoolRankings] = useState<Map<string, number>>(new Map());
   const [allPoolNames, setAllPoolNames] = useState<string[]>([]); // Track all pools we've ever seen
   const [maxPoolCount, setMaxPoolCount] = useState<number>(10); // Track maximum pool count for stable scaling
+  
+  // Define point size based on mode and props with dynamic sizing
+  const basePointSize = useMemo(() => {
+    if (pointSize) {
+      // Use provided pointSize if specified
+      return pointSize;
+    }
+    
+    // Get the number of pools for dynamic calculation
+    const poolCount = Math.max(allPoolNames.length, maxPoolCount, 5);
+    const availableHeight = dimensions.height - 60; // Account for margins (top: 30, bottom: 20, extra padding)
+    
+    // Calculate maximum point size that prevents overlap
+    // Each pool should have at least enough space for a circle plus some padding
+    const maxPointSize = Math.floor(availableHeight / poolCount / 3.5); // Divide by 3.5 for balanced spacing between circles
+    
+    // Set reasonable bounds: minimum 2px, maximum 12px
+    const dynamicSize = Math.max(2, Math.min(12, maxPointSize));
+    
+    return isHistoricalBlock 
+      ? Math.min(dynamicSize, CHART_POINT_SIZES.HISTORICAL) 
+      : dynamicSize;
+  }, [pointSize, allPoolNames.length, maxPoolCount, dimensions.height, isHistoricalBlock]);
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
@@ -154,6 +241,7 @@ function RealtimeChartBase({
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
   const currentBlockHeightRef = useRef<number | undefined>(filterBlockHeight);
+  
   
   // Reset the historical data loaded flag when the block height changes
   useEffect(() => {
@@ -218,7 +306,9 @@ function RealtimeChartBase({
     }
 
     // Calculate margin and available area
-    const margin = { top: 10, right: 20, bottom: 20, left: 20 };
+    // Add extra right margin for pool names if enabled
+    const poolNamesWidth = showPoolNames ? 180 : 0;
+    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -326,36 +416,99 @@ function RealtimeChartBase({
           return;
         }
         
-        // Draw the point
-        ctx.beginPath();
+        // Check if we should draw a change indicator or regular point
+        // Draw larger circles for any detected changes, even if untracked (empty changeDisplay)
+        const hasChangeInfo = point.changeInfo && point.changeInfo.hasChanges;
         
-        // Larger points for hovered pool
+        // Calculate size for both cases
         const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
         
-        ctx.arc(x, y, size, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Add a subtle outline for better visibility against dark backgrounds
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.stroke();
-        ctx.strokeStyle = color; // Reset stroke style
+        if (hasChangeInfo) {
+          // Draw change indicator letter(s) in fixed-size circle
+          const text = point.changeDisplay || '';
+          const circleRadius = size * 1.8; // Balanced circle size for readability
+          
+          // Use contrasting text color based on background
+          const textColor = getContrastingTextColor(color);
+          
+          // Draw colored background circle
+          // Convert HSL to RGB since canvas might not support HSL properly
+          const rgbColor = hslToRgb(color);
+          ctx.beginPath();
+          ctx.arc(x, y, circleRadius, 0, Math.PI * 2);
+          ctx.fillStyle = rgbColor;
+          ctx.fill();
+          
+          // Draw subtle border
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          
+          // Auto-adjust font size to fit text in circle - start with larger font
+          let fontSize = Math.max(10, basePointSize + 2); // Start with larger font size
+          ctx.font = `${fontSize}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          
+          // Measure text and scale down font if needed
+          let textMetrics = ctx.measureText(text);
+          const maxTextWidth = circleRadius * 1.4; // Leave some padding (diameter * 0.7)
+          
+          // Scale down font size if text is too wide, but don't go below 8px
+          while (textMetrics.width > maxTextWidth && fontSize > 8) {
+            fontSize--;
+            ctx.font = `${fontSize}px monospace`;
+            textMetrics = ctx.measureText(text);
+          }
+          
+          // Draw text with appropriate color
+          ctx.fillStyle = textColor;
+          ctx.fillText(text, x, y);
+          
+        } else {
+          // Draw regular circle point
+          const rgbColor = hslToRgb(color);
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fillStyle = rgbColor;
+          ctx.fill();
+          
+          // Add a subtle outline for better visibility against dark backgrounds
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+          ctx.stroke();
+          ctx.strokeStyle = color; // Reset stroke style
+        }
         
         // Draw label if showLabels is true
         if (showLabels) {
           ctx.fillStyle = color;
           ctx.font = '9px sans-serif';
           ctx.textAlign = 'left';
-          ctx.fillText(poolName, x + 6, y + 3);
+          // Position label to the right of the circle, accounting for circle size
+          const labelOffset = hasChangeInfo ? size * 1.8 + 4 : size + 4;
+          ctx.fillText(poolName, x + labelOffset, y + 3);
           ctx.fillStyle = color; // Reset fill style for next point
         }
         
         // Highlight if this is the exact hovered point
         if (hoveredPoint && point.timestamp === hoveredPoint.timestamp && point.poolName === hoveredPoint.poolName) {
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(x, y, size + 3, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          
+          if (hasChangeInfo) {
+            // For change indicators, use fixed circle size
+            const highlightRadius = size * 1.8 + 3; // Same as change indicator circle + highlight border
+            ctx.beginPath();
+            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            // For regular points
+            const highlightRadius = size + 3;
+            ctx.beginPath();
+            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         }
       });
     });
@@ -383,7 +536,142 @@ function RealtimeChartBase({
       
       ctx.setLineDash([]); // Reset line dash
     }
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames]);
+    
+    // Draw pool names on the right side if enabled
+    if (showPoolNames && stablePoolNames.length > 0) {
+      // Draw vertical separator line
+      const separatorX = dimensions.width - poolNamesWidth;
+      ctx.strokeStyle = 'rgba(150, 150, 150, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(separatorX, margin.top);
+      ctx.lineTo(separatorX, dimensions.height - margin.bottom);
+      ctx.stroke();
+      
+      // Calculate row height for horizontal separators
+      const denominator = Math.max(stablePoolNames.length, maxPoolCount, 10);
+      const rowHeight = availableHeight / denominator;
+      
+      // Draw horizontal row separator lines between pools
+      ctx.strokeStyle = 'rgba(150, 150, 150, 0.2)'; // Slightly more visible for row separation
+      ctx.lineWidth = 1;
+      for (let i = 1; i < stablePoolNames.length; i++) {
+        // Position line at the boundary between rows (halfway between pool centers)
+        const y = margin.top + (i * rowHeight) - (rowHeight / 2);
+        ctx.beginPath();
+        // Draw separator line only in the chart area (not extending into pool names section)
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(separatorX, y);
+        ctx.stroke();
+      }
+      
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      
+      const poolNamesX = separatorX + 10; // 10px padding from the separator line
+      
+      // Set font size proportional to row height (about 40% of row height, with min/max bounds)
+      const fontSize = Math.max(10, Math.min(18, Math.floor(rowHeight * 0.4)));
+      ctx.font = `${fontSize}px monospace`;
+      
+      stablePoolNames.forEach((poolName, index) => {
+        const y = poolIndexToPixel(index, poolName);
+        const color = poolColors[poolName] || stringToColor(poolName);
+        const rgbColor = hslToRgb(color);
+        
+        // Calculate background width extending to right edge with padding
+        const rightPadding = 10;
+        const backgroundWidth = dimensions.width - (poolNamesX - 2) - rightPadding;
+        
+        // Draw colored background rectangle extending full row height and to right edge
+        ctx.fillStyle = rgbColor;
+        ctx.fillRect(poolNamesX - 2, y - rowHeight/2, backgroundWidth, rowHeight);
+        
+        // Draw pool name with contrasting text color and left padding
+        const textColor = getContrastingTextColor(color);
+        const textPadding = 8; // Left padding for the text
+        const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
+        
+        // Get ASCII tag for this pool (from latest data point)
+        const poolDataPoints = chartData.filter(point => point.poolName === poolName);
+        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        const asciiTag = latestPoint?.asciiTag || '';
+        
+        // Draw pool name
+        let poolNameText = poolName;
+        const poolNameWidth = ctx.measureText(poolNameText).width;
+        
+        if (poolNameWidth > maxTextWidth) {
+          // Binary search to find the longest pool name that fits with ellipsis
+          let start = 0;
+          let end = poolName.length;
+          
+          while (start < end) {
+            const mid = Math.floor((start + end + 1) / 2);
+            const testText = poolName.substring(0, mid) + '...';
+            const testWidth = ctx.measureText(testText).width;
+            
+            if (testWidth <= maxTextWidth) {
+              start = mid;
+            } else {
+              end = mid - 1;
+            }
+          }
+          
+          poolNameText = poolName.substring(0, start) + '...';
+        }
+        
+        // Calculate positions for pool name and ASCII tag
+        const poolNameY = y - (asciiTag ? rowHeight * 0.15 : 0); // Move up slightly if ASCII tag exists
+        const asciiTagY = y + rowHeight * 0.25; // Position ASCII tag below pool name
+        
+        // Draw pool name
+        ctx.fillStyle = textColor;
+        ctx.fillText(poolNameText, poolNamesX + textPadding, poolNameY);
+        
+        // Draw ASCII tag on new line if it exists
+        if (asciiTag) {
+          // Use smaller font for ASCII tag
+          const originalFont = ctx.font;
+          const smallerFontSize = Math.max(8, Math.floor(fontSize * 0.75));
+          ctx.font = `${smallerFontSize}px monospace`;
+          
+          // Truncate ASCII tag if too long
+          let asciiDisplayText = asciiTag;
+          const asciiTextWidth = ctx.measureText(asciiDisplayText).width;
+          
+          if (asciiTextWidth > maxTextWidth) {
+            // Binary search to find the longest ASCII tag that fits with ellipsis
+            let start = 0;
+            let end = asciiTag.length;
+            
+            while (start < end) {
+              const mid = Math.floor((start + end + 1) / 2);
+              const testText = asciiTag.substring(0, mid) + '...';
+              const testWidth = ctx.measureText(testText).width;
+              
+              if (testWidth <= maxTextWidth) {
+                start = mid;
+              } else {
+                end = mid - 1;
+              }
+            }
+            
+            asciiDisplayText = asciiTag.substring(0, start) + '...';
+          }
+          
+          // Draw ASCII tag with slightly dimmed color
+          const dimmedTextColor = textColor === '#000000' ? '#666666' : '#cccccc';
+          ctx.fillStyle = dimmedTextColor;
+          ctx.fillText(asciiDisplayText, poolNamesX + textPadding, asciiTagY);
+          
+          // Restore original font
+          ctx.font = originalFont;
+        }
+      });
+    }
+    
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -477,8 +765,7 @@ function RealtimeChartBase({
       const nanoseconds = parseInt(cleaned, 16);
       // Convert to milliseconds for chart display
       return nanoseconds / 1000000;
-    } catch (e) {
-      console.error("Failed to parse timestamp:", timestampStr, e);
+    } catch {
       return Date.now(); // Fallback to current time
     }
   }, [isHistoricalBlock]);
@@ -516,6 +803,16 @@ function RealtimeChartBase({
           const poolName = record.pool_name || 'unknown';
           const poolIndex = poolNames.indexOf(poolName) + 1; // +1 to avoid 0 index
           
+          // Get ASCII tag for historical data
+          const asciiTag = record.coinbase1 && record.extranonce1 && record.extranonce2_length !== undefined && record.coinbase2
+            ? getFormattedCoinbaseAsciiTag(
+                record.coinbase1,
+                record.extranonce1,
+                record.extranonce2_length,
+                record.coinbase2
+              )
+            : '';
+
           points.push({
             timestamp,
             poolName,
@@ -526,9 +823,10 @@ function RealtimeChartBase({
             prev_hash: record.prev_hash,
             nbits: record.nbits,
             ntime: record.ntime,
+            asciiTag,
           });
-        } catch (e) {
-          console.error("Failed to process record:", record, e);
+        } catch {
+          // Skip failed records silently
         }
       });
       
@@ -592,7 +890,8 @@ function RealtimeChartBase({
     }
     
     // Calculate margins (must match drawChart exactly)
-    const margin =  { top: 10, right: 20, bottom: 20, left: 20 };
+    const poolNamesWidth = showPoolNames ? 180 : 0;
+    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -662,7 +961,7 @@ function RealtimeChartBase({
     });
     
     setHoveredPoint(closestPoint);
-  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize]);
+  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, showPoolNames]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
@@ -813,6 +1112,28 @@ function RealtimeChartBase({
       const poolIndex = poolRankings.get(poolName) || 
         (currentPoolNames.indexOf(poolName) + 1) || 1;
       
+      // Compute coinbase data needed for change detection
+      const coinbaseRaw = formatCoinbaseRaw(
+        item.coinbase1,
+        item.extranonce1,
+        item.extranonce2_length,
+        item.coinbase2
+      );
+      const coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
+      const auxPowData = computeCoinbaseScriptSigInfo(coinbaseRaw)?.auxPowData;
+      
+      // Detect template changes
+      const changeInfo = detectTemplateChanges(item, coinbaseOutputs, auxPowData);
+      const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
+      
+      // Get ASCII tag from coinbase script sig
+      const asciiTag = getFormattedCoinbaseAsciiTag(
+        item.coinbase1,
+        item.extranonce1,
+        item.extranonce2_length,
+        item.coinbase2
+      );
+      
       return {
         timestamp,
         poolName,
@@ -822,7 +1143,10 @@ function RealtimeChartBase({
         clean_jobs: item.clean_jobs,
         prev_hash: item.prev_hash,
         nbits: item.nbits,
-        ntime: item.ntime
+        ntime: item.ntime,
+        changeInfo,
+        changeDisplay,
+        asciiTag
       };
     });
     
@@ -837,8 +1161,16 @@ function RealtimeChartBase({
         
         const history = poolDataHistoryRef.current.get(poolName)!;
         
-        // Only add the point if it has a new timestamp
-        if (!history.some(existing => existing.timestamp === point.timestamp)) {
+        // Create a more robust unique key to prevent infinite loops
+        const pointKey = `${point.poolName}-${point.timestamp}-${point.changeDisplay}`;
+        
+        // Check if we already have this exact point
+        const isDuplicate = history.some(existing => {
+          const existingKey = `${existing.poolName}-${existing.timestamp}-${existing.changeDisplay}`;
+          return existingKey === pointKey;
+        });
+        
+        if (!isDuplicate) {
           history.push(point);
         }
         
@@ -853,6 +1185,7 @@ function RealtimeChartBase({
         const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
         resultPoints.push(...pointsInTimeWindow);
       });
+      
       
       // Return domain information and filtered points
       return {
@@ -878,7 +1211,7 @@ function RealtimeChartBase({
         maxTimestamp
       }
     };
-  }, [filterBlockHeight, parseTimestamp, poolRankings, pruneOldData, maxPoolCount, isHistoricalBlock, allPoolNames, poolColors]);
+  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -889,7 +1222,9 @@ function RealtimeChartBase({
   // Fetch and update data from the global stream or historical data
   useEffect(() => {
     // Don't fetch if paused
-    if (paused) return;
+    if (paused) {
+      return;
+    }
     
     // We'll handle historical data with the direct approach above
     // Only fetch real-time data in this effect
@@ -898,7 +1233,9 @@ function RealtimeChartBase({
       const throttledUpdate = createThrottle(() => {
         // Get stratum updates from the stream
         const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
-        if (stratumUpdates.length === 0) return;
+        if (stratumUpdates.length === 0) {
+          return;
+        }
         
         const stratumData = stratumUpdates.map(item => item.data as StratumV1Data);
         
@@ -936,7 +1273,7 @@ function RealtimeChartBase({
         throttledUpdate.cancel();
       };
     }
-  }, [filterByType, paused, processData, startTransition, isHistoricalBlock]);
+  }, [filterByType, paused, isHistoricalBlock, processData]);
   
   return (
     <div 
@@ -944,7 +1281,7 @@ function RealtimeChartBase({
       onMouseLeave={handleCanvasMouseLeave}
     >
       {/* Chart header with title and options - only show for non-historical blocks */}
-      {!isHistoricalBlock && (
+      {!isHistoricalBlock && !hideHeader && (
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-medium">Timing</h3>
           
@@ -986,7 +1323,7 @@ function RealtimeChartBase({
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium">Show labels:</span>
                     <button
-                      onClick={() => setShowLabels(prev => !prev)}
+                      onClick={() => setLocalShowLabels(prev => !prev)}
                       className={`px-2 py-1 text-xs rounded ${
                         showLabels
                           ? 'bg-blue-500 text-white'
@@ -1005,12 +1342,12 @@ function RealtimeChartBase({
       
       <div 
         ref={containerRef}
-        className={`w-full ${isHistoricalBlock ? 'h-full' : 'h-[calc(100%-24px)]'}`}
+        className={`w-full ${isHistoricalBlock || hideHeader ? 'h-full' : 'h-[calc(100%-24px)]'}`}
         style={{ cursor: 'crosshair' }}
       >
         <canvas
           ref={canvasRef}
-          className="w-full h-full"
+          className="w-full h-full bg-transparent"
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         />
@@ -1024,8 +1361,87 @@ function RealtimeChartBase({
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
           <br />
           <span>Time: {formatMicroseconds(hoveredPoint.timestamp)}</span>
+          {hoveredPoint.changeInfo?.changeDetails && (
+            <>
+              <br />
+              <div className="text-[8px] text-gray-300 mt-1 whitespace-nowrap">
+                {hoveredPoint.changeInfo.changeDetails.rskHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">RSK Old: {hoveredPoint.changeInfo.changeDetails.rskHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">RSK New: {hoveredPoint.changeInfo.changeDetails.rskHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.auxPowHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Old: {hoveredPoint.changeInfo.changeDetails.auxPowHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW New: {hoveredPoint.changeInfo.changeDetails.auxPowHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.merkleBranches && (
+                  <div className="mb-1">
+                    <div className="text-blue-300 whitespace-nowrap overflow-hidden">Merkle branches changed</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.syscoinHash && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Syscoin Old: {hoveredPoint.changeInfo.changeDetails.syscoinHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Syscoin New: {hoveredPoint.changeInfo.changeDetails.syscoinHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.cleanJobs && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Clean Jobs Old: {String(hoveredPoint.changeInfo.changeDetails.cleanJobs.old)}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Clean Jobs New: {String(hoveredPoint.changeInfo.changeDetails.cleanJobs.new)}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.prevHash != null && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Prev Hash Old: {hoveredPoint.changeInfo.changeDetails.prevHash.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Prev Hash New: {hoveredPoint.changeInfo.changeDetails.prevHash.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.height != null && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Height Old: {hoveredPoint.changeInfo.changeDetails.height.old}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Height New: {hoveredPoint.changeInfo.changeDetails.height.new}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.otherChanges && hoveredPoint.changeInfo.changeDetails.otherChanges.length > 0 && (
+                  <div className="mb-1">
+                    <div className="text-yellow-300 font-semibold mb-1">Other Changes:</div>
+                    {hoveredPoint.changeInfo.changeDetails.otherChanges.map((change, index) => (
+                      <div key={index} className="mb-1">
+                        <div className="text-red-300 whitespace-nowrap overflow-hidden">{change.field} Old: {String(change.old)}</div>
+                        <div className="text-green-300 whitespace-nowrap overflow-hidden">{change.field} New: {String(change.new)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
+      
+      {/* Change indicators legend in footer */}
+      <div className="absolute bottom-6 left-2 group">
+        <div className="text-[9px] text-gray-500 dark:text-gray-400 cursor-help">
+          Legend
+        </div>
+        <div className="absolute bottom-4 left-0 hidden group-hover:block bg-black/90 dark:bg-gray-800/95 text-white p-2 rounded shadow-lg z-20 whitespace-nowrap">
+          <div className="text-[10px] space-y-0.5">
+            <div><span className="font-mono font-bold">R</span> - RSK hash</div>
+            <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
+            <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
+            <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
+            <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
+            <div><span className="font-mono font-bold">P</span> - Prev hash</div>
+            <div><span className="font-mono font-bold">H</span> - Height</div>
+            <div><span className="font-mono font-bold">O</span> - Other changes</div>
+            <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate template</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

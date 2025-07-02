@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { GlobalMenu } from "@/components/GlobalMenu";
 import { GlobalMenuProvider } from "@/components/GlobalMenuContext";
 import { DataStreamProvider } from "@/lib/DataStreamContext";
 import { BlocksProvider } from "@/lib/BlocksContext";
@@ -28,11 +27,8 @@ export default function RootLayout({
                   <VisualizationProvider>
                     {/* ClientNavigation handles passing the blockHeight to Navigation */}
                     <ClientNavigation>
-                      <GlobalMenu />
-                    </ClientNavigation>
-                    <div>
                       {children}
-                    </div>
+                    </ClientNavigation>
                   </VisualizationProvider>
                 </GlobalMenuProvider>
               </HistoricalDataProvider>

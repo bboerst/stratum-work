@@ -2,11 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { sankeyLinkHorizontal } from "d3-sankey";
+import { sankey, sankeyLinkHorizontal, sankeyLeft } from "d3-sankey";
 import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
-import { eventSourceService } from "@/lib/eventSourceService";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType } from "@/lib/types";
 import { useSankeyColors } from '@/hooks/useSankeyColors';
 import { getBranchColor } from '@/utils/sankeyColors';
 import { useTheme } from 'next-themes';
@@ -14,6 +11,7 @@ import { useSankeyLayout } from "@/hooks/useSankeyLayout";
 import SankeyTooltip, { TooltipData } from './sankey/SankeyTooltip';
 import SankeyPoolLabels from './sankey/SankeyPoolLabels';
 import SankeyStates from './sankey/SankeyStates';
+import { useSankeyControls } from '@/hooks/useSankeyControls';
 
 interface SankeyDiagramProps {
   height: number;
@@ -31,19 +29,23 @@ export default function SankeyDiagram({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number>(1000); 
-  const [error, setError] = useState<string | null>(null);
-  const [isConnected, setIsConnected] = useState<boolean>(false);
   const [tooltipData, setTooltipData] = useState<TooltipData>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
-  const { filterByType, paused, setPaused } = useGlobalDataStream();
-  // Use our custom hook for Sankey colors
+  
+  // Use our custom hooks
   const colors = useSankeyColors();
+  const { 
+    error, 
+    setError, 
+    isConnected, 
+    paused, 
+    setPaused, 
+    stratumV1Data, 
+    dataVersion 
+  } = useSankeyControls({ data });
   
   // Access theme for conditional rendering if needed
   const { theme } = useTheme();
-    
-  // Get stratum V1 data from the global data stream if not provided via props
-  const stratumV1Data = data.length > 0 ? data : filterByType(StreamDataType.STRATUM_V1);
   
   // Update width when container size changes
   useEffect(() => {
@@ -496,47 +498,7 @@ export default function SankeyDiagram({
     renderDiagram();
   }, [colors]);
   
-  // Handle events from the EventSource
-  const handleEvent = (event: any) => {
-    try {
-      if (paused) return;
-      
-      // Process the new event
-      sankeyDataProcessor.processStratumV1Event(event);
-      
-      // Render with the updated data, ensuring pool labels are maintained
-      renderDiagram();
-      
-    } catch (err) {
-      console.error("Error processing event:", err);
-      setError(`Error processing event: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  
-  // Connect to EventSource API
-  useEffect(() => {
-    try {
-      // Register event handler
-      eventSourceService.onEvent(handleEvent);
-      setIsConnected(true);
-    } catch (err) {
-      console.error("Error connecting to EventSource:", err);
-      setError(`Error connecting to EventSource: ${err instanceof Error ? err.message : String(err)}`);
-      setIsConnected(false);
-    }
-    
-    // Initialize the diagram
-    initializeDiagram();
-    
-    // Cleanup
-    return () => {
-      try {
-        eventSourceService.offEvent(handleEvent);
-      } catch (err) {
-        console.error("Error disconnecting from EventSource:", err);
-      }
-    };
-  }, []);
+
   
   return (
     <div 

@@ -2,10 +2,17 @@
  * Data processing utilities for the Sankey diagram
  */
 
+import { StratumV1Data as BaseStratumV1Data } from './types';
+
 // Original mining event interface
 export interface MiningEvent {
   poolName: string;
   merkleBranches: string[];
+}
+
+// Extended Stratum V1 data with _id field for internal processing
+export interface StratumV1Data extends BaseStratumV1Data {
+  _id: string;
 }
 
 // Real event data format from the global data stream
@@ -13,23 +20,7 @@ export interface StratumV1Event {
   type: string;
   id: string;
   timestamp: string;
-  data: {
-    _id: string;
-    timestamp: string;
-    pool_name: string;
-    height: number;
-    job_id: string;
-    prev_hash: string;
-    coinbase1: string;
-    coinbase2: string;
-    merkle_branches: string[];
-    version: string;
-    nbits: string;
-    ntime: string;
-    clean_jobs: boolean;
-    extranonce1: string;
-    extranonce2_length: number;
-  };
+  data: StratumV1Data;
 }
 
 export interface SankeyNode {

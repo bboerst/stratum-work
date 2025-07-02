@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { sankey, sankeyLinkHorizontal, sankeyLeft } from "d3-sankey";
 import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
+import { StratumV1Data } from "@/lib/types";
 import { useSankeyColors } from '@/hooks/useSankeyColors';
 import { getBranchColor } from '@/utils/sankeyColors';
 import { useTheme } from 'next-themes';
@@ -15,7 +16,7 @@ import { useSankeyControls } from '@/hooks/useSankeyControls';
 
 interface SankeyDiagramProps {
   height: number;
-  data?: any[];
+  data?: StratumV1Data[]; // Static/historical data (auto-detects vs live EventSource)
   showLabels?: boolean;
   onDataRendered?: (nodeCount: number, linkCount: number) => void;
 }
@@ -47,6 +48,10 @@ export default function SankeyDiagram({
   // Access theme for conditional rendering if needed
   const { theme } = useTheme();
   
+  // Auto-detect data source: use static data prop if provided, otherwise live EventSource data
+  const actualStratumV1Data = data && data.length > 0 ? data : stratumV1Data;
+  const hasStaticData = data && data.length > 0;
+  
   // Update width when container size changes
   useEffect(() => {
     if (!containerRef.current) return;
@@ -77,7 +82,7 @@ export default function SankeyDiagram({
       sankeyDataProcessor.reset();
       
       // Process real data if available
-      if (stratumV1Data.length > 0) {
+      if (actualStratumV1Data.length > 0) {
         processRealData();
       }
       // Note: SankeyStates component handles empty state display
@@ -92,12 +97,12 @@ export default function SankeyDiagram({
   
   // Process data from the global data stream
   const processRealData = () => {
-    console.log("Processing data:", stratumV1Data.length, "events");
+    console.log("Processing data:", actualStratumV1Data.length, "events");
     try {
-      if (stratumV1Data.length === 0) return;
+      if (actualStratumV1Data.length === 0) return;
 
       // Process the data for Sankey diagram
-      stratumV1Data.forEach(event => {
+      actualStratumV1Data.forEach(event => {
         try {
           sankeyDataProcessor.processStratumV1Event(event);
         } catch (err) {
@@ -466,15 +471,10 @@ export default function SankeyDiagram({
   
   // Process global data stream events when they change
   useEffect(() => {
-    if (stratumV1Data.length > 0) {
-      // Reset data processor first
-      sankeyDataProcessor.reset();
-      // Clear any tooltips
-      setTooltipData(null);
-      setTooltipPosition(null);
-      processRealData();
+    if (actualStratumV1Data.length > 0) {
+      renderDiagram();
     }
-  }, [stratumV1Data]);
+  }, [actualStratumV1Data]);
   
   // Re-render when paused state changes
   useEffect(() => {
@@ -510,7 +510,7 @@ export default function SankeyDiagram({
       <SankeyStates
         error={error}
         isConnected={isConnected}
-        hasData={stratumV1Data.length > 0}
+        hasData={actualStratumV1Data.length > 0}
         svgRef={svgRef}
         width={width}
         height={height}

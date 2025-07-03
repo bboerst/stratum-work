@@ -6,6 +6,49 @@ import { usePathname } from 'next/navigation';
 import { Table, /* Workflow, */ ScatterChart } from "lucide-react";
 import { GlobalMenu } from "./GlobalMenu";
 
+// TableIcon component
+const TableIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M3 3h18v18H3z" />
+    <path d="M3 9h18" />
+    <path d="M3 15h18" />
+    <path d="M9 3v18" />
+    <path d="M15 3v18" />
+  </svg>
+);
+
+// NavItem component
+interface NavItemProps {
+  href: string;
+  isActive: boolean;
+  title: string;
+  icon: React.ReactNode;
+}
+
+const NavItem = ({ href, isActive, title, icon }: NavItemProps) => (
+  <Link 
+    href={href}
+    className={`flex items-center px-3 py-2 rounded-md text-sm ${
+      isActive
+        ? 'bg-accent text-accent-foreground'
+        : 'hover:bg-accent hover:text-accent-foreground'
+    }`}
+    aria-current={isActive ? 'page' : undefined}
+  >
+    {icon}
+    <span className="ml-2">{title}</span>
+  </Link>
+);
+
 interface NavigationProps {
   children: React.ReactNode;
   blockHeight?: number | null;
@@ -72,4 +115,4 @@ export default function Navigation({ children }: NavigationProps) {
       {children}
     </>
   );
-} 
+}

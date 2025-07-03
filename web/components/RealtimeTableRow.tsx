@@ -10,19 +10,19 @@ interface RealtimeTableRowProps {
   row: SortedRow;
   columnsVisible: { [key: string]: boolean };
   columnWidths: { [key: string]: number };
-  handlePoolClick: (poolName: string) => void;
+  handleTemplateSelect: (row: SortedRow) => void;
 }
 
 export default function RealtimeTableRowComponent({
   row,
   columnsVisible,
   columnWidths,
-  handlePoolClick
+  handleTemplateSelect
 }: RealtimeTableRowProps) {
   return (
     <TableRow 
       className="hover:bg-[hsl(var(--muted))] cursor-pointer"
-      onClick={() => handlePoolClick(row.pool_name)}
+      onClick={() => handleTemplateSelect(row)}
     >
       {columnsVisible.pool_name && (
         <TableCell

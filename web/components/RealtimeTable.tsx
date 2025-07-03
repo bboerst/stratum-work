@@ -6,6 +6,7 @@ import { Table, TableBody } from "@/components/ui/table";
 import { StratumV1Data, StreamDataType } from "@/lib/types";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
+import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
 import { SortedRow, RealtimeTableProps, SortDirection } from "@/types/tableTypes";
 import { useColumnVisibility, useColumnResizing, useSorting, usePagination } from "@/hooks/useTableState";
 import { useTableData } from "@/hooks/useTableData";
@@ -32,6 +33,9 @@ export default function RealtimeTable({
     currentHistoricalHeight,
     clearHistoricalData
   } = useHistoricalData();
+  
+  // Get selected template context
+  const { setSelectedTemplate } = useSelectedTemplate();
   
   // Filter for only Stratum V1 data
   const stratumV1Data = useMemo(() => {
@@ -169,14 +173,45 @@ export default function RealtimeTable({
     }
   }, [isFiltering, visibleRows, rows, sortData]);
   
-  // Handle pool name click
-  const handlePoolClick = useCallback((poolName: string) => {
-    if (poolName) {
-      // Use Next.js router for client-side navigation
-      // Encode the pool name to handle special characters in URLs
-      router.push(`/template/${encodeURIComponent(poolName)}`);
+
+  // Handle template selection for BlockTemplateCard
+  const handleTemplateSelect = useCallback((row: SortedRow) => {
+    // If we're viewing realtime data (not filtering by block height), navigate to template page
+    if (!isFiltering) {
+      // Navigate to the template page for realtime data
+      router.push(`/template/${encodeURIComponent(row.pool_name)}`);
+      return;
     }
-  }, [router]);
+    
+    // For historical data, show in side panel
+    const stratumData: StratumV1Data = {
+      pool_name: row.pool_name,
+      timestamp: row.timestamp,
+      job_id: row.job_id,
+      height: row.height,
+      prev_hash: row.prev_hash,
+      version: row.version,
+      coinbase1: row.coinbase1,
+      coinbase2: row.coinbase2,
+      merkle_branches: row.merkle_branches,
+      nbits: row.nbits || '',
+      ntime: row.ntime || '',
+      clean_jobs: row.clean_jobs,
+      extranonce1: row.extranonce1,
+      extranonce2_length: row.extranonce2_length,
+      coinbase_outputs: row.coinbase_outputs
+        .filter(output => output.address !== undefined)
+        .map(output => ({
+          address: output.address!,
+          value: output.value,
+        })),
+      first_transaction: row.first_transaction,
+      fee_rate: row.fee_rate,
+      merkle_branch_colors: row.merkle_branch_colors
+    };
+    
+    setSelectedTemplate(stratumData);
+  }, [setSelectedTemplate, isFiltering, router]);
 
   // Add an effect to handle block changes
   useEffect(() => {
@@ -254,7 +289,7 @@ export default function RealtimeTable({
               row={row}
               columnsVisible={columnsVisible}
               columnWidths={columnWidths}
-              handlePoolClick={handlePoolClick}
+              handleTemplateSelect={handleTemplateSelect}
             />
           ))}
           

@@ -8,7 +8,9 @@ import { useGlobalMenu } from "../components/GlobalMenuContext";
 import { useGlobalDataStream } from "../lib/DataStreamContext";
 import { useBlocks } from "../lib/BlocksContext";
 import { useVisualization } from "../components/VisualizationContext";
+import { useSelectedTemplate } from "../lib/SelectedTemplateContext";
 import VisualizationPanel from "../components/VisualizationPanel";
+import BlockTemplateCard from "../components/BlockTemplateCard";
 
 export default function HomePage() {
   const router = useRouter();
@@ -19,6 +21,7 @@ export default function HomePage() {
   const { isConnected } = useGlobalDataStream();
   const { resetBlocksState } = useBlocks();
   const { isPanelVisible } = useVisualization();
+  const { selectedTemplate, setSelectedTemplate } = useSelectedTemplate();
   
   // Use a ref to track if we've already reset the state to avoid infinite loops
   const hasResetRef = useRef(false);
@@ -49,10 +52,19 @@ export default function HomePage() {
     }
   }, [resetBlocksState]);
 
+  // Clear selected template when switching to realtime mode
+  useEffect(() => {
+    if (selectedBlock === -1) {
+      setSelectedTemplate(null);
+    }
+  }, [selectedBlock, setSelectedTemplate]);
+
   // Handle block click
   const handleBlockClick = (height: number) => {
     // Special case for the being-mined block (height -1)
     if (height === -1) {
+      // Clear any selected template when switching to realtime view
+      setSelectedTemplate(null);
       // Just update the selected block for the being-mined block
       // We don't need to reset the state again here since we're already on the home page
       setSelectedBlock(height);
@@ -87,6 +99,25 @@ export default function HomePage() {
             filterBlockHeight={selectedBlock ?? undefined}
           />
         </div>
+        
+        {/* Selected Template Panel - only show for historical data */}
+        {selectedTemplate && selectedBlock !== null && selectedBlock !== -1 && (
+          <div className="w-[600px] flex-shrink-0 border-l border-border bg-background overflow-auto">
+            <div className="p-4">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold">Selected Template Details</h2>
+                <button 
+                  onClick={() => setSelectedTemplate(null)}
+                  className="text-gray-500 hover:text-gray-700 text-xl font-bold w-6 h-6 flex items-center justify-center"
+                  title="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <BlockTemplateCard latestMessage={selectedTemplate} />
+            </div>
+          </div>
+        )}
         
         {/* Visualization Panel */}
         {isPanelVisible && (

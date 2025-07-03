@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { StratumV1Data, CoinbaseOutput } from "@/lib/types";
+import { useSelectedTemplate } from '@/lib/SelectedTemplateContext';
 import {
     formatNbits,
 } from '@/utils/formatters';
@@ -213,46 +214,52 @@ const JsonViewerWithMerkleColors: React.FC<JsonViewerProps> = ({ data }) => {
 const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) => {
     // Add state for the toggle
     const [showRawOutputData, setShowRawOutputData] = useState(false);
+    
+    // Get selected template from context
+    const { selectedTemplate } = useSelectedTemplate();
+    
+    // Use selected template if available, otherwise fall back to latestMessage
+    const displayMessage = selectedTemplate || latestMessage;
 
     const rowData: SortedRow | null = useMemo(() => {
-        if (!latestMessage) return null;
+        if (!displayMessage) return null;
 
         try {
             const cbRaw = (
-                latestMessage.coinbase1 + 
-                latestMessage.extranonce1 + 
-                ('00'.repeat(latestMessage.extranonce2_length)) + 
-                latestMessage.coinbase2
+                displayMessage.coinbase1 + 
+                displayMessage.extranonce1 + 
+                ('00'.repeat(displayMessage.extranonce2_length)) + 
+                displayMessage.coinbase2
             );
 
             const { scriptSigInfo, txDetails } = parseCoinbaseData(cbRaw);
             const coinbaseOutputValue = computeCoinbaseOutputValue(cbRaw);
             const coinbaseOutputs = computeCoinbaseOutputs(cbRaw);
             const asciiTag = getFormattedCoinbaseAsciiTag(
-                latestMessage.coinbase1,
-                latestMessage.extranonce1,
-                latestMessage.extranonce2_length,
-                latestMessage.coinbase2
+                displayMessage.coinbase1,
+                displayMessage.extranonce1,
+                displayMessage.extranonce2_length,
+                displayMessage.coinbase2
             );
 
             return {
-                pool_name: latestMessage.pool_name,
-                timestamp: latestMessage.timestamp,
-                job_id: latestMessage.job_id,
-                height: latestMessage.height,
-                prev_hash: latestMessage.prev_hash,
-                version: latestMessage.version,
-                coinbase1: latestMessage.coinbase1,
-                coinbase2: latestMessage.coinbase2,
-                extranonce1: latestMessage.extranonce1,
-                extranonce2_length: latestMessage.extranonce2_length,
-                clean_jobs: latestMessage.clean_jobs,
-                first_transaction: latestMessage.first_transaction,
-                fee_rate: latestMessage.fee_rate,
-                merkle_branches: latestMessage.merkle_branches,
-                merkle_branch_colors: latestMessage.merkle_branch_colors,
-                nbits: latestMessage.nbits,
-                ntime: latestMessage.ntime,
+                pool_name: displayMessage.pool_name,
+                timestamp: displayMessage.timestamp,
+                job_id: displayMessage.job_id,
+                height: displayMessage.height,
+                prev_hash: displayMessage.prev_hash,
+                version: displayMessage.version,
+                coinbase1: displayMessage.coinbase1,
+                coinbase2: displayMessage.coinbase2,
+                extranonce1: displayMessage.extranonce1,
+                extranonce2_length: displayMessage.extranonce2_length,
+                clean_jobs: displayMessage.clean_jobs,
+                first_transaction: displayMessage.first_transaction,
+                fee_rate: displayMessage.fee_rate,
+                merkle_branches: displayMessage.merkle_branches,
+                merkle_branch_colors: displayMessage.merkle_branch_colors,
+                nbits: displayMessage.nbits,
+                ntime: displayMessage.ntime,
                 coinbaseRaw: cbRaw,
                 coinbaseScriptASCII: asciiTag,
                 coinbaseOutputValue: coinbaseOutputValue,
@@ -269,18 +276,18 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
             console.error("Error preparing row data in BlockTemplateCard:", error);
             return null;
         }
-    }, [latestMessage]);
+    }, [displayMessage]);
 
     const prevMessageRef = useRef<StratumV1Data | undefined>(undefined);
 
     useEffect(() => {
-        prevMessageRef.current = latestMessage;
+        prevMessageRef.current = displayMessage;
     });
 
-    const versionFlash = useFlashOnUpdate(latestMessage?.version);
-    const nbitsFlash = useFlashOnUpdate(latestMessage?.nbits);
-    const ntimeFlash = useFlashOnUpdate(latestMessage?.ntime);
-    const prevHashFlash = useFlashOnUpdate(latestMessage?.prev_hash);
+    const versionFlash = useFlashOnUpdate(displayMessage?.version);
+    const nbitsFlash = useFlashOnUpdate(displayMessage?.nbits);
+    const ntimeFlash = useFlashOnUpdate(displayMessage?.ntime);
+    const prevHashFlash = useFlashOnUpdate(displayMessage?.prev_hash);
     const parsedHeightFlash = useFlashOnUpdate(rowData?.coinbaseHeight);
     const scriptAsciiFlash = useFlashOnUpdate(rowData?.coinbaseScriptASCII);
     const auxPowFlash = useFlashOnUpdate(JSON.stringify(rowData?.auxPowData));
@@ -289,19 +296,19 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
     const txLocktimeFlash = useFlashOnUpdate(rowData?.txLocktime);
     const witnessNonceFlash = useFlashOnUpdate(rowData?.witnessCommitmentNonce);
     const outputValueFlash = useFlashOnUpdate(rowData?.coinbaseOutputValue);
-    const extranonce2LenFlash = useFlashOnUpdate(latestMessage?.extranonce2_length);
+    const extranonce2LenFlash = useFlashOnUpdate(displayMessage?.extranonce2_length);
 
   return (
     <TooltipProvider>
       <div className="w-full relative">
         <div className="relative p-4 rounded-lg border bg-card shadow-md flex flex-col items-stretch w-full font-mono text-xs">
-            {latestMessage && (
+            {displayMessage && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 mb-6">
                     <div className="border-r border-gray-300 dark:border-gray-600 pr-6">
                         <div className="text-sm font-semibold mb-2 text-center text-foreground">Raw Stratum Data (mining.notify)</div>
                         <div className="bg-muted p-2 rounded mt-1 overflow-x-auto">
                             <pre style={{ fontSize: '0.7rem' }}><code>
-                              <JsonViewerWithMerkleColors data={latestMessage} />
+                              <JsonViewerWithMerkleColors data={displayMessage} />
                             </code></pre>
                         </div>
                     </div>
@@ -310,7 +317,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                         <div className="rounded p-2 bg-muted/20 flex items-center justify-center">
                             <MerkleTreeVisualization
                                 coinbaseTxHash={rowData?.coinbaseRaw ? "Coinbase Tx" : undefined}
-                                merkleBranches={latestMessage?.merkle_branches}
+                                merkleBranches={displayMessage?.merkle_branches}
                             />
                         </div>
                     </div>
@@ -323,14 +330,14 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                         <div className="font-semibold">Version</div>
                         <div className="text-muted-foreground text-[9px]">(4 bytes)</div>
                         <div className={`mt-1 break-all ${versionFlash}`}>
-                            {latestMessage ? `0x${latestMessage.version}` : '...'}
+                            {displayMessage ? `0x${displayMessage.version}` : '...'}
                         </div>
                     </div>
                     <div className="py-2 px-1 flex flex-col justify-between items-center flex-grow" style={{ flexBasis: '40%' }}>
                         <div className="font-semibold">Prev Block Hash</div>
                         <div className="text-muted-foreground text-[9px]">(32 bytes)</div>
                         <div className={`mt-1 break-all ${prevHashFlash}`}>
-                            {latestMessage?.prev_hash || '...'}
+                            {displayMessage?.prev_hash || '...'}
                         </div>
                     </div>
                     <div className="py-2 px-1 flex flex-col justify-between items-center flex-grow" style={{ flexBasis: '40%' }}>
@@ -350,7 +357,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                         </Tooltip>
                         <div className="text-muted-foreground text-[9px]">(4 bytes)</div>
                         <div className={`mt-1 break-all ${ntimeFlash}`}>
-                            {latestMessage?.ntime || '...'}
+                            {displayMessage?.ntime || '...'}
                         </div>
                     </div>
                     <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
@@ -360,7 +367,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                         </Tooltip>
                         <div className="text-muted-foreground text-[9px]">(4 bytes)</div>
                         <div className={`mt-1 break-all ${nbitsFlash}`}>
-                            {latestMessage ? formatNbits(latestMessage.nbits) : '...'}
+                            {displayMessage ? formatNbits(displayMessage.nbits) : '...'}
                         </div>
                     </div>
                     <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
@@ -425,7 +432,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                             {rowData.coinbaseScriptASCII || '(No printable ASCII)'}
                                         </div>
                                     </div>
-                                    {latestMessage?.extranonce1 && (
+                                    {displayMessage?.extranonce1 && (
                                         <div>
                                             <div className="font-medium text-muted-foreground mb-0.5">
                                                 <Tooltip>
@@ -436,7 +443,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                             <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 text-muted-foreground`}>[REDACTED]</div>
                                         </div>
                                     )}
-                                    {latestMessage?.extranonce2_length !== undefined && (
+                                    {displayMessage?.extranonce2_length !== undefined && (
                                         <div>
                                             <div className="font-medium text-muted-foreground mb-0.5">
                                                 <Tooltip>
@@ -444,7 +451,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                                     <TooltipContent className="bg-background text-foreground"><p>Required length (bytes) of the nonce part the miner generates.</p></TooltipContent>
                                                 </Tooltip>
                                             </div>
-                                            <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${extranonce2LenFlash}`}>{latestMessage.extranonce2_length} bytes</div>
+                                            <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${extranonce2LenFlash}`}>{displayMessage.extranonce2_length} bytes</div>
                                         </div>
                                     )}
                                     {rowData.auxPowData && (

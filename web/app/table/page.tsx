@@ -14,7 +14,7 @@ export default function TablePage() {
         <div className="flex justify-between items-center mb-4">
           <div className="flex gap-2">
             <button
-              className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+              className="pause-button flex items-center gap-2 px-3 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
               onClick={() => setPaused(!paused)}
             >
               {paused ? "Resume" : "Pause"}

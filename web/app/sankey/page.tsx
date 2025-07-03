@@ -1,7 +1,7 @@
 "use client";
 
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType } from "@/lib/types";
+import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useMemo, useState, useEffect } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
@@ -26,16 +26,8 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { filterByType, data, paused: globalPaused, setPaused: setGlobalPaused } = useGlobalDataStream();
+  const { filterByType, data, paused, setPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
-  
-  // Local pause state - we want to manage this locally since it's specific to the Sankey diagram
-  const [localPaused, setLocalPaused] = useState(false);
-  
-  // Keep local pause state in sync with global pause state
-  useEffect(() => {
-    setGlobalPaused(localPaused);
-  }, [localPaused, setGlobalPaused]);
   
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
@@ -55,8 +47,8 @@ export default function SankeyPage() {
   useEffect(() => {
     setMenuContent(
       <SankeyMenu
-        paused={localPaused}
-        setPaused={setLocalPaused}
+        paused={paused}
+        setPaused={setPaused}
         showSettings={showSettings}
         setShowSettings={setShowSettings}
         showLabels={showLabels}
@@ -68,7 +60,7 @@ export default function SankeyPage() {
       />
     );
     return () => setMenuContent(null);
-  }, [localPaused, showSettings, showLabels, showStatus, showRawEvents, setMenuContent]);
+  }, [paused, showSettings, showLabels, showStatus, showRawEvents, setMenuContent, setPaused]);
   
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
@@ -77,7 +69,7 @@ export default function SankeyPage() {
         <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-md text-blue-800 dark:text-blue-200">
             This Sankey diagram shows the flow of data from mining pools to their merkle branches.
             The width of each link represents the number of connections between nodes.
-            {localPaused && (
+            {paused && (
               <div className="mt-2 font-bold">
                 ⚠️ Diagram updates are currently paused. Click the Resume button to see live updates.
               </div>

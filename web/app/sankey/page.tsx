@@ -7,9 +7,10 @@ import { SankeyDiagram } from "@/components/SankeyDiagram";
 import { SankeyMenu } from "@/components/SankeyMenu";
 
 /**
- * This is a placeholder for the Sankey diagram visualization.
- * Currently, it just displays raw messages from the data stream.
- * Feel free to change anything on this page, I'm just using it as a placeholder for the real Sankey diagram.
+ * Sankey Diagram Visualization Page
+ * 
+ * This page displays a Sankey diagram visualization showing the flow of data
+ * between miners, pools, and the network.
  */
 
 export default function SankeyPage() {
@@ -23,7 +24,7 @@ export default function SankeyPage() {
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
-        <h1 className="text-2xl font-bold mb-6">Stratum V1 Data Stream</h1>
+        <h1 className="text-2xl font-bold mb-6">Mining Data Flow Visualization</h1>
         
         {/* Sankey Menu for controls */}
         <div className="mb-4">
@@ -32,8 +33,9 @@ export default function SankeyPage() {
         
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 rounded-lg p-4 bg-gray-50">
-          <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded-md text-yellow-800">
-            Sankey diagram visualization using the SankeyDiagram component. The actual data visualization will need to be implemented within the component.
+          <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-md text-blue-800">
+            This Sankey diagram shows the flow of hashrate between miners, pools, and the network. 
+            The width of each link represents the volume of data flowing between nodes.
           </div>
           
           <SankeyDiagram width={1000} height={600} />
@@ -51,4 +53,4 @@ export default function SankeyPage() {
       </div>
     </main>
   );
-} 
+}

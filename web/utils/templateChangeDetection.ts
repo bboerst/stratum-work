@@ -1,14 +1,44 @@
 import { StratumV1Data } from '@/lib/types';
-import { CoinbaseOutputDetail, OpReturnData, AuxPowData } from './bitcoinUtils';
+import { processTemplateData, ProcessedTemplateData, clearProcessedDataCache as clearProcessorCache } from './templateDataProcessor';
 
 export enum TemplateChangeType {
-  RSK_HASH = 'R',
+  // Core template fields
   AUXPOW_HASH = 'A', 
   MERKLE_BRANCHES = 'M',
-  SYSCOIN_HASH = 'S',
   CLEAN_JOBS = 'C',
   PREV_HASH = 'P',
   HEIGHT = 'H',
+  VERSION = 'V',
+  NBITS = 'N',
+  NTIME = 'T',
+  EXTRANONCE2_LENGTH = 'E',
+  
+  // Transaction fields
+  TX_VERSION = 'X',
+  TX_LOCKTIME = 'L',
+  INPUT_SEQUENCE = 'I',
+  WITNESS_NONCE = 'W',
+  COINBASE_ASCII = 'Z',
+  COINBASE_OUTPUT_VALUE = 'Q',
+  COINBASE_OUTPUTS = 'U',
+  AUXPOW_MERKLE_SIZE = 'K',
+  AUXPOW_NONCE = 'J',
+  
+  // Individual OP_RETURN protocol changes (struck-through letters representing protocol names)
+  OP_RETURN_RSK = 'R̶',           // RSK Block (R with strikethrough)
+  OP_RETURN_COREDAO = 'C̶',       // CoreDAO (C with strikethrough)
+  OP_RETURN_SYSCOIN = 'S̶',       // Syscoin (S with strikethrough)
+  OP_RETURN_HATHOR = 'H̶',        // Hathor Network (H with strikethrough)
+  OP_RETURN_EXSAT = 'E̶',         // ExSat (E with strikethrough)
+  OP_RETURN_OMNI = 'O̶',          // Omni (O with strikethrough)
+  OP_RETURN_RUNESTONE = 'U̶',     // Runestone (U with strikethrough, avoiding R conflict)
+  OP_RETURN_WITNESS = 'W̶',       // WitnessCommitment (W with strikethrough)
+  OP_RETURN_STACKS = 'T̶',        // Stacks Block Commit (T with strikethrough, avoiding S conflict)
+  OP_RETURN_BIP47 = 'B̶',         // BIP47 Payment Code (B with strikethrough)
+  OP_RETURN_EMPTY = 'Ø̶',         // Empty OP_RETURN (Ø with strikethrough)
+  OP_RETURN_OTHER = 'Ω̶',         // Other OP_RETURN protocols (Ω with strikethrough)
+  
+  // Generic fallback
   OTHER = 'O'
 }
 
@@ -16,107 +46,143 @@ export interface TemplateChangeResult {
   hasChanges: boolean;
   changeTypes: TemplateChangeType[];
   changeDetails: {
-    rskHash?: { old?: string; new?: string };
+    // AuxPOW hash (separate from OP_RETURN protocols)
     auxPowHash?: { old?: string; new?: string };
-    syscoinHash?: { old?: string; new?: string };
+    
+    // Core template fields
     merkleBranches?: { old: string[]; new: string[] };
     cleanJobs?: { old: boolean | string; new: boolean | string };
     prevHash?: { old: string; new: string };
     height?: { old: number; new: number };
+    version?: { old: string; new: string };
+    nbits?: { old?: string; new?: string };
+    ntime?: { old?: string; new?: string };
+    extranonce2Length?: { old: number; new: number };
+    
+    // Transaction fields
+    txVersion?: { old?: number; new?: number };
+    txLocktime?: { old?: number; new?: number };
+    inputSequence?: { old?: number; new?: number };
+    witnessNonce?: { old?: string | null; new?: string | null };
+    coinbaseAscii?: { old: string; new: string };
+    coinbaseOutputValue?: { old: number; new: number };
+    coinbaseOutputs?: { old: any[]; new: any[] };
+    auxPowMerkleSize?: { old?: number | null; new?: number | null };
+    auxPowNonce?: { old?: number | null; new?: number | null };
+    
+    // Individual OP_RETURN protocol changes
+    opReturnProtocols?: {
+      old: Map<string, any>;
+      new: Map<string, any>;
+      changed: string[]; // List of protocol names that changed
+    };
+    
     otherChanges?: Array<{ field: string; old: any; new: any }>;
   };
 }
 
-interface ProcessedTemplate {
-  poolName: string;
-  jobId: string;
-  height: number;
-  rskHash?: string;
-  auxPowHash?: string;
-  syscoinHash?: string;
-  merkleBranches: string[];
-  cleanJobs: boolean | string;
-  prevHash: string;
-  version: string;
-  nbits?: string;
-  ntime?: string;
-}
-
-// Cache for processed templates to avoid re-processing
-const templateCache = new Map<string, ProcessedTemplate>();
-const MAX_TEMPLATE_CACHE_SIZE = 100;
+// Use the ProcessedTemplateData interface from templateDataProcessor
+type ProcessedTemplate = ProcessedTemplateData;
 
 // Cache for last template per pool to enable comparison
 const lastTemplateByPool = new Map<string, ProcessedTemplate>();
 
-
-function extractRskHash(coinbaseOutputs?: CoinbaseOutputDetail[]): string | undefined {
-  if (!coinbaseOutputs) return undefined;
-  
-  for (const output of coinbaseOutputs) {
-    if (output.type === 'nulldata' && output.decodedData?.protocol === 'RSK Block') {
-      return output.decodedData.details?.rskBlockHash;
-    }
-  }
-  return undefined;
-}
-
-function extractSyscoinHash(coinbaseOutputs?: CoinbaseOutputDetail[]): string | undefined {
-  if (!coinbaseOutputs) return undefined;
-  
-  for (const output of coinbaseOutputs) {
-    if (output.type === 'nulldata' && output.decodedData?.protocol === 'Syscoin') {
-      return output.decodedData.details?.relatedHash;
-    }
-  }
-  return undefined;
-}
-
-function extractAuxPowHash(auxPowData?: AuxPowData | null): string | undefined {
-  return auxPowData?.auxHashOrRoot;
-}
-
-function processTemplate(
-  data: StratumV1Data, 
-  coinbaseOutputs?: CoinbaseOutputDetail[],
-  auxPowData?: AuxPowData | null
-): ProcessedTemplate {
-  const cacheKey = `${data.pool_name}-${data.job_id}-${data.height}`;
-  
-  if (templateCache.has(cacheKey)) {
-    return templateCache.get(cacheKey)!;
-  }
-  
-  const processed: ProcessedTemplate = {
-    poolName: data.pool_name,
-    jobId: data.job_id,
-    height: data.height,
-    rskHash: extractRskHash(coinbaseOutputs),
-    auxPowHash: extractAuxPowHash(auxPowData),
-    syscoinHash: extractSyscoinHash(coinbaseOutputs),
-    merkleBranches: [...data.merkle_branches],
-    cleanJobs: data.clean_jobs,
-    prevHash: data.prev_hash,
-    version: data.version,
-    nbits: data.nbits,
-    ntime: data.ntime
-  };
-  
-  // Manage cache size
-  if (templateCache.size >= MAX_TEMPLATE_CACHE_SIZE) {
-    const firstKey = templateCache.keys().next().value;
-    if (firstKey !== undefined) {
-      templateCache.delete(firstKey);
-    }
-  }
-  
-  templateCache.set(cacheKey, processed);
-  return processed;
-}
-
 function arraysEqual<T>(a: T[], b: T[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((val, index) => val === b[index]);
+}
+
+// Deep comparison for objects
+function objectsEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+  
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  
+  if (keysA.length !== keysB.length) return false;
+  
+  for (const key of keysA) {
+    if (!keysB.includes(key)) return false;
+    if (!objectsEqual(a[key], b[key])) return false;
+  }
+  
+  return true;
+}
+
+// Compare coinbase outputs for true structural changes only (not content/value/OP_RETURN data changes)
+function coinbaseOutputsStructurallyEqual(a: any[], b: any[]): boolean {
+  // Different number of outputs = structural change
+  if (a.length !== b.length) return false;
+  
+  for (let i = 0; i < a.length; i++) {
+    const outputA = a[i];
+    const outputB = b[i];
+    
+    // Check if output type changed (address vs nulldata vs unknown)
+    if (outputA.type !== outputB.type) return false;
+    
+    // For address outputs, check if the address changed (not value)
+    if (outputA.type === 'address' && outputA.address !== outputB.address) return false;
+    
+    // For nulldata (OP_RETURN) outputs, only check if the protocol type changed
+    // Don't check the actual data content since that's tracked separately by OP_RETURN protocol tracking
+    if (outputA.type === 'nulldata') {
+      const protocolA = outputA.decodedData?.protocol;
+      const protocolB = outputB.decodedData?.protocol;
+      if (protocolA !== protocolB) return false;
+    }
+    
+    // For unknown outputs, check if the script type/hex changed significantly
+    if (outputA.type === 'unknown' && outputA.hex !== outputB.hex) return false;
+  }
+  
+  return true;
+}
+
+// Compare Maps for OP_RETURN protocols
+function mapsEqual(a: Map<string, any>, b: Map<string, any>): boolean {
+  if (a.size !== b.size) return false;
+  
+  for (const [key, value] of a) {
+    if (!b.has(key) || !objectsEqual(value, b.get(key))) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+// Get protocol-specific change type
+function getProtocolChangeType(protocol: string): TemplateChangeType {
+  switch (protocol) {
+    case 'RSK Block':
+      return TemplateChangeType.OP_RETURN_RSK;
+    case 'CoreDAO':
+      return TemplateChangeType.OP_RETURN_COREDAO;
+    case 'Syscoin':
+      return TemplateChangeType.OP_RETURN_SYSCOIN;
+    case 'Hathor Network':
+      return TemplateChangeType.OP_RETURN_HATHOR;
+    case 'ExSat':
+      return TemplateChangeType.OP_RETURN_EXSAT;
+    case 'Omni':
+      return TemplateChangeType.OP_RETURN_OMNI;
+    case 'Runestone':
+      return TemplateChangeType.OP_RETURN_RUNESTONE;
+    case 'WitnessCommitment':
+      return TemplateChangeType.OP_RETURN_WITNESS;
+    case 'Stacks Block Commit':
+      return TemplateChangeType.OP_RETURN_STACKS;
+    case 'BIP47 Payment Code':
+      return TemplateChangeType.OP_RETURN_BIP47;
+    case 'Empty OP_RETURN':
+    case 'OP_RETURN (0 byte)':
+      return TemplateChangeType.OP_RETURN_EMPTY;
+    default:
+      return TemplateChangeType.OP_RETURN_OTHER;
+  }
 }
 
 // Cache for processed change detection results to prevent duplicate processing
@@ -124,9 +190,7 @@ const changeDetectionCache = new Map<string, TemplateChangeResult>();
 const MAX_CHANGE_DETECTION_CACHE_SIZE = 200;
 
 export function detectTemplateChanges(
-  data: StratumV1Data,
-  coinbaseOutputs?: CoinbaseOutputDetail[],
-  auxPowData?: AuxPowData | null
+  data: StratumV1Data
 ): TemplateChangeResult {
   // Create a unique key for this specific data point to prevent duplicate processing
   const changeDetectionKey = `${data.pool_name}-${data.job_id}-${data.height}-${data.timestamp}`;
@@ -136,7 +200,7 @@ export function detectTemplateChanges(
     return changeDetectionCache.get(changeDetectionKey)!;
   }
   
-  const currentTemplate = processTemplate(data, coinbaseOutputs, auxPowData);
+  const currentTemplate = processTemplateData(data);
   const lastTemplate = lastTemplateByPool.get(data.pool_name);
   
   // If no previous template, this is the first one (show large circle but no change indicators)
@@ -184,17 +248,9 @@ export function detectTemplateChanges(
   const changeTypes: TemplateChangeType[] = [];
   const changeDetails: TemplateChangeResult['changeDetails'] = {};
   
-  // Check RSK hash changes - only if both values are defined or one changes from/to defined
-  if ((lastTemplate.rskHash || currentTemplate.rskHash) && 
-      lastTemplate.rskHash !== currentTemplate.rskHash) {
-    changeTypes.push(TemplateChangeType.RSK_HASH);
-    changeDetails.rskHash = {
-      old: lastTemplate.rskHash,
-      new: currentTemplate.rskHash
-    };
-  }
+  // Comprehensive field change detection
   
-  // Check AuxPOW hash changes - only if both values are defined or one changes from/to defined
+  // AuxPOW hash (separate from OP_RETURN protocols)
   if ((lastTemplate.auxPowHash || currentTemplate.auxPowHash) && 
       lastTemplate.auxPowHash !== currentTemplate.auxPowHash) {
     changeTypes.push(TemplateChangeType.AUXPOW_HASH);
@@ -204,17 +260,39 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check Syscoin hash changes - only if both values are defined or one changes from/to defined
-  if ((lastTemplate.syscoinHash || currentTemplate.syscoinHash) && 
-      lastTemplate.syscoinHash !== currentTemplate.syscoinHash) {
-    changeTypes.push(TemplateChangeType.SYSCOIN_HASH);
-    changeDetails.syscoinHash = {
-      old: lastTemplate.syscoinHash,
-      new: currentTemplate.syscoinHash
-    };
+  // Individual OP_RETURN protocol changes
+  if (!mapsEqual(lastTemplate.opReturnProtocols, currentTemplate.opReturnProtocols)) {
+    const oldProtocols = lastTemplate.opReturnProtocols;
+    const newProtocols = currentTemplate.opReturnProtocols;
+    const changedProtocols: string[] = [];
+    
+    // Check for changed/removed protocols
+    for (const [protocol, oldData] of oldProtocols) {
+      const newData = newProtocols.get(protocol);
+      if (!newData || !objectsEqual(oldData, newData)) {
+        changedProtocols.push(protocol);
+        changeTypes.push(getProtocolChangeType(protocol));
+      }
+    }
+    
+    // Check for new protocols
+    for (const [protocol, newData] of newProtocols) {
+      if (!oldProtocols.has(protocol)) {
+        changedProtocols.push(protocol);
+        changeTypes.push(getProtocolChangeType(protocol));
+      }
+    }
+    
+    if (changedProtocols.length > 0) {
+      changeDetails.opReturnProtocols = {
+        old: oldProtocols,
+        new: newProtocols,
+        changed: changedProtocols
+      };
+    }
   }
   
-  // Check merkle branches changes
+  // Merkle branches
   if (!arraysEqual(lastTemplate.merkleBranches, currentTemplate.merkleBranches)) {
     changeTypes.push(TemplateChangeType.MERKLE_BRANCHES);
     changeDetails.merkleBranches = {
@@ -223,7 +301,7 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check clean jobs changes - only track when clean jobs becomes true
+  // Clean jobs - only track when becoming true
   if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs && currentTemplate.cleanJobs === true) {
     changeTypes.push(TemplateChangeType.CLEAN_JOBS);
     changeDetails.cleanJobs = {
@@ -232,7 +310,7 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check prev hash changes
+  // Core stratum fields
   if (lastTemplate.prevHash !== currentTemplate.prevHash) {
     changeTypes.push(TemplateChangeType.PREV_HASH);
     changeDetails.prevHash = {
@@ -241,7 +319,6 @@ export function detectTemplateChanges(
     };
   }
   
-  // Check height changes
   if (lastTemplate.height !== currentTemplate.height) {
     changeTypes.push(TemplateChangeType.HEIGHT);
     changeDetails.height = {
@@ -250,34 +327,114 @@ export function detectTemplateChanges(
     };
   }
   
-  // Detect other template changes not covered by specific tracked types
-  const otherChanges: Array<{ field: string; old: any; new: any }> = [];
-  
-  // Check all fields for changes (except those already tracked above)
-  const fieldsToCheck = [
-    { field: 'version', old: lastTemplate.version, new: currentTemplate.version },
-    { field: 'nbits', old: lastTemplate.nbits, new: currentTemplate.nbits },
-    { field: 'ntime', old: lastTemplate.ntime, new: currentTemplate.ntime }
-  ];
-  
-  // Add clean jobs changes if not already tracked (when it's not becoming true)
-  if (lastTemplate.cleanJobs !== currentTemplate.cleanJobs && currentTemplate.cleanJobs !== true) {
-    fieldsToCheck.push({ field: 'cleanJobs', old: lastTemplate.cleanJobs as any, new: currentTemplate.cleanJobs as any });
+  if (lastTemplate.version !== currentTemplate.version) {
+    changeTypes.push(TemplateChangeType.VERSION);
+    changeDetails.version = {
+      old: lastTemplate.version,
+      new: currentTemplate.version
+    };
   }
   
-  fieldsToCheck.forEach(({ field, old, new: newVal }) => {
-    if (old !== newVal) {
-      otherChanges.push({ field, old, new: newVal });
-    }
-  });
+  if ((lastTemplate.nbits || currentTemplate.nbits) && 
+      lastTemplate.nbits !== currentTemplate.nbits) {
+    changeTypes.push(TemplateChangeType.NBITS);
+    changeDetails.nbits = {
+      old: lastTemplate.nbits,
+      new: currentTemplate.nbits
+    };
+  }
   
-  // Add other changes to details if any exist
-  if (otherChanges.length > 0) {
-    changeDetails.otherChanges = otherChanges;
-    // Add OTHER type if no other specific changes were detected
-    if (changeTypes.length === 0) {
-      changeTypes.push(TemplateChangeType.OTHER);
-    }
+  if ((lastTemplate.ntime || currentTemplate.ntime) && 
+      lastTemplate.ntime !== currentTemplate.ntime) {
+    changeTypes.push(TemplateChangeType.NTIME);
+    changeDetails.ntime = {
+      old: lastTemplate.ntime,
+      new: currentTemplate.ntime
+    };
+  }
+  
+  if (lastTemplate.extranonce2Length !== currentTemplate.extranonce2Length) {
+    changeTypes.push(TemplateChangeType.EXTRANONCE2_LENGTH);
+    changeDetails.extranonce2Length = {
+      old: lastTemplate.extranonce2Length,
+      new: currentTemplate.extranonce2Length
+    };
+  }
+  
+  // Transaction fields
+  if (lastTemplate.txVersion !== currentTemplate.txVersion) {
+    changeTypes.push(TemplateChangeType.TX_VERSION);
+    changeDetails.txVersion = {
+      old: lastTemplate.txVersion,
+      new: currentTemplate.txVersion
+    };
+  }
+  
+  if (lastTemplate.txLocktime !== currentTemplate.txLocktime) {
+    changeTypes.push(TemplateChangeType.TX_LOCKTIME);
+    changeDetails.txLocktime = {
+      old: lastTemplate.txLocktime,
+      new: currentTemplate.txLocktime
+    };
+  }
+  
+  if (lastTemplate.inputSequence !== currentTemplate.inputSequence) {
+    changeTypes.push(TemplateChangeType.INPUT_SEQUENCE);
+    changeDetails.inputSequence = {
+      old: lastTemplate.inputSequence,
+      new: currentTemplate.inputSequence
+    };
+  }
+  
+  if (lastTemplate.witnessCommitmentNonce !== currentTemplate.witnessCommitmentNonce) {
+    changeTypes.push(TemplateChangeType.WITNESS_NONCE);
+    changeDetails.witnessNonce = {
+      old: lastTemplate.witnessCommitmentNonce,
+      new: currentTemplate.witnessCommitmentNonce
+    };
+  }
+  
+  // Coinbase fields
+  
+  if (lastTemplate.coinbaseScriptASCII !== currentTemplate.coinbaseScriptASCII) {
+    changeTypes.push(TemplateChangeType.COINBASE_ASCII);
+    changeDetails.coinbaseAscii = {
+      old: lastTemplate.coinbaseScriptASCII,
+      new: currentTemplate.coinbaseScriptASCII
+    };
+  }
+  
+  if (lastTemplate.coinbaseOutputValue !== currentTemplate.coinbaseOutputValue) {
+    changeTypes.push(TemplateChangeType.COINBASE_OUTPUT_VALUE);
+    changeDetails.coinbaseOutputValue = {
+      old: lastTemplate.coinbaseOutputValue,
+      new: currentTemplate.coinbaseOutputValue
+    };
+  }
+  
+  if (!coinbaseOutputsStructurallyEqual(lastTemplate.coinbaseOutputs, currentTemplate.coinbaseOutputs)) {
+    changeTypes.push(TemplateChangeType.COINBASE_OUTPUTS);
+    changeDetails.coinbaseOutputs = {
+      old: lastTemplate.coinbaseOutputs,
+      new: currentTemplate.coinbaseOutputs
+    };
+  }
+  
+  // AuxPOW fields
+  if (lastTemplate.auxPowMerkleSize !== currentTemplate.auxPowMerkleSize) {
+    changeTypes.push(TemplateChangeType.AUXPOW_MERKLE_SIZE);
+    changeDetails.auxPowMerkleSize = {
+      old: lastTemplate.auxPowMerkleSize,
+      new: currentTemplate.auxPowMerkleSize
+    };
+  }
+  
+  if (lastTemplate.auxPowNonce !== currentTemplate.auxPowNonce) {
+    changeTypes.push(TemplateChangeType.AUXPOW_NONCE);
+    changeDetails.auxPowNonce = {
+      old: lastTemplate.auxPowNonce,
+      new: currentTemplate.auxPowNonce
+    };
   }
   
   // Store current template as the last template for this pool (after all comparisons)
@@ -302,29 +459,93 @@ export function detectTemplateChanges(
 
 export function getChangeTypeDisplay(changeTypes: TemplateChangeType[]): string {
   if (changeTypes.length === 0) return ''; // Empty string for untracked changes (will show empty circle)
-  if (changeTypes.length === 1) return changeTypes[0];
+  
+  // Filter out change types that should not be displayed in circle plots
+  const hiddenChangeTypes = new Set([
+    TemplateChangeType.NTIME,              // nTime changes
+    TemplateChangeType.COINBASE_OUTPUT_VALUE, // Output value changes  
+    TemplateChangeType.OP_RETURN_WITNESS,  // Witness Commit changes
+    TemplateChangeType.COINBASE_ASCII      // Coinbase ASCII tag changes
+  ]);
+  
+  const visibleChangeTypes = changeTypes.filter(type => !hiddenChangeTypes.has(type));
+  
+  if (visibleChangeTypes.length === 0) return ''; // Empty string if only hidden changes
+  if (visibleChangeTypes.length === 1) return visibleChangeTypes[0];
   
   // For multiple changes, combine them
-  const sortedTypes = [...changeTypes].sort();
+  const sortedTypes = [...visibleChangeTypes].sort();
   return sortedTypes.join('');
 }
 
 export function getChangeTypeDescription(changeType: TemplateChangeType): string {
   switch (changeType) {
-    case TemplateChangeType.RSK_HASH:
-      return 'RSK merge mining hash updated';
+    // Core template fields
     case TemplateChangeType.AUXPOW_HASH:
       return 'AuxPOW hash updated';
     case TemplateChangeType.MERKLE_BRANCHES:
       return 'Transaction merkle branches changed';
-    case TemplateChangeType.SYSCOIN_HASH:
-      return 'Syscoin merge mining hash updated';
     case TemplateChangeType.CLEAN_JOBS:
       return 'Clean jobs flag changed';
     case TemplateChangeType.PREV_HASH:
       return 'Previous block hash changed';
     case TemplateChangeType.HEIGHT:
       return 'Block height changed';
+    case TemplateChangeType.VERSION:
+      return 'Block version changed';
+    case TemplateChangeType.NBITS:
+      return 'Difficulty target (nBits) changed';
+    case TemplateChangeType.NTIME:
+      return 'Block timestamp (nTime) changed';
+    case TemplateChangeType.EXTRANONCE2_LENGTH:
+      return 'Extranonce2 length changed';
+      
+    // Transaction fields
+    case TemplateChangeType.TX_VERSION:
+      return 'Transaction version changed';
+    case TemplateChangeType.TX_LOCKTIME:
+      return 'Transaction locktime changed';
+    case TemplateChangeType.INPUT_SEQUENCE:
+      return 'Input sequence changed';
+    case TemplateChangeType.WITNESS_NONCE:
+      return 'Witness commitment nonce changed';
+    case TemplateChangeType.COINBASE_ASCII:
+      return 'Coinbase ASCII tag changed';
+    case TemplateChangeType.COINBASE_OUTPUT_VALUE:
+      return 'Coinbase output value changed';
+    case TemplateChangeType.COINBASE_OUTPUTS:
+      return 'Coinbase output structure changed';
+    case TemplateChangeType.AUXPOW_MERKLE_SIZE:
+      return 'AuxPOW merkle size changed';
+    case TemplateChangeType.AUXPOW_NONCE:
+      return 'AuxPOW nonce changed';
+      
+    // Individual OP_RETURN protocol changes
+    case TemplateChangeType.OP_RETURN_RSK:
+      return 'RSK Block OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_COREDAO:
+      return 'CoreDAO OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_SYSCOIN:
+      return 'Syscoin OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_HATHOR:
+      return 'Hathor Network OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_EXSAT:
+      return 'ExSat OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_OMNI:
+      return 'Omni OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_RUNESTONE:
+      return 'Runestone OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_WITNESS:
+      return 'Witness Commitment OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_STACKS:
+      return 'Stacks Block Commit OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_BIP47:
+      return 'BIP47 Payment Code OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_EMPTY:
+      return 'Empty OP_RETURN changed';
+    case TemplateChangeType.OP_RETURN_OTHER:
+      return 'Other OP_RETURN protocol changed';
+      
     case TemplateChangeType.OTHER:
       return 'Other template changes';
     default:
@@ -334,7 +555,7 @@ export function getChangeTypeDescription(changeType: TemplateChangeType): string
 
 // Utility to clear cache (useful for testing or memory management)
 export function clearTemplateCache(): void {
-  templateCache.clear();
   lastTemplateByPool.clear();
   changeDetectionCache.clear();
+  clearProcessorCache();
 }

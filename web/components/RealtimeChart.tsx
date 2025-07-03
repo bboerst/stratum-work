@@ -10,8 +10,7 @@ import {
   getChangeTypeDisplay,
   TemplateChangeResult 
 } from "@/utils/templateChangeDetection";
-import { computeCoinbaseOutputs, computeCoinbaseScriptSigInfo, getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
-import { formatCoinbaseRaw } from "@/utils/formatters";
+import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -1112,18 +1111,8 @@ function RealtimeChartBase({
       const poolIndex = poolRankings.get(poolName) || 
         (currentPoolNames.indexOf(poolName) + 1) || 1;
       
-      // Compute coinbase data needed for change detection
-      const coinbaseRaw = formatCoinbaseRaw(
-        item.coinbase1,
-        item.extranonce1,
-        item.extranonce2_length,
-        item.coinbase2
-      );
-      const coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
-      const auxPowData = computeCoinbaseScriptSigInfo(coinbaseRaw)?.auxPowData;
-      
-      // Detect template changes
-      const changeInfo = detectTemplateChanges(item, coinbaseOutputs, auxPowData);
+      // Detect template changes using the new simplified interface
+      const changeInfo = detectTemplateChanges(item);
       const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
       
       // Get ASCII tag from coinbase script sig
@@ -1365,27 +1354,15 @@ function RealtimeChartBase({
             <>
               <br />
               <div className="text-[8px] text-gray-300 mt-1 whitespace-nowrap">
-                {hoveredPoint.changeInfo.changeDetails.rskHash && (
-                  <div className="mb-1">
-                    <div className="text-red-300 whitespace-nowrap overflow-hidden">RSK Old: {hoveredPoint.changeInfo.changeDetails.rskHash.old || 'N/A'}</div>
-                    <div className="text-green-300 whitespace-nowrap overflow-hidden">RSK New: {hoveredPoint.changeInfo.changeDetails.rskHash.new || 'N/A'}</div>
-                  </div>
-                )}
                 {hoveredPoint.changeInfo.changeDetails.auxPowHash && (
                   <div className="mb-1">
-                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Old: {hoveredPoint.changeInfo.changeDetails.auxPowHash.old || 'N/A'}</div>
-                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW New: {hoveredPoint.changeInfo.changeDetails.auxPowHash.new || 'N/A'}</div>
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Old: {hoveredPoint.changeInfo.changeDetails.auxPowHash.old ? hoveredPoint.changeInfo.changeDetails.auxPowHash.old.substring(0, 16) + '...' : 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW New: {hoveredPoint.changeInfo.changeDetails.auxPowHash.new ? hoveredPoint.changeInfo.changeDetails.auxPowHash.new.substring(0, 16) + '...' : 'N/A'}</div>
                   </div>
                 )}
                 {hoveredPoint.changeInfo.changeDetails.merkleBranches && (
                   <div className="mb-1">
                     <div className="text-blue-300 whitespace-nowrap overflow-hidden">Merkle branches changed</div>
-                  </div>
-                )}
-                {hoveredPoint.changeInfo.changeDetails.syscoinHash && (
-                  <div className="mb-1">
-                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Syscoin Old: {hoveredPoint.changeInfo.changeDetails.syscoinHash.old || 'N/A'}</div>
-                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Syscoin New: {hoveredPoint.changeInfo.changeDetails.syscoinHash.new || 'N/A'}</div>
                   </div>
                 )}
                 {hoveredPoint.changeInfo.changeDetails.cleanJobs && (
@@ -1396,14 +1373,158 @@ function RealtimeChartBase({
                 )}
                 {hoveredPoint.changeInfo.changeDetails.prevHash != null && (
                   <div className="mb-1">
-                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Prev Hash Old: {hoveredPoint.changeInfo.changeDetails.prevHash.old || 'N/A'}</div>
-                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Prev Hash New: {hoveredPoint.changeInfo.changeDetails.prevHash.new || 'N/A'}</div>
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Prev Hash Old: {hoveredPoint.changeInfo.changeDetails.prevHash.old ? hoveredPoint.changeInfo.changeDetails.prevHash.old.substring(0, 16) + '...' : 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Prev Hash New: {hoveredPoint.changeInfo.changeDetails.prevHash.new ? hoveredPoint.changeInfo.changeDetails.prevHash.new.substring(0, 16) + '...' : 'N/A'}</div>
                   </div>
                 )}
                 {hoveredPoint.changeInfo.changeDetails.height != null && (
                   <div className="mb-1">
                     <div className="text-red-300 whitespace-nowrap overflow-hidden">Height Old: {hoveredPoint.changeInfo.changeDetails.height.old}</div>
                     <div className="text-green-300 whitespace-nowrap overflow-hidden">Height New: {hoveredPoint.changeInfo.changeDetails.height.new}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.version && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Version Old: {hoveredPoint.changeInfo.changeDetails.version.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Version New: {hoveredPoint.changeInfo.changeDetails.version.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.nbits && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">nBits Old: {hoveredPoint.changeInfo.changeDetails.nbits.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">nBits New: {hoveredPoint.changeInfo.changeDetails.nbits.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.ntime && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">nTime Old: {hoveredPoint.changeInfo.changeDetails.ntime.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">nTime New: {hoveredPoint.changeInfo.changeDetails.ntime.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.extranonce2Length && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Extranonce2 Length Old: {hoveredPoint.changeInfo.changeDetails.extranonce2Length.old}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Extranonce2 Length New: {hoveredPoint.changeInfo.changeDetails.extranonce2Length.new}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.txVersion && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">TX Version Old: {hoveredPoint.changeInfo.changeDetails.txVersion.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">TX Version New: {hoveredPoint.changeInfo.changeDetails.txVersion.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.txLocktime && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">TX Locktime Old: {hoveredPoint.changeInfo.changeDetails.txLocktime.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">TX Locktime New: {hoveredPoint.changeInfo.changeDetails.txLocktime.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.inputSequence && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Input Sequence Old: {hoveredPoint.changeInfo.changeDetails.inputSequence.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Input Sequence New: {hoveredPoint.changeInfo.changeDetails.inputSequence.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.witnessNonce && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Witness Nonce Old: {hoveredPoint.changeInfo.changeDetails.witnessNonce.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Witness Nonce New: {hoveredPoint.changeInfo.changeDetails.witnessNonce.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.coinbaseAscii && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Coinbase ASCII Old: {hoveredPoint.changeInfo.changeDetails.coinbaseAscii.old || 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Coinbase ASCII New: {hoveredPoint.changeInfo.changeDetails.coinbaseAscii.new || 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.coinbaseOutputValue && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Output Value Old: {(hoveredPoint.changeInfo.changeDetails.coinbaseOutputValue.old / 100000000).toFixed(8)} BTC</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">Output Value New: {(hoveredPoint.changeInfo.changeDetails.coinbaseOutputValue.new / 100000000).toFixed(8)} BTC</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.coinbaseOutputs && (
+                  <div className="mb-1">
+                    <div className="text-orange-300 font-semibold mb-1">Output Structure Changed:</div>
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">Old: {hoveredPoint.changeInfo.changeDetails.coinbaseOutputs.old.length} output(s)</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">New: {hoveredPoint.changeInfo.changeDetails.coinbaseOutputs.new.length} output(s)</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.auxPowMerkleSize && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Merkle Size Old: {hoveredPoint.changeInfo.changeDetails.auxPowMerkleSize.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW Merkle Size New: {hoveredPoint.changeInfo.changeDetails.auxPowMerkleSize.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.auxPowNonce && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Nonce Old: {hoveredPoint.changeInfo.changeDetails.auxPowNonce.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW Nonce New: {hoveredPoint.changeInfo.changeDetails.auxPowNonce.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo?.changeDetails.opReturnProtocols && hoveredPoint.changeInfo.changeDetails.opReturnProtocols.changed.length > 0 && (
+                  <div className="mb-1">
+                    <div className="text-purple-300 font-semibold mb-1">OP_RETURN Protocol Changes:</div>
+                    {hoveredPoint.changeInfo.changeDetails.opReturnProtocols.changed.map((protocol, index) => {
+                      const oldData = hoveredPoint.changeInfo?.changeDetails.opReturnProtocols?.old.get(protocol);
+                      const newData = hoveredPoint.changeInfo?.changeDetails.opReturnProtocols?.new.get(protocol);
+                      
+                      // Helper function to get key display value for different protocols
+                      const getDisplayValue = (data: { details?: Record<string, unknown>; dataHex?: string; value?: number } | undefined) => {
+                        if (!data) return 'N/A';
+                        
+                        // For WitnessCommitment, show dataHex if no details
+                        if (protocol === 'WitnessCommitment' && !data.details && data.dataHex) {
+                          return data.dataHex.substring(0, 16) + '...';
+                        }
+                        
+                        if (!data.details) return 'N/A';
+                        
+                        switch (protocol) {
+                          case 'RSK Block':
+                            return (data.details.rskBlockHash as string)?.substring(0, 16) + '...' || 'N/A';
+                          case 'CoreDAO':
+                            return (data.details.validatorAddress as string)?.substring(0, 20) + '...' || 'N/A';
+                          case 'Syscoin':
+                            return (data.details.relatedHash as string)?.substring(0, 16) + '...' || 'N/A';
+                          case 'Hathor Network':
+                            return (data.details.auxBlockHash as string)?.substring(0, 16) + '...' || 'N/A';
+                          case 'ExSat':
+                            return (data.details.synchronizerAccount as string) || 'N/A';
+                          case 'Omni':
+                            return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'Empty';
+                          case 'Runestone':
+                            return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'Empty';
+                          case 'WitnessCommitment':
+                            return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'Empty';
+                          case 'Stacks Block Commit':
+                            return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'Empty';
+                          case 'BIP47 Payment Code':
+                            return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'Empty';
+                          default:
+                            const keys = Object.keys(data.details);
+                            return keys.length > 0 ? `${keys.length} fields` : 'Empty';
+                        }
+                      };
+                      
+                      return (
+                        <div key={index} className="mb-1">
+                          <div className="text-cyan-300 font-medium">{protocol}:</div>
+                          {!oldData && newData && (
+                            <div className="text-green-300 whitespace-nowrap overflow-hidden">  Added: {getDisplayValue(newData)}</div>
+                          )}
+                          {oldData && !newData && (
+                            <div className="text-red-300 whitespace-nowrap overflow-hidden">  Removed: {getDisplayValue(oldData)}</div>
+                          )}
+                          {oldData && newData && (
+                            <>
+                              <div className="text-red-300 whitespace-nowrap overflow-hidden">  Old: {getDisplayValue(oldData)}</div>
+                              <div className="text-green-300 whitespace-nowrap overflow-hidden">  New: {getDisplayValue(newData)}</div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {hoveredPoint.changeInfo.changeDetails.otherChanges && hoveredPoint.changeInfo.changeDetails.otherChanges.length > 0 && (
@@ -1428,17 +1549,45 @@ function RealtimeChartBase({
         <div className="text-[9px] text-gray-500 dark:text-gray-400 cursor-help">
           Legend
         </div>
-        <div className="absolute bottom-4 left-0 hidden group-hover:block bg-black/90 dark:bg-gray-800/95 text-white p-2 rounded shadow-lg z-20 whitespace-nowrap">
-          <div className="text-[10px] space-y-0.5">
-            <div><span className="font-mono font-bold">R</span> - RSK hash</div>
-            <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
-            <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
-            <div><span className="font-mono font-bold">S</span> - Syscoin hash</div>
-            <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
-            <div><span className="font-mono font-bold">P</span> - Prev hash</div>
-            <div><span className="font-mono font-bold">H</span> - Height</div>
-            <div><span className="font-mono font-bold">O</span> - Other changes</div>
-            <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate template</div>
+        <div className="absolute bottom-6 left-0 hidden group-hover:block bg-black/95 text-white p-3 rounded-lg shadow-xl z-30 min-w-max">
+          <div className="text-[10px] flex flex-row gap-6">
+            <div className="flex flex-col space-y-0.5">
+              <div className="font-bold mb-1 text-blue-300 text-center">Core Fields</div>
+              <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
+              <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
+              <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
+              <div><span className="font-mono font-bold">P</span> - Prev hash</div>
+              <div><span className="font-mono font-bold">H</span> - Height</div>
+              <div><span className="font-mono font-bold">V</span> - Version</div>
+              <div><span className="font-mono font-bold">N</span> - nBits</div>
+              <div><span className="font-mono font-bold">E</span> - Extranonce2 length</div>
+            </div>
+            <div className="flex flex-col space-y-0.5">
+              <div className="font-bold mb-1 text-green-300 text-center">Transaction Fields</div>
+              <div><span className="font-mono font-bold">X</span> - TX version</div>
+              <div><span className="font-mono font-bold">L</span> - TX locktime</div>
+              <div><span className="font-mono font-bold">I</span> - Input sequence</div>
+              <div><span className="font-mono font-bold">W</span> - Witness nonce</div>
+              <div><span className="font-mono font-bold">U</span> - Output structure</div>
+              <div><span className="font-mono font-bold">K</span> - AuxPOW merkle size</div>
+              <div><span className="font-mono font-bold">J</span> - AuxPOW nonce</div>
+            </div>
+            <div className="flex flex-col space-y-0.5">
+              <div className="font-bold mb-1 text-yellow-300 text-center">OP_RETURN Protocols</div>
+              <div><span className="font-mono font-bold">R̶</span> - RSK Block</div>
+              <div><span className="font-mono font-bold">C̶</span> - CoreDAO</div>
+              <div><span className="font-mono font-bold">S̶</span> - Syscoin</div>
+              <div><span className="font-mono font-bold">H̶</span> - Hathor Network</div>
+              <div><span className="font-mono font-bold">E̶</span> - ExSat</div>
+              <div><span className="font-mono font-bold">O̶</span> - Omni</div>
+              <div><span className="font-mono font-bold">U̶</span> - Runestone</div>
+              <div><span className="font-mono font-bold">W̶</span> - WitnessCommitment</div>
+              <div><span className="font-mono font-bold">T̶</span> - Stacks Block</div>
+              <div><span className="font-mono font-bold">B̶</span> - BIP47 Payment</div>
+              <div><span className="font-mono font-bold">Ø̶</span> - Empty OP_RETURN</div>
+              <div><span className="font-mono font-bold">Ω̶</span> - Other OP_RETURN</div>
+              <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate</div>
+            </div>
           </div>
         </div>
       </div>

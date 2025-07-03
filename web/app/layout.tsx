@@ -6,6 +6,7 @@ import { DataStreamProvider } from "@/lib/DataStreamContext";
 import { BlocksProvider } from "@/lib/BlocksContext";
 import { VisualizationProvider } from "@/components/VisualizationContext";
 import { HistoricalDataProvider } from "@/lib/HistoricalDataContext";
+import { SelectedTemplateProvider } from "@/lib/SelectedTemplateContext";
 import ClientNavigation from "@/components/ClientNavigation";
 
 export const metadata: Metadata = {
@@ -23,14 +24,16 @@ export default function RootLayout({
           <DataStreamProvider>
             <BlocksProvider>
               <HistoricalDataProvider>
-                <GlobalMenuProvider>
-                  <VisualizationProvider>
-                    {/* ClientNavigation handles passing the blockHeight to Navigation */}
-                    <ClientNavigation>
-                      {children}
-                    </ClientNavigation>
-                  </VisualizationProvider>
-                </GlobalMenuProvider>
+                <SelectedTemplateProvider>
+                  <GlobalMenuProvider>
+                    <VisualizationProvider>
+                      {/* ClientNavigation handles passing the blockHeight to Navigation */}
+                      <ClientNavigation>
+                        {children}
+                      </ClientNavigation>
+                    </VisualizationProvider>
+                  </GlobalMenuProvider>
+                </SelectedTemplateProvider>
               </HistoricalDataProvider>
             </BlocksProvider>
           </DataStreamProvider>

@@ -8,7 +8,9 @@ import { useGlobalMenu } from "@/components/GlobalMenuContext";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { useBlocks } from "@/lib/BlocksContext";
 import { useVisualization } from "@/components/VisualizationContext";
+import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
 import VisualizationPanel from "@/components/VisualizationPanel";
+import BlockTemplateCard from "@/components/BlockTemplateCard";
 import HistoricalChartWrapper from "@/components/HistoricalChartWrapper";
 import HistoricalPoolTiming from "@/components/HistoricalPoolTiming";
 import CollapsibleRow from "@/components/CollapsibleRow";
@@ -25,6 +27,7 @@ export default function HeightPage() {
   const { isConnected } = useGlobalDataStream();
   const { resetBlocksState } = useBlocks();
   const { isPanelVisible } = useVisualization();
+  const { selectedTemplate, setSelectedTemplate } = useSelectedTemplate();
   
   // Set the menu content when the component mounts
   useEffect(() => {
@@ -46,6 +49,8 @@ export default function HeightPage() {
   const handleBlockClick = (height: number) => {
     // Special case for the being-mined block (height -1)
     if (height === -1) {
+      // Clear any selected template when switching to realtime view
+      setSelectedTemplate(null);
       // Reset blocks state before navigating
       resetBlocksState();
       // Navigate to the root URL for the being-mined block using client-side navigation
@@ -100,6 +105,25 @@ export default function HeightPage() {
             filterBlockHeight={blockHeight ?? undefined}
           />
         </div>
+        
+        {/* Selected Template Panel */}
+        {selectedTemplate && (
+          <div className="w-[600px] flex-shrink-0 border-l border-border bg-background overflow-auto">
+            <div className="p-4">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold">Selected Template Details</h2>
+                <button 
+                  onClick={() => setSelectedTemplate(null)}
+                  className="text-gray-500 hover:text-gray-700 text-xl font-bold w-6 h-6 flex items-center justify-center"
+                  title="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <BlockTemplateCard latestMessage={selectedTemplate} />
+            </div>
+          </div>
+        )}
         
         {/* Visualization Panel */}
         {isPanelVisible && (

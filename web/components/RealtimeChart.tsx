@@ -142,6 +142,11 @@ interface ChartDataPoint {
   changeInfo?: TemplateChangeResult;
   changeDisplay?: string;
   asciiTag?: string;
+  // Fields needed for asciiTag calculation
+  coinbase1?: string;
+  coinbase2?: string;
+  extranonce1?: string;
+  extranonce2_length?: number;
   [key: string]: unknown;
 }
 
@@ -817,12 +822,18 @@ function RealtimeChartBase({
             poolName,
             poolIndex,
             height: record.height || 0,
-            // Include other fields if needed
+            // Include other fields for display
             version: record.version,
             prev_hash: record.prev_hash,
             nbits: record.nbits,
             ntime: record.ntime,
             asciiTag,
+            // Fields needed for asciiTag calculation
+            coinbase1: record.coinbase1,
+            coinbase2: record.coinbase2,
+            extranonce1: record.extranonce1,
+            extranonce2_length: record.extranonce2_length,
+            clean_jobs: record.clean_jobs,
           });
         } catch {
           // Skip failed records silently
@@ -867,6 +878,7 @@ function RealtimeChartBase({
     });
   }, []);
   
+
   // Handle canvas mouse events
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -965,7 +977,7 @@ function RealtimeChartBase({
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
   }, []);
-  
+
   // Handle outside click to close options menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1135,7 +1147,12 @@ function RealtimeChartBase({
         ntime: item.ntime,
         changeInfo,
         changeDisplay,
-        asciiTag
+        asciiTag,
+        // Fields needed for asciiTag calculation
+        coinbase1: item.coinbase1,
+        coinbase2: item.coinbase2,
+        extranonce1: item.extranonce1,
+        extranonce2_length: item.extranonce2_length
       };
     });
     

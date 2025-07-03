@@ -56,7 +56,7 @@ export default function SankeyMenu({
     <>
       {/* Pause/Resume button */}
       <button
-        className="pause-button px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors duration-200 flex items-center mr-2"
+        className="pause-button flex items-center gap-2 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors duration-200 text-sm font-medium"
         onClick={handlePauseToggle}
         title={paused ? "Resume" : "Pause"}
       >

@@ -399,13 +399,14 @@ export default function SankeyDiagram({
             .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
             .attr("fill", "white") // White text for better contrast on colored nodes
-            .attr("stroke", "black") // Add black stroke
-            .attr("stroke-width", "0.5px") // Thin stroke width
+            .attr("stroke", "black") // Black stroke for outline
+            .attr("stroke-width", "1.2px") // Enhanced stroke width for better visibility
+            .attr("stroke-linejoin", "round") // Smooth stroke corners
             .attr("paint-order", "stroke")
             .attr("font-size", "11px")
             .attr("font-weight", "600")
             .attr("pointer-events", "none") // Prevent interfering with node click/hover events
-            .attr("text-shadow", "0px 0px 3px rgba(0,0,0,0.7)") // Text shadow for better readability
+            .style("text-shadow", "0px 0px 3px rgba(0,0,0,0.6), 1px 1px 1px rgba(0,0,0,0.4)") // Subtle shadow for enhanced readability
             .text(label);
         });
       }

@@ -450,7 +450,7 @@ export default function SankeyDiagram({
           // Create text element in the labels group
           labelsGroup.append("text")
             .attr("x", xPosition)
-            .attr("y", d.y0 + nodeHeight / 2 + 4) // +4 for better vertical centering
+            .attr("y", d.y0 + nodeHeight / 2) // Perfect vertical center using dominant-baseline
             .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
             .attr("fill", "white") // White text for better contrast on colored nodes

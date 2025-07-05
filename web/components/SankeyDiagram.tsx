@@ -354,10 +354,66 @@ export default function SankeyDiagram({
       
 
       
-      // Add node labels if enabled
+      // Render connecting lines BEFORE node labels to ensure proper z-order
+      if (svg && nodes && sankeyDataProcessor) {
+        // Create a group specifically for connecting lines (behind everything else)
+        const connectingLinesGroup = svg.append("g")
+          .attr("class", "connecting-lines-group");
+        
+        // Get pool-to-branch mapping
+        const poolToLastBranchMap = sankeyDataProcessor.getLastMerkleBranchesForPools();
+        
+        if (poolToLastBranchMap.size > 0) {
+          // Group pools by their last merkle branch
+          const branchToPoolsMap = new Map<string, string[]>();
+          
+          poolToLastBranchMap.forEach((branchName, poolName) => {
+            if (!branchToPoolsMap.has(branchName)) {
+              branchToPoolsMap.set(branchName, []);
+            }
+            branchToPoolsMap.get(branchName)!.push(poolName);
+          });
+          
+          // Find branch nodes
+          const branchNodes = nodes.filter((n: any) => n.type === 'branch');
+          
+          // Add connecting lines for each branch with pools
+          branchToPoolsMap.forEach((poolNames, branchName) => {
+            // Find the node for this branch
+            let branchNode = branchNodes.find((node: any) => node.name === branchName);
+            if (!branchNode) {
+              branchNode = branchNodes.find((node: any) => 
+                node.name.toLowerCase() === branchName.toLowerCase()
+              );
+            }
+            
+            if (branchNode) {
+              const nodeX = branchNode.x1; // right edge
+              const nodeY = branchNode.y0 + ((branchNode.y1 - branchNode.y0) / 2); // center
+              const LABEL_OFFSET_X = 20;
+              
+              // Add the connecting line
+              connectingLinesGroup.append("line")
+                .attr("x1", nodeX)
+                .attr("y1", nodeY)
+                .attr("x2", nodeX + LABEL_OFFSET_X - 5)
+                .attr("y2", nodeY)
+                .attr("stroke", theme === 'dark' ? '#aaa' : '#666')
+                .attr("stroke-width", 1.5)
+                .attr("stroke-dasharray", "3,2");
+            }
+          });
+        }
+      }
+      
+      // Add node labels if enabled - using separate group for proper z-order
       if (showLabels) {
-        // Use individual text elements for each node for better visibility
-        nodeGroup.each(function(d: any) {
+        // Create a separate group for all merkle branch labels (renders after connecting lines)
+        const labelsGroup = svg.append("g")
+          .attr("class", "merkle-branch-labels-group");
+        
+        // Process each node for labels
+        nodes.forEach((d: any) => {
           // Skip if no data or dimensions
           if (!d || d.x0 === undefined || d.y0 === undefined) return;
           
@@ -375,27 +431,26 @@ export default function SankeyDiagram({
           const isRightEdge = d.x1 > width - 30; // Node is within 30px of the right edge
           
           // Calculate position and text-anchor based on node position
-          let xPosition, textAnchor, padding;
+          let xPosition, textAnchor;
           
           if (isLeftEdge) {
             // For left edge nodes, position text inside the node with padding and align left
-            xPosition = 5; // 5px padding from left edge of node
+            xPosition = d.x0 + 5; // 5px padding from left edge of node
             textAnchor = "start";
           } else if (isRightEdge) {
             // For right edge nodes, position text inside the node with padding and align right
-            xPosition = nodeWidth - 5; // 5px padding from right edge of node
+            xPosition = d.x1 - 5; // 5px padding from right edge of node
             textAnchor = "end";
           } else {
             // For center nodes, keep centered
-            xPosition = nodeWidth / 2;
+            xPosition = d.x0 + nodeWidth / 2;
             textAnchor = "middle";
           }
           
-          // Create text element
-          d3.select(this)
-            .append("text")
+          // Create text element in the labels group
+          labelsGroup.append("text")
             .attr("x", xPosition)
-            .attr("y", nodeHeight / 2 + 4) // +4 for better vertical centering
+            .attr("y", d.y0 + nodeHeight / 2 + 4) // +4 for better vertical centering
             .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
             .attr("fill", "white") // White text for better contrast on colored nodes

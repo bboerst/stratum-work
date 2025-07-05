@@ -245,15 +245,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
           .attr("class", "pool-label")
           .attr("transform", `translate(${x}, ${y})`);
         
-        // Add connecting line
-        labelGroup.append("line")
-          .attr("x1", -LABEL_OFFSET_X) // Connect from the node edge
-          .attr("y1", 0) // Center of node
-          .attr("x2", -5) // Small offset before the label
-          .attr("y2", 0)
-          .attr("stroke", theme === 'dark' ? '#aaa' : '#666')
-          .attr("stroke-width", 1.5)
-          .attr("stroke-dasharray", "3,2");
+        // Note: Connecting lines are now rendered in SankeyDiagram.tsx for proper z-order
           
         // Create the background rectangle with equal padding
         labelGroup.append("rect")

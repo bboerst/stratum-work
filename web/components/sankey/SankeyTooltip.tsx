@@ -97,14 +97,42 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
           {data.connectedPools.length > 0 && (
             <>
               <div style={{ marginTop: '8px', fontWeight: 'bold' }}>Pool Connections:</div>
-              {data.connectedPools.map((pool, i) => (
-                <div 
-                  key={`pool-${i}`} 
-                  style={{ paddingLeft: '10px', display: 'flex', alignItems: 'center', margin: '2px 0' }}
-                >
-                  <span style={{ marginRight: '4px' }}>-</span> {pool}
+              <div style={{ display: 'flex', marginTop: '4px' }}>
+                {/* Left column */}
+                <div style={{ flex: 1, paddingRight: '16px', minWidth: '120px' }}>
+                  {data.connectedPools
+                    .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
+                    .map((pool, i) => {
+                      const originalIndex = i * 2; // Convert back to original index
+                      return (
+                        <div 
+                          key={`pool-left-${originalIndex}`} 
+                          style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                        >
+                          {originalIndex + 1}. {pool}
+                        </div>
+                      );
+                    })
+                  }
                 </div>
-              ))}
+                {/* Right column */}
+                <div style={{ flex: 1, paddingLeft: '16px', minWidth: '120px' }}>
+                  {data.connectedPools
+                    .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
+                    .map((pool, i) => {
+                      const originalIndex = i * 2 + 1; // Convert back to original index
+                      return (
+                        <div 
+                          key={`pool-right-${originalIndex}`} 
+                          style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                        >
+                          {originalIndex + 1}. {pool}
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              </div>
             </>
           )}
         </>
@@ -126,7 +154,7 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
         borderRadius: '4px',
         padding: '8px',
         pointerEvents: 'none',
-        maxWidth: '250px',
+        maxWidth: '450px',
         zIndex: 1000,
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         transition: 'opacity 0.2s'

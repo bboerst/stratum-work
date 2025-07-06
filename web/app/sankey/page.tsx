@@ -66,15 +66,6 @@ export default function SankeyPage() {
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
         <h1 className="text-2xl font-bold mb-6">Mining Data Flow Visualization</h1>
-        <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-md text-blue-800 dark:text-blue-200">
-            This Sankey diagram shows the flow of data from mining pools to their merkle branches.
-            The width of each link represents the number of connections between nodes.
-            {paused && (
-              <div className="mt-2 font-bold">
-                ⚠️ Diagram updates are currently paused. Click the Resume button to see live updates.
-              </div>
-            )}
-          </div>
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 
@@ -109,6 +100,21 @@ export default function SankeyPage() {
               />
             </div>
           )}
+        </div>
+        
+        {/* Description moved below diagram container */}
+        <div className="mt-4 p-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-md">
+          <div className="text-blue-800 dark:text-blue-200">
+            This interactive Sankey diagram traces how mining pools assemble and broadcast block templates via Stratum, showing the relationship between pools and their Merkle branches. <strong>Continuous streaming</strong> keeps the visualization current, so you can watch as block-template elements shift between pools and spot emerging patterns in how those templates are constructed.<br /><br />
+            
+            <strong>Interactions:</strong> Hover over elements to see tooltips displaying similarity scores between pool block templates. Click any Merkle branch node to copy its full hash to your clipboard—a green flash confirms the copy.<br /><br />
+            
+            <strong>Menu controls:</strong><br />
+            ⏯️ Pause/Resume real-time data<br />
+            ⚙️ Settings (light/dark mode, toggle labels, stats, raw events)<br /><br />
+            
+            <strong>Template Similarity:</strong> Following <em>b10c's research</em>, similarity scores are calculated by comparing the Merkle branches pools send in Stratum jobs. A score of 0.92 means two pools share 92% of their block template structure, indicating potential coordination or shared infrastructure between mining operations.
+          </div>
         </div>
       </div>
     </main>

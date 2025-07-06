@@ -357,6 +357,15 @@ export class SankeyDataProcessor {
   }
   
   /**
+   * Get the ordered merkle branches for a specific pool
+   * @param poolName - Name of the pool
+   * @returns Array of merkle branch hashes in their original order
+   */
+  public getMerkleBranchesForPool(poolName: string): string[] {
+    return this.lastPoolEvents.get(poolName) || [];
+  }
+
+  /**
    * Get the last merkle branch for each pool
    * @returns Map of pool names to their last merkle branch names
    */

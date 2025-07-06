@@ -34,6 +34,25 @@ export default function SankeyPage() {
     return filterByType(StreamDataType.STRATUM_V1);
   }, [filterByType, data]);
   
+  // Calculate dynamic height based on pool count using square root scaling
+  const dynamicHeight = useMemo(() => {
+    const calculateHeight = (poolCount: number): number => {
+      const baseHeight = 200;
+      const maxHeight = 1400;
+      const multiplier = 190; // Calculated to reach ~1400px at 40 pools with baseHeight = 200
+      const calculatedHeight = baseHeight + (Math.sqrt(poolCount) * multiplier);
+      return Math.min(calculatedHeight, maxHeight);
+    };
+    
+    // Count unique pools from the data
+    const poolCount = new Set(
+      stratumV1Data
+        .filter(item => item.type === StreamDataType.STRATUM_V1)
+        .map(item => item.data.pool_name)
+    ).size;
+    return calculateHeight(Math.max(poolCount, 1)); // Ensure minimum of 1 pool for calculation
+  }, [stratumV1Data]);
+  
   // Persist showStatus and showRawEvents to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -71,7 +90,7 @@ export default function SankeyPage() {
                 
           <SankeyDiagram 
             
-            height={700}
+            height={dynamicHeight}
             data={stratumV1Data}
             showLabels={showLabels}
             onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}

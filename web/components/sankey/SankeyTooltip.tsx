@@ -178,10 +178,7 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
       return (
         <>
           <div style={{ fontWeight: 'bold' }}>
-            Merkle Branch {data.branchIndex}:<br />
-            <div style={{ paddingLeft: '10px', display: 'flex', alignItems: 'center', margin: '2px 0' }}>
-              <span style={{ marginRight: '4px' }}>&gt;</span> {hashStart}
-            </div>
+            Merkle Branch {data.branchIndex}: {hashStart}
             <div style={{ fontSize: '10px', marginTop: '2px', opacity: 0.8 }}>
               (Click to copy full hash)
             </div>
@@ -191,102 +188,141 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
           {similarityScores.length > 0 && (
             <>
               <div style={{ marginTop: '8px', fontWeight: 'bold' }}>Similarity Scores:</div>
-              <div style={{ display: 'flex', marginTop: '4px' }}>
-                {/* Left column */}
-                <div style={{ flex: 1, paddingRight: '8px', minWidth: '300px' }}>
-                  {similarityScores
-                    .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
-                    .map((similarity, i) => {
-                      const originalIndex = i * 2; // Convert back to original index
-                      return (
-                        <div 
-                          key={`similarity-left-${originalIndex}`}
-                          style={{ 
-                            display: 'block',
-                            margin: '1px 0', 
-                            fontSize: '12px',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            ...getSimilarityColor(similarity.score)
-                          }}
-                          title={`${similarity.poolA} ↔ ${similarity.poolB}: ${formatPercentage(similarity.score)}`}
-                        >
-                          {similarity.poolA} ↔ {similarity.poolB}: {formatPercentage(similarity.score)}
-                        </div>
-                      );
-                    })
-                  }
+              {similarityScores.length <= 10 ? (
+                // Single column layout for 10 or fewer pairs
+                <div style={{ marginTop: '4px' }}>
+                  {similarityScores.map((similarity, i) => (
+                    <div 
+                      key={`similarity-${i}`}
+                      style={{ 
+                        display: 'block',
+                        margin: '1px 0', 
+                        fontSize: '12px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        ...getSimilarityColor(similarity.score)
+                      }}
+                      title={`${similarity.poolA} ↔ ${similarity.poolB}: ${formatPercentage(similarity.score)}`}
+                    >
+                      {similarity.poolA} ↔ {similarity.poolB}: {formatPercentage(similarity.score)}
+                    </div>
+                  ))}
                 </div>
-                {/* Right column */}
-                <div style={{ flex: 1, paddingLeft: '8px', minWidth: '300px' }}>
-                  {similarityScores
-                    .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
-                    .map((similarity, i) => {
-                      const originalIndex = i * 2 + 1; // Convert back to original index
-                      return (
-                        <div 
-                          key={`similarity-right-${originalIndex}`}
-                          style={{ 
-                            display: 'block',
-                            margin: '1px 0', 
-                            fontSize: '12px',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            ...getSimilarityColor(similarity.score)
-                          }}
-                          title={`${similarity.poolA} ↔ ${similarity.poolB}: ${formatPercentage(similarity.score)}`}
-                        >
-                          {similarity.poolA} ↔ {similarity.poolB}: {formatPercentage(similarity.score)}
-                        </div>
-                      );
-                    })
-                  }
+              ) : (
+                // Two column layout for more than 10 pairs
+                <div style={{ display: 'flex', marginTop: '4px' }}>
+                  {/* Left column */}
+                  <div style={{ flex: 1, paddingRight: '8px', minWidth: '300px' }}>
+                    {similarityScores
+                      .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
+                      .map((similarity, i) => {
+                        const originalIndex = i * 2; // Convert back to original index
+                        return (
+                          <div 
+                            key={`similarity-left-${originalIndex}`}
+                            style={{ 
+                              display: 'block',
+                              margin: '1px 0', 
+                              fontSize: '12px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              ...getSimilarityColor(similarity.score)
+                            }}
+                            title={`${similarity.poolA} ↔ ${similarity.poolB}: ${formatPercentage(similarity.score)}`}
+                          >
+                            {similarity.poolA} ↔ {similarity.poolB}: {formatPercentage(similarity.score)}
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
+                  {/* Right column */}
+                  <div style={{ flex: 1, paddingLeft: '8px', minWidth: '300px' }}>
+                    {similarityScores
+                      .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
+                      .map((similarity, i) => {
+                        const originalIndex = i * 2 + 1; // Convert back to original index
+                        return (
+                          <div 
+                            key={`similarity-right-${originalIndex}`}
+                            style={{ 
+                              display: 'block',
+                              margin: '1px 0', 
+                              fontSize: '12px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              ...getSimilarityColor(similarity.score)
+                            }}
+                            title={`${similarity.poolA} ↔ ${similarity.poolB}: ${formatPercentage(similarity.score)}`}
+                          >
+                            {similarity.poolA} ↔ {similarity.poolB}: {formatPercentage(similarity.score)}
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
 
           {data.connectedPools.length > 0 && (
             <>
               <div style={{ marginTop: '8px', fontWeight: 'bold' }}>Pool Connections:</div>
-              <div style={{ display: 'flex', marginTop: '4px' }}>
-                {/* Left column */}
-                <div style={{ flex: 1, paddingRight: '16px', minWidth: '120px' }}>
-                  {data.connectedPools
-                    .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
-                    .map((pool, i) => {
-                      const originalIndex = i * 2; // Convert back to original index
-                      return (
-                        <div 
-                          key={`pool-left-${originalIndex}`} 
-                          style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
-                        >
-                          {originalIndex + 1}. {pool}
-                        </div>
-                      );
-                    })
-                  }
+              {similarityScores.length <= 10 ? (
+                // Single column layout for 10 or fewer similarity score pairs
+                <div style={{ marginTop: '4px' }}>
+                  {data.connectedPools.map((pool, i) => (
+                    <div 
+                      key={`pool-${i}`} 
+                      style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                    >
+                      {i + 1}. {pool}
+                    </div>
+                  ))}
                 </div>
-                {/* Right column */}
-                <div style={{ flex: 1, paddingLeft: '16px', minWidth: '120px' }}>
-                  {data.connectedPools
-                    .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
-                    .map((pool, i) => {
-                      const originalIndex = i * 2 + 1; // Convert back to original index
-                      return (
-                        <div 
-                          key={`pool-right-${originalIndex}`} 
-                          style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
-                        >
-                          {originalIndex + 1}. {pool}
-                        </div>
-                      );
-                    })
-                  }
+              ) : (
+                // Two column layout for more than 10 similarity score pairs
+                <div style={{ display: 'flex', marginTop: '4px' }}>
+                  {/* Left column */}
+                  <div style={{ flex: 1, paddingRight: '16px', minWidth: '120px' }}>
+                    {data.connectedPools
+                      .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
+                      .map((pool, i) => {
+                        const originalIndex = i * 2; // Convert back to original index
+                        return (
+                          <div 
+                            key={`pool-left-${originalIndex}`} 
+                            style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                          >
+                            {originalIndex + 1}. {pool}
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
+                  {/* Right column */}
+                  <div style={{ flex: 1, paddingLeft: '16px', minWidth: '120px' }}>
+                    {data.connectedPools
+                      .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
+                      .map((pool, i) => {
+                        const originalIndex = i * 2 + 1; // Convert back to original index
+                        return (
+                          <div 
+                            key={`pool-right-${originalIndex}`} 
+                            style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                          >
+                            {originalIndex + 1}. {pool}
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </>
@@ -308,7 +344,8 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
         borderRadius: '4px',
         padding: '8px',
         pointerEvents: 'none',
-        maxWidth: similarityScores.length > 0 ? '700px' : '450px',
+        maxWidth: similarityScores.length > 10 ? '700px' : '450px',
+        minWidth: similarityScores.length > 0 ? '300px' : 'auto',
         zIndex: 1000,
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         transition: 'opacity 0.2s'

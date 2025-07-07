@@ -106,7 +106,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       });
       
       // Sort pools alphabetically within each branch group
-      branchToPoolsMap.forEach((pools, branch) => {
+      branchToPoolsMap.forEach((pools) => {
         pools.sort(); // Sort alphabetically
       });
       

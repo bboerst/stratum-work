@@ -93,14 +93,19 @@ export default function SankeyDiagram({
       setTooltipPosition(null);
       
       // Format node label
-      const formatNodeLabel = (node: any): string => {
+      interface NodeWithTypeAndName {
+        type: string;
+        name: string;
+        branchIndex?: number;
+      }
+      const formatNodeLabel = (node: NodeWithTypeAndName): string => {
         if (node.type === 'pool') return node.name;
         // For merkle branches, just show the hash part without the MB prefix
         return node.name.substring(0, 6).toLowerCase();
       };
       
       // Find pools that use this node
-      const findConnectedPools = (node: any): string[] => {
+      const findConnectedPools = (node: NodeWithTypeAndName): string[] => {
         // For pool nodes, there are no "used by pools" (they are pools themselves)
         if (node.type === 'pool') return [];
         
@@ -174,7 +179,7 @@ export default function SankeyDiagram({
         .join("path")
         .attr("d", sankeyLinkHorizontal() as any)
         .attr("stroke", colors.link)
-        .attr("stroke-width", (d: any) => Math.max(1, d.width))
+        .attr("stroke-width", (d: unknown) => Math.max(1, (d as { width: number }).width))
         .attr("fill", "none")
         .attr("opacity", 0.7);
       
@@ -188,20 +193,20 @@ export default function SankeyDiagram({
         .selectAll("g")
         .data(nodes)
         .join("g")
-        .attr("transform", (d: any) => `translate(${d.x0 || 0},${d.y0 || 0})`);
+        .attr("transform", (d: unknown) => `translate(${(d as { x0?: number; y0?: number }).x0 || 0},${(d as { x0?: number; y0?: number }).y0 || 0})`);
       
       // Add node rectangles with hover functionality
       nodeGroup.append("rect")
-        .attr("width", (d: any) => (d.x1 || 0) - (d.x0 || 0))
-        .attr("height", (d: any) => (d.y1 || 0) - (d.y0 || 0))
-        .attr("fill", (d: any) => {
+        .attr("width", (d: unknown) => ((d as { x1?: number; x0?: number }).x1 || 0) - ((d as { x1?: number; x0?: number }).x0 || 0))
+        .attr("height", (d: unknown) => ((d as { y1?: number; y0?: number }).y1 || 0) - ((d as { y1?: number; y0?: number }).y0 || 0))
+        .attr("fill", (d: NodeWithTypeAndName) => {
           if (d.type === 'pool') return colors.poolNode;
           // Use the utility function to get a consistent color with caching
           return getBranchColor(d.name);
         })
         .attr("stroke", colors.nodeStroke)
         .attr("cursor", "pointer")
-        .on("click", function(event: MouseEvent, d: any) {
+        .on("click", function(event: MouseEvent, d: NodeWithTypeAndName) {
           // Only copy for merkle branch nodes, not pool nodes
           if (d.type !== 'pool') {
             const fullHash = d.name.toLowerCase();
@@ -220,7 +225,7 @@ export default function SankeyDiagram({
             });
           }
         })
-        .on("mouseover", function(event: MouseEvent, d: any) {
+        .on("mouseover", function(event: MouseEvent, d: NodeWithTypeAndName) {
           const label = formatNodeLabel(d);
           
           // Find pools connected to this node
@@ -237,7 +242,7 @@ export default function SankeyDiagram({
             setTooltipData({
               type: 'branch',
               name: d.name,
-              branchIndex: d.branchIndex,
+              branchIndex: d.branchIndex || 0,
               connectedPools: connectedPools
             });
           }
@@ -279,14 +284,14 @@ export default function SankeyDiagram({
           });
           
           // Find branch nodes
-          const branchNodes = nodes.filter((n: any) => n.type === 'branch');
+          const branchNodes = nodes.filter((n: NodeWithTypeAndName) => n.type === 'branch');
           
           // Add connecting lines for each branch with pools
           branchToPoolsMap.forEach((poolNames, branchName) => {
             // Find the node for this branch
-            let branchNode = branchNodes.find((node: any) => node.name === branchName);
+            let branchNode = branchNodes.find((node: NodeWithTypeAndName) => node.name === branchName);
             if (!branchNode) {
-              branchNode = branchNodes.find((node: any) => 
+              branchNode = branchNodes.find((node: NodeWithTypeAndName) => 
                 node.name.toLowerCase() === branchName.toLowerCase()
               );
             }
@@ -317,44 +322,44 @@ export default function SankeyDiagram({
           .attr("class", "merkle-branch-labels-group");
         
         // Process each node for labels
-        nodes.forEach((d: any) => {
+        nodes.forEach((d: unknown) => {
           // Skip if no data or dimensions
-          if (!d || d.x0 === undefined || d.y0 === undefined) return;
+          if (!d || (d as any).x0 === undefined || (d as any).y0 === undefined) return;
           
-          const nodeWidth = (d.x1 || 0) - (d.x0 || 0);
-          const nodeHeight = (d.y1 || 0) - (d.y0 || 0);
+          const nodeWidth = ((d as any).x1 || 0) - ((d as any).x0 || 0);
+          const nodeHeight = ((d as any).y1 || 0) - ((d as any).y0 || 0);
           
           // Skip nodes too small to show text
           if (nodeWidth < 10 || nodeHeight < 10) return;
           
           // Get label text
-          const label = formatNodeLabel(d);
+          const label = formatNodeLabel(d as NodeWithTypeAndName);
           
           // Detect if this is a left-edge or right-edge node
-          const isLeftEdge = d.x0 < 30; // Node is within 30px of the left edge
-          const isRightEdge = d.x1 > width - 30; // Node is within 30px of the right edge
+          const isLeftEdge = (d as any).x0 < 30; // Node is within 30px of the left edge
+          const isRightEdge = (d as any).x1 > width - 30; // Node is within 30px of the right edge
           
           // Calculate position and text-anchor based on node position
           let xPosition, textAnchor;
           
           if (isLeftEdge) {
             // For left edge nodes, position text inside the node with padding and align left
-            xPosition = d.x0 + 5; // 5px padding from left edge of node
+            xPosition = (d as any).x0 + 5; // 5px padding from left edge of node
             textAnchor = "start";
           } else if (isRightEdge) {
             // For right edge nodes, position text inside the node with padding and align right
-            xPosition = d.x1 - 5; // 5px padding from right edge of node
+            xPosition = (d as any).x1 - 5; // 5px padding from right edge of node
             textAnchor = "end";
           } else {
             // For center nodes, keep centered
-            xPosition = d.x0 + nodeWidth / 2;
+            xPosition = (d as any).x0 + nodeWidth / 2;
             textAnchor = "middle";
           }
           
           // Create text element in the labels group
           labelsGroup.append("text")
             .attr("x", xPosition)
-            .attr("y", d.y0 + nodeHeight / 2) // Perfect vertical center using dominant-baseline
+            .attr("y", (d as any).y0 + nodeHeight / 2) // Perfect vertical center using dominant-baseline
             .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
             .attr("fill", "white") // White text for better contrast on colored nodes

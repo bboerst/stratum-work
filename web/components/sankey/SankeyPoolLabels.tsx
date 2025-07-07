@@ -1,12 +1,22 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback } from "react";
 
+
+interface SankeyNode {
+  type: string;
+  name: string;
+  x0?: number;
+  x1?: number;
+  y0?: number;
+  y1?: number;
+}
 
 interface SankeyPoolLabelsProps {
   // Core data structures
-  nodes: any[];
-  sankeyDataProcessor: any;
+  nodes: SankeyNode[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sankeyDataProcessor: any;  // Keep as any for D3 data processor with methods
   
   // Layout & positioning information
   width: number;
@@ -20,7 +30,8 @@ interface SankeyPoolLabelsProps {
   };
   
   // D3 selection for rendering
-  svg: any;  // D3 selection of the SVG element
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svg: any;  // Keep as any for D3 selection with methods
 }
 
 /**
@@ -56,18 +67,18 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
     
     try {
       // Find the absolute rightmost branch node position for alignment
-      const branchNodes = nodes.filter((n: any) => n.type === 'branch');
+      const branchNodes = nodes.filter((n: SankeyNode) => n.type === 'branch');
 
       
       // Create a map from branch name to node index
-      const branchNameToNode = new Map();
-      branchNodes.forEach((node: any) => {
+      const branchNameToNode = new Map<string, SankeyNode>();
+      branchNodes.forEach((node: SankeyNode) => {
         branchNameToNode.set(node.name, node);
       });
       
       // Group branch nodes by their horizontal position to identify columns
-      const branchNodesByX = new Map<number, any[]>();
-      branchNodes.forEach((node: any) => {
+      const branchNodesByX = new Map<number, SankeyNode[]>();
+      branchNodes.forEach((node: SankeyNode) => {
         const x = Math.round(node.x1 || 0);
         if (!branchNodesByX.has(x)) {
           branchNodesByX.set(x, []);
@@ -98,7 +109,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       // Group pools by their last merkle branch
       const branchToPoolsMap = new Map<string, string[]>();
       
-      poolToLastBranchMap.forEach((branchName, poolName) => {
+      poolToLastBranchMap.forEach((branchName: string, poolName: string) => {
         if (!branchToPoolsMap.has(branchName)) {
           branchToPoolsMap.set(branchName, []);
         }
@@ -141,8 +152,8 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
         }
         
         // Get the position for this node
-        const nodeX = branchNode.x1; // right edge
-        const nodeY = branchNode.y0 + ((branchNode.y1 - branchNode.y0) / 2); // vertical center
+        const nodeX = branchNode.x1 || 0; // right edge, default to 0 if undefined
+        const nodeY = (branchNode.y0 || 0) + (((branchNode.y1 || 0) - (branchNode.y0 || 0)) / 2); // vertical center
         
         console.log(`Found node for branch ${branchName} at position (${nodeX}, ${nodeY}) with pools: ${poolNames.join(', ')}`);
         
@@ -160,14 +171,14 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
         console.warn('No pool labels found through normal mapping, using fallback approach');
         
         // Calculate global max X for fallback alignment
-        const globalMaxX = Math.max(...nodes.map((n: any) => n.x1 || 0)) + 5;
+        const globalMaxX = Math.max(...nodes.map((n: SankeyNode) => n.x1 || 0)) + 5;
         
         // Get all pools directly from the data processor
         const poolToBranch = sankeyDataProcessor.getLastMerkleBranchesForPools();
         
         // Render labels directly using the pool information
         let verticalOffset = 50; // Start with an offset from top
-        poolToBranch.forEach((branchName, poolName) => {
+        poolToBranch.forEach((branchName: string, poolName: string) => {
           console.log(`Direct pool label: ${poolName} (branch: ${branchName})`);
           
           poolLabelsToAdd.push({

@@ -26,7 +26,7 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { filterByType, data, paused, setPaused } = useGlobalDataStream();
+  const { filterByType, paused, setPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
   
   // Get only Stratum V1 data for this visualization

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as d3 from "d3";
 import { sankeyLinkHorizontal } from "d3-sankey";
 import { sankeyDataProcessor } from "@/lib/sankeyDataProcessor";
@@ -78,7 +78,7 @@ export default function SankeyDiagram({
 
   
   // Render the Sankey diagram
-  const renderDiagram = () => {
+  const renderDiagram = useCallback(() => {
     try {
       // Clear previous rendering
       if (svgRef.current) {
@@ -97,6 +97,11 @@ export default function SankeyDiagram({
         type: string;
         name: string;
         branchIndex?: number;
+        // D3 Sankey node positioning properties
+        x0?: number;
+        x1?: number;
+        y0?: number;
+        y1?: number;
       }
       const formatNodeLabel = (node: NodeWithTypeAndName): string => {
         if (node.type === 'pool') return node.name;
@@ -177,6 +182,7 @@ export default function SankeyDiagram({
         .selectAll("path")
         .data(links)
         .join("path")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .attr("d", sankeyLinkHorizontal() as any)
         .attr("stroke", colors.link)
         .attr("stroke-width", (d: unknown) => Math.max(1, (d as { width: number }).width))
@@ -324,10 +330,10 @@ export default function SankeyDiagram({
         // Process each node for labels
         nodes.forEach((d: unknown) => {
           // Skip if no data or dimensions
-          if (!d || (d as any).x0 === undefined || (d as any).y0 === undefined) return;
+          if (!d || (d as NodeWithTypeAndName).x0 === undefined || (d as NodeWithTypeAndName).y0 === undefined) return;
           
-          const nodeWidth = ((d as any).x1 || 0) - ((d as any).x0 || 0);
-          const nodeHeight = ((d as any).y1 || 0) - ((d as any).y0 || 0);
+          const nodeWidth = ((d as NodeWithTypeAndName).x1 || 0) - ((d as NodeWithTypeAndName).x0 || 0);
+          const nodeHeight = ((d as NodeWithTypeAndName).y1 || 0) - ((d as NodeWithTypeAndName).y0 || 0);
           
           // Skip nodes too small to show text
           if (nodeWidth < 10 || nodeHeight < 10) return;
@@ -336,30 +342,30 @@ export default function SankeyDiagram({
           const label = formatNodeLabel(d as NodeWithTypeAndName);
           
           // Detect if this is a left-edge or right-edge node
-          const isLeftEdge = (d as any).x0 < 30; // Node is within 30px of the left edge
-          const isRightEdge = (d as any).x1 > width - 30; // Node is within 30px of the right edge
+          const isLeftEdge = (d as NodeWithTypeAndName).x0! < 30; // Node is within 30px of the left edge
+          const isRightEdge = (d as NodeWithTypeAndName).x1! > width - 30; // Node is within 30px of the right edge
           
           // Calculate position and text-anchor based on node position
           let xPosition, textAnchor;
           
           if (isLeftEdge) {
             // For left edge nodes, position text inside the node with padding and align left
-            xPosition = (d as any).x0 + 5; // 5px padding from left edge of node
+            xPosition = (d as NodeWithTypeAndName).x0! + 5; // 5px padding from left edge of node
             textAnchor = "start";
           } else if (isRightEdge) {
             // For right edge nodes, position text inside the node with padding and align right
-            xPosition = (d as any).x1 - 5; // 5px padding from right edge of node
+            xPosition = (d as NodeWithTypeAndName).x1! - 5; // 5px padding from right edge of node
             textAnchor = "end";
           } else {
             // For center nodes, keep centered
-            xPosition = (d as any).x0 + nodeWidth / 2;
+            xPosition = (d as NodeWithTypeAndName).x0! + nodeWidth / 2;
             textAnchor = "middle";
           }
           
           // Create text element in the labels group
           labelsGroup.append("text")
             .attr("x", xPosition)
-            .attr("y", (d as any).y0 + nodeHeight / 2) // Perfect vertical center using dominant-baseline
+            .attr("y", (d as NodeWithTypeAndName).y0! + nodeHeight / 2) // Perfect vertical center using dominant-baseline
             .attr("text-anchor", textAnchor)
             .attr("dominant-baseline", "middle")
             .attr("fill", "white") // White text for better contrast on colored nodes
@@ -393,7 +399,7 @@ export default function SankeyDiagram({
           theme: theme || 'light',
           colors: {
             poolLabel: colors.poolLabel,
-            ...colors as any  // Cast to any to satisfy index signature
+            ...(colors as unknown as Record<string, string>)  // Cast via unknown to satisfy index signature
           },
           svg
         });
@@ -432,7 +438,7 @@ export default function SankeyDiagram({
           .text(`Error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  };
+  }, [colors, width, height, setTooltipData, setTooltipPosition]);
   
   // Process global data stream events when they change
   useEffect(() => {

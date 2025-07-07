@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
-import * as d3 from "d3";
+import React, { useEffect } from "react";
+
 
 interface SankeyPoolLabelsProps {
   // Core data structures
@@ -57,7 +57,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
     try {
       // Find the absolute rightmost branch node position for alignment
       const branchNodes = nodes.filter((n: any) => n.type === 'branch');
-      const rightmostBranchX1 = Math.max(...branchNodes.map((n: any) => n.x1 || 0));
+
       
       // Create a map from branch name to node index
       const branchNameToNode = new Map();
@@ -201,7 +201,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       
       // Calculate vertical spacing for labels (if multiple pools share the same x-coordinate)
       const LINE_HEIGHT = 16; // Height per line of text
-      const LABEL_PADDING = 6; // Padding inside label box
+
       const LABEL_OFFSET_X = 20; // Horizontal offset from the node
       const FONT_SIZE = 12;
       const TEXT_PADDING = 1; // Minimal padding between text and box edge

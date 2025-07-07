@@ -165,7 +165,7 @@ export default function SankeyDiagram({
       const gridGroup = svg.append("g").attr("class", "merkle-branch-grid");
       
       // Add grid lines for each branch position
-      gridData.branchPositions.forEach(({ branchIndex, avgX, labelText }) => {
+      gridData.branchPositions.forEach(({ avgX, labelText }) => {
         // Add vertical grid line
         gridGroup.append("line")
           .attr("x1", avgX)

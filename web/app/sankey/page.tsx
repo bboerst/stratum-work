@@ -32,7 +32,7 @@ export default function SankeyPage() {
   // Get only Stratum V1 data for this visualization
   const stratumV1Data = useMemo(() => {
     return filterByType(StreamDataType.STRATUM_V1);
-  }, [filterByType, data]);
+  }, [filterByType]);
   
   // Calculate dynamic height based on pool count using square root scaling
   const dynamicHeight = useMemo(() => {
@@ -132,7 +132,7 @@ export default function SankeyPage() {
             ⏯️ Pause/Resume real-time data<br />
             ⚙️ Settings (light/dark mode, toggle labels, stats, raw events)<br /><br />
             
-            <strong>Template Similarity:</strong> Following <em>b10c's research</em>, similarity scores are calculated by comparing the Merkle branches pools send in Stratum jobs. A score of 0.92 means two pools share 92% of their block template structure, indicating potential coordination or shared infrastructure between mining operations.
+            <strong>Template Similarity:</strong> Following <em>b10c&apos;s research</em>, similarity scores are calculated by comparing the Merkle branches pools send in Stratum jobs. A score of 0.92 means two pools share 92% of their block template structure, indicating potential coordination or shared infrastructure between mining operations.
           </div>
         </div>
       </div>

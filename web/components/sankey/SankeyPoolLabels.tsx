@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect } from "react";
+import { Selection } from "d3-selection";
+import { SankeyDataProcessor } from "@/lib/sankeyDataProcessor";
 
 
 interface SankeyNode {
@@ -15,8 +17,7 @@ interface SankeyNode {
 interface SankeyPoolLabelsProps {
   // Core data structures
   nodes: SankeyNode[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sankeyDataProcessor: any;  // Keep as any for D3 data processor with methods
+  sankeyDataProcessor: SankeyDataProcessor;
   
   // Layout & positioning information
   width: number;
@@ -30,8 +31,7 @@ interface SankeyPoolLabelsProps {
   };
   
   // D3 selection for rendering
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  svg: any;  // Keep as any for D3 selection with methods
+  svg: Selection<SVGSVGElement | null, unknown, null, undefined>;
 }
 
 /**

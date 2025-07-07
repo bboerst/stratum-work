@@ -182,8 +182,7 @@ export default function SankeyDiagram({
         .selectAll("path")
         .data(links)
         .join("path")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .attr("d", sankeyLinkHorizontal() as any)
+        .attr("d", sankeyLinkHorizontal())
         .attr("stroke", colors.link)
         .attr("stroke-width", (d: unknown) => Math.max(1, (d as { width: number }).width))
         .attr("fill", "none")

@@ -1,7 +1,7 @@
 "use client";
 
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType, StratumV1Data } from "@/lib/types";
+import { StreamDataType } from '@/lib/types';
 import { useMemo, useState, useEffect } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";

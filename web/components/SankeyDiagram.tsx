@@ -2,8 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { sankey, sankeyLinkHorizontal, sankeyLeft } from "d3-sankey";
-import { sankeyDataProcessor, SankeyData, StratumV1Event } from "@/lib/sankeyDataProcessor";
+import { sankeyLinkHorizontal } from "d3-sankey";
+import { sankeyDataProcessor } from "@/lib/sankeyDataProcessor";
 import { StratumV1Data } from "@/lib/types";
 import { useSankeyColors } from '@/hooks/useSankeyColors';
 import { getBranchColor } from '@/utils/sankeyColors';
@@ -40,9 +40,7 @@ export default function SankeyDiagram({
     setError, 
     isConnected, 
     paused, 
-    setPaused, 
-    stratumV1Data, 
-    dataVersion 
+    stratumV1Data 
   } = useSankeyControls({ data });
   
   // Access theme for conditional rendering if needed
@@ -50,7 +48,7 @@ export default function SankeyDiagram({
   
   // Auto-detect data source: use static data prop if provided, otherwise live EventSource data
   const actualStratumV1Data = data && data.length > 0 ? data : stratumV1Data;
-  const hasStaticData = data && data.length > 0;
+
   
   // Update width when container size changes
   useEffect(() => {
@@ -75,25 +73,7 @@ export default function SankeyDiagram({
     };
   }, []);
   
-  // Initialize or reset the diagram
-  const initializeDiagram = () => {
-    try {
-      // Reset any previous data
-      sankeyDataProcessor.reset();
-      
-      // Process real data if available
-      if (actualStratumV1Data.length > 0) {
-        processRealData();
-      }
-      // Note: SankeyStates component handles empty state display
-      
-      // Clear any previous errors
-      setError(null);
-    } catch (err) {
-      console.error("Error initializing diagram:", err);
-      setError(`Error initializing diagram: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
+
   
   // Process data from the global data stream
   const processRealData = () => {
@@ -168,7 +148,7 @@ export default function SankeyDiagram({
       }
       
       // Use the layout hook to calculate sankey layout
-      const { nodes, links, gridData, layoutMetrics } = useSankeyLayout(width, height, data);
+      const { nodes, links, gridData } = useSankeyLayout(width, height, data);
       
       // Notify parent component about node/link counts
       if (onDataRendered && data.nodes && data.links) {
@@ -277,7 +257,7 @@ export default function SankeyDiagram({
       };
       
       // Get map of last branches to their pools
-      const lastBranchesMap = findLastBranchesForPools();
+
       
       // Add nodes
       const nodeGroup = svg.append("g")

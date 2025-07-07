@@ -437,14 +437,14 @@ export default function SankeyDiagram({
           .text(`Error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  }, [colors, width, height, setTooltipData, setTooltipPosition]);
+  }, [colors, width, height, setTooltipData, setTooltipPosition, onDataRendered, setError, showLabels, theme]);
   
   // Process global data stream events when they change
   useEffect(() => {
     if (actualStratumV1Data.length > 0) {
       renderDiagram();
     }
-  }, [actualStratumV1Data]);
+  }, [actualStratumV1Data, renderDiagram]);
   
   // Re-render when paused state changes
   useEffect(() => {
@@ -453,12 +453,12 @@ export default function SankeyDiagram({
     setTooltipPosition(null);
     // Preserve the showLabels state when re-rendering due to paused state changes
     renderDiagram();
-  }, [paused]);
+  }, [paused, renderDiagram]);
   
   // Re-render when showLabels changes
   useEffect(() => {
     renderDiagram();
-  }, [showLabels]);
+  }, [showLabels, renderDiagram]);
   
   // Re-render when theme/colors change
   useEffect(() => {
@@ -466,7 +466,7 @@ export default function SankeyDiagram({
     setTooltipData(null);
     setTooltipPosition(null);
     renderDiagram();
-  }, [colors]);
+  }, [colors, renderDiagram]);
   
 
   

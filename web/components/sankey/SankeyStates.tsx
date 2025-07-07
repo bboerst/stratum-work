@@ -30,33 +30,33 @@ export default function SankeyStates({
   colors,
 }: SankeyStatesProps) {
   
-  // Render empty diagram with message to SVG
-  const renderEmptyDiagram = () => {
-    if (!svgRef.current) return;
-    
-    // Clear the SVG
-    d3.select(svgRef.current).selectAll("*").remove();
-    
-    // Set background color via d3
-    d3.select(svgRef.current).style("background-color", colors.background);
-    
-    // Display a message if no data
-    d3.select(svgRef.current)
-      .append("text")
-      .attr("x", width / 2)
-      .attr("y", height / 2)
-      .attr("text-anchor", "middle")
-      .attr("fill", colors.text)
-      .attr("font-size", "16px")
-      .text("No data available");
-  };
-
   // Effect to handle empty state rendering
   useEffect(() => {
+    // Render empty diagram with message to SVG
+    const renderEmptyDiagram = () => {
+      if (!svgRef.current) return;
+      
+      // Clear the SVG
+      d3.select(svgRef.current).selectAll("*").remove();
+      
+      // Set background color via d3
+      d3.select(svgRef.current).style("background-color", colors.background);
+      
+      // Display a message if no data
+      d3.select(svgRef.current)
+        .append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2)
+        .attr("text-anchor", "middle")
+        .attr("fill", colors.text)
+        .attr("font-size", "16px")
+        .text("No data available");
+    };
+
     if (!error && hasData === false) {
       renderEmptyDiagram();
     }
-  }, [error, hasData, width, height, colors]);
+  }, [error, hasData, width, height, colors, svgRef]);
 
   return (
     <>

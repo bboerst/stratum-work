@@ -2,7 +2,7 @@
 
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from '@/lib/types';
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
 import SankeyMenu from "@/components/SankeyMenu";
@@ -53,6 +53,11 @@ export default function SankeyPage() {
     return calculateHeight(Math.max(poolCount, 1)); // Ensure minimum of 1 pool for calculation
   }, [stratumV1Data]);
   
+  // Wrap onDataRendered in useCallback to prevent unnecessary re-renders
+  const handleDataRendered = useCallback((nodes: number, links: number) => {
+    setNodeLinkCounts({ nodes, links });
+  }, []);
+  
   // Persist showStatus and showRawEvents to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -93,7 +98,7 @@ export default function SankeyPage() {
             height={dynamicHeight}
             data={stratumV1Data}
             showLabels={showLabels}
-            onDataRendered={(nodes, links) => setNodeLinkCounts({ nodes, links })}
+            onDataRendered={handleDataRendered}
           />
 
 {/* Data status below diagram */}

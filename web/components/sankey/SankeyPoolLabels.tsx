@@ -294,7 +294,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
     }
     
     return null;
-  }, [nodes, sankeyDataProcessor, svg, width, height, theme, colors]);
+  }, [nodes, sankeyDataProcessor, svg, height, theme, colors]);
   
   // Use effect to render labels when component mounts or inputs change
   useEffect(() => {

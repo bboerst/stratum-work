@@ -178,62 +178,7 @@ export default function SankeyDiagram({
         .attr("fill", "none")
         .attr("opacity", 0.7);
       
-      // Function to identify the last merkle branch for each pool using direct data from SankeyDataProcessor
-      const findLastBranchesForPools = (): Map<number, string[]> => {
-        const branchesToPools = new Map<number, string[]>();
-        
-        // Get pool to last merkle branch map directly from data processor
-        const poolToLastBranch = sankeyDataProcessor.getLastMerkleBranchesForPools();
-        
-        // Create a map from branch name to node index for quick lookups
-        const branchNameToIndex = new Map<string, number>();
-        nodes.forEach((node: any, index: number) => {
-          if (node.type === 'branch') {
-            branchNameToIndex.set(node.name, index);
-          }
-        });
 
-        // Get nodeIndex by name without case sensitivity
-        const getNodeIndexByName = (name: string): number | undefined => {
-          // Check for exact match first
-          if (branchNameToIndex.has(name)) {
-            return branchNameToIndex.get(name);
-          }
-          
-          // If no exact match, try case-insensitive comparison
-          const lowerName = name.toLowerCase();
-          for (const [key, index] of branchNameToIndex.entries()) {
-            if (key.toLowerCase() === lowerName) {
-              return index;
-            }
-          }
-          
-          return undefined;
-        };
-        
-        // Log what we're finding
-        console.log("Last branches for pools:", Object.fromEntries(poolToLastBranch));
-        
-        // Map each pool's last branch to its node index
-        poolToLastBranch.forEach((branchName, poolName) => {
-          // Find the node index for this branch name
-          const nodeIndex = getNodeIndexByName(branchName);
-          
-          if (nodeIndex !== undefined) {
-            // If we find the node, associate it with this pool
-            if (!branchesToPools.has(nodeIndex)) {
-              branchesToPools.set(nodeIndex, [poolName]);
-            } else {
-              branchesToPools.get(nodeIndex)!.push(poolName);
-            }
-            console.log(`Found last branch for pool ${poolName}: ${branchName} (node index ${nodeIndex})`);
-          } else {
-            console.warn(`Could not find node index for branch ${branchName} (pool ${poolName})`);
-          }
-        });
-        
-        return branchesToPools;
-      };
       
       // Get map of last branches to their pools
 

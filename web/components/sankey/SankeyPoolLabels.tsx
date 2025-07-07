@@ -208,7 +208,7 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       const TEXT_PADDING_HORIZONTAL = 4; // Equal horizontal padding for both sides
       
       // Add pool labels with nice styling and connecting lines
-      poolLabelsToAdd.forEach((labelInfo, index) => {
+      poolLabelsToAdd.forEach((labelInfo) => {
         // Calculate horizontal position to the right of the node
         const x = labelInfo.nodeX + LABEL_OFFSET_X;
         
@@ -228,7 +228,6 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
         
         // Set the vertical boundaries of our content
         const topEdge = -halfContentHeight;
-        const bottomEdge = halfContentHeight;
         
         // Ensure the label stays within the visible height area
         if (y + (contentHeight / 2) > height) {

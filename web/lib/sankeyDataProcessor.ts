@@ -441,7 +441,7 @@ export class SankeyDataProcessor {
         // Find any connection from this pool
         for (const [connectionKey, pools] of this.activeConnections.entries()) {
           if (pools.has(poolName)) {
-            const [sourceId, targetId] = connectionKey.split('-').map(id => parseInt(id));
+            const [, targetId] = connectionKey.split('-').map(id => parseInt(id));
             const targetNode = this.nodes[targetId];
             
             if (targetNode && targetNode.type === 'branch') {

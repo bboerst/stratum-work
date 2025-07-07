@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as d3 from "d3";
 import { sankeyLinkHorizontal } from "d3-sankey";
 import { sankeyDataProcessor } from "@/lib/sankeyDataProcessor";
-import { StratumV1Data } from "@/lib/types";
+import { StratumV1Data, StreamData, StreamDataType, BaseStreamData } from "@/lib/types";
 import { useSankeyColors } from '@/hooks/useSankeyColors';
 import { getBranchColor } from '@/utils/sankeyColors';
 import { useTheme } from 'next-themes';
@@ -16,7 +16,7 @@ import { useSankeyControls } from '@/hooks/useSankeyControls';
 
 interface SankeyDiagramProps {
   height: number;
-  data?: StratumV1Data[]; // Static/historical data (auto-detects vs live EventSource)
+  data?: StreamData[]; // StreamData array (will extract StratumV1Data internally)
   showLabels?: boolean;
   onDataRendered?: (nodeCount: number, linkCount: number) => void;
 }
@@ -46,8 +46,21 @@ export default function SankeyDiagram({
   // Access theme for conditional rendering if needed
   const { theme } = useTheme();
   
-  // Auto-detect data source: use static data prop if provided, otherwise live EventSource data
-  const actualStratumV1Data = data && data.length > 0 ? data : stratumV1Data;
+  // Extract StratumV1Data from StreamData (handle type conversion at component boundary)
+  const extractedStratumV1Data = useMemo(() => {
+    if (data && data.length > 0) {
+      // Extract StratumV1Data from provided StreamData
+      return data
+        .filter((item): item is BaseStreamData & { type: StreamDataType.STRATUM_V1, data: StratumV1Data } => 
+          item.type === StreamDataType.STRATUM_V1
+        )
+        .map(item => item.data);
+    }
+    return [];
+  }, [data]);
+  
+  // Auto-detect data source: use static data prop if provided, otherwise live EventSource data  
+  const actualStratumV1Data = extractedStratumV1Data.length > 0 ? extractedStratumV1Data : stratumV1Data;
 
   
   // Update width when container size changes

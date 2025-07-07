@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback } from "react";
 import { Selection } from "d3-selection";
 import { SankeyDataProcessor } from "@/lib/sankeyDataProcessor";
 
@@ -49,16 +49,11 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
   colors,
   svg
 }) => {
-  // Use effect to render labels when component mounts or inputs change
-  useEffect(() => {
-    renderPoolLabels();
-  }, [nodes, sankeyDataProcessor, width, height, theme, colors, svg]);
-  
   /**
    * Renders pool labels based on the pool-to-branch mapping from the data processor
    * @returns null - rendering is done via D3 directly to the SVG
    */
-  const renderPoolLabels = () => {
+  const renderPoolLabels = useCallback(() => {
     // Early exit if we don't have the required data
     if (!nodes || nodes.length === 0 || !svg || !sankeyDataProcessor) {
       console.warn("Missing required data for pool labels");
@@ -299,7 +294,12 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
     }
     
     return null;
-  };
+  }, [nodes, sankeyDataProcessor, svg, width, height, theme, colors]);
+  
+  // Use effect to render labels when component mounts or inputs change
+  useEffect(() => {
+    renderPoolLabels();
+  }, [nodes, sankeyDataProcessor, width, height, theme, colors, svg, renderPoolLabels]);
   
   // This component doesn't render anything directly - it manipulates the SVG via D3
   return null;

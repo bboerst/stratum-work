@@ -75,28 +75,7 @@ export default function SankeyDiagram({
   
 
   
-  // Process data from the global data stream
-  const processRealData = () => {
-    console.log("Processing data:", actualStratumV1Data.length, "events");
-    try {
-      if (actualStratumV1Data.length === 0) return;
 
-      // Process the data for Sankey diagram
-      actualStratumV1Data.forEach(event => {
-        try {
-          sankeyDataProcessor.processStratumV1Event(event);
-        } catch (err) {
-          console.error("Error processing event:", err);
-        }
-      });
-
-      // Render the diagram with the processed data
-      renderDiagram();
-    } catch (err) {
-      console.error("Error processing real data:", err);
-      setError(`Error processing data: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
   
   // Render the Sankey diagram
   const renderDiagram = () => {

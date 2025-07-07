@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, ReactNode, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+
 import { useDataStream } from "./useDataStream";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";

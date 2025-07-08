@@ -56,7 +56,6 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
   const renderPoolLabels = useCallback(() => {
     // Early exit if we don't have the required data
     if (!nodes || nodes.length === 0 || !svg || !sankeyDataProcessor) {
-      console.warn("Missing required data for pool labels");
       return null;
     }
     
@@ -93,11 +92,9 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       
       // Get the direct mapping from pool name to last branch name
       const poolToLastBranchMap = sankeyDataProcessor.getLastMerkleBranchesForPools();
-      console.log("All pools with their last branches:", Object.fromEntries(poolToLastBranchMap));
       
       // Early exit if we don't have any pools to show
       if (poolToLastBranchMap.size === 0) {
-        console.warn('No pool to branch mappings found');
         return null;
       }
       
@@ -142,15 +139,12 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
         
         // Skip if we can't find the node
         if (!branchNode) {
-          console.warn(`Could not find node for branch ${branchName} (pools: ${poolNames.join(', ')})`);
           return;
         }
         
         // Get the position for this node
         const nodeX = branchNode.x1 || 0; // right edge, default to 0 if undefined
         const nodeY = (branchNode.y0 || 0) + (((branchNode.y1 || 0) - (branchNode.y0 || 0)) / 2); // vertical center
-        
-        console.log(`Found node for branch ${branchName} at position (${nodeX}, ${nodeY}) with pools: ${poolNames.join(', ')}`);
         
         // Add to our labels list
         poolLabelsToAdd.push({
@@ -163,7 +157,6 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
       
       // If we couldn't find any labels through the normal method, try the fallback approach
       if (poolLabelsToAdd.length === 0) {
-        console.warn('No pool labels found through normal mapping, using fallback approach');
         
         // Calculate global max X for fallback alignment
         const globalMaxX = Math.max(...nodes.map((n: SankeyNode) => n.x1 || 0)) + 5;
@@ -174,8 +167,6 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
         // Render labels directly using the pool information
         let verticalOffset = 50; // Start with an offset from top
         poolToBranch.forEach((branchName: string, poolName: string) => {
-          console.log(`Direct pool label: ${poolName} (branch: ${branchName})`);
-          
           poolLabelsToAdd.push({
             nodeX: globalMaxX - 10,
             nodeY: verticalOffset,
@@ -183,18 +174,15 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
             branchName: branchName
           });
           
-          verticalOffset += 25; // Space labels vertically
+          verticalOffset += 25; // Space between labels
         });
-        
-        console.log(`Added ${poolLabelsToAdd.length} direct pool labels as fallback`);
       }
       
       // Sort labels by vertical position
       poolLabelsToAdd.sort((a, b) => a.nodeY - b.nodeY);
       
-      // If we still have no labels to add, exit
+      // Final check - if we still have no labels, exit
       if (poolLabelsToAdd.length === 0) {
-        console.warn('No pool labels could be created, not rendering any');
         return null;
       }
       
@@ -285,9 +273,6 @@ const SankeyPoolLabels: React.FC<SankeyPoolLabelsProps> = ({
             .text(name);
         });
       });
-      
-      // Log for debugging
-      console.log(`Added ${poolLabelsToAdd.length} pool labels to the diagram`);
       
     } catch (err) {
       console.error("Error rendering pool labels:", err);

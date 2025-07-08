@@ -73,8 +73,6 @@ export const useSankeyControls = ({
     try {
       if (stratumV1Data.length === 0) return;
       
-      console.log(`Processing ${stratumV1Data.length} stratum V1 events`);
-      
       // Process each event through the sankey data processor
       stratumV1Data.forEach((event: any) => {
         sankeyDataProcessor.processStratumV1Event(event);

@@ -179,23 +179,18 @@ export class SankeyDataProcessor {
           } else {
             this.activeConnections.get(connectionKey)!.add(event.poolName);
           }
-        } else {
-          console.warn(`Skipping connection ${poolNode}-${branchNode} to avoid cycle`);
         }
       } else if (previousBranch) {
         // Connect previous branch to current branch
         const prevBranchNode = this.getOrCreateNode(previousBranch, 'branch');
         const connectionKey = `${prevBranchNode}-${branchNode}`;
         
-        // Check for cycles before adding
-        if (!this.wouldCreateCycle(prevBranchNode, branchNode)) {
+        if (prevBranchNode !== branchNode) {
           if (!this.activeConnections.has(connectionKey)) {
             this.activeConnections.set(connectionKey, new Set([event.poolName]));
           } else {
             this.activeConnections.get(connectionKey)!.add(event.poolName);
           }
-        } else {
-          console.warn(`Skipping connection ${prevBranchNode}-${branchNode} to avoid cycle`);
         }
       }
       
@@ -293,11 +288,7 @@ export class SankeyDataProcessor {
       });
     });
     
-    // // Log node reduction info if we filtered out any nodes
-    // if (this.nodes.length !== filteredNodes.length) {
-    //   console.log(`Filtered out ${this.nodes.length - filteredNodes.length} unused nodes. ` +
-    //               `Reduced from ${this.nodes.length} to ${filteredNodes.length} nodes.`);
-    // }
+
     
     return { nodes: filteredNodes, links };
   }
@@ -372,17 +363,12 @@ export class SankeyDataProcessor {
   public getLastMerkleBranchesForPools(): Map<string, string> {
     const lastBranches = new Map<string, string>();
     
-    // Log all the pool events we're tracking
-    // console.log(`Processing ${this.lastPoolEvents.size} pool events for label rendering`);
-    
-    // Store all branch names for reference and debugging
-    const allBranchNodes = new Set<string>();
-    this.nodes.forEach(node => {
-      if (node.type === 'branch') {
-        allBranchNodes.add(node.name);
-      }
-    });
-    // console.log(`Total branch nodes in the system: ${allBranchNodes.size}`);
+    // Get all branch nodes for verification
+    const allBranchNodes = new Set(
+      this.nodes
+        .filter(node => node.type === 'branch')
+        .map(node => node.name.toLowerCase())
+    );
     
     this.lastPoolEvents.forEach((branches, poolName) => {
       if (branches.length > 0) {
@@ -392,7 +378,6 @@ export class SankeyDataProcessor {
         // Verify the branch exists in our nodes
         if (this.nodeIndex.has(lastBranch)) {
           lastBranches.set(poolName, lastBranch);
-          // console.log(`Pool ${poolName}: last branch = ${lastBranch} (verified in nodes)`);
         } else {
           // Try to find a matching node with different case
           let foundMatch = false;
@@ -402,7 +387,6 @@ export class SankeyDataProcessor {
             if (nodeName.toLowerCase() === lowerLastBranch && this.nodes[nodeId].type === 'branch') {
               // Use the actual case from the node index for better matching
               lastBranches.set(poolName, nodeName);
-              // console.log(`Pool ${poolName}: last branch = ${lastBranch} (case-insensitive match to ${nodeName})`);
               foundMatch = true;
               break;
             }
@@ -414,28 +398,19 @@ export class SankeyDataProcessor {
               const altBranch = branches[i];
               if (this.nodeIndex.has(altBranch)) {
                 lastBranches.set(poolName, altBranch);
-                // console.log(`Pool ${poolName}: using alternative branch = ${altBranch} (last branch ${lastBranch} not found)`);
                 foundMatch = true;
                 break;
               }
             }
             
-            if (!foundMatch) {
-              console.warn(`Pool ${poolName}: could not find any matching branch node for branches: ${branches.join(', ')}`);
-            }
+
           }
         }
-      } else {
-        console.warn(`Pool ${poolName} has no merkle branches`);
       }
     });
     
-    // console.log(`Found ${lastBranches.size} pools with last branches out of ${this.lastPoolEvents.size} total pools`);
-    
     // Ensure we have data to work with
     if (lastBranches.size === 0) {
-      console.warn('No pools with last branches found. This may indicate an issue with data processing.');
-      
       // Emergency fallback - directly map pools to any branch node
       this.lastPoolEvents.forEach((_, poolName) => {
         // Find any connection from this pool
@@ -446,7 +421,6 @@ export class SankeyDataProcessor {
             
             if (targetNode && targetNode.type === 'branch') {
               lastBranches.set(poolName, targetNode.name);
-              // console.log(`EMERGENCY FALLBACK: Pool ${poolName} mapped to branch ${targetNode.name} via connection`);
               break;
             }
           }

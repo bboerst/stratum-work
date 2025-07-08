@@ -11,6 +11,8 @@ interface TimingPageControlsProps {
   setTimeWindow: (timeWindow: number) => void;
   showLabels: boolean;
   setShowLabels: (showLabels: boolean) => void;
+  sortByTimeReceived: boolean;
+  setSortByTimeReceived: (sortByTimeReceived: boolean) => void;
 }
 
 export default function TimingPageControls({ 
@@ -19,7 +21,9 @@ export default function TimingPageControls({
   timeWindow, 
   setTimeWindow, 
   showLabels, 
-  setShowLabels 
+  setShowLabels,
+  sortByTimeReceived,
+  setSortByTimeReceived
 }: TimingPageControlsProps) {
   const [showSettings, setShowSettings] = useState(false);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -104,6 +108,21 @@ export default function TimingPageControls({
                 }`}
               >
                 {showLabels ? "On" : "Off"}
+              </button>
+            </div>
+            
+            {/* Pool sorting toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">Sort pools:</span>
+              <button
+                onClick={() => setSortByTimeReceived(!sortByTimeReceived)}
+                className={`px-2 py-1 text-xs rounded ${
+                  sortByTimeReceived
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700'
+                }`}
+              >
+                {sortByTimeReceived ? "Time" : "A-Z"}
               </button>
             </div>
           </div>

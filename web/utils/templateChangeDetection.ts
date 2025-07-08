@@ -437,8 +437,10 @@ export function detectTemplateChanges(
     };
   }
   
-  // Store current template as the last template for this pool (after all comparisons)
-  lastTemplateByPool.set(data.pool_name, currentTemplate);
+  // Only store current template if it's from the same height or newer (prevent out-of-order overwrites)
+  if (currentTemplate.height >= lastTemplate.height) {
+    lastTemplateByPool.set(data.pool_name, currentTemplate);
+  }
   
   const result = {
     hasChanges: true, // Always true if we reach here (different job ID means template changed)

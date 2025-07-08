@@ -293,11 +293,11 @@ export class SankeyDataProcessor {
       });
     });
     
-    // Log node reduction info if we filtered out any nodes
-    if (this.nodes.length !== filteredNodes.length) {
-      console.log(`Filtered out ${this.nodes.length - filteredNodes.length} unused nodes. ` +
-                  `Reduced from ${this.nodes.length} to ${filteredNodes.length} nodes.`);
-    }
+    // // Log node reduction info if we filtered out any nodes
+    // if (this.nodes.length !== filteredNodes.length) {
+    //   console.log(`Filtered out ${this.nodes.length - filteredNodes.length} unused nodes. ` +
+    //               `Reduced from ${this.nodes.length} to ${filteredNodes.length} nodes.`);
+    // }
     
     return { nodes: filteredNodes, links };
   }
@@ -373,7 +373,7 @@ export class SankeyDataProcessor {
     const lastBranches = new Map<string, string>();
     
     // Log all the pool events we're tracking
-    console.log(`Processing ${this.lastPoolEvents.size} pool events for label rendering`);
+    // console.log(`Processing ${this.lastPoolEvents.size} pool events for label rendering`);
     
     // Store all branch names for reference and debugging
     const allBranchNodes = new Set<string>();
@@ -382,7 +382,7 @@ export class SankeyDataProcessor {
         allBranchNodes.add(node.name);
       }
     });
-    console.log(`Total branch nodes in the system: ${allBranchNodes.size}`);
+    // console.log(`Total branch nodes in the system: ${allBranchNodes.size}`);
     
     this.lastPoolEvents.forEach((branches, poolName) => {
       if (branches.length > 0) {
@@ -392,7 +392,7 @@ export class SankeyDataProcessor {
         // Verify the branch exists in our nodes
         if (this.nodeIndex.has(lastBranch)) {
           lastBranches.set(poolName, lastBranch);
-          console.log(`Pool ${poolName}: last branch = ${lastBranch} (verified in nodes)`);
+          // console.log(`Pool ${poolName}: last branch = ${lastBranch} (verified in nodes)`);
         } else {
           // Try to find a matching node with different case
           let foundMatch = false;
@@ -402,7 +402,7 @@ export class SankeyDataProcessor {
             if (nodeName.toLowerCase() === lowerLastBranch && this.nodes[nodeId].type === 'branch') {
               // Use the actual case from the node index for better matching
               lastBranches.set(poolName, nodeName);
-              console.log(`Pool ${poolName}: last branch = ${lastBranch} (case-insensitive match to ${nodeName})`);
+              // console.log(`Pool ${poolName}: last branch = ${lastBranch} (case-insensitive match to ${nodeName})`);
               foundMatch = true;
               break;
             }
@@ -414,7 +414,7 @@ export class SankeyDataProcessor {
               const altBranch = branches[i];
               if (this.nodeIndex.has(altBranch)) {
                 lastBranches.set(poolName, altBranch);
-                console.log(`Pool ${poolName}: using alternative branch = ${altBranch} (last branch ${lastBranch} not found)`);
+                // console.log(`Pool ${poolName}: using alternative branch = ${altBranch} (last branch ${lastBranch} not found)`);
                 foundMatch = true;
                 break;
               }
@@ -430,7 +430,7 @@ export class SankeyDataProcessor {
       }
     });
     
-    console.log(`Found ${lastBranches.size} pools with last branches out of ${this.lastPoolEvents.size} total pools`);
+    // console.log(`Found ${lastBranches.size} pools with last branches out of ${this.lastPoolEvents.size} total pools`);
     
     // Ensure we have data to work with
     if (lastBranches.size === 0) {
@@ -446,7 +446,7 @@ export class SankeyDataProcessor {
             
             if (targetNode && targetNode.type === 'branch') {
               lastBranches.set(poolName, targetNode.name);
-              console.log(`EMERGENCY FALLBACK: Pool ${poolName} mapped to branch ${targetNode.name} via connection`);
+              // console.log(`EMERGENCY FALLBACK: Pool ${poolName} mapped to branch ${targetNode.name} via connection`);
               break;
             }
           }

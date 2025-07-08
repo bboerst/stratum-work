@@ -61,7 +61,6 @@ export default function SankeyDiagram({
   
   // Auto-detect data source: use static data prop if provided, otherwise live EventSource data  
   const actualStratumV1Data = extractedStratumV1Data.length > 0 ? extractedStratumV1Data : stratumV1Data;
-
   
   // Update width when container size changes
   useEffect(() => {
@@ -85,11 +84,7 @@ export default function SankeyDiagram({
       window.removeEventListener('resize', updateWidth);
     };
   }, []);
-  
-
-  
-
-  
+ 
   // Render the Sankey diagram
   const renderDiagram = useCallback(() => {
     try {
@@ -189,7 +184,6 @@ export default function SankeyDiagram({
           .text(labelText);
       });
       
-      
       // Add links
       svg.append("g")
         .selectAll("path")
@@ -200,12 +194,7 @@ export default function SankeyDiagram({
         .attr("stroke-width", (d: unknown) => Math.max(1, (d as { width: number }).width))
         .attr("fill", "none")
         .attr("opacity", 0.7);
-      
-
-      
-      // Get map of last branches to their pools
-
-      
+            
       // Add nodes
       const nodeGroup = svg.append("g")
         .selectAll("g")
@@ -278,8 +267,6 @@ export default function SankeyDiagram({
           setTooltipData(null);
           setTooltipPosition(null);
         });
-      
-
       
       // Render connecting lines BEFORE node labels to ensure proper z-order
       if (svg && nodes && sankeyDataProcessor) {
@@ -450,38 +437,17 @@ export default function SankeyDiagram({
           .text(`Error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  }, [colors, width, height, setTooltipData, setTooltipPosition, onDataRendered, setError, showLabels, theme]);
+  }, [colors, width, height, showLabels, theme]);
   
-  // Process global data stream events when they change
+  // Consolidated useEffect for all rendering triggers
   useEffect(() => {
     if (actualStratumV1Data.length > 0) {
+      // Clear tooltips when any major state changes to prevent stale tooltips
+      setTooltipData(null);
+      setTooltipPosition(null);
       renderDiagram();
     }
-  }, [actualStratumV1Data, renderDiagram]);
-  
-  // Re-render when paused state changes
-  useEffect(() => {
-    // Ensure tooltips are cleared when paused state changes
-    setTooltipData(null);
-    setTooltipPosition(null);
-    // Preserve the showLabels state when re-rendering due to paused state changes
-    renderDiagram();
-  }, [paused, renderDiagram]);
-  
-  // Re-render when showLabels changes
-  useEffect(() => {
-    renderDiagram();
-  }, [showLabels, renderDiagram]);
-  
-  // Re-render when theme/colors change
-  useEffect(() => {
-    // Ensure tooltips are cleared when colors change
-    setTooltipData(null);
-    setTooltipPosition(null);
-    renderDiagram();
-  }, [colors, renderDiagram]);
-  
-
+  }, [actualStratumV1Data, paused, showLabels, colors, renderDiagram]);
   
   return (
     <div 

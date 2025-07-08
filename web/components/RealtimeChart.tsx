@@ -8,7 +8,8 @@ import { CHART_POINT_SIZES } from "@/lib/constants";
 import { 
   detectTemplateChanges, 
   getChangeTypeDisplay,
-  TemplateChangeResult 
+  TemplateChangeResult,
+  clearTemplateCache
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 
@@ -159,6 +160,7 @@ interface RealtimeChartProps {
   hideHeader?: boolean; // Hide the title and options
   showLabels?: boolean; // Show labels for data points
   showPoolNames?: boolean; // Show static pool names column on the right
+  sortByTimeReceived?: boolean; // External sorting control (overrides internal state when provided)
 }
 
 // Define pool colors map type
@@ -174,7 +176,8 @@ function RealtimeChartBase({
   pointSize,
   hideHeader = false,
   showLabels: propShowLabels,
-  showPoolNames = false
+  showPoolNames = false,
+  sortByTimeReceived: propSortByTimeReceived
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -193,9 +196,11 @@ function RealtimeChartBase({
   
   // State for visualization options
   const [localShowLabels, setLocalShowLabels] = useState(false); // Off by default
+  const [localSortByTimeReceived, setLocalSortByTimeReceived] = useState(true); // True = time received descending by default
   
   // Use prop if provided, otherwise use local state
   const showLabels = propShowLabels !== undefined ? propShowLabels : localShowLabels;
+  const sortByTimeReceived = propSortByTimeReceived !== undefined ? propSortByTimeReceived : localSortByTimeReceived;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
   
@@ -246,6 +251,37 @@ function RealtimeChartBase({
   const [, setHistoricalDataLoaded] = useState(false);
   const currentBlockHeightRef = useRef<number | undefined>(filterBlockHeight);
   
+  // Function to sort pool names based on current sorting mode
+  const sortPoolNames = useCallback((poolNames: string[], chartData: ChartDataPoint[]) => {
+    if (!sortByTimeReceived) {
+      // Alphabetical sorting
+      return [...poolNames].sort();
+    } else {
+      // Time received descending - get the latest timestamp for each pool
+      const poolLatestTimestamps = new Map<string, number>();
+      
+      chartData.forEach(point => {
+        const currentLatest = poolLatestTimestamps.get(point.poolName) || 0;
+        if (point.timestamp > currentLatest) {
+          poolLatestTimestamps.set(point.poolName, point.timestamp);
+        }
+      });
+      
+      // Sort by latest timestamp descending, then alphabetically for ties
+      return [...poolNames].sort((a, b) => {
+        const aTime = poolLatestTimestamps.get(a) || 0;
+        const bTime = poolLatestTimestamps.get(b) || 0;
+        
+        if (aTime !== bTime) {
+          return bTime - aTime; // Descending order (newest first)
+        }
+        
+        // If timestamps are equal, sort alphabetically
+        return a.localeCompare(b);
+      });
+    }
+  }, [sortByTimeReceived]);
+  
   
   // Reset the historical data loaded flag when the block height changes
   useEffect(() => {
@@ -256,6 +292,9 @@ function RealtimeChartBase({
       // Clear existing data when switching between blocks
       poolDataHistoryRef.current.clear();
       setChartData([]);
+      
+      // Clear template change detection cache to prevent stale comparisons
+      clearTemplateCache();
       
       // Reset pool tracking when switching blocks
       if (isHistoricalBlock) {
@@ -327,9 +366,12 @@ function RealtimeChartBase({
     
     // Use allPoolNames for stable vertical positioning
     // If allPoolNames is empty, fall back to current pool names
-    const stablePoolNames = allPoolNames.length > 0 
+    const basePoolNames = allPoolNames.length > 0 
       ? allPoolNames 
-      : Array.from(groupedData.keys()).sort();
+      : Array.from(groupedData.keys());
+    
+    // Apply sorting based on current sorting mode
+    const stablePoolNames = sortPoolNames(basePoolNames, chartData);
     
     // Get min/max timestamps for domain calculation
     const timestamps = chartData.map(point => point.timestamp);
@@ -675,7 +717,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames]);
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -778,7 +820,15 @@ function RealtimeChartBase({
   useEffect(() => {
     if (isHistoricalBlock && historicalData.length > 0) {
       // Create a map of pool names to indices for consistent y-axis positioning
-      const poolNames = Array.from(new Set(historicalData.map(item => item.pool_name || 'unknown'))).sort();
+      const basePoolNames = Array.from(new Set(historicalData.map(item => item.pool_name || 'unknown')));
+      // For historical data, we'll temporarily use all points for sorting calculation
+      const tempPoints = historicalData.map(item => ({
+        poolName: item.pool_name || 'unknown',
+        timestamp: typeof item.timestamp === 'string' && item.timestamp.startsWith('0x') 
+          ? parseInt(item.timestamp.replace(/^0x/, ''), 16) / 1000000
+          : parseTimestamp(item.timestamp || 0)
+      }));
+      const poolNames = sortPoolNames(basePoolNames, tempPoints as ChartDataPoint[]);
       
       // Create data points directly from historical records
       const points: ChartDataPoint[] = [];
@@ -868,7 +918,7 @@ function RealtimeChartBase({
       setChartData(points);
       setHistoricalDataLoaded(true);
     }
-  }, [isHistoricalBlock, historicalData, parseTimestamp]);
+  }, [isHistoricalBlock, historicalData, parseTimestamp, sortPoolNames]);
   
   // Prune old data beyond the time window to prevent memory leaks
   const pruneOldData = useCallback((cutoffTimeMs: number) => {
@@ -908,9 +958,12 @@ function RealtimeChartBase({
     
     // Use allPoolNames for stable vertical positioning (same as in drawChart)
     const currentPoolNames = Array.from(new Set(chartData.map(point => point.poolName)));
-    const stablePoolNames = allPoolNames.length > 0 
+    const basePoolNames = allPoolNames.length > 0 
       ? allPoolNames 
-      : currentPoolNames.sort();
+      : currentPoolNames;
+    
+    // Apply sorting based on current sorting mode
+    const stablePoolNames = sortPoolNames(basePoolNames, chartData);
     
     // Calculate timestamps for domain determination
     const timestamps = chartData.map(point => point.timestamp);
@@ -972,7 +1025,7 @@ function RealtimeChartBase({
     });
     
     setHoveredPoint(closestPoint);
-  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, showPoolNames]);
+  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, showPoolNames, sortPoolNames]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
@@ -1053,13 +1106,22 @@ function RealtimeChartBase({
     });
     
     // Get current pools as array
-    const currentPoolNames = Array.from(poolNames).sort();
+    const currentPoolNames = Array.from(poolNames);
+    
+    // Create temporary data points for sorting calculation
+    const tempDataForSorting = filteredData.map(item => ({
+      poolName: item.pool_name || 'Unknown',
+      timestamp: parseTimestamp(item.timestamp)
+    }));
+    
+    // Apply sorting to current pool names
+    const sortedCurrentPoolNames = sortPoolNames(currentPoolNames, tempDataForSorting as ChartDataPoint[]);
     
     // Update the allPoolNames state to include any new pools
     if (!isHistoricalBlock) {
-      const newPools = currentPoolNames.filter(name => !allPoolNames.includes(name));
+      const newPools = sortedCurrentPoolNames.filter(name => !allPoolNames.includes(name));
       if (newPools.length > 0) {
-        const updatedPoolNames = [...allPoolNames, ...newPools].sort();
+        const updatedPoolNames = [...allPoolNames, ...newPools];
         setAllPoolNames(updatedPoolNames);
         
         // Also update rankings for new pools
@@ -1083,25 +1145,25 @@ function RealtimeChartBase({
       }
     } else {
       // For historical blocks, just use the current pools since we reset when switching blocks
-      setAllPoolNames(currentPoolNames);
+      setAllPoolNames(sortedCurrentPoolNames);
       
       // Update rankings, colors for historical view
       const rankings = new Map<string, number>();
       const colors: PoolColorsMap = {};
       
-      currentPoolNames.forEach((name, idx) => {
+      sortedCurrentPoolNames.forEach((name, idx) => {
         rankings.set(name, idx + 1);
         colors[name] = stringToColor(name);
       });
       
       setPoolRankings(rankings);
       setPoolColors(colors);
-      setMaxPoolCount(Math.max(maxPoolCount, currentPoolNames.length));
+      setMaxPoolCount(Math.max(maxPoolCount, sortedCurrentPoolNames.length));
     }
     
     // Return pool info
     const poolInfo = {
-      poolNames: currentPoolNames,
+      poolNames: sortedCurrentPoolNames,
       cutoffTimeMs
     };
     
@@ -1121,7 +1183,7 @@ function RealtimeChartBase({
       // Use current rankings or default to an evenly distributed value
       const poolName = item.pool_name || 'Unknown';
       const poolIndex = poolRankings.get(poolName) || 
-        (currentPoolNames.indexOf(poolName) + 1) || 1;
+        (sortedCurrentPoolNames.indexOf(poolName) + 1) || 1;
       
       // Detect template changes using the new simplified interface
       const changeInfo = detectTemplateChanges(item);
@@ -1217,12 +1279,14 @@ function RealtimeChartBase({
         maxTimestamp
       }
     };
-  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings]);
+  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings, sortPoolNames]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
     poolDataHistoryRef.current.clear();
     setChartData([]);
+    // Clear template change detection cache to prevent stale comparisons
+    clearTemplateCache();
   }, [filterBlockHeight]);
   
   // Fetch and update data from the global stream or historical data
@@ -1339,6 +1403,23 @@ function RealtimeChartBase({
                       {showLabels ? "On" : "Off"}
                     </button>
                   </div>
+                  
+                  {/* Pool sorting toggle - only show if not controlled externally */}
+                  {propSortByTimeReceived === undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Sort pools:</span>
+                      <button
+                        onClick={() => setLocalSortByTimeReceived(prev => !prev)}
+                        className={`px-2 py-1 text-xs rounded ${
+                          sortByTimeReceived
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-700'
+                        }`}
+                      >
+                        {sortByTimeReceived ? "Time" : "A-Z"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

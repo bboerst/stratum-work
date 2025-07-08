@@ -33,7 +33,7 @@ export default function VisualizationPanel({
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const timeWindow = 15; // Default to 15 seconds
+  const timeWindow = 60; // Default to 60 seconds
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);

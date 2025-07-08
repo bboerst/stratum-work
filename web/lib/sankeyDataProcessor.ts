@@ -363,13 +363,6 @@ export class SankeyDataProcessor {
   public getLastMerkleBranchesForPools(): Map<string, string> {
     const lastBranches = new Map<string, string>();
     
-    // Get all branch nodes for verification
-    const allBranchNodes = new Set(
-      this.nodes
-        .filter(node => node.type === 'branch')
-        .map(node => node.name.toLowerCase())
-    );
-    
     this.lastPoolEvents.forEach((branches, poolName) => {
       if (branches.length > 0) {
         // Last branch is the last element in the array

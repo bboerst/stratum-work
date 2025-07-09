@@ -38,7 +38,7 @@ export function useSankeyLayout(
   data: SankeyData
 ): SankeyLayoutResult {
   // Calculate right padding to accommodate pool labels
-  const poolLabelPadding = 150;
+  const poolLabelPadding = 180;
 
   // Calculate dynamic left offset based on widest pool name
   let maxPoolNameWidth = 0;

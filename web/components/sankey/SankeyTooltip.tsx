@@ -82,7 +82,9 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
 }) => {
   const tooltipRef = useRef<HTMLDivElement>(null);
 
+  // TODO: SIMILARITY SCORES HIDDEN - Uncomment this section to restore similarity score functionality
   // Calculate similarity scores for branch tooltips
+  /*
   const similarityScores = useMemo((): SimilarityScore[] => {
     if (!data || data.type !== 'branch' || data.connectedPools.length < 2) {
       return [];
@@ -113,6 +115,10 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
     // Sort by score descending (highest first)
     return scores.sort((a, b) => b.score - a.score);
   }, [data]);
+  */
+  
+  // Placeholder for when similarity scores are hidden
+  const similarityScores: SimilarityScore[] = [];
 
   // Positioning logic with boundary detection, similar to original implementation
   useEffect(() => {
@@ -184,12 +190,11 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
             </div>
           </div>
 
-          {/* Similarity Score Section */}
+          {/* SIMILARITY SCORES SECTION - COMMENTED OUT FOR HIDING
           {similarityScores.length > 0 && (
             <>
               <div style={{ marginTop: '8px', fontWeight: 'bold' }}>Similarity Scores:</div>
               {similarityScores.length <= 10 ? (
-                // Single column layout for 10 or fewer pairs
                 <div style={{ marginTop: '4px' }}>
                   {similarityScores.map((similarity, i) => (
                     <div 
@@ -210,14 +215,12 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
                   ))}
                 </div>
               ) : (
-                // Two column layout for more than 10 pairs
                 <div style={{ display: 'flex', marginTop: '4px' }}>
-                  {/* Left column */}
                   <div style={{ flex: 1, paddingRight: '8px', minWidth: '300px' }}>
                     {similarityScores
-                      .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
+                      .filter((_, i) => i % 2 === 0)
                       .map((similarity, i) => {
-                        const originalIndex = i * 2; // Convert back to original index
+                        const originalIndex = i * 2;
                         return (
                           <div 
                             key={`similarity-left-${originalIndex}`}
@@ -238,12 +241,11 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
                       })
                     }
                   </div>
-                  {/* Right column */}
                   <div style={{ flex: 1, paddingLeft: '8px', minWidth: '300px' }}>
                     {similarityScores
-                      .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
+                      .filter((_, i) => i % 2 === 1)
                       .map((similarity, i) => {
-                        const originalIndex = i * 2 + 1; // Convert back to original index
+                        const originalIndex = i * 2 + 1;
                         return (
                           <div 
                             key={`similarity-right-${originalIndex}`}
@@ -268,12 +270,13 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
               )}
             </>
           )}
+          END SIMILARITY SCORES SECTION */}
 
           {data.connectedPools.length > 0 && (
             <>
               <div style={{ marginTop: '8px', fontWeight: 'bold' }}>Pool Connections:</div>
-              {similarityScores.length <= 10 ? (
-                // Single column layout for 10 or fewer similarity score pairs
+              {data.connectedPools.length <= 10 ? (
+                // Single column layout for 10 or fewer pools
                 <div style={{ marginTop: '4px' }}>
                   {data.connectedPools.map((pool, i) => (
                     <div 
@@ -285,18 +288,18 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
                   ))}
                 </div>
               ) : (
-                // Two column layout for more than 10 similarity score pairs
+                // Two column layout for more than 10 pools
                 <div style={{ display: 'flex', marginTop: '4px' }}>
                   {/* Left column */}
-                  <div style={{ flex: 1, paddingRight: '16px', minWidth: '120px' }}>
+                  <div style={{ flex: 1, paddingRight: '8px', minWidth: '200px' }}>
                     {data.connectedPools
                       .filter((_, i) => i % 2 === 0) // Even indices (0, 2, 4...)
                       .map((pool, i) => {
                         const originalIndex = i * 2; // Convert back to original index
                         return (
                           <div 
-                            key={`pool-left-${originalIndex}`} 
-                            style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                            key={`pool-left-${originalIndex}`}
+                            style={{ display: 'flex', alignItems: 'center', margin: '1px 0', fontSize: '13px' }}
                           >
                             {originalIndex + 1}. {pool}
                           </div>
@@ -305,15 +308,15 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
                     }
                   </div>
                   {/* Right column */}
-                  <div style={{ flex: 1, paddingLeft: '16px', minWidth: '120px' }}>
+                  <div style={{ flex: 1, paddingLeft: '8px', minWidth: '200px' }}>
                     {data.connectedPools
                       .filter((_, i) => i % 2 === 1) // Odd indices (1, 3, 5...)
                       .map((pool, i) => {
                         const originalIndex = i * 2 + 1; // Convert back to original index
                         return (
                           <div 
-                            key={`pool-right-${originalIndex}`} 
-                            style={{ display: 'flex', alignItems: 'center', margin: '2px 0', fontSize: '13px' }}
+                            key={`pool-right-${originalIndex}`}
+                            style={{ display: 'flex', alignItems: 'center', margin: '1px 0', fontSize: '13px' }}
                           >
                             {originalIndex + 1}. {pool}
                           </div>
@@ -344,8 +347,8 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
         borderRadius: '4px',
         padding: '8px',
         pointerEvents: 'none',
-        maxWidth: similarityScores.length > 10 ? '700px' : '450px',
-        minWidth: similarityScores.length > 0 ? '300px' : 'auto',
+        maxWidth: (data?.type === 'branch' && data.connectedPools?.length > 10) ? '700px' : '450px',
+        minWidth: (data?.type === 'branch' && data.connectedPools?.length > 0) ? '300px' : 'auto',
         zIndex: 1000,
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         transition: 'opacity 0.2s'

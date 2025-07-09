@@ -89,7 +89,7 @@ export default function SankeyPage() {
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
-        <h1 className="text-2xl font-bold mb-6">Mining Data Flow Visualization</h1>
+        <h1 className="text-2xl font-bold mb-6">Sankey Merkle Branches</h1>
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 

@@ -180,7 +180,7 @@ function RealtimeChartBase({
   sortByTimeReceived: propSortByTimeReceived
 }: RealtimeChartProps) {
   // Get data from the global data stream
-  const { filterByType } = useGlobalDataStream();
+  const { filteredData } = useGlobalDataStream();
   
   // Get historical data from context
   const { historicalData, isHistoricalDataLoaded } = useHistoricalData();
@@ -1289,6 +1289,51 @@ function RealtimeChartBase({
     clearTemplateCache();
   }, [filterBlockHeight]);
   
+  // Track seen pools to detect filter changes
+  const seenPoolsRef = useRef<Set<string>>(new Set());
+
+  // Clear chart internal state when pool filtering changes
+  useEffect(() => {
+    if (isHistoricalBlock) return; // Skip for historical data
+    
+    const currentPoolsFromData = new Set<string>();
+    const stratumUpdates = filteredData.filter(item => item.type === StreamDataType.STRATUM_V1);
+    stratumUpdates.forEach(item => {
+      const stratumData = item.data as StratumV1Data;
+      if (stratumData.pool_name) {
+        currentPoolsFromData.add(stratumData.pool_name);
+      }
+    });
+    
+    const previousPools = seenPoolsRef.current;
+    const removedPools = Array.from(previousPools).filter(pool => !currentPoolsFromData.has(pool));
+    
+    if (removedPools.length > 0) {
+      // Clear internal state to remove filtered pools
+      setChartData([]);
+      poolDataHistoryRef.current.clear();
+      
+      // Remove filtered pools from pool tracking
+      const updatedPoolNames = allPoolNames.filter(pool => !removedPools.includes(pool));
+      setAllPoolNames(updatedPoolNames);
+      
+      // Update pool colors and rankings
+      const updatedColors: PoolColorsMap = {};
+      const updatedRankings = new Map<string, number>();
+      
+      updatedPoolNames.forEach((name, idx) => {
+        updatedColors[name] = poolColors[name] || stringToColor(name);
+        updatedRankings.set(name, idx + 1);
+      });
+      
+      setPoolColors(updatedColors);
+      setPoolRankings(updatedRankings);
+    }
+    
+    // Update seen pools for next check
+    seenPoolsRef.current = currentPoolsFromData;
+  }, [filteredData, isHistoricalBlock, allPoolNames, poolColors]);
+
   // Fetch and update data from the global stream or historical data
   useEffect(() => {
     // Don't fetch if paused
@@ -1301,8 +1346,8 @@ function RealtimeChartBase({
     if (!isHistoricalBlock) {
       // Create a throttled update function to limit the frequency of updates
       const throttledUpdate = createThrottle(() => {
-        // Get stratum updates from the stream
-        const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
+        // Get stratum updates from the filtered stream
+        const stratumUpdates = filteredData.filter(item => item.type === StreamDataType.STRATUM_V1);
         if (stratumUpdates.length === 0) {
           return;
         }
@@ -1343,7 +1388,7 @@ function RealtimeChartBase({
         throttledUpdate.cancel();
       };
     }
-  }, [filterByType, paused, isHistoricalBlock, processData]);
+  }, [filteredData, paused, isHistoricalBlock, processData]);
   
   return (
     <div 

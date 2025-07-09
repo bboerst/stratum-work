@@ -23,7 +23,7 @@ export default function RealtimeTable({
   const router = useRouter();
   
   // Get data from the global data stream
-  const { filterByType } = useGlobalDataStream();
+  const { filteredData: globalFilteredData } = useGlobalDataStream();
   
   // Get historical data context
   const { 
@@ -37,11 +37,11 @@ export default function RealtimeTable({
   // Get selected template context
   const { setSelectedTemplate } = useSelectedTemplate();
   
-  // Filter for only Stratum V1 data
+  // Filter for only Stratum V1 data from already filtered data
   const stratumV1Data = useMemo(() => {
-    const filtered = filterByType(StreamDataType.STRATUM_V1);
+    const filtered = globalFilteredData.filter(item => item.type === StreamDataType.STRATUM_V1);
     return filtered.map(item => item.data as StratumV1Data);
-  }, [filterByType]);
+  }, [globalFilteredData]);
   
   // Use hooks for table state management
   const { columnsVisible, toggleColumn } = useColumnVisibility();
@@ -217,13 +217,13 @@ export default function RealtimeTable({
   useEffect(() => {
     // This effect detects when a new block is found
     // Listen for block data in the stream
-    const blockData = filterByType(StreamDataType.BLOCK);
+    const blockData = globalFilteredData.filter(item => item.type === StreamDataType.BLOCK);
     
     if (blockData.length > 0 && !paused) {
       // We intentionally don't do anything special here
       // The useTableData hook handles updating the current height
     }
-  }, [filterByType, paused]);
+  }, [globalFilteredData, paused]);
 
   // Set up the intersection observer for infinite scrolling
   useEffect(() => {

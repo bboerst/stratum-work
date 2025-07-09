@@ -1,13 +1,16 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef } from 'react';
+// import { useMemo } from 'react'; // COMMENTED OUT FOR SIMILARITY SCORES HIDING
 import { SankeyColors } from '../../utils/sankeyColors';
-import { sankeyDataProcessor } from '../../lib/sankeyDataProcessor';
+// import { sankeyDataProcessor } from '../../lib/sankeyDataProcessor'; // COMMENTED OUT FOR SIMILARITY SCORES HIDING
 
-// Similarity score data structure
+// Similarity score data structure - COMMENTED OUT FOR SIMILARITY SCORES HIDING
+/*
 interface SimilarityScore {
   poolA: string;
   poolB: string;
   score: number; // 0-100 percentage
 }
+*/
 
 export type TooltipData = 
   | { type: 'pool'; name: string; label: string }
@@ -26,6 +29,8 @@ export interface SankeyTooltipProps {
  * Formula: score(A,B) = Σ(i=1 to l) [1_{A_i=B_i} / 2^(1+l-i)]
  * Where l = min(|A|, |B|) and i is 1-based index
  */
+// COMMENTED OUT FOR SIMILARITY SCORES HIDING - These functions preserved for future restoration
+/*
 function calculateSimilarityScore(branchesA: string[], branchesB: string[]): number {
   if (branchesA.length === 0 || branchesB.length === 0) {
     return 0;
@@ -45,9 +50,6 @@ function calculateSimilarityScore(branchesA: string[], branchesB: string[]): num
   return score * 100;
 }
 
-/**
- * Format similarity score percentage, trimming trailing zeros
- */
 function formatPercentage(score: number): string {
   // Round to 2 decimal places and remove trailing zeros
   const rounded = Math.round(score * 100) / 100;
@@ -55,9 +57,6 @@ function formatPercentage(score: number): string {
   return formatted.replace(/\.?0+$/, '') + '%';
 }
 
-/**
- * Get color style for similarity score based on thresholds
- */
 function getSimilarityColor(score: number): React.CSSProperties {
   if (score < 30) {
     return { color: '#22c55e' }; // green
@@ -67,6 +66,7 @@ function getSimilarityColor(score: number): React.CSSProperties {
     return { color: '#ef4444' }; // red
   }
 }
+*/
 
 /**
  * SankeyTooltip component - displays tooltips for Sankey diagram nodes
@@ -117,8 +117,8 @@ const SankeyTooltip: React.FC<SankeyTooltipProps> = ({
   }, [data]);
   */
   
-  // Placeholder for when similarity scores are hidden
-  const similarityScores: SimilarityScore[] = [];
+  // Placeholder for when similarity scores are hidden - COMMENTED OUT
+  // const similarityScores: SimilarityScore[] = [];
 
   // Positioning logic with boundary detection, similar to original implementation
   useEffect(() => {

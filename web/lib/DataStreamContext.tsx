@@ -40,9 +40,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
   
   // Track enabled pools for filtering
   const [enabledPools, setEnabledPools] = useState<Set<string>>(new Set());
-  const [hasLoadedFromStorage, setHasLoadedFromStorage] = useState(false);
-  
-  // Keep track of pools we've seen before to detect truly new ones
+  const [hasInitialized, setHasInitialized] = useState(false);
   const seenPoolsRef = useRef<Set<string>>(new Set());
   
   // Create a single instance of the data stream
@@ -62,34 +60,20 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     return Array.from(pools).sort();
   }, [dataStream.data]);
   
-  // Load enabled pools from localStorage only once when first pools become available
+  // Initialize enabled pools when first pools become available
   useEffect(() => {
-    if (typeof window !== "undefined" && availablePools.length > 0 && !hasLoadedFromStorage) {
-      const saved = localStorage.getItem("enabledPools");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved) as string[];
-          setEnabledPools(new Set(parsed));
-        } catch {
-          // If parsing fails, enable all pools by default
-          setEnabledPools(new Set(availablePools));
-        }
-      } else {
-        // If no saved data, enable all pools by default
-        setEnabledPools(new Set(availablePools));
-      }
-      
+    if (availablePools.length > 0 && !hasInitialized) {
+      // Always enable all pools by default (no localStorage)
+      setEnabledPools(new Set(availablePools));
       // Mark all current pools as seen
       availablePools.forEach(pool => seenPoolsRef.current.add(pool));
-      setHasLoadedFromStorage(true);
+      setHasInitialized(true);
     }
-  // Only depend on the length and load status to avoid re-running on every data change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availablePools.length, hasLoadedFromStorage]);
+  }, [availablePools, hasInitialized]);
   
-  // Auto-enable truly new pools that appear
+  // Auto-enable truly new pools that appear after initialization
   useEffect(() => {
-    if (hasLoadedFromStorage && availablePools.length > 0) {
+    if (hasInitialized && availablePools.length > 0) {
       const currentSeen = seenPoolsRef.current;
       const newPools = availablePools.filter(pool => !currentSeen.has(pool));
       
@@ -97,7 +81,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
         // Update our seen pools
         newPools.forEach(pool => currentSeen.add(pool));
         
-        // Add new pools to enabled set (they should be enabled by default)
+        // Add only truly new pools to enabled set
         setEnabledPools(prev => {
           const newSet = new Set(prev);
           newPools.forEach(pool => newSet.add(pool));
@@ -105,14 +89,8 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
         });
       }
     }
-  }, [availablePools, hasLoadedFromStorage]);
+  }, [availablePools, hasInitialized]);
   
-  // Save enabled pools to localStorage whenever they change
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("enabledPools", JSON.stringify(Array.from(enabledPools)));
-    }
-  }, [enabledPools]);
   
   // Filter data based on enabled pools
   const filteredData = useMemo(() => {
@@ -121,8 +99,8 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
       if (item.type === StreamDataType.STRATUM_V1) {
         const stratumData = item.data as StratumV1Data;
         
-        // If we haven't loaded from storage yet, allow all pools through
-        if (!hasLoadedFromStorage) {
+        // If we haven't initialized yet, allow all pools through
+        if (!hasInitialized) {
           return true;
         }
         
@@ -140,7 +118,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     });
     
     return filtered;
-  }, [dataStream.data, enabledPools, hasLoadedFromStorage]);
+  }, [dataStream.data, enabledPools, hasInitialized]);
   
   // Toggle a single pool
   const togglePool = useCallback((poolName: string) => {

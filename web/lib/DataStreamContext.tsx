@@ -1,14 +1,16 @@
 "use client";
 
-import React, { createContext, useContext, ReactNode, useState } from "react";
+import React, { createContext, useContext, ReactNode, useState, useEffect } from "react";
+
 import { useDataStream } from "./useDataStream";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
+import { usePathname } from "next/navigation";
 
 interface DataStreamContextType {
   data: StreamData[];
   isConnected: boolean;
   clearData: () => void;
-  setPaused: (paused: boolean) => void;
+  setPaused: (value: boolean | ((prev: boolean) => boolean)) => void;
   paused: boolean;
   filterByType: (type: StreamDataType) => StreamData[];
   setDataTypes: (types: StreamDataType[]) => void;
@@ -19,8 +21,14 @@ interface DataStreamContextType {
 const DataStreamContext = createContext<DataStreamContextType | undefined>(undefined);
 
 export function DataStreamProvider({ children }: { children: ReactNode }) {
-  // Track paused state globally
+  // Track paused state globally - starts unpaused and resets on navigation
   const [paused, setPaused] = useState(false);
+  const pathname = usePathname();
+  
+  // Auto-resume (unpause) on page navigation
+  useEffect(() => {
+    setPaused(false);
+  }, [pathname]); // Resets pause state whenever route changes
   
   // Track which data types to subscribe to
   const [dataTypes, setDataTypes] = useState<StreamDataType[]>(Object.values(StreamDataType));

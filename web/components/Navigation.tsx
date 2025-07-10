@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from 'next/navigation';
-import { Table, /* Workflow, */ ScatterChart } from "lucide-react";
+import { Table, Workflow, ScatterChart } from "lucide-react";
 import { GlobalMenu } from "./GlobalMenu";
 
 interface NavigationProps {
@@ -27,12 +27,12 @@ export default function Navigation({ children }: NavigationProps) {
       icon: ScatterChart,
       description: "Full screen pool timing visualization"
     },
-    // {
-    //   href: "/sankey",
-    //   label: "Sankey",
-    //   icon: Workflow,
-    //   description: "Sankey diagram visualization"
-    // }
+    {
+      href: "/sankey",
+      label: "Sankey",
+      icon: Workflow,
+      description: "Sankey diagram visualization"
+    }
   ];
   
   return (
@@ -72,4 +72,4 @@ export default function Navigation({ children }: NavigationProps) {
       {children}
     </>
   );
-} 
+}

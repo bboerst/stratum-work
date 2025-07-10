@@ -33,6 +33,20 @@ prisma.$connect()
   })
   .catch((error) => {
     console.error('Failed to connect to MongoDB:', error);
+    // More detailed error logging
+    if (error.message && error.message.includes('Authentication failed')) {
+      console.error('Authentication error: Check your MongoDB credentials in DATABASE_URL');
+    } else if (error.message && error.message.includes('ECONNREFUSED')) {
+      console.error('Connection refused: Make sure MongoDB is running at the specified host and port');
+    } else if (error.message && error.message.includes('topology was destroyed')) {
+      console.error('Database connection was closed: Trying to reconnect...');
+      // Try to reconnect after a delay
+      setTimeout(() => {
+        prisma.$connect()
+          .then(() => console.log('Successfully reconnected to MongoDB'))
+          .catch(e => console.error('Reconnection failed:', e));
+      }, 5000);
+    }
   });
 
 export default prisma; 

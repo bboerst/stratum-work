@@ -471,6 +471,16 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
 // Use a global in-flight map so we don't re-request the same txid
 const inFlightRequests: { [txid: string]: boolean } = {};
 
+// Helper function to format fee rate with variable precision
+function formatFeeRate(fee: number): number {
+  if (fee >= 100) {
+    return Math.round(fee); // 0 decimal places
+  } else if (fee < 10) {
+    return Math.round(fee * 100) / 100; // 2 decimal places
+  }
+  return Math.round(fee * 10) / 10; // 1 decimal place
+}
+
 export async function fetchFeeRate(firstTxid: string): Promise<number | string> {
   try {
     // Check CPFP endpoint first
@@ -479,7 +489,7 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
     if (resp.ok) {
       const data = await resp.json();
       if (data.effectiveFeePerVsize) {
-        return Math.round(data.effectiveFeePerVsize * 100) / 100;
+        return formatFeeRate(data.effectiveFeePerVsize);
       }
     }
 
@@ -489,7 +499,7 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
     if (resp.ok) {
       const data = await resp.json();
       if (data.fee && data.weight) {
-        return Math.round((data.fee / (data.weight / 4)) * 100) / 100;
+        return formatFeeRate(data.fee / (data.weight / 4));
       }
     }
     return "not found";

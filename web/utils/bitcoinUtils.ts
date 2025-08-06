@@ -479,7 +479,7 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
     if (resp.ok) {
       const data = await resp.json();
       if (data.effectiveFeePerVsize) {
-        return Math.round(data.effectiveFeePerVsize);
+        return Math.round(data.effectiveFeePerVsize * 100) / 100;
       }
     }
 
@@ -489,7 +489,7 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
     if (resp.ok) {
       const data = await resp.json();
       if (data.fee && data.weight) {
-        return Math.round(data.fee / (data.weight / 4));
+        return Math.round((data.fee / (data.weight / 4)) * 100) / 100;
       }
     }
     return "not found";

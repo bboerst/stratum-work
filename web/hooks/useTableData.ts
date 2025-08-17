@@ -56,6 +56,35 @@ export function useTableData(
   // Refs for tracking requests
   const inFlightRequests = useRef<Set<string>>(new Set());
 
+  // Track the pools we've seen to detect filter changes
+  const seenPoolsRef = useRef<Set<string>>(new Set());
+
+  // Clear internal state when pool filtering changes
+  useEffect(() => {
+    const currentPools = new Set(stratumV1Data.map(d => d.pool_name));
+    const previousPools = seenPoolsRef.current;
+    
+    // Check if any previously seen pools are now missing (filtered out)
+    const removedPools = Array.from(previousPools).filter(pool => !currentPools.has(pool));
+    
+    if (removedPools.length > 0) {
+      // Clear internal state to remove filtered pools
+      setRows([]);
+      setFilteredData([]);
+      setAllData([]);
+      setVisibleData([]);
+      latestPoolDataRef.current.clear();
+      poolCoinbaseMap.current.clear();
+      
+      // Reset pagination
+      setPage(1);
+      setHasMore(false);
+    }
+    
+    // Update seen pools for next check
+    seenPoolsRef.current = currentPools;
+  }, [stratumV1Data]);
+
   // Update rows when data changes
   useEffect(() => {
     // This effect processes new data from the stream

@@ -1,11 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
 import { ConnectionIndicator } from "./ConnectionIndicator";
+import PoolFilter from "./PoolFilter";
+import { Filter } from "lucide-react";
 
 export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
+  const [showPoolFilter, setShowPoolFilter] = useState(false);
   
   return (
     <div className="flex justify-end items-center space-x-4 z-50">
@@ -23,6 +26,21 @@ export function GlobalMenu() {
           <div className="h-6 w-px bg-gray-500"></div>
         </>
       )}
+      
+      {/* Pool filter button */}
+      <button
+        className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 relative"
+        onClick={() => setShowPoolFilter(!showPoolFilter)}
+        title="Filter pools"
+      >
+        <Filter className="h-5 w-5" />
+      </button>
+      
+      {/* Pool filter dropdown */}
+      <PoolFilter
+        showFilter={showPoolFilter}
+        onShowFilterChange={setShowPoolFilter}
+      />
       
       {/* GitHub link - always present on the far right */}
       <a

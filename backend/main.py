@@ -13,7 +13,7 @@ import uuid
 import re
 from datetime import datetime
 import concurrent.futures
-from queue import Queue
+from queue import Queue, Empty
 from contextlib import contextmanager
 from threading import Lock
 import random

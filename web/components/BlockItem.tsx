@@ -81,6 +81,13 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
                     ) : flag.icon === 'error' ? '!' : '•'}
                   </div>
                 </TooltipTrigger>
+                <TooltipContent side="top">
+                  <div className="max-w-xs whitespace-pre-wrap">
+                    {flag.icon === 'fork'
+                      ? 'Different previous block hash detected'
+                      : (flag.tooltip || flag.title || flag.key)}
+                  </div>
+                </TooltipContent>
               </Tooltip>
             ))}
           </TooltipProvider>

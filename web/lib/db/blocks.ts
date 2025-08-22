@@ -58,6 +58,7 @@ interface MongoDBBlock {
   coinbase_script_sig: string;
   pool?: Record<string, unknown>;
   mining_pool?: Record<string, unknown>;
+  analysis?: Record<string, unknown>;
   transactions?: number;
   size?: number;
   weight?: number;
@@ -151,7 +152,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
         return {
           ...block,
           id: block._id?.toString ? block._id.toString() : block.id, // Convert ObjectId to string
-          mining_pool
+          mining_pool,
+          analysis: block.analysis
         };
       });
       
@@ -206,7 +208,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
         return {
           ...block,
           id: block._id?.toString ? block._id.toString() : block.id, // Convert ObjectId to string
-          mining_pool
+          mining_pool,
+          analysis: block.analysis
         };
       });
       
@@ -271,7 +274,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
       return {
         ...block,
         id: block._id.toString(), // Convert ObjectId to string
-        mining_pool
+        mining_pool,
+        analysis: block.analysis
       };
     });
     
@@ -387,10 +391,31 @@ export async function getBlockByHeight(height: number) {
     // Convert the pool data to the mining_pool format expected by the frontend
     const mining_pool = formatMiningPool(poolData);
     
+    // Helper to coerce potential ObjectId or string id without using any
+    function coerceId(b: MongoDBBlock | { id?: unknown; _id?: { toString(): string } }): string {
+      // Prefer _id if present
+      const maybeObjId = (b as { _id?: { toString(): string } })._id;
+      if (maybeObjId && typeof maybeObjId.toString === 'function') {
+        return maybeObjId.toString();
+      }
+      const maybeId = (b as { id?: unknown }).id;
+      return typeof maybeId === 'string' ? maybeId : '';
+    }
+    
+    // Extract analysis if present on the raw object shape
+    function coerceAnalysis(b: unknown): Record<string, unknown> | undefined {
+      if (b && typeof b === 'object' && 'analysis' in (b as Record<string, unknown>)) {
+        const a = (b as Record<string, unknown>)['analysis'];
+        return (a && typeof a === 'object') ? (a as Record<string, unknown>) : undefined;
+      }
+      return undefined;
+    }
+    
     return {
       ...block,
-      id: block._id.toString(), // Convert ObjectId to string
-      mining_pool
+      id: coerceId(block),
+      mining_pool,
+      analysis: coerceAnalysis(block)
     };
   } catch (error) {
     console.error(`Error fetching block by height ${height}:`, error);
@@ -440,9 +465,27 @@ export async function getBlockByHeight(height: number) {
     // Convert the pool data to the mining_pool format expected by the frontend
     const mining_pool = formatMiningPool(poolData);
     
+    function coerceId2(b: MongoDBBlock | { id?: unknown; _id?: { toString(): string } }): string {
+      const maybeObjId = (b as { _id?: { toString(): string } })._id;
+      if (maybeObjId && typeof maybeObjId.toString === 'function') {
+        return maybeObjId.toString();
+      }
+      const maybeId = (b as { id?: unknown }).id;
+      return typeof maybeId === 'string' ? maybeId : '';
+    }
+    function coerceAnalysis2(b: unknown): Record<string, unknown> | undefined {
+      if (b && typeof b === 'object' && 'analysis' in (b as Record<string, unknown>)) {
+        const a = (b as Record<string, unknown>)['analysis'];
+        return (a && typeof a === 'object') ? (a as Record<string, unknown>) : undefined;
+      }
+      return undefined;
+    }
+    
     return {
       ...block,
-      mining_pool
+      id: coerceId2(block),
+      mining_pool,
+      analysis: coerceAnalysis2(block)
     };
   }
 }
@@ -478,10 +521,27 @@ export async function getBlockByHash(blockHash: string) {
     // Convert the pool data to the mining_pool format expected by the frontend
     const mining_pool = formatMiningPool(poolData);
     
+    function coerceId2(b: MongoDBBlock | { id?: unknown; _id?: { toString(): string } }): string {
+      const maybeObjId = (b as { _id?: { toString(): string } })._id;
+      if (maybeObjId && typeof maybeObjId.toString === 'function') {
+        return maybeObjId.toString();
+      }
+      const maybeId = (b as { id?: unknown }).id;
+      return typeof maybeId === 'string' ? maybeId : '';
+    }
+    function coerceAnalysis2(b: unknown): Record<string, unknown> | undefined {
+      if (b && typeof b === 'object' && 'analysis' in (b as Record<string, unknown>)) {
+        const a = (b as Record<string, unknown>)['analysis'];
+        return (a && typeof a === 'object') ? (a as Record<string, unknown>) : undefined;
+      }
+      return undefined;
+    }
+    
     return {
       ...block,
-      id: block._id.toString(), // Convert ObjectId to string
-      mining_pool
+      id: coerceId2(block),
+      mining_pool,
+      analysis: coerceAnalysis2(block)
     };
   } catch (error) {
     console.error(`Error fetching block by hash ${blockHash}:`, error);
@@ -531,9 +591,27 @@ export async function getBlockByHash(blockHash: string) {
     // Convert the pool data to the mining_pool format expected by the frontend
     const mining_pool = formatMiningPool(poolData);
     
+    function coerceId2(b: MongoDBBlock | { id?: unknown; _id?: { toString(): string } }): string {
+      const maybeObjId = (b as { _id?: { toString(): string } })._id;
+      if (maybeObjId && typeof maybeObjId.toString === 'function') {
+        return maybeObjId.toString();
+      }
+      const maybeId = (b as { id?: unknown }).id;
+      return typeof maybeId === 'string' ? maybeId : '';
+    }
+    function coerceAnalysis2(b: unknown): Record<string, unknown> | undefined {
+      if (b && typeof b === 'object' && 'analysis' in (b as Record<string, unknown>)) {
+        const a = (b as Record<string, unknown>)['analysis'];
+        return (a && typeof a === 'object') ? (a as Record<string, unknown>) : undefined;
+      }
+      return undefined;
+    }
+    
     return {
       ...block,
-      mining_pool
+      id: coerceId2(block),
+      mining_pool,
+      analysis: coerceAnalysis2(block)
     };
   }
 }

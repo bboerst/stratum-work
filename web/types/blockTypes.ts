@@ -13,4 +13,13 @@ export interface Block {
   timestamp: number;
   mining_pool?: MiningPool;
   isRealtime?: boolean; // Flag to indicate if this block came from real-time updates
+  analysis?: {
+    flags?: Array<{
+      key: string;
+      icon: 'fork' | 'error' | string;
+      title?: string;
+      tooltip?: string;
+      details?: Record<string, unknown>;
+    }>;
+  };
 } 

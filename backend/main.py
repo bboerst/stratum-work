@@ -18,6 +18,13 @@ from contextlib import contextmanager
 from threading import Lock
 import random
 from distutils.util import strtobool
+from typing import List, Dict, Any
+
+# For decoding transactions when running analysis
+try:
+    from bitcoin.core import CTransaction
+except Exception:
+    CTransaction = None  # Analysis that requires tx parsing will be skipped if unavailable
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -899,15 +906,46 @@ def process_block(block_hash: str, is_new_block: bool = False):
             reverse=True
         )
         
-        # Identify mining pool using pools manager
-        mining_pool = pools_manager.identify_pool(coinbase_script_sig, coinbase_addresses)
-        
+        # Run composable analyses using mining.notify templates for this height
+        analysis = {}
+        try:
+            if ENABLE_HISTORICAL_DATA and db is not None:
+                analysis = run_block_analyses(height, coinbase_script_sig, coinbase_addresses)
+        except Exception as analysis_err:
+            logger.error(f"Error running analyses for height {height}: {analysis_err}")
+            analysis = {}
+
+        # Determine mining pool from analysis (preferred), otherwise fallback to Unknown
+        mining_pool = {}
+        try:
+            if isinstance(analysis, dict) and analysis.get("pool_identification"):
+                pool_info = analysis.get("pool_identification", {})
+                mining_pool = pool_info.get("mining_pool", {}) or {}
+                logger.info(
+                    "Pool identification via analysis: name=%s id=%s method=%s",
+                    mining_pool.get('name', 'Unknown'),
+                    mining_pool.get('id', 'unknown'),
+                    pool_info.get('method', 'unknown')
+                )
+            else:
+                # Fallback to direct identification if analysis did not produce it
+                mining_pool = pools_manager.identify_pool(coinbase_script_sig, coinbase_addresses)
+                logger.info(
+                    "Pool identification via fallback: name=%s id=%s",
+                    mining_pool.get('name', 'Unknown'),
+                    mining_pool.get('id', 'unknown')
+                )
+        except Exception as pool_err:
+            logger.error(f"Error identifying mining pool at height {height}: {pool_err}")
+            mining_pool = {"name": "Unknown", "id": "unknown"}
+
         doc = {
             "height": height,
             "coinbase_script_sig": coinbase_script_sig,
             "block_hash": block_hash,
             "timestamp": block["time"],
-            "mining_pool": mining_pool
+            "mining_pool": mining_pool,
+            "analysis": analysis
         }
         
         # For new blocks, use update_one with upsert to avoid duplicates
@@ -931,12 +969,155 @@ def process_block(block_hash: str, is_new_block: bool = False):
                 "hash": block_hash,
                 "height": height,
                 "timestamp": datetime.utcfromtimestamp(block["time"]).isoformat(),
-                "mining_pool": mining_pool
+                "mining_pool": mining_pool,
+                "analysis": analysis
             }
         }
         publish_to_rabbitmq(rabbitmq_doc)
     except Exception as e:
         logger.error("Error processing block %s: %s", block_hash, e)
+
+# --- Analysis framework ---
+def reconstruct_coinbase_raw(coinbase1: str, extranonce1: str, extranonce2_length: int, coinbase2: str) -> str:
+    try:
+        return f"{coinbase1}{extranonce1}{'00' * int(extranonce2_length)}{coinbase2}"
+    except Exception:
+        return f"{coinbase1}{extranonce1}{coinbase2}"
+
+def parse_tx_total_output_value_sats(coinbase_raw_hex: str) -> int:
+    if not CTransaction:
+        return 0
+    try:
+        stream = BytesIO(bytes.fromhex(coinbase_raw_hex))
+        tx = CTransaction.stream_deserialize(stream)
+        total = 0
+        for vout in tx.vout:
+            try:
+                total += int(vout.nValue)
+            except Exception:
+                continue
+        return total
+    except Exception:
+        return 0
+
+def get_block_subsidy_sats(height: int) -> int:
+    # 50 BTC initial subsidy, halving every 210000 blocks
+    halvings = height // 210000
+    if halvings >= 64:  # After many halvings subsidy becomes 0
+        return 0
+    base = 50 * 100_000_000
+    return base >> halvings
+
+def analyze_prev_hash_divergence(templates: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    prev_to_pools: Dict[str, List[str]] = {}
+    for t in templates:
+        prev = str(t.get("prev_hash", "")).lower()
+        pool = str(t.get("pool_name", "unknown"))
+        if not prev:
+            continue
+        prev_to_pools.setdefault(prev, []).append(pool)
+    if len(prev_to_pools) <= 1:
+        return None
+    parts = []
+    for prev, pools in prev_to_pools.items():
+        parts.append(f"{', '.join(sorted(set(pools)))}: {prev}")
+    tooltip = "Prev hash divergence across pools:\n" + "\n".join(parts)
+    logger.info("Analysis(prev_hash_divergence): %d distinct prev_hash values found", len(prev_to_pools))
+    return {
+        "key": "prev_hash_fork",
+        "icon": "fork",
+        "title": "Different previous block hash",
+        "tooltip": tooltip,
+        "details": {"groups": [{"prev_hash": k, "pools": v} for k, v in prev_to_pools.items()]}
+    }
+
+def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], height: int) -> Dict[str, Any] | None:
+    subsidy = get_block_subsidy_sats(height)
+    offenders: List[Dict[str, Any]] = []
+    for t in templates:
+        merkle_branches = t.get("merkle_branches") or []
+        if isinstance(merkle_branches, list) and len(merkle_branches) == 0:
+            coinbase1 = str(t.get("coinbase1", ""))
+            coinbase2 = str(t.get("coinbase2", ""))
+            extranonce1 = str(t.get("extranonce1", ""))
+            extranonce2_length = int(t.get("extranonce2_length", 0) or 0)
+            raw = reconstruct_coinbase_raw(coinbase1, extranonce1, extranonce2_length, coinbase2)
+            total = parse_tx_total_output_value_sats(raw)
+            if total > subsidy:
+                offenders.append({
+                    "pool_name": t.get("pool_name", "unknown"),
+                    "total_sats": total,
+                    "subsidy_sats": subsidy
+                })
+    if not offenders:
+        return None
+    pools = sorted({o.get("pool_name", "unknown") for o in offenders})
+    tooltip = (
+        f"Templates without merkle branches exceed subsidy @ height {height}:\n"
+        f"Pools: {', '.join(pools)}\n"
+        f"Count: {len(offenders)}"
+    )
+    logger.warning(
+        "Analysis(invalid_coinbase_without_merkle): %d offending templates found at height %d (subsidy=%d)",
+        len(offenders), height, subsidy
+    )
+    return {
+        "key": "invalid_coinbase_no_merkle",
+        "icon": "error",
+        "title": "Invalid template sent to miners",
+        "tooltip": tooltip,
+        "details": {"offenders": offenders}
+    }
+
+def analyze_pool_identification(coinbase_script_hex: str, coinbase_addresses: List[str]) -> Dict[str, Any]:
+    logger.info(
+        "Analysis(pool_identification): starting with %d coinbase addresses",
+        len(coinbase_addresses or [])
+    )
+    mining_pool = pools_manager.identify_pool(coinbase_script_hex, coinbase_addresses)
+    method = mining_pool.get("identification_method", "unknown") if mining_pool else "none"
+    name = mining_pool.get("name", "Unknown") if mining_pool else "Unknown"
+    logger.info(
+        "Analysis(pool_identification): result name=%s method=%s",
+        name, method
+    )
+    return {
+        "mining_pool": mining_pool or {"name": "Unknown", "id": "unknown"},
+        "method": method,
+        "addresses_considered": coinbase_addresses,
+    }
+
+def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coinbase_addresses: List[str] | None = None) -> Dict[str, Any]:
+    flags: List[Dict[str, Any]] = []
+    analysis: Dict[str, Any] = {}
+    logger.info("Running analyses for height %d", height)
+    try:
+        templates = list(db.mining_notify.find({"height": height})) if db is not None else []
+    except Exception as e:
+        logger.error(f"Error fetching mining.notify templates for height {height}: {e}")
+        templates = []
+
+    logger.info("Analysis: fetched %d templates for height %d", len(templates), height)
+    if templates:
+        prev_flag = analyze_prev_hash_divergence(templates)
+        if prev_flag:
+            flags.append(prev_flag)
+        invalid_flag = analyze_invalid_coinbase_without_merkle(templates, height)
+        if invalid_flag:
+            flags.append(invalid_flag)
+    else:
+        logger.info("Analysis: no templates available for height %d", height)
+
+    # Pool identification analysis if inputs provided
+    if coinbase_script_hex is not None and coinbase_addresses is not None:
+        try:
+            analysis["pool_identification"] = analyze_pool_identification(coinbase_script_hex, coinbase_addresses)
+        except Exception as e:
+            logger.error(f"Error during pool identification analysis for height {height}: {e}")
+
+    if flags:
+        analysis["flags"] = flags
+    return analysis
 
 def sync_blocks():
     """

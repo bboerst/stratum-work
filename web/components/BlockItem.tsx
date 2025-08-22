@@ -53,7 +53,7 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
       </div>
       {/* Analysis icons in upper-right corner */}
       {block.analysis?.flags && block.analysis.flags.length > 0 && (
-        <div className="absolute top-1 right-1 flex gap-1">
+        <div className="absolute top-[1px] right-2 z-20 flex gap-1">
           <TooltipProvider>
             {block.analysis.flags.map((flag, idx) => (
               <Tooltip key={`${flag.key}-${idx}`}>
@@ -63,15 +63,24 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
                     aria-label={flag.title || flag.key}
                     title={flag.title}
                   >
-                    {flag.icon === 'fork' ? 'Y' : flag.icon === 'error' ? '!' : '•'}
+                    {flag.icon === 'fork' ? (
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <circle cx="6" cy="4" r="2" />
+                        <circle cx="18" cy="4" r="2" />
+                        <circle cx="12" cy="20" r="2" />
+                        <path d="M6 6v2a6 6 0 0 0 6 6" />
+                        <path d="M18 6v2a6 6 0 0 1-6 6" />
+                        <path d="M12 14v4" />
+                      </svg>
+                    ) : flag.icon === 'error' ? '!' : '•'}
                   </div>
                 </TooltipTrigger>
-                <TooltipContent side="top">
-                  <div className="max-w-xs whitespace-pre-wrap">
-                    {flag.title && <div className="font-semibold mb-1">{flag.title}</div>}
-                    <div>{flag.tooltip || flag.key}</div>
-                  </div>
-                </TooltipContent>
               </Tooltip>
             ))}
           </TooltipProvider>

@@ -50,6 +50,27 @@ export interface BlockData {
     match_type?: string;
     identification_method?: 'address' | 'tag';
   };
+  analysis?: {
+    flags?: Array<{
+      key: string;
+      icon: 'fork' | 'error' | string;
+      title?: string;
+      tooltip?: string;
+      details?: Record<string, unknown>;
+    }>;
+    pool_identification?: {
+      mining_pool?: {
+        id?: number | string;
+        name?: string;
+        link?: string;
+        slug?: string;
+        match_type?: string;
+        identification_method?: 'address' | 'tag';
+      };
+      method?: string;
+      addresses_considered?: string[];
+    }
+  };
 }
 
 /**

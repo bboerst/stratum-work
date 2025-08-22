@@ -661,6 +661,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
               height: latestBlock.height,
               timestamp: new Date(latestBlock.timestamp).getTime(),
               mining_pool: latestBlock.mining_pool || { id: 0, name: 'Unknown' },
+              analysis: latestBlock.analysis,
               isRealtime: true // Mark this as a real-time block
             };
             

@@ -45,6 +45,8 @@ export interface BlockData {
   mining_pool?: {
     id: number;
     name: string;
+    tag?: string;
+    datum_template_creator?: string;
     link?: string;
     slug?: string;
     match_type?: string;

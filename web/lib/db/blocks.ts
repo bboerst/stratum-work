@@ -9,6 +9,7 @@ interface MiningPool {
   id: number;
   name: string;
   tag?: string;
+  datum_template_creator?: string;
   link?: string;
   slug?: string;
   match_type?: string;
@@ -29,6 +30,7 @@ interface PoolData extends Record<string, unknown> {
   id?: string | number;
   name?: string;
   tag?: string;
+  datum_template_creator?: string;
   link?: string;
   slug?: string;
   match_type?: string;
@@ -91,6 +93,7 @@ function formatMiningPool(poolData: Record<string, unknown> | null | undefined):
     id: typeof pool.id === 'string' ? parseInt(pool.id as string) : (pool.id as number) || 0,
     name: (pool.name as string) || 'Unknown',
     tag: pool.tag as string | undefined,
+    datum_template_creator: (pool as any).datum_template_creator as string | undefined,
     link: pool.link as string | undefined,
     slug: pool.slug as string | undefined,
     match_type: pool.match_type as string | undefined,

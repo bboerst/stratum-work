@@ -84,12 +84,93 @@ def identify_by_tag(pools: Dict[str, Dict[str, Any]], coinbase_script_hex: str) 
 def identify_pool_from_data(
     pools: Dict[str, Dict[str, Any]], coinbase_script_hex: str, coinbase_addresses: List[str]
 ) -> Dict[str, Any]:
+    def _decode_coinbase_text(script_hex: str) -> str:
+        try:
+            return bytes.fromhex(script_hex).decode("utf-8", errors="replace").replace("\n", "")
+        except Exception:
+            return ""
+
+    def _is_ocean_pool(pool: Dict[str, Any]) -> bool:
+        name = (pool or {}).get("name", "") or ""
+        slug = (pool or {}).get("slug", "") or ""
+        pid = (pool or {}).get("id", "") or ""
+        name_l = str(name).lower()
+        slug_l = str(slug).lower()
+        pid_l = str(pid).lower()
+        return any(s in ("ocean",) for s in (name_l, slug_l, pid_l))
+
+    def _parse_datum_template_creator_names(coinbase_hex: str) -> List[str]:
+        try:
+            if not coinbase_hex:
+                return []
+            # Convert hex string to byte values
+            bytes_arr: List[int] = []
+            for i in range(0, len(coinbase_hex), 2):
+                chunk = coinbase_hex[i : i + 2]
+                try:
+                    bytes_arr.append(int(chunk, 16))
+                except Exception:
+                    # Stop parsing on invalid hex
+                    break
+
+            if not bytes_arr:
+                return []
+
+            # Skip block height (var-length encoded in first byte count)
+            tag_length_byte_idx = 1 + bytes_arr[0]
+            if tag_length_byte_idx >= len(bytes_arr):
+                return []
+
+            tags_length = bytes_arr[tag_length_byte_idx]
+            # Handle OP_PUSHDATA1 (0x4c)
+            if tags_length == 0x4C:
+                tag_length_byte_idx += 1
+                if tag_length_byte_idx >= len(bytes_arr):
+                    return []
+                tags_length = bytes_arr[tag_length_byte_idx]
+
+            tag_start = tag_length_byte_idx + 1
+            tag_end = tag_start + tags_length
+            if tag_start >= len(bytes_arr) or tag_start < 0:
+                return []
+            tag_end = min(tag_end, len(bytes_arr))
+            tags_bytes = bytes_arr[tag_start:tag_end]
+            tag_string = ''.join(chr(b) for b in tags_bytes)
+            tag_string = tag_string.replace('\x00', '')
+
+            # Split on 0x0f and clean to [A-Za-z0-9 ] only
+            names = [re.sub(r'[^a-zA-Z0-9 ]', '', part) for part in tag_string.split('\x0f')]
+            # Trim and drop empties
+            names = [n.strip() for n in names if n and n.strip()]
+            return names
+        except Exception:
+            return []
+
     # Prefer address match first
     addr = identify_by_address(pools, coinbase_addresses)
     if addr:
+        # If this is OCEAN, try to enrich with the DATUM template creator (using mempool logic)
+        if _is_ocean_pool(addr):
+            names = _parse_datum_template_creator_names(coinbase_script_hex)
+            if names:
+                # choose the last cleaned name that isn't an OCEAN/DATUM marker
+                for candidate in reversed(names):
+                    low = candidate.lower()
+                    if low and ("ocean" not in low and "datum" not in low):
+                        addr["datum_template_creator"] = candidate
+                        break
         return addr
     tag = identify_by_tag(pools, coinbase_script_hex)
     if tag:
+        # If this is OCEAN, try to enrich with the DATUM template creator (using mempool logic)
+        if _is_ocean_pool(tag):
+            names = _parse_datum_template_creator_names(coinbase_script_hex)
+            if names:
+                for candidate in reversed(names):
+                    low = candidate.lower()
+                    if low and ("ocean" not in low and "datum" not in low):
+                        tag["datum_template_creator"] = candidate
+                        break
         return tag
     return {}
 

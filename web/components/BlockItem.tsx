@@ -50,6 +50,11 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
             ? '~receiving~'
             : block.mining_pool?.name || '?'} 
         </span>
+        {block.mining_pool?.datum_template_creator && (
+          <span className="text-[9px] opacity-60 truncate max-w-[80px] text-center">
+            {block.mining_pool.datum_template_creator}
+          </span>
+        )}
       </div>
       {/* Analysis icons in upper-right corner */}
       {block.analysis?.flags && block.analysis.flags.length > 0 && (

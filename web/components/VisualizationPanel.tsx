@@ -78,26 +78,21 @@ export default function VisualizationPanel({
   }, []);
 
   const renderInterestingPanel = useCallback(() => {
-    function buildTooltip(item: InterestingItem): string {
-      const parts: string[] = [];
+    type FindingLine = { icon?: 'fork' | 'error'; text: string };
+    function buildLines(item: InterestingItem): FindingLine[] {
+      const lines: FindingLine[] = [];
       const flags = (item.analysis && Array.isArray(item.analysis.flags)) ? (item.analysis.flags as AnalysisFlag[]) : [];
-      const forkFlag = flags.find(f => f && f.icon === 'fork');
-      const errorFlag = flags.find(f => f && f.icon === 'error');
-      // Fork summary
-      if (forkFlag) {
-        parts.push('prev-hash divergence');
-      }
-      // Error summary (no counts)
-      if (errorFlag) {
-        parts.push('Invalid templates');
-      }
-      if (parts.length === 0) parts.push('Interesting analysis finding');
-      return `${item.height} — ${parts.join(' • ')}`;
+      const hasFork = flags.some(f => f && f.icon === 'fork');
+      const hasError = flags.some(f => f && f.icon === 'error');
+      if (hasFork) lines.push({ icon: 'fork', text: 'Multiple Prev Block Hash' });
+      if (hasError) lines.push({ icon: 'error', text: 'Invalid templates' });
+      if (lines.length === 0) lines.push({ text: 'Interesting analysis finding' });
+      return lines;
     }
     return (
-      <div className="border border-border rounded-md bg-card w-full">
-        <div className="px-3 py-2 border-b border-border text-sm font-semibold">Findings</div>
-        <div className="max-h-[260px] overflow-auto">
+      <div className="border border-border rounded-md bg-card w-full h-full flex flex-col relative">
+        <div className="px-3 py-2 border-b border-border text-sm font-semibold flex-shrink-0">Findings</div>
+        <div className="flex-1 overflow-y-auto relative pr-2">
           {loadingInteresting && (
             <div className="p-3 text-xs opacity-70">Loading…</div>
           )}
@@ -107,43 +102,52 @@ export default function VisualizationPanel({
           {!loadingInteresting && interesting.length > 0 && (
             <ul className="divide-y divide-border">
               {interesting.map(item => {
-                const flags = (item.analysis && Array.isArray(item.analysis.flags)) ? (item.analysis.flags as AnalysisFlag[]) : [];
-                const hasFork = flags.some((f) => f && f.icon === 'fork');
-                const hasError = flags.some((f) => f && f.icon === 'error');
-                const summary = buildTooltip(item);
+                const lines = buildLines(item);
+                const titleText = [String(item.height), ...lines.map(l => l.text)].join('\n');
                 return (
                   <li
                     key={item.block_hash}
-                    title={summary}
-                    className="px-3 py-2 grid grid-cols-[24px_1fr] items-center gap-2 text-xs cursor-pointer hover:bg-muted"
+                    title={titleText}
+                    className="grid grid-cols-[64px_1fr] gap-2 text-xs cursor-pointer hover:bg-muted items-stretch"
                     onClick={() => router.push(`/height/${item.height}`)}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/height/${item.height}`); } }}
                     role="button"
                     tabIndex={0}
                   >
-                    <div className="flex items-center gap-1 w-6">
-                      {hasFork && (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <circle cx="6" cy="4" r="2" />
-                          <circle cx="18" cy="4" r="2" />
-                          <circle cx="12" cy="20" r="2" />
-                          <path d="M6 6v2a6 6 0 0 0 6 6" />
-                          <path d="M18 6v2a6 6 0 0 1-6 6" />
-                          <path d="M12 14v4" />
-                        </svg>
-                      )}
-                      {hasError && (
-                        <span className="inline-block h-3 w-3 rounded-sm bg-red-600 text-white leading-3 text-[9px] text-center">!</span>
-                      )}
+                    {/* Height column spanning full row height */}
+                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-100 text-black dark:bg-gray-900 dark:text-white rounded-sm">
+                      {item.height}
                     </div>
-                    <div className="truncate">
-                      {summary}
+                    {/* Findings column */}
+                    <div className="truncate py-2">
+                      <div className="space-y-0.5">
+                        {lines.map((line, idx) => (
+                          <div key={idx} className="truncate flex items-center gap-2">
+                            {line.icon === 'fork' && (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <circle cx="6" cy="4" r="2" />
+                                <circle cx="18" cy="4" r="2" />
+                                <circle cx="12" cy="20" r="2" />
+                                <path d="M6 6v2a6 6 0 0 0 6 6" />
+                                <path d="M18 6v2a6 6 0 0 1-6 6" />
+                                <path d="M12 14v4" />
+                              </svg>
+                            )}
+                            {line.icon === 'error' && (
+                              <span className="inline-block h-3 w-3 rounded-sm bg-red-600 text-white leading-3 text-[9px] text-center">!</span>
+                            )}
+                            <span className="truncate">{line.text}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </li>
                 );
               })}
             </ul>
           )}
+          {/* Vertical scroll indicator */}
+          <div aria-hidden className="pointer-events-none absolute right-0 top-2 bottom-2 w-1 bg-gradient-to-b from-transparent via-muted/60 to-transparent rounded"></div>
         </div>
       </div>
     );
@@ -211,9 +215,9 @@ export default function VisualizationPanel({
       </div>
       
       {/* Visualization content */}
-      <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
+      <div className="px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
         {/* Interesting findings */}
-        <div className="mt-3">
+        <div className="mt-3 h-full">
           {renderInterestingPanel()}
         </div>
       </div>

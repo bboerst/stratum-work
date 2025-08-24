@@ -59,7 +59,7 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
               <Tooltip key={`${flag.key}-${idx}`}>
                 <TooltipTrigger asChild>
                   <div
-                    className="h-4 w-4 rounded-sm bg-black/70 text-white flex items-center justify-center cursor-default"
+                    className="h-4 w-4 rounded-sm text-white flex items-center justify-center cursor-default"
                     aria-label={flag.title || flag.key}
                     title={flag.title}
                   >

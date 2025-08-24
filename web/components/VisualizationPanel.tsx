@@ -3,8 +3,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useVisualization } from './VisualizationContext';
-import RealtimeChart from './RealtimeChart';
-import { CHART_POINT_SIZES } from '@/lib/constants';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -27,14 +25,13 @@ interface VisualizationPanelProps {
 }
 
 export default function VisualizationPanel({ 
-  paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
   const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const timeWindow = 60; // Default to 60 seconds
+  // Removed timing chart from this panel
   type AnalysisFlag = { icon?: string; key?: string; title?: string; details?: Record<string, unknown> };
   type InterestingItem = { height: number; block_hash: string; analysis?: { flags?: AnalysisFlag[] } | undefined; mining_pool?: { name?: string } };
   const [interesting, setInteresting] = useState<InterestingItem[]>([]);
@@ -181,20 +178,6 @@ export default function VisualizationPanel({
     };
   }, [width, throttledMouseMove]);
 
-  // Render the pool timing chart
-  const renderPoolTimingChart = useCallback(() => {
-    return (
-      <div className="border border-border rounded-md p-2 bg-card h-[550px] w-full">
-        <RealtimeChart 
-          paused={paused} 
-          filterBlockHeight={filterBlockHeight}
-          timeWindow={timeWindow}
-          pointSize={CHART_POINT_SIZES.REALTIME}
-        />
-      </div>
-    );
-  }, [timeWindow, paused, filterBlockHeight]);
-
   // Don't render visualization panel if toggled off
   if (!isPanelVisible) {
     return null;
@@ -229,9 +212,6 @@ export default function VisualizationPanel({
       
       {/* Visualization content */}
       <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
-        {/* Timing chart */}
-        {renderPoolTimingChart()}
-
         {/* Interesting findings */}
         <div className="mt-3">
           {renderInterestingPanel()}

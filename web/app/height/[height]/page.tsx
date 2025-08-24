@@ -14,6 +14,7 @@ import BlockTemplateCard from "@/components/BlockTemplateCard";
 import HistoricalChartWrapper from "@/components/HistoricalChartWrapper";
 import HistoricalPoolTiming from "@/components/HistoricalPoolTiming";
 import CollapsibleRow from "@/components/CollapsibleRow";
+import AnalyticsPanel from "@/components/AnalyticsPanel";
 
 export default function HeightPage() {
   const params = useParams();
@@ -80,6 +81,13 @@ export default function HeightPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
         <div className="flex-1 overflow-auto">
+          {blockHeight !== null && blockHeight > 0 && (
+            <div className="px-4">
+              <CollapsibleRow title="Findings" defaultExpanded={true}>
+                <AnalyticsPanel height={blockHeight} />
+              </CollapsibleRow>
+            </div>
+          )}
           {blockHeight !== null && blockHeight > 0 && (
             <div className="px-4">
               <CollapsibleRow title="Time to First Template" defaultExpanded={true}>

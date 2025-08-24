@@ -1,5 +1,6 @@
 import React from 'react';
 import { Block } from '../types/blockTypes';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface BlockItemProps {
   block: Block;
@@ -49,7 +50,54 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
             ? '~receiving~'
             : block.mining_pool?.name || '?'} 
         </span>
+        {block.mining_pool?.datum_template_creator && (
+          <span className="text-[9px] opacity-60 truncate max-w-[80px] text-center">
+            {block.mining_pool.datum_template_creator}
+          </span>
+        )}
       </div>
+      {/* Analysis icons in upper-right corner */}
+      {block.analysis?.flags && block.analysis.flags.length > 0 && (
+        <div className="absolute top-[1px] right-2 z-20 flex gap-1">
+          <TooltipProvider>
+            {block.analysis.flags.map((flag, idx) => (
+              <Tooltip key={`${flag.key}-${idx}`}>
+                <TooltipTrigger asChild>
+                  <div
+                    className="h-4 text-white flex items-center justify-center cursor-default"
+                    aria-label={flag.title || flag.key}
+                    title={flag.title}
+                  >
+                    {flag.icon === 'fork' ? (
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <circle cx="6" cy="4" r="2" />
+                        <circle cx="18" cy="4" r="2" />
+                        <circle cx="12" cy="20" r="2" />
+                        <path d="M6 6v2a6 6 0 0 0 6 6" />
+                        <path d="M18 6v2a6 6 0 0 1-6 6" />
+                        <path d="M12 14v4" />
+                      </svg>
+                    ) : flag.icon === 'error' ? '!' : '•'}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <div className="max-w-xs whitespace-pre-wrap">
+                    {flag.icon === 'fork'
+                      ? 'Different previous block hash detected'
+                      : (flag.tooltip || flag.title || flag.key)}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </TooltipProvider>
+        </div>
+      )}
     </div>
   );
 };

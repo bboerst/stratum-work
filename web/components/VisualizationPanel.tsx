@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useVisualization } from './VisualizationContext';
-import RealtimeChart from './RealtimeChart';
-import { CHART_POINT_SIZES } from '@/lib/constants';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -26,14 +25,18 @@ interface VisualizationPanelProps {
 }
 
 export default function VisualizationPanel({ 
-  paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
   const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  const timeWindow = 60; // Default to 60 seconds
+  // Removed timing chart from this panel
+  type AnalysisFlag = { icon?: string; key?: string; title?: string; details?: Record<string, unknown> };
+  type InterestingItem = { height: number; block_hash: string; analysis?: { flags?: AnalysisFlag[] } | undefined; mining_pool?: { name?: string } };
+  const [interesting, setInteresting] = useState<InterestingItem[]>([]);
+  const router = useRouter();
+  const [loadingInteresting, setLoadingInteresting] = useState(false);
   
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -61,6 +64,94 @@ export default function VisualizationPanel({
   // Apply throttling outside of useCallback to avoid dependency issues
   const throttledMouseMove = createThrottle(handleThrottledMouseMove, 16); // Approximately 60fps
 
+  useEffect(() => {
+    // Fetch interesting blocks list (server rendered API)
+    setLoadingInteresting(true);
+    fetch('/api/analysis-data?interesting=true', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        const items = Array.isArray(d.items) ? d.items : [];
+        setInteresting(items);
+      })
+      .catch(() => setInteresting([]))
+      .finally(() => setLoadingInteresting(false));
+  }, []);
+
+  const renderInterestingPanel = useCallback(() => {
+    type FindingLine = { icon?: 'fork' | 'error'; text: string };
+    function buildLines(item: InterestingItem): FindingLine[] {
+      const lines: FindingLine[] = [];
+      const flags = (item.analysis && Array.isArray(item.analysis.flags)) ? (item.analysis.flags as AnalysisFlag[]) : [];
+      const hasFork = flags.some(f => f && f.icon === 'fork');
+      const hasError = flags.some(f => f && f.icon === 'error');
+      if (hasFork) lines.push({ icon: 'fork', text: 'Multiple Prev Block Hash' });
+      if (hasError) lines.push({ icon: 'error', text: 'Invalid templates' });
+      if (lines.length === 0) lines.push({ text: 'Interesting analysis finding' });
+      return lines;
+    }
+    return (
+      <div className="border border-border rounded-md bg-card w-full h-full flex flex-col relative">
+        <div className="px-3 py-2 border-b border-border text-sm font-semibold flex-shrink-0">Findings</div>
+        <div className="flex-1 overflow-y-auto relative pr-2">
+          {loadingInteresting && (
+            <div className="p-3 text-xs opacity-70">Loading…</div>
+          )}
+          {!loadingInteresting && interesting.length === 0 && (
+            <div className="p-3 text-xs opacity-70">No findings</div>
+          )}
+          {!loadingInteresting && interesting.length > 0 && (
+            <ul className="divide-y divide-border">
+              {interesting.map(item => {
+                const lines = buildLines(item);
+                const titleText = [String(item.height), ...lines.map(l => l.text)].join('\n');
+                return (
+                  <li
+                    key={item.block_hash}
+                    title={titleText}
+                    className="grid grid-cols-[64px_1fr] gap-2 text-xs cursor-pointer hover:bg-muted items-stretch"
+                    onClick={() => router.push(`/height/${item.height}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/height/${item.height}`); } }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    {/* Height column spanning full row height */}
+                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
+                      {item.height}
+                    </div>
+                    {/* Findings column */}
+                    <div className="truncate py-2">
+                      <div className="space-y-0.5">
+                        {lines.map((line, idx) => (
+                          <div key={idx} className="truncate flex items-center gap-2">
+                            {line.icon === 'fork' && (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <circle cx="6" cy="4" r="2" />
+                                <circle cx="18" cy="4" r="2" />
+                                <circle cx="12" cy="20" r="2" />
+                                <path d="M6 6v2a6 6 0 0 0 6 6" />
+                                <path d="M18 6v2a6 6 0 0 1-6 6" />
+                                <path d="M12 14v4" />
+                              </svg>
+                            )}
+                            {line.icon === 'error' && (
+                              <span className="inline-block h-3 w-3 rounded-sm bg-red-600 text-white leading-3 text-[9px] text-center">!</span>
+                            )}
+                            <span className="truncate">{line.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {/* Vertical scroll indicator */}
+          <div aria-hidden className="pointer-events-none absolute right-0 top-2 bottom-2 w-1 bg-gradient-to-b from-transparent via-muted/60 to-transparent rounded"></div>
+        </div>
+      </div>
+    );
+  }, [interesting, loadingInteresting, router]);
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
       if (resizeHandleRef.current && resizeHandleRef.current.contains(e.target as Node)) {
@@ -90,20 +181,6 @@ export default function VisualizationPanel({
       document.removeEventListener('mouseup', handleMouseUp);
     };
   }, [width, throttledMouseMove]);
-
-  // Render the pool timing chart
-  const renderPoolTimingChart = useCallback(() => {
-    return (
-      <div className="border border-border rounded-md p-2 bg-card h-[550px] w-full">
-        <RealtimeChart 
-          paused={paused} 
-          filterBlockHeight={filterBlockHeight}
-          timeWindow={timeWindow}
-          pointSize={CHART_POINT_SIZES.REALTIME}
-        />
-      </div>
-    );
-  }, [timeWindow, paused, filterBlockHeight]);
 
   // Don't render visualization panel if toggled off
   if (!isPanelVisible) {
@@ -138,9 +215,11 @@ export default function VisualizationPanel({
       </div>
       
       {/* Visualization content */}
-      <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
-        {/* Timing chart */}
-        {renderPoolTimingChart()}
+      <div className="px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
+        {/* Interesting findings */}
+        <div className="mt-3 h-full">
+          {renderInterestingPanel()}
+        </div>
       </div>
     </div>
   );

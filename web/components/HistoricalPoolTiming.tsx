@@ -30,6 +30,45 @@ function getPercentile(sortedData: number[], percentile: number): number {
   }
 }
 
+// Parse a timestamp that might be hex-encoded nanoseconds or ISO-8601 into epoch nanoseconds
+function parseFirstSeenTimestampToNs(timestamp: string): number {
+  if (!timestamp) return 0;
+
+  const trimmed = timestamp.trim();
+  // If it's all hex characters, treat as hex-encoded integer (nanoseconds)
+  if (/^[0-9a-fA-F]+$/.test(trimmed)) {
+    // parseInt on very large hex values fits within JS number precision for our range
+    // (nanoseconds since epoch today still fits within 2^53 safely for a while),
+    // but even if precision loss occurs, we only use relative differences within the same set.
+    const ns = parseInt(trimmed, 16);
+    return Number.isFinite(ns) ? ns : 0;
+  }
+
+  // Try ISO 8601 like 2024-12-20T12:45:08.871633 (no timezone provided)
+  // We'll interpret it as UTC for consistency, and capture fractional seconds to nanoseconds.
+  const isoMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?/);
+  if (isoMatch) {
+    const datePart = isoMatch[1]; // YYYY-MM-DD
+    const timePart = isoMatch[2]; // HH:mm:ss
+    const fraction = isoMatch[3] || ""; // fractional seconds digits
+    const baseMs = Date.parse(`${datePart}T${timePart}Z`); // treat as UTC
+    if (!Number.isNaN(baseMs)) {
+      // Convert fractional seconds to nanoseconds (pad/truncate to 9 digits)
+      const nanoStr = (fraction || "").padEnd(9, "0").slice(0, 9);
+      const fractionNs = nanoStr ? parseInt(nanoStr, 10) : 0;
+      return Math.max(0, baseMs) * 1_000_000 + (Number.isFinite(fractionNs) ? fractionNs : 0);
+    }
+  }
+
+  // Fallback: let Date try to parse whatever it is; treat result as ms
+  const parsedMs = Date.parse(trimmed);
+  if (!Number.isNaN(parsedMs)) {
+    return Math.max(0, parsedMs) * 1_000_000;
+  }
+
+  return 0;
+}
+
 const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight }) => {
   const [timingData, setTimingData] = useState<PoolTimingData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -53,10 +92,10 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
         const data: PoolTimingData[] = await response.json();
         
         if (data.length > 0) {
-            // Convert hex timestamps to numbers for calculation and find the earliest
-            const timestampsAsNumbers = data.map(d => parseInt(d.firstSeenTimestamp, 16));
+            // Convert mixed-format timestamps (hex ns or ISO) to epoch nanoseconds
+            const timestampsAsNumbers = data.map(d => parseFirstSeenTimestampToNs(d.firstSeenTimestamp));
             const earliestTimestampValue = Math.min(...timestampsAsNumbers);
-            
+
             const processedData = data.map((d, index) => {
                 const currentTimestampValue = timestampsAsNumbers[index];
                 return {
@@ -65,7 +104,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
                     relativeTimeNs: currentTimestampValue - earliestTimestampValue
                 };
             }).sort((a, b) => (a.relativeTimeNs ?? 0) - (b.relativeTimeNs ?? 0));
-            
+
             setTimingData(processedData); // No need to cast anymore if types align
         } else {
             setTimingData([]);

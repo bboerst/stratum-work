@@ -72,6 +72,15 @@ interface MongoDBBlock {
   [key: string]: unknown;
 }
 
+// Safe helper to read a string property from an unknown object without using any
+function readString(obj: unknown, key: string): string | undefined {
+  if (obj && typeof obj === 'object' && key in (obj as Record<string, unknown>)) {
+    const value = (obj as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Convert pool data from database to MiningPool format
  */
@@ -92,8 +101,8 @@ function formatMiningPool(poolData: Record<string, unknown> | null | undefined):
   const result = {
     id: typeof pool.id === 'string' ? parseInt(pool.id as string) : (pool.id as number) || 0,
     name: (pool.name as string) || 'Unknown',
-    tag: pool.tag as string | undefined,
-    datum_template_creator: (pool as any).datum_template_creator as string | undefined,
+    tag: readString(pool, 'tag'),
+    datum_template_creator: readString(pool, 'datum_template_creator'),
     link: pool.link as string | undefined,
     slug: pool.slug as string | undefined,
     match_type: pool.match_type as string | undefined,

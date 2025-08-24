@@ -115,7 +115,7 @@ export default function VisualizationPanel({
                     tabIndex={0}
                   >
                     {/* Height column spanning full row height */}
-                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-100 text-black dark:bg-gray-900 dark:text-white rounded-sm">
+                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
                       {item.height}
                     </div>
                     {/* Findings column */}

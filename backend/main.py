@@ -13,11 +13,18 @@ import uuid
 import re
 from datetime import datetime
 import concurrent.futures
-from queue import Queue
+from queue import Queue, Empty
 from contextlib import contextmanager
 from threading import Lock
 import random
 from distutils.util import strtobool
+from typing import List, Dict, Any
+
+# For decoding transactions when running analysis
+try:
+    from bitcoin.core import CTransaction
+except Exception:
+    CTransaction = None  # Analysis that requires tx parsing will be skipped if unavailable
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -555,287 +562,6 @@ def retry_rpc(func, description, *args, attempts=5, initial_delay=2, **kwargs):
     # This should never be reached, but just in case
     raise last_exception if last_exception else Exception(f"Failed to execute RPC call {description}")
 
-# --- Mining Pool Identification System ---
-class PoolsManager:
-    def __init__(self, db, pool_json_url):
-        self.db = db
-        self.pool_json_url = pool_json_url
-        self.pools = {}  # Cache of loaded pools
-        self.pool_definitions_hash = None  # Track when definitions change
-        self.reindexing = False  # Flag to prevent multiple reindexing operations
-        
-    def load_pools(self) -> dict:
-        """Load pool definitions from GitHub or local cache"""
-        max_retries = 3
-        retry_delay = 5
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"Fetching pool definitions from {self.pool_json_url} (attempt {attempt}/{max_retries})")
-                
-                # Add a longer timeout and custom headers to mimic a browser
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'application/json'
-                }
-                response = requests.get(self.pool_json_url, headers=headers, timeout=30)
-                response.raise_for_status()
-                pool_data = response.json()
-                
-                # Calculate hash of the pool definitions to detect changes
-                new_hash = hash(json.dumps(pool_data, sort_keys=True))
-                definitions_changed = (self.pool_definitions_hash is not None and 
-                                      self.pool_definitions_hash != new_hash)
-                self.pool_definitions_hash = new_hash
-                
-                # Convert to dictionary keyed by uniqueId
-                pools = {pool.get('id'): pool for pool in pool_data}
-                self.pools = pools
-                
-                # Store in database
-                self.db.pools.delete_many({})  # Clear existing
-                self.db.pools.insert_many(pool_data)
-                
-                logger.info(f"Successfully loaded {len(pools)} mining pool definitions from GitHub")
-                
-                # If definitions changed, trigger reindexing
-                if definitions_changed and self.db.blocks.count_documents({}) > 0:
-                    logger.info("Pool definitions changed, scheduling reindexing of blocks")
-                    threading.Thread(target=self.reindex_blocks, daemon=True).start()
-                    
-                return pools
-                
-            except requests.exceptions.SSLError as ssl_err:
-                logger.error(f"SSL error fetching pool definitions (attempt {attempt}/{max_retries}): {ssl_err}")
-                if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    logger.warning("Max retries exceeded for SSL error, falling back to local file or database")
-            except requests.exceptions.RequestException as req_err:
-                logger.error(f"Request error fetching pool definitions (attempt {attempt}/{max_retries}): {req_err}")
-                if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    logger.warning("Max retries exceeded for request error, falling back to local file or database")
-            except Exception as e:
-                logger.error(f"Unexpected error loading mining pool list (attempt {attempt}/{max_retries}): {e}")
-                if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    logger.warning("Max retries exceeded for unexpected error, falling back to local file or database")
-        
-        # Try to load from local file first
-        try:
-            if os.path.exists(LOCAL_POOL_FILE):
-                logger.info(f"Attempting to load pool definitions from local file: {LOCAL_POOL_FILE}")
-                with open(LOCAL_POOL_FILE, 'r') as f:
-                    pool_data = json.load(f)
-                    
-                # Store in database to ensure consistency
-                self.db.pools.delete_many({})
-                self.db.pools.insert_many(pool_data)
-                
-                pools = {pool.get('id'): pool for pool in pool_data}
-                self.pools = pools
-                
-                logger.info(f"Successfully loaded {len(pools)} mining pool definitions from local file")
-                return pools
-            else:
-                logger.warning(f"Local pool file {LOCAL_POOL_FILE} not found, falling back to database")
-        except Exception as file_err:
-            logger.error(f"Error loading pool definitions from local file: {file_err}")
-        
-        # Fall back to database if available
-        try:
-            pool_data = list(self.db.pools.find({}, {"_id": 0}))
-            if pool_data:
-                logger.info(f"Loaded {len(pool_data)} mining pool definitions from database")
-                return {pool.get('id'): pool for pool in pool_data}
-            else:
-                logger.warning("No pool definitions found in database")
-                return {}
-        except Exception as db_err:
-            logger.error(f"Error loading pool definitions from database: {db_err}")
-            return {}
-    
-    def identify_pool(self, coinbase_script_hex: str, coinbase_addresses: list) -> dict:
-        """
-        Identify pool using both coinbase addresses and coinbase tags.
-        
-        This follows the approach from the bitcoin-pool-identification Rust library:
-        1. First try to identify by address (more reliable)
-        2. Then try to identify by coinbase tag
-        
-        Returns a dictionary with pool information or an empty dictionary if no match is found.
-        """
-        if not self.pools:
-            self.pools = self.load_pools()
-            
-        # First try to identify by address (more reliable)
-        address_match = self._identify_by_address(coinbase_addresses)
-        if address_match:
-            return address_match
-        
-        # Then try to identify by coinbase tag
-        tag_match = self._identify_by_tag(coinbase_script_hex)
-        if tag_match:
-            return tag_match
-        
-        # No match found
-        return {}
-    
-    def _identify_by_address(self, coinbase_addresses: list) -> dict:
-        """Identify pool by coinbase output addresses"""
-        if not coinbase_addresses:
-            return {}
-            
-        for pool_id, pool in self.pools.items():
-            pool_addresses = pool.get('addresses', [])
-            for addr in coinbase_addresses:
-                if addr in pool_addresses:
-                    return {
-                        'id': pool_id,
-                        'name': pool.get('name'),
-                        'slug': pool.get('slug', pool.get('name', '').lower().replace(' ', '-')),
-                        'link': pool.get('link'),
-                        'match_type': 'address',
-                        'identification_method': 'address'
-                    }
-        return {}
-    
-    def _identify_by_tag(self, coinbase_script_hex: str) -> dict:
-        """Identify pool by coinbase tag in script_sig"""
-        if not coinbase_script_hex:
-            return {}
-            
-        try:
-            # Decode coinbase script as UTF-8 (with replacement for invalid chars)
-            # This matches the Rust implementation's coinbase_script_as_utf8 method
-            coinbase_text = bytes.fromhex(coinbase_script_hex).decode('utf-8', errors='replace').replace('\n', '')
-            
-            for pool_id, pool in self.pools.items():
-                # Check against tags
-                for tag in pool.get('tags', []):
-                    if tag in coinbase_text:
-                        return {
-                            'id': pool_id,
-                            'name': pool.get('name'),
-                            'slug': pool.get('slug', pool.get('name', '').lower().replace(' ', '-')),
-                            'link': pool.get('link'),
-                            'match_type': 'tag',
-                            'identification_method': 'tag'
-                        }
-                
-                # Check against regexes (additional feature not in the Rust code)
-                for pattern in pool.get('regexes', []):
-                    if re.search(pattern, coinbase_text, re.IGNORECASE):
-                        return {
-                            'id': pool_id,
-                            'name': pool.get('name'),
-                            'slug': pool.get('slug', pool.get('name', '').lower().replace(' ', '-')),
-                            'link': pool.get('link'),
-                            'match_type': 'tag',
-                            'identification_method': 'tag'
-                        }
-        except Exception as e:
-            logger.error(f"Error decoding coinbase script: {e}")
-            
-        return {}
-    
-    def reindex_blocks(self):
-        """Reindex all blocks with updated pool information"""
-        if self.reindexing:
-            logger.info("Reindexing already in progress, skipping")
-            return
-            
-        self.reindexing = True
-        try:
-            # Get a unique list of heights that need reindexing
-            blocks_to_reindex = self.db.blocks.find({})
-            
-            logger.info(f"Starting to reindex pool information for blocks")
-            
-            count = 0
-            for block in blocks_to_reindex:
-                # Reprocess the block with updated pool definitions
-                block_hash = block.get('block_hash')
-                self.reprocess_block_pool_info(block_hash)
-                count += 1
-                
-                if count % 100 == 0:
-                    logger.info(f"Reindexed pool info for {count} blocks")
-            
-            logger.info(f"Completed reindexing pool information for {count} blocks")
-        except Exception as e:
-            logger.error(f"Error during block reindexing: {e}")
-        finally:
-            self.reindexing = False
-    
-    def reprocess_block_pool_info(self, block_hash: str):
-        """Reprocess the pool information for a specific block"""
-        try:
-            # Get the block from the database
-            block = self.db.blocks.find_one({"block_hash": block_hash})
-            if not block:
-                logger.warning(f"Block {block_hash} not found in database")
-                return
-            
-            # Extract the coinbase script and addresses
-            coinbase_script_hex = block.get("coinbase_script_sig", "")
-            coinbase_addresses = block.get("coinbase_addresses", [])
-            height = block.get("height")
-            
-            # Get the current pool identification
-            current_pool = block.get("mining_pool", {})
-            old_pool_name = current_pool.get("name", "Unknown")
-            
-            # Identify the pool
-            mining_pool = self.identify_pool(coinbase_script_hex, coinbase_addresses)
-            
-            # If mining_pool is an empty dict, set default values
-            if not mining_pool:
-                mining_pool = {"name": "Unknown", "id": "unknown"}
-                
-            new_pool_name = mining_pool.get("name", "Unknown")
-            
-            # Update the block in the database if the pool identification changed
-            if old_pool_name != new_pool_name:
-                logger.info(f"Updating pool for block {block_hash} from '{old_pool_name}' to '{new_pool_name}'")
-                
-                # Update the block in the database
-                self.db.blocks.update_one(
-                    {"block_hash": block_hash}, 
-                    {"$set": {"mining_pool": mining_pool}}
-                )
-                
-                # Get the updated block and publish a full block update
-                updated_block = self.db.blocks.find_one({"block_hash": block_hash})
-                if updated_block:
-                    # Convert ObjectId to string for JSON serialization
-                    if "_id" in updated_block:
-                        updated_block["_id"] = str(updated_block["_id"])
-                    
-                    # Publish a full block update to RabbitMQ
-                    rabbitmq_doc = {
-                        "type": "block",
-                        "id": str(uuid.uuid4()),
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "data": updated_block
-                    }
-                    publish_to_rabbitmq(rabbitmq_doc)
-                    logger.info(f"Published block update for block {block_hash} with new pool info")
-            
-        except Exception as e:
-            logger.error(f"Error reprocessing pool info for block {block_hash}: {e}")
-
-# Create the pools manager
-pools_manager = PoolsManager(db, POOL_LIST_URL)
 
 # --- Block processing ---
 def process_block(block_hash: str, is_new_block: bool = False):
@@ -899,15 +625,46 @@ def process_block(block_hash: str, is_new_block: bool = False):
             reverse=True
         )
         
-        # Identify mining pool using pools manager
-        mining_pool = pools_manager.identify_pool(coinbase_script_sig, coinbase_addresses)
-        
+        # Run composable analyses using mining.notify templates for this height
+        analysis = {}
+        try:
+            if ENABLE_HISTORICAL_DATA and db is not None:
+                analysis = run_block_analyses(height, coinbase_script_sig, coinbase_addresses)
+        except Exception as analysis_err:
+            logger.error(f"Error running analyses for height {height}: {analysis_err}")
+            analysis = {}
+
+        # Determine mining pool from analysis (preferred), otherwise fallback to Unknown
+        mining_pool = {}
+        try:
+            if isinstance(analysis, dict) and analysis.get("pool_identification"):
+                pool_info = analysis.get("pool_identification", {})
+                mining_pool = pool_info.get("mining_pool", {}) or {}
+                logger.info(
+                    "Pool identification via analysis: name=%s id=%s method=%s",
+                    mining_pool.get('name', 'Unknown'),
+                    mining_pool.get('id', 'unknown'),
+                    pool_info.get('method', 'unknown')
+                )
+            else:
+                # Fallback to direct identification if analysis did not produce it
+                mining_pool = pools_manager.identify_pool(coinbase_script_sig, coinbase_addresses)
+                logger.info(
+                    "Pool identification via fallback: name=%s id=%s",
+                    mining_pool.get('name', 'Unknown'),
+                    mining_pool.get('id', 'unknown')
+                )
+        except Exception as pool_err:
+            logger.error(f"Error identifying mining pool at height {height}: {pool_err}")
+            mining_pool = {"name": "Unknown", "id": "unknown"}
+
         doc = {
             "height": height,
             "coinbase_script_sig": coinbase_script_sig,
             "block_hash": block_hash,
             "timestamp": block["time"],
-            "mining_pool": mining_pool
+            "mining_pool": mining_pool,
+            "analysis": analysis
         }
         
         # For new blocks, use update_one with upsert to avoid duplicates
@@ -931,12 +688,54 @@ def process_block(block_hash: str, is_new_block: bool = False):
                 "hash": block_hash,
                 "height": height,
                 "timestamp": datetime.utcfromtimestamp(block["time"]).isoformat(),
-                "mining_pool": mining_pool
+                "mining_pool": mining_pool,
+                "analysis": analysis
             }
         }
         publish_to_rabbitmq(rabbitmq_doc)
     except Exception as e:
         logger.error("Error processing block %s: %s", block_hash, e)
+
+from analytics.prev_hash_divergence import analyze_prev_hash_divergence
+from analytics.invalid_coinbase_no_merkle import analyze_invalid_coinbase_without_merkle
+from analytics.pool_identification import analyze_pool_identification, identify_pool_from_data, PoolsManager
+
+# Create the pools manager (must exist before startup_event and analysis usage)
+pools_manager = PoolsManager(db, POOL_LIST_URL, LOCAL_POOL_FILE, publish_to_rabbitmq)
+
+def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coinbase_addresses: List[str] | None = None) -> Dict[str, Any]:
+    flags: List[Dict[str, Any]] = []
+    analysis: Dict[str, Any] = {}
+    logger.info("Running analyses for height %d", height)
+    try:
+        templates = list(db.mining_notify.find({"height": height})) if db is not None else []
+    except Exception as e:
+        logger.error(f"Error fetching mining.notify templates for height {height}: {e}")
+        templates = []
+
+    logger.info("Analysis: fetched %d templates for height %d", len(templates), height)
+    if templates:
+        prev_flag = analyze_prev_hash_divergence(templates, logger)
+        if prev_flag:
+            flags.append(prev_flag)
+        invalid_flag = analyze_invalid_coinbase_without_merkle(templates, height, logger)
+        if invalid_flag:
+            flags.append(invalid_flag)
+    else:
+        logger.info("Analysis: no templates available for height %d", height)
+
+    # Pool identification analysis if inputs provided
+    if coinbase_script_hex is not None and coinbase_addresses is not None:
+        try:
+            analysis["pool_identification"] = analyze_pool_identification(
+                coinbase_script_hex, coinbase_addresses, pools_manager, logger
+            )
+        except Exception as e:
+            logger.error(f"Error during pool identification analysis for height {height}: {e}")
+
+    if flags:
+        analysis["flags"] = flags
+    return analysis
 
 def sync_blocks():
     """

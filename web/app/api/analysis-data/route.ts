@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
 import { getBlockByHeight } from "@/lib/db/blocks";
+import { prisma } from "@/lib/db/prisma";
+
+interface InterestingBlockItem {
+  height: number;
+  block_hash: string;
+  analysis?: Record<string, unknown>;
+  mining_pool?: Record<string, unknown>;
+}
+
+interface MongoCursorResult<T> {
+  cursor: { firstBatch: T[] };
+}
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
@@ -39,7 +51,42 @@ import {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const heightParam = searchParams.get('height');
+  const interesting = searchParams.get('interesting');
   
+  // If interesting=true, return a list of interesting blocks (excluding pool_identification-only)
+  if (interesting === 'true') {
+    try {
+      const raw = await prisma.$runCommandRaw({
+        find: 'blocks',
+        filter: {
+          analysis: { $exists: true, $type: 'object' },
+          $expr: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: { $objectToArray: '$analysis' },
+                    as: 'kv',
+                    cond: { $ne: ['$$kv.k', 'pool_identification'] }
+                  }
+                }
+              },
+              0
+            ]
+          }
+        },
+        projection: { _id: 0, height: 1, block_hash: 1, analysis: 1, mining_pool: 1 },
+        sort: { height: -1 },
+        limit: 200
+      }) as unknown as MongoCursorResult<InterestingBlockItem>;
+      const items: InterestingBlockItem[] = raw?.cursor?.firstBatch || [];
+      return NextResponse.json({ items });
+    } catch (e) {
+      console.error('Error fetching interesting blocks:', e);
+      return NextResponse.json({ items: [] });
+    }
+  }
+
   if (!heightParam) {
     return NextResponse.json({ error: "Missing block height" }, { status: 400 });
   }

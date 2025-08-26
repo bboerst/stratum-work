@@ -81,6 +81,67 @@ The backend identifies which pool mined each block by analyzing the coinbase tra
 
 See [backend/main.py:815-890](backend/main.py#L814-L913) for the block processing function.
 
+### Backend Analytics Plug‑ins
+
+The backend supports a pluggable analytics system that runs whenever a new block is processed. These analytics inspect the set of `mining.notify` templates for the block’s height and may emit structured findings that get saved on the block document and forwarded to RabbitMQ.
+
+- Location: `backend/analytics/`
+  - `prev_hash_divergence.py` – detects pools advertising different previous block hashes
+  - `invalid_coinbase_no_merkle.py` – flags templates with no merkle branches where the coinbase output exceeds the block subsidy
+  - `pool_identification.py` – owns pool identification and the `PoolsManager`
+
+- Output shape (stored on `db.blocks` and in the SSE payload):
+  - `analysis.flags[]`: list of small findings with compact metadata
+    - Each item: `{ key: string, icon: string, details: {...} }`
+    - Example (prev-hash fork):
+      ```json
+      {
+        "key": "prev_hash_fork",
+        "icon": "fork",
+        "details": {
+          "groups": [
+            { "prev_hash": "…", "pools": ["PoolA", "PoolB"] }
+          ]
+        }
+      }
+      ```
+  - `analysis.pool_identification`: richer object for the winning pool
+    - `{ mining_pool: {...}, method: "address|tag", addresses_considered: [] }`
+
+#### Adding a New Analyzer
+
+1. Create a new module in `backend/analytics/`, e.g. `my_new_analysis.py`, and export a function that returns either a finding dict or `None`:
+   ```python
+   from typing import Any, Dict, List, Optional
+
+   def analyze_my_feature(templates: List[Dict[str, Any]], logger) -> Optional[Dict[str, Any]]:
+       # inspect templates …
+       if not interesting:
+           return None
+       return {
+           "key": "my_feature",
+           "icon": "star",
+           "details": { "…": "…" }
+       }
+   ```
+
+2. Import and append it in `backend/main.py` inside `run_block_analyses(...)` (the function already collects and passes the MongoDB `mining_notify` records for the block height):
+   ```python
+   from analytics.my_new_analysis import analyze_my_feature
+
+   …
+   finding = analyze_my_feature(templates, logger)
+   if finding:
+       flags.append(finding)
+   ```
+
+3. Rebuild the backend image so the new module is included (the Dockerfile copies `backend/analytics/`).
+
+Guidelines:
+- Keep findings small (store details needed to render UI, avoid large payloads).
+- Prefer deterministic, height-scoped logic using the templates fetched for that block height.
+- Use the shared logger for traceability; avoid printing secrets.
+
 ## Features
 
 - Real-time display of `mining.notify` messages from Stratum pools

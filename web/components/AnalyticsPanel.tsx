@@ -69,7 +69,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     if (!groups || groups.length === 0) return null;
     return (
       <div className="mt-2">
-        <div className="text-sm font-semibold mb-2">Multiple Prev Block Hash</div>
+        <div className="text-sm font-semibold mb-2">Fork</div>
         <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${groups.length}, minmax(0, 1fr))` }}>
           {groups.map((g, idx) => (
             <div key={idx} className="border border-border rounded-md p-2 bg-background/60">

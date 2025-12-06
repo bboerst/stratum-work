@@ -84,7 +84,7 @@ export default function VisualizationPanel({
       const flags = (item.analysis && Array.isArray(item.analysis.flags)) ? (item.analysis.flags as AnalysisFlag[]) : [];
       const hasFork = flags.some(f => f && f.icon === 'fork');
       const hasError = flags.some(f => f && f.icon === 'error');
-      if (hasFork) lines.push({ icon: 'fork', text: 'Multiple Prev Block Hash' });
+      if (hasFork) lines.push({ icon: 'fork', text: 'Fork' });
       if (hasError) lines.push({ icon: 'error', text: 'Invalid templates' });
       if (lines.length === 0) lines.push({ text: 'Interesting analysis finding' });
       return lines;

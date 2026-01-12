@@ -34,6 +34,7 @@ export interface SortedRow {
   inputSequence?: number;
   txLocktime?: number;
   witnessCommitmentNonce?: string | null;
+  signaling_bip110?: boolean; // True if bit 4 is set in version (BIP-110 Reduced Data UASF)
 }
 
 // Sort direction type

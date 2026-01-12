@@ -27,6 +27,7 @@ export default function RealtimeTableSettings({
     { key: "first_transaction", label: "First Tx" },
     { key: "fee_rate", label: "Fee Rate" },
     { key: "version", label: "Version" },
+    { key: "signaling_bip110", label: "BIP-110 Signaling" },
     { key: "nbits", label: "Nbits" },
     { key: "coinbaseRaw", label: "Coinbase RAW" },
     { key: "timestamp", label: "Time Received" },

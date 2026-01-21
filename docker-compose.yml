@@ -115,6 +115,25 @@ services:
       --db-password "mongopassword"
       --log-level "DEBUG"
 
+  collector-256foundation:
+    <<: *collector-base
+    # Expose unique port for each collector if --enable-stratum-client
+    # ports:
+    #   - "3333:3333"
+    command: >
+      /usr/local/bin/python main.py
+      --pool-name "256Foundation"
+      --url "stratum+tcp://pool.256foundation.org:3333"
+      --userpass "developer1.001:x"
+      --rabbitmq-host "rabbitmq"
+      --rabbitmq-username "mquser"
+      --rabbitmq-password "mqpassword"
+      --db-url "mongodb"
+      --db-name "stratum-logger"
+      --db-username "mongouser"
+      --db-password "mongopassword"
+      --log-level "DEBUG"
+
   web:
     build:
       context: ./web

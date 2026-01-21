@@ -24,7 +24,7 @@ spec:
         - "main.py"
         args:
         {{- range .Values.arguments }}
-        - {{ . }}
+        - {{ . | quote }}
         {{- end }}
         {{- if .Values.service.enabled }}
         ports:

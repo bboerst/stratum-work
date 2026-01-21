@@ -11,8 +11,8 @@ releases:
         poolName: "{{ .poolName }}"
         service:
           enabled: {{ .service.enabled }}
-          port:
-            stratum: {{ .service.port.stratum }}
+          ports:
+            stratum: {{ .service.ports.stratum }}
           type: {{ .service.type }}
           loadBalancerIP: {{ .service.loadBalancerIP }}
         arguments:

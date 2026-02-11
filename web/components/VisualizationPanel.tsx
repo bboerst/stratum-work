@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useVisualization } from './VisualizationContext';
+import RealtimeChart from './RealtimeChart';
+import { CHART_POINT_SIZES } from '@/lib/constants';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -25,13 +27,17 @@ interface VisualizationPanelProps {
 }
 
 export default function VisualizationPanel({ 
+  paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
+  const MINI_POOL_NAMES_PANEL_WIDTH = 108;
+  const MINI_CHART_SIDE_PADDING = 8;
+  const MINI_POOL_NAMES_INNER_PADDING = 4;
   const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  // Removed timing chart from this panel
+  const timeWindow = 30;
   type AnalysisFlag = { icon?: string; key?: string; title?: string; details?: Record<string, unknown> };
   type InterestingItem = { height: number; block_hash: string; analysis?: { flags?: AnalysisFlag[] } | undefined; mining_pool?: { name?: string } };
   const [interesting, setInteresting] = useState<InterestingItem[]>([]);
@@ -46,6 +52,7 @@ export default function VisualizationPanel({
 
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
+  const realtimeFilterBlockHeight = filterBlockHeight === -1 ? undefined : filterBlockHeight;
 
   // Throttled resize handler to improve performance
   const handleThrottledMouseMove = useCallback((e: MouseEvent) => {
@@ -76,6 +83,39 @@ export default function VisualizationPanel({
       .catch(() => setInteresting([]))
       .finally(() => setLoadingInteresting(false));
   }, []);
+
+  const renderPoolTimingChart = useCallback(() => {
+    return (
+      <div className="border border-border rounded-md p-2 bg-card h-full w-full min-h-0">
+        <RealtimeChart
+          paused={paused}
+          filterBlockHeight={realtimeFilterBlockHeight}
+          timeWindow={timeWindow}
+          pointSize={CHART_POINT_SIZES.REALTIME}
+          chartSidePadding={MINI_CHART_SIDE_PADDING}
+          showPoolNames={true}
+          poolNamesPanelWidth={MINI_POOL_NAMES_PANEL_WIDTH}
+          poolNamesInnerPadding={MINI_POOL_NAMES_INNER_PADDING}
+          headerRightControl={
+            <button
+              type="button"
+              onClick={() => router.push('/timing')}
+              className="h-6 w-6 inline-flex items-center justify-center rounded border border-border bg-background/90 hover:bg-muted transition-colors"
+              title="Open full timing view"
+              aria-label="Open full timing view"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          }
+        />
+      </div>
+    );
+  }, [paused, realtimeFilterBlockHeight, router]);
 
   const renderInterestingPanel = useCallback(() => {
     type FindingLine = { icon?: 'fork' | 'error'; text: string };
@@ -215,12 +255,14 @@ export default function VisualizationPanel({
       </div>
       
       {/* Visualization content */}
-      <div className="px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
-        {/* Interesting findings */}
-        <div className="mt-3 h-full">
+      <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] w-full min-h-0 flex flex-col gap-3">
+        <div className="basis-1/2 min-h-0">
+          {renderPoolTimingChart()}
+        </div>
+        <div className="basis-1/2 min-h-0">
           {renderInterestingPanel()}
         </div>
       </div>
     </div>
   );
-} 
+}

@@ -130,6 +130,15 @@ const formatMicroseconds = (timestamp: number): string => {
   return `${hours}:${minutes}:${seconds}.${millis}`;
 };
 
+// Compact axis format for narrow charts.
+const formatCompactTime = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const millis = date.getMilliseconds().toString().padStart(3, '0');
+  return `${minutes}:${seconds}.${millis}`;
+};
+
 interface ChartDataPoint {
   timestamp: number;
   poolName: string;
@@ -157,10 +166,14 @@ interface RealtimeChartProps {
   filterBlockHeight?: number;
   timeWindow?: number; // Time window in seconds
   pointSize?: number; // Size of data points in pixels
+  chartSidePadding?: number; // Left/right chart padding (excluding pool names panel)
   hideHeader?: boolean; // Hide the title and options
   showLabels?: boolean; // Show labels for data points
   showPoolNames?: boolean; // Show static pool names column on the right
+  poolNamesPanelWidth?: number; // Width of pool names panel in px when enabled
+  poolNamesInnerPadding?: number; // Inner padding inside pool names panel (px)
   sortByTimeReceived?: boolean; // External sorting control (overrides internal state when provided)
+  headerRightControl?: React.ReactNode; // Optional control shown to the right of Options
 }
 
 // Define pool colors map type
@@ -174,10 +187,14 @@ function RealtimeChartBase({
   filterBlockHeight,
   timeWindow = 30, // Default to 30 seconds
   pointSize,
+  chartSidePadding = 20,
   hideHeader = false,
   showLabels: propShowLabels,
   showPoolNames = false,
-  sortByTimeReceived: propSortByTimeReceived
+  poolNamesPanelWidth = 180,
+  poolNamesInnerPadding = 10,
+  sortByTimeReceived: propSortByTimeReceived,
+  headerRightControl
 }: RealtimeChartProps) {
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -203,6 +220,14 @@ function RealtimeChartBase({
   const sortByTimeReceived = propSortByTimeReceived !== undefined ? propSortByTimeReceived : localSortByTimeReceived;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
+  const effectivePoolNamesWidth = useMemo(
+    () => (showPoolNames ? Math.max(40, Math.min(300, poolNamesPanelWidth)) : 0),
+    [showPoolNames, poolNamesPanelWidth]
+  );
+  const chartMargin = useMemo(
+    () => ({ top: 30, right: chartSidePadding + effectivePoolNamesWidth, bottom: 20, left: chartSidePadding }),
+    [effectivePoolNamesWidth, chartSidePadding]
+  );
   
   // Refs for DOM elements and data
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -349,9 +374,7 @@ function RealtimeChartBase({
     }
 
     // Calculate margin and available area
-    // Add extra right margin for pool names if enabled
-    const poolNamesWidth = showPoolNames ? 180 : 0;
-    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
+    const margin = chartMargin;
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -422,13 +445,37 @@ function RealtimeChartBase({
     ctx.lineTo(dimensions.width - margin.right, dimensions.height - margin.bottom);
     ctx.stroke();
     
-    // Draw x-axis tick marks and labels
-    const tickCount = 5;
-    const tickWidth = availableWidth / (tickCount - 1);
-    
+    // Draw x-axis tick marks and labels with adaptive density to avoid overlap on narrow charts.
+    const useCompactTimeLabels = availableWidth < 360;
+    const formatTickLabel = (timestamp: number) =>
+      useCompactTimeLabels ? formatCompactTime(timestamp) : formatMicroseconds(timestamp);
+
     ctx.fillStyle = 'rgba(150, 150, 150, 0.8)';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
+
+    let tickCount = 5;
+    while (tickCount > 3) {
+      const tickWidth = availableWidth / (tickCount - 1);
+      let overlaps = false;
+
+      for (let i = 0; i < tickCount; i++) {
+        const timestamp = effectiveTimeDomain[0] + (i / (tickCount - 1)) * (effectiveTimeDomain[1] - effectiveTimeDomain[0]);
+        const label = formatTickLabel(timestamp);
+        const labelWidth = ctx.measureText(label).width;
+        if (labelWidth > tickWidth - 8) {
+          overlaps = true;
+          break;
+        }
+      }
+
+      if (!overlaps) {
+        break;
+      }
+      tickCount -= 1;
+    }
+
+    const tickWidth = availableWidth / (tickCount - 1);
     
     for (let i = 0; i < tickCount; i++) {
       const x = margin.left + i * tickWidth;
@@ -441,7 +488,7 @@ function RealtimeChartBase({
       ctx.stroke();
       
       // Draw label
-      ctx.fillText(formatMicroseconds(timestamp), x, dimensions.height - margin.bottom + 15);
+      ctx.fillText(formatTickLabel(timestamp), x, dimensions.height - margin.bottom + 15);
     }
     
     // Draw data points for each pool
@@ -586,7 +633,7 @@ function RealtimeChartBase({
     // Draw pool names on the right side if enabled
     if (showPoolNames && stablePoolNames.length > 0) {
       // Draw vertical separator line
-      const separatorX = dimensions.width - poolNamesWidth;
+      const separatorX = dimensions.width - effectivePoolNamesWidth;
       ctx.strokeStyle = 'rgba(150, 150, 150, 0.3)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -614,7 +661,7 @@ function RealtimeChartBase({
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       
-      const poolNamesX = separatorX + 10; // 10px padding from the separator line
+      const poolNamesX = separatorX + poolNamesInnerPadding;
       
       // Set font size proportional to row height (about 40% of row height, with min/max bounds)
       const fontSize = Math.max(10, Math.min(18, Math.floor(rowHeight * 0.4)));
@@ -626,7 +673,7 @@ function RealtimeChartBase({
         const rgbColor = hslToRgb(color);
         
         // Calculate background width extending to right edge with padding
-        const rightPadding = 10;
+        const rightPadding = poolNamesInnerPadding;
         const backgroundWidth = dimensions.width - (poolNamesX - 2) - rightPadding;
         
         // Draw colored background rectangle extending full row height and to right edge
@@ -635,7 +682,7 @@ function RealtimeChartBase({
         
         // Draw pool name with contrasting text color and left padding
         const textColor = getContrastingTextColor(color);
-        const textPadding = 8; // Left padding for the text
+        const textPadding = Math.max(4, poolNamesInnerPadding - 2); // Left padding for the text
         const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
         
         // Get ASCII tag for this pool (from latest data point)
@@ -643,28 +690,14 @@ function RealtimeChartBase({
         const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
         const asciiTag = latestPoint?.asciiTag || '';
         
-        // Draw pool name
-        let poolNameText = poolName;
-        const poolNameWidth = ctx.measureText(poolNameText).width;
-        
-        if (poolNameWidth > maxTextWidth) {
-          // Binary search to find the longest pool name that fits with ellipsis
-          let start = 0;
-          let end = poolName.length;
-          
-          while (start < end) {
-            const mid = Math.floor((start + end + 1) / 2);
-            const testText = poolName.substring(0, mid) + '...';
-            const testWidth = ctx.measureText(testText).width;
-            
-            if (testWidth <= maxTextWidth) {
-              start = mid;
-            } else {
-              end = mid - 1;
-            }
-          }
-          
-          poolNameText = poolName.substring(0, start) + '...';
+        // Draw pool name in full by reducing font size to fit when needed.
+        const defaultPoolNameFontSize = fontSize;
+        const minPoolNameFontSize = Math.max(7, Math.floor(fontSize * 0.55));
+        let fittedPoolNameFontSize = defaultPoolNameFontSize;
+        ctx.font = `${fittedPoolNameFontSize}px monospace`;
+        while (fittedPoolNameFontSize > minPoolNameFontSize && ctx.measureText(poolName).width > maxTextWidth) {
+          fittedPoolNameFontSize -= 1;
+          ctx.font = `${fittedPoolNameFontSize}px monospace`;
         }
         
         // Calculate positions for pool name and ASCII tag
@@ -673,13 +706,13 @@ function RealtimeChartBase({
         
         // Draw pool name
         ctx.fillStyle = textColor;
-        ctx.fillText(poolNameText, poolNamesX + textPadding, poolNameY);
+        ctx.fillText(poolName, poolNamesX + textPadding, poolNameY);
         
         // Draw ASCII tag on new line if it exists
         if (asciiTag) {
           // Use smaller font for ASCII tag
           const originalFont = ctx.font;
-          const smallerFontSize = Math.max(8, Math.floor(fontSize * 0.75));
+          const smallerFontSize = Math.max(8, Math.floor(fittedPoolNameFontSize * 0.8));
           ctx.font = `${smallerFontSize}px monospace`;
           
           // Truncate ASCII tag if too long
@@ -717,7 +750,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames]);
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -951,8 +984,7 @@ function RealtimeChartBase({
     }
     
     // Calculate margins (must match drawChart exactly)
-    const poolNamesWidth = showPoolNames ? 180 : 0;
-    const margin = { top: 30, right: 20 + poolNamesWidth, bottom: 20, left: 20 };
+    const margin = chartMargin;
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
@@ -1025,7 +1057,7 @@ function RealtimeChartBase({
     });
     
     setHoveredPoint(closestPoint);
-  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, showPoolNames, sortPoolNames]);
+  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, sortPoolNames, chartMargin]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
@@ -1242,8 +1274,8 @@ function RealtimeChartBase({
           history.push(point);
         }
         
-        // Sort by timestamp descending
-        history.sort((a, b) => b.timestamp - a.timestamp);
+        // Keep oldest -> newest so newest renders last (on top) when points overlap.
+        history.sort((a, b) => a.timestamp - b.timestamp);
       });
       
       // Collect points within the time window
@@ -1253,6 +1285,9 @@ function RealtimeChartBase({
         const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
         resultPoints.push(...pointsInTimeWindow);
       });
+
+      // Global ordering: render oldest first, newest last for consistent overlap behavior.
+      resultPoints.sort((a, b) => a.timestamp - b.timestamp);
       
       
       // Return domain information and filtered points
@@ -1269,6 +1304,7 @@ function RealtimeChartBase({
     }
     
     // For historical data: Use processed points directly
+    processedData.sort((a, b) => a.timestamp - b.timestamp);
     return {
       points: processedData,
       poolInfo,
@@ -1355,74 +1391,75 @@ function RealtimeChartBase({
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-medium">Timing</h3>
           
-          {/* Options menu */}
-          <div 
-            ref={optionsMenuRef}
-          >
-            <button 
-              onClick={toggleOptionsMenu}
-              className="bg-opacity-20 bg-black dark:bg-white dark:bg-opacity-20 text-[10px] px-1.5 py-0.5 rounded"
-            >
-              Options
-            </button>
-            
-            {showOptionsMenu && (
-              <div className="absolute right-0 mt-1 w-48 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 p-2 z-10">
-                <div className="space-y-3">
-                  {/* Show last time control */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">Show last:</span>
-                    <div className="flex items-center space-x-2">
-                      <button 
-                        onClick={() => adjustTimeWindow(-15)} 
-                        className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
-                      >
-                        −
-                      </button>
-                      <span className="text-xs w-8 text-center">{localTimeWindow}s</span>
-                      <button 
-                        onClick={() => adjustTimeWindow(15)} 
-                        className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Show labels toggle */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">Show labels:</span>
-                    <button
-                      onClick={() => setLocalShowLabels(prev => !prev)}
-                      className={`px-2 py-1 text-xs rounded ${
-                        showLabels
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gray-200 dark:bg-gray-700'
-                      }`}
-                    >
-                      {showLabels ? "On" : "Off"}
-                    </button>
-                  </div>
-                  
-                  {/* Pool sorting toggle - only show if not controlled externally */}
-                  {propSortByTimeReceived === undefined && (
+          <div className="flex items-center gap-2">
+            {/* Options menu */}
+            <div ref={optionsMenuRef}>
+              <button 
+                onClick={toggleOptionsMenu}
+                className="h-6 px-2 inline-flex items-center justify-center bg-opacity-20 bg-black dark:bg-white dark:bg-opacity-20 text-[10px] rounded"
+              >
+                Options
+              </button>
+              
+              {showOptionsMenu && (
+                <div className="absolute right-0 mt-1 w-48 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 p-2 z-10">
+                  <div className="space-y-3">
+                    {/* Show last time control */}
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium">Sort pools:</span>
+                      <span className="text-xs font-medium">Show last:</span>
+                      <div className="flex items-center space-x-2">
+                        <button 
+                          onClick={() => adjustTimeWindow(-15)} 
+                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                        >
+                          −
+                        </button>
+                        <span className="text-xs w-8 text-center">{localTimeWindow}s</span>
+                        <button 
+                          onClick={() => adjustTimeWindow(15)} 
+                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Show labels toggle */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Show labels:</span>
                       <button
-                        onClick={() => setLocalSortByTimeReceived(prev => !prev)}
+                        onClick={() => setLocalShowLabels(prev => !prev)}
                         className={`px-2 py-1 text-xs rounded ${
-                          sortByTimeReceived
+                          showLabels
                             ? 'bg-blue-500 text-white'
                             : 'bg-gray-200 dark:bg-gray-700'
                         }`}
                       >
-                        {sortByTimeReceived ? "Time" : "A-Z"}
+                        {showLabels ? "On" : "Off"}
                       </button>
                     </div>
-                  )}
+                    
+                    {/* Pool sorting toggle - only show if not controlled externally */}
+                    {propSortByTimeReceived === undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium">Sort pools:</span>
+                        <button
+                          onClick={() => setLocalSortByTimeReceived(prev => !prev)}
+                          className={`px-2 py-1 text-xs rounded ${
+                            sortByTimeReceived
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-gray-200 dark:bg-gray-700'
+                          }`}
+                        >
+                          {sortByTimeReceived ? "Time" : "A-Z"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+            {headerRightControl}
           </div>
         </div>
       )}

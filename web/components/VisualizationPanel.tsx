@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useVisualization } from './VisualizationContext';
+import RealtimeChart from './RealtimeChart';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -25,13 +26,19 @@ interface VisualizationPanelProps {
 }
 
 export default function VisualizationPanel({ 
+  paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
+  const MINI_POOL_NAMES_PANEL_WIDTH = 92;
+  const MINI_CHART_SIDE_PADDING = 8;
+  const MINI_POOL_NAMES_INNER_PADDING = 4;
+  const MINI_CHART_POINT_SIZE = 3;
+  const MINI_CHART_FONT_SCALE = 0.82;
   const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
   const maxWidth = 800; // Maximum width
-  // Removed timing chart from this panel
+  const timeWindow = 30;
   type AnalysisFlag = { icon?: string; key?: string; title?: string; details?: Record<string, unknown> };
   type InterestingItem = { height: number; block_hash: string; analysis?: { flags?: AnalysisFlag[] } | undefined; mining_pool?: { name?: string } };
   const [interesting, setInteresting] = useState<InterestingItem[]>([]);
@@ -46,6 +53,7 @@ export default function VisualizationPanel({
 
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
+  const realtimeFilterBlockHeight = filterBlockHeight === -1 ? undefined : filterBlockHeight;
 
   // Throttled resize handler to improve performance
   const handleThrottledMouseMove = useCallback((e: MouseEvent) => {
@@ -77,6 +85,42 @@ export default function VisualizationPanel({
       .finally(() => setLoadingInteresting(false));
   }, []);
 
+  const renderPoolTimingChart = useCallback(() => {
+    return (
+      <div className="border border-border rounded-md p-2 bg-card h-full w-full min-h-0">
+        <RealtimeChart
+          paused={paused}
+          filterBlockHeight={realtimeFilterBlockHeight}
+          timeWindow={timeWindow}
+          pointSize={MINI_CHART_POINT_SIZE}
+          fontScale={MINI_CHART_FONT_SCALE}
+          chartSidePadding={MINI_CHART_SIDE_PADDING}
+          showPoolNames={true}
+          showPoolAsciiTag={false}
+          truncatePoolNames={true}
+          poolNamesPanelWidth={MINI_POOL_NAMES_PANEL_WIDTH}
+          poolNamesInnerPadding={MINI_POOL_NAMES_INNER_PADDING}
+          headerRightControl={
+            <button
+              type="button"
+              onClick={() => router.push('/timing')}
+              className="h-6 w-6 inline-flex items-center justify-center rounded border border-border bg-background/90 hover:bg-muted transition-colors"
+              title="Open full timing view"
+              aria-label="Open full timing view"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          }
+        />
+      </div>
+    );
+  }, [paused, realtimeFilterBlockHeight, router]);
+
   const renderInterestingPanel = useCallback(() => {
     type FindingLine = { icon?: 'fork' | 'error'; text: string };
     function buildLines(item: InterestingItem): FindingLine[] {
@@ -91,13 +135,13 @@ export default function VisualizationPanel({
     }
     return (
       <div className="border border-border rounded-md bg-card w-full h-full flex flex-col relative">
-        <div className="px-3 py-2 border-b border-border text-sm font-semibold flex-shrink-0">Findings</div>
+        <div className="px-2 py-1.5 border-b border-border text-xs font-semibold flex-shrink-0">Findings</div>
         <div className="flex-1 overflow-y-auto relative pr-2">
           {loadingInteresting && (
-            <div className="p-3 text-xs opacity-70">Loading…</div>
+            <div className="p-2 text-[11px] opacity-70">Loading…</div>
           )}
           {!loadingInteresting && interesting.length === 0 && (
-            <div className="p-3 text-xs opacity-70">No findings</div>
+            <div className="p-2 text-[11px] opacity-70">No findings</div>
           )}
           {!loadingInteresting && interesting.length > 0 && (
             <ul className="divide-y divide-border">
@@ -108,21 +152,21 @@ export default function VisualizationPanel({
                   <li
                     key={item.block_hash}
                     title={titleText}
-                    className="grid grid-cols-[64px_1fr] gap-2 text-xs cursor-pointer hover:bg-muted items-stretch"
+                    className="grid grid-cols-[54px_1fr] gap-1 text-[11px] cursor-pointer hover:bg-muted items-stretch"
                     onClick={() => router.push(`/height/${item.height}`)}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/height/${item.height}`); } }}
                     role="button"
                     tabIndex={0}
                   >
                     {/* Height column spanning full row height */}
-                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
+                    <div className="flex items-center justify-center px-1.5 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
                       {item.height}
                     </div>
                     {/* Findings column */}
-                    <div className="truncate py-2">
+                    <div className="truncate py-1">
                       <div className="space-y-0.5">
                         {lines.map((line, idx) => (
-                          <div key={idx} className="truncate flex items-center gap-2">
+                          <div key={idx} className="truncate flex items-center gap-1.5">
                             {line.icon === 'fork' && (
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                 <circle cx="6" cy="4" r="2" />
@@ -134,7 +178,7 @@ export default function VisualizationPanel({
                               </svg>
                             )}
                             {line.icon === 'error' && (
-                              <span className="inline-block h-3 w-3 rounded-sm bg-red-600 text-white leading-3 text-[9px] text-center">!</span>
+                              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-600 text-white leading-[10px] text-[8px] text-center">!</span>
                             )}
                             <span className="truncate">{line.text}</span>
                           </div>
@@ -215,12 +259,14 @@ export default function VisualizationPanel({
       </div>
       
       {/* Visualization content */}
-      <div className="px-4 pb-4 h-[calc(100%-60px)] overflow-auto w-full">
-        {/* Interesting findings */}
-        <div className="mt-3 h-full">
+      <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] w-full min-h-0 flex flex-col gap-3">
+        <div className="basis-3/5 min-h-0">
+          {renderPoolTimingChart()}
+        </div>
+        <div className="basis-2/5 min-h-0">
           {renderInterestingPanel()}
         </div>
       </div>
     </div>
   );
-} 
+}

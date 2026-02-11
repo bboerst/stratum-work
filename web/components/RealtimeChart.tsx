@@ -170,6 +170,8 @@ interface RealtimeChartProps {
   hideHeader?: boolean; // Hide the title and options
   showLabels?: boolean; // Show labels for data points
   showPoolNames?: boolean; // Show static pool names column on the right
+  showPoolAsciiTag?: boolean; // Show coinbase ASCII line in pool names panel
+  truncatePoolNames?: boolean; // Truncate pool names with ellipsis when they exceed available width
   poolNamesPanelWidth?: number; // Width of pool names panel in px when enabled
   poolNamesInnerPadding?: number; // Inner padding inside pool names panel (px)
   sortByTimeReceived?: boolean; // External sorting control (overrides internal state when provided)
@@ -191,6 +193,8 @@ function RealtimeChartBase({
   hideHeader = false,
   showLabels: propShowLabels,
   showPoolNames = false,
+  showPoolAsciiTag = true,
+  truncatePoolNames = false,
   poolNamesPanelWidth = 180,
   poolNamesInnerPadding = 10,
   sortByTimeReceived: propSortByTimeReceived,
@@ -688,16 +692,36 @@ function RealtimeChartBase({
         // Get ASCII tag for this pool (from latest data point)
         const poolDataPoints = chartData.filter(point => point.poolName === poolName);
         const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
-        const asciiTag = latestPoint?.asciiTag || '';
+        const asciiTag = showPoolAsciiTag ? (latestPoint?.asciiTag || '') : '';
         
-        // Draw pool name in full by reducing font size to fit when needed.
+        // Draw pool name: either truncate with ellipsis, or reduce font size to fit.
         const defaultPoolNameFontSize = fontSize;
         const minPoolNameFontSize = Math.max(7, Math.floor(fontSize * 0.55));
         let fittedPoolNameFontSize = defaultPoolNameFontSize;
+        let poolNameText = poolName;
         ctx.font = `${fittedPoolNameFontSize}px monospace`;
-        while (fittedPoolNameFontSize > minPoolNameFontSize && ctx.measureText(poolName).width > maxTextWidth) {
-          fittedPoolNameFontSize -= 1;
-          ctx.font = `${fittedPoolNameFontSize}px monospace`;
+
+        if (truncatePoolNames) {
+          if (ctx.measureText(poolNameText).width > maxTextWidth) {
+            let start = 0;
+            let end = poolName.length;
+            while (start < end) {
+              const mid = Math.floor((start + end + 1) / 2);
+              const testText = poolName.substring(0, mid) + '...';
+              const testWidth = ctx.measureText(testText).width;
+              if (testWidth <= maxTextWidth) {
+                start = mid;
+              } else {
+                end = mid - 1;
+              }
+            }
+            poolNameText = poolName.substring(0, start) + '...';
+          }
+        } else {
+          while (fittedPoolNameFontSize > minPoolNameFontSize && ctx.measureText(poolNameText).width > maxTextWidth) {
+            fittedPoolNameFontSize -= 1;
+            ctx.font = `${fittedPoolNameFontSize}px monospace`;
+          }
         }
         
         // Calculate positions for pool name and ASCII tag
@@ -706,7 +730,7 @@ function RealtimeChartBase({
         
         // Draw pool name
         ctx.fillStyle = textColor;
-        ctx.fillText(poolName, poolNamesX + textPadding, poolNameY);
+        ctx.fillText(poolNameText, poolNamesX + textPadding, poolNameY);
         
         // Draw ASCII tag on new line if it exists
         if (asciiTag) {
@@ -750,7 +774,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding]);
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {

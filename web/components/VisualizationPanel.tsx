@@ -30,7 +30,7 @@ export default function VisualizationPanel({
   paused = false,
   filterBlockHeight
 }: VisualizationPanelProps) {
-  const MINI_POOL_NAMES_PANEL_WIDTH = 108;
+  const MINI_POOL_NAMES_PANEL_WIDTH = 92;
   const MINI_CHART_SIDE_PADDING = 8;
   const MINI_POOL_NAMES_INNER_PADDING = 4;
   const { isPanelVisible } = useVisualization();
@@ -94,6 +94,8 @@ export default function VisualizationPanel({
           pointSize={CHART_POINT_SIZES.REALTIME}
           chartSidePadding={MINI_CHART_SIDE_PADDING}
           showPoolNames={true}
+          showPoolAsciiTag={false}
+          truncatePoolNames={true}
           poolNamesPanelWidth={MINI_POOL_NAMES_PANEL_WIDTH}
           poolNamesInnerPadding={MINI_POOL_NAMES_INNER_PADDING}
           headerRightControl={
@@ -256,10 +258,10 @@ export default function VisualizationPanel({
       
       {/* Visualization content */}
       <div className="pt-2 px-4 pb-4 h-[calc(100%-60px)] w-full min-h-0 flex flex-col gap-3">
-        <div className="basis-1/2 min-h-0">
+        <div className="basis-3/5 min-h-0">
           {renderPoolTimingChart()}
         </div>
-        <div className="basis-1/2 min-h-0">
+        <div className="basis-2/5 min-h-0">
           {renderInterestingPanel()}
         </div>
       </div>

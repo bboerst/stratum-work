@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useVisualization } from './VisualizationContext';
 import RealtimeChart from './RealtimeChart';
-import { CHART_POINT_SIZES } from '@/lib/constants';
 
 // Improved throttle helper function with correct typing and better performance
 function createThrottle<T extends (e: MouseEvent) => void>(
@@ -33,6 +32,8 @@ export default function VisualizationPanel({
   const MINI_POOL_NAMES_PANEL_WIDTH = 92;
   const MINI_CHART_SIDE_PADDING = 8;
   const MINI_POOL_NAMES_INNER_PADDING = 4;
+  const MINI_CHART_POINT_SIZE = 3;
+  const MINI_CHART_FONT_SCALE = 0.82;
   const { isPanelVisible } = useVisualization();
   const [width, setWidth] = useState(350); // Default width
   const minWidth = 350; // Minimum width
@@ -91,7 +92,8 @@ export default function VisualizationPanel({
           paused={paused}
           filterBlockHeight={realtimeFilterBlockHeight}
           timeWindow={timeWindow}
-          pointSize={CHART_POINT_SIZES.REALTIME}
+          pointSize={MINI_CHART_POINT_SIZE}
+          fontScale={MINI_CHART_FONT_SCALE}
           chartSidePadding={MINI_CHART_SIDE_PADDING}
           showPoolNames={true}
           showPoolAsciiTag={false}
@@ -133,13 +135,13 @@ export default function VisualizationPanel({
     }
     return (
       <div className="border border-border rounded-md bg-card w-full h-full flex flex-col relative">
-        <div className="px-3 py-2 border-b border-border text-sm font-semibold flex-shrink-0">Findings</div>
+        <div className="px-2 py-1.5 border-b border-border text-xs font-semibold flex-shrink-0">Findings</div>
         <div className="flex-1 overflow-y-auto relative pr-2">
           {loadingInteresting && (
-            <div className="p-3 text-xs opacity-70">Loading…</div>
+            <div className="p-2 text-[11px] opacity-70">Loading…</div>
           )}
           {!loadingInteresting && interesting.length === 0 && (
-            <div className="p-3 text-xs opacity-70">No findings</div>
+            <div className="p-2 text-[11px] opacity-70">No findings</div>
           )}
           {!loadingInteresting && interesting.length > 0 && (
             <ul className="divide-y divide-border">
@@ -150,21 +152,21 @@ export default function VisualizationPanel({
                   <li
                     key={item.block_hash}
                     title={titleText}
-                    className="grid grid-cols-[64px_1fr] gap-2 text-xs cursor-pointer hover:bg-muted items-stretch"
+                    className="grid grid-cols-[54px_1fr] gap-1 text-[11px] cursor-pointer hover:bg-muted items-stretch"
                     onClick={() => router.push(`/height/${item.height}`)}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/height/${item.height}`); } }}
                     role="button"
                     tabIndex={0}
                   >
                     {/* Height column spanning full row height */}
-                    <div className="flex items-center justify-center px-2 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
+                    <div className="flex items-center justify-center px-1.5 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
                       {item.height}
                     </div>
                     {/* Findings column */}
-                    <div className="truncate py-2">
+                    <div className="truncate py-1">
                       <div className="space-y-0.5">
                         {lines.map((line, idx) => (
-                          <div key={idx} className="truncate flex items-center gap-2">
+                          <div key={idx} className="truncate flex items-center gap-1.5">
                             {line.icon === 'fork' && (
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                 <circle cx="6" cy="4" r="2" />
@@ -176,7 +178,7 @@ export default function VisualizationPanel({
                               </svg>
                             )}
                             {line.icon === 'error' && (
-                              <span className="inline-block h-3 w-3 rounded-sm bg-red-600 text-white leading-3 text-[9px] text-center">!</span>
+                              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-600 text-white leading-[10px] text-[8px] text-center">!</span>
                             )}
                             <span className="truncate">{line.text}</span>
                           </div>

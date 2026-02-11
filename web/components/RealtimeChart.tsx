@@ -166,6 +166,7 @@ interface RealtimeChartProps {
   filterBlockHeight?: number;
   timeWindow?: number; // Time window in seconds
   pointSize?: number; // Size of data points in pixels
+  fontScale?: number; // Scales chart/label typography for compact layouts
   chartSidePadding?: number; // Left/right chart padding (excluding pool names panel)
   hideHeader?: boolean; // Hide the title and options
   showLabels?: boolean; // Show labels for data points
@@ -189,6 +190,7 @@ function RealtimeChartBase({
   filterBlockHeight,
   timeWindow = 30, // Default to 30 seconds
   pointSize,
+  fontScale = 1,
   chartSidePadding = 20,
   hideHeader = false,
   showLabels: propShowLabels,
@@ -224,6 +226,7 @@ function RealtimeChartBase({
   const sortByTimeReceived = propSortByTimeReceived !== undefined ? propSortByTimeReceived : localSortByTimeReceived;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
+  const uiFontScale = Math.max(0.65, Math.min(1.25, fontScale));
   const effectivePoolNamesWidth = useMemo(
     () => (showPoolNames ? Math.max(40, Math.min(300, poolNamesPanelWidth)) : 0),
     [showPoolNames, poolNamesPanelWidth]
@@ -455,7 +458,7 @@ function RealtimeChartBase({
       useCompactTimeLabels ? formatCompactTime(timestamp) : formatMicroseconds(timestamp);
 
     ctx.fillStyle = 'rgba(150, 150, 150, 0.8)';
-    ctx.font = '10px sans-serif';
+    ctx.font = `${Math.max(8, Math.round(10 * uiFontScale))}px sans-serif`;
     ctx.textAlign = 'center';
 
     let tickCount = 5;
@@ -542,7 +545,7 @@ function RealtimeChartBase({
           ctx.stroke();
           
           // Auto-adjust font size to fit text in circle - start with larger font
-          let fontSize = Math.max(10, basePointSize + 2); // Start with larger font size
+          let fontSize = Math.max(8, Math.round((basePointSize + 2) * uiFontScale)); // Start with larger font size
           ctx.font = `${fontSize}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -552,7 +555,7 @@ function RealtimeChartBase({
           const maxTextWidth = circleRadius * 1.4; // Leave some padding (diameter * 0.7)
           
           // Scale down font size if text is too wide, but don't go below 8px
-          while (textMetrics.width > maxTextWidth && fontSize > 8) {
+          while (textMetrics.width > maxTextWidth && fontSize > Math.max(6, Math.floor(8 * uiFontScale))) {
             fontSize--;
             ctx.font = `${fontSize}px monospace`;
             textMetrics = ctx.measureText(text);
@@ -580,7 +583,7 @@ function RealtimeChartBase({
         // Draw label if showLabels is true
         if (showLabels) {
           ctx.fillStyle = color;
-          ctx.font = '9px sans-serif';
+          ctx.font = `${Math.max(7, Math.round(9 * uiFontScale))}px sans-serif`;
           ctx.textAlign = 'left';
           // Position label to the right of the circle, accounting for circle size
           const labelOffset = hasChangeInfo ? size * 1.8 + 4 : size + 4;
@@ -668,7 +671,7 @@ function RealtimeChartBase({
       const poolNamesX = separatorX + poolNamesInnerPadding;
       
       // Set font size proportional to row height (about 40% of row height, with min/max bounds)
-      const fontSize = Math.max(10, Math.min(18, Math.floor(rowHeight * 0.4)));
+      const fontSize = Math.max(8, Math.min(18, Math.floor(rowHeight * 0.4 * uiFontScale)));
       ctx.font = `${fontSize}px monospace`;
       
       stablePoolNames.forEach((poolName, index) => {
@@ -736,7 +739,7 @@ function RealtimeChartBase({
         if (asciiTag) {
           // Use smaller font for ASCII tag
           const originalFont = ctx.font;
-          const smallerFontSize = Math.max(8, Math.floor(fittedPoolNameFontSize * 0.8));
+          const smallerFontSize = Math.max(7, Math.floor(fittedPoolNameFontSize * 0.8));
           ctx.font = `${smallerFontSize}px monospace`;
           
           // Truncate ASCII tag if too long
@@ -774,7 +777,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames]);
+  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -1503,7 +1506,7 @@ function RealtimeChartBase({
       
       {/* Fixed tooltip at the bottom of the chart */}
       {hoveredPoint && (
-        <div className="absolute bottom-1 right-2 text-[9px] font-medium text-right bg-black/70 dark:bg-gray-800/90 p-1 rounded shadow-sm z-10">
+        <div className="absolute bottom-1 right-2 font-medium text-right bg-black/70 dark:bg-gray-800/90 p-1 rounded shadow-sm z-10" style={{ fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}>
           <span className="font-bold">{hoveredPoint.poolName}</span>
           {" | "}
           <span>Height: {hoveredPoint.height || 'N/A'}</span>
@@ -1512,7 +1515,7 @@ function RealtimeChartBase({
           {hoveredPoint.changeInfo?.changeDetails && (
             <>
               <br />
-              <div className="text-[8px] text-gray-300 mt-1 whitespace-nowrap">
+              <div className="text-gray-300 mt-1 whitespace-nowrap" style={{ fontSize: `${Math.max(6, Math.round(8 * uiFontScale))}px` }}>
                 {hoveredPoint.changeInfo.changeDetails.auxPowHash && (
                   <div className="mb-1">
                     <div className="text-red-300 whitespace-nowrap overflow-hidden">AuxPOW Old: {hoveredPoint.changeInfo.changeDetails.auxPowHash.old ? hoveredPoint.changeInfo.changeDetails.auxPowHash.old.substring(0, 16) + '...' : 'N/A'}</div>
@@ -1705,11 +1708,11 @@ function RealtimeChartBase({
       
       {/* Change indicators legend in footer */}
       <div className="absolute bottom-6 left-2 group">
-        <div className="text-[9px] text-gray-500 dark:text-gray-400 cursor-help">
+        <div className="text-gray-500 dark:text-gray-400 cursor-help" style={{ fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}>
           Legend
         </div>
         <div className="absolute bottom-6 left-0 hidden group-hover:block bg-black/95 text-white p-3 rounded-lg shadow-xl z-30 min-w-max">
-          <div className="text-[10px] flex flex-row gap-6">
+          <div className="flex flex-row gap-6" style={{ fontSize: `${Math.max(8, Math.round(10 * uiFontScale))}px` }}>
             <div className="flex flex-col space-y-0.5">
               <div className="font-bold mb-1 text-blue-300 text-center">Core Fields</div>
               <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>

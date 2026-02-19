@@ -44,7 +44,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   const initialLoadDoneRef = useRef<Record<number, boolean>>({});
 
   // Get data from the global data stream
-  const { filterByType } = useGlobalDataStream();
+  const { filteredData } = useGlobalDataStream();
 
   // Update the context's lastLoadedHeight when our ref changes
   useEffect(() => {
@@ -594,8 +594,8 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
 
   // Subscribe to stratum updates to track being-mined block height
   useEffect(() => {
-    // Get stratum updates from the stream
-    const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
+    // Get stratum updates from the filtered stream
+    const stratumUpdates = filteredData.filter(item => item.type === StreamDataType.STRATUM_V1);
     
     if (stratumUpdates.length > 0) {
       // Get the latest stratum update
@@ -633,12 +633,12 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
         }
       }
     }
-  }, [filterByType, currentBlockHeight, blocks, pendingBlockHeights, selectedBlockHeight]);
+  }, [filteredData, currentBlockHeight, blocks, pendingBlockHeights, selectedBlockHeight]);
 
   // Subscribe to block updates from the global data stream
   useEffect(() => {
-    // Get block messages from the stream
-    const blockUpdates = filterByType(StreamDataType.BLOCK);
+    // Get block messages from the filtered stream
+    const blockUpdates = filteredData.filter(item => item.type === StreamDataType.BLOCK);
     
     if (blockUpdates.length > 0) {
       // Get the latest block update
@@ -685,7 +685,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
         }
       }
     }
-  }, [filterByType, setBlocks, pendingBlockHeights, selectedBlockHeight]);
+  }, [filteredData, setBlocks, pendingBlockHeights, selectedBlockHeight]);
 
   // Memoize the calculation of the blocks to display
   const blocksToDisplay = useMemo(() => {

@@ -14,8 +14,41 @@ import { formatCoinbaseRaw } from './formatters'; // Import necessary formatter
 // Maximum size for all caches to prevent memory leaks
 const MAX_CACHE_SIZE = 1000;
 
-// Shared transaction cache
+// Shared transaction cache — stores parsed transactions and known-bad hex strings
 const transactionCache = new Map<string, Transaction>();
+const failedParseCache = new Set<string>();
+
+// Sentinel class so downstream catch blocks can identify cached failures and skip re-logging
+export class CachedParseError extends Error {
+  constructor() {
+    super("Previously failed to parse coinbase hex (cached)");
+    this.name = "CachedParseError";
+  }
+}
+
+function isCachedParseError(err: unknown): boolean {
+  return err instanceof CachedParseError;
+}
+
+// Set of coinbaseRaw values already reported with pool context by callers
+const reportedFailures = new Set<string>();
+
+// Call from code that knows the pool name to get a one-time log per bad coinbase hex.
+// Returns true if the coinbase hex is known to be unparseable.
+export function reportParseFailure(coinbaseRaw: string, poolName: string, height?: number): boolean {
+  if (!failedParseCache.has(coinbaseRaw)) return false;
+  if (reportedFailures.has(coinbaseRaw)) return true;
+  reportedFailures.add(coinbaseRaw);
+  if (reportedFailures.size > MAX_CACHE_SIZE) {
+    const first = reportedFailures.values().next().value;
+    if (first !== undefined) reportedFailures.delete(first);
+  }
+  console.warn(
+    `[coinbase parse failure] pool="${poolName}" height=${height ?? "?"} ` +
+    `hex(first 60)="${coinbaseRaw.slice(0, 60)}…" len=${coinbaseRaw.length}`
+  );
+  return true;
+}
 
 // Cache for coinbase script ASCII
 const coinbaseScriptAsciiCache = new Map<string, string>();
@@ -82,22 +115,36 @@ export interface CoinbaseTxDetails {
   witnessCommitmentNonce?: string | null;
 }
 
-// Helper function to get a transaction from cache or parse it
+// Helper function to get a transaction from cache or parse it.
+// Throws on malformed hex but caches failures to avoid repeated parse attempts and log spam.
+// On first failure, logs the error with hex context. On subsequent failures, throws a
+// silent CachedParseError that downstream catch blocks can recognize and skip logging.
 export function getTransaction(coinbaseRaw: string): Transaction {
-  if (!transactionCache.has(coinbaseRaw)) {
-    // Manage cache size
+  const cached = transactionCache.get(coinbaseRaw);
+  if (cached) return cached;
+
+  if (failedParseCache.has(coinbaseRaw)) {
+    throw new CachedParseError();
+  }
+
+  try {
     if (transactionCache.size >= MAX_CACHE_SIZE) {
       const firstKey = transactionCache.keys().next().value;
       if (firstKey !== undefined) {
         transactionCache.delete(firstKey);
       }
     }
-    // Parse and cache the transaction
     const tx = Transaction.fromHex(coinbaseRaw);
     transactionCache.set(coinbaseRaw, tx);
     return tx;
+  } catch (err) {
+    if (failedParseCache.size >= MAX_CACHE_SIZE) {
+      const first = failedParseCache.values().next().value;
+      if (first !== undefined) failedParseCache.delete(first);
+    }
+    failedParseCache.add(coinbaseRaw);
+    throw err;
   }
-  return transactionCache.get(coinbaseRaw)!;
 }
 
 // Helper function to manage cache size
@@ -132,8 +179,10 @@ export function getFormattedCoinbaseAsciiTag(
     // 4. Format remaining hex to ASCII (use cache)
     return formatCoinbaseScriptASCII(scriptSigInfo.remainingScriptHex);
   } catch (error) {
-    console.error("Error in getFormattedCoinbaseAsciiTag:", error);
-    return ""; // Return empty string on error
+    if (!isCachedParseError(error)) {
+      console.error("Error in getFormattedCoinbaseAsciiTag:", error);
+    }
+    return "";
   }
 }
 
@@ -181,7 +230,9 @@ export function computeCoinbaseOutputValue(coinbaseRaw: string): number {
     manageCache(coinbaseOutputValueCache, coinbaseRaw, totalValue);
     return totalValue;
   } catch (err) {
-    console.error("Error computing coinbase output value:", err);
+    if (!isCachedParseError(err)) {
+      console.error("Error computing coinbase output value:", err);
+    }
     return 0;
   }
 }
@@ -462,7 +513,9 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
       manageCache(coinbaseOutputsCache, coinbaseRaw, outputs);
       return outputs;
     } catch (err) {
-      console.error("Error computing coinbase outputs:", err);
+      if (!isCachedParseError(err)) {
+        console.error("Error computing coinbase outputs:", err);
+      }
       return [];
     }
 }
@@ -512,11 +565,10 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
 // Clear a coinbase transaction from all caches
 export function clearCoinbaseFromCaches(coinbaseRaw: string): void {
   transactionCache.delete(coinbaseRaw);
+  failedParseCache.delete(coinbaseRaw);
   coinbaseOutputsCache.delete(coinbaseRaw);
   coinbaseScriptAsciiCache.delete(coinbaseRaw);
   coinbaseOutputValueCache.delete(coinbaseRaw);
-  // Note: outputScriptAddressCache is not cleared here as it's keyed by script hex,
-  // not coinbase raw, and should persist across different coinbase transactions
 }
 
 // Check if a request is in flight
@@ -658,7 +710,9 @@ export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScrip
     const scriptSigBuffer = tx.ins[0].script;
     return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
   } catch (error) {
-    console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    if (!isCachedParseError(error)) {
+      console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    }
     return {
       height: null,
       auxPowData: null,
@@ -669,24 +723,27 @@ export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScrip
 
 // Function to get other coinbase transaction details
 export function getCoinbaseTxDetails(coinbaseRaw: string): CoinbaseTxDetails {
-  const tx = getTransaction(coinbaseRaw);
-  let witnessCommitmentNonce: string | null = null;
+  try {
+    const tx = getTransaction(coinbaseRaw);
+    let witnessCommitmentNonce: string | null = null;
 
-  // Witness data exists on the first input, and has exactly one element
-  // This element is typically the nonce for the witness commitment
-  if (tx.ins && tx.ins.length > 0 && tx.ins[0].witness && tx.ins[0].witness.length === 1) {
-      // Double-check by ensuring a witness commitment output actually exists
-      const hasWitnessCommitmentOutput = tx.outs.some(out => out.script.toString('hex').startsWith('6a24aa21a9ed'));
-      if (hasWitnessCommitmentOutput) {
-           witnessCommitmentNonce = tx.ins[0].witness[0].toString('hex');
-      }
+    if (tx.ins && tx.ins.length > 0 && tx.ins[0].witness && tx.ins[0].witness.length === 1) {
+        const hasWitnessCommitmentOutput = tx.outs.some(out => out.script.toString('hex').startsWith('6a24aa21a9ed'));
+        if (hasWitnessCommitmentOutput) {
+             witnessCommitmentNonce = tx.ins[0].witness[0].toString('hex');
+        }
+    }
+
+    return {
+      txVersion: tx.version,
+      inputSequence: tx.ins[0]?.sequence || 0, 
+      txLocktime: tx.locktime,
+      witnessCommitmentNonce: witnessCommitmentNonce
+    };
+  } catch (err) {
+    if (!isCachedParseError(err)) {
+      console.error("Error in getCoinbaseTxDetails:", err);
+    }
+    return { txVersion: 0, inputSequence: 0, txLocktime: 0, witnessCommitmentNonce: null };
   }
-
-  return {
-    txVersion: tx.version,
-    // Coinbase input sequence is typically 0xffffffff, but read it anyway
-    inputSequence: tx.ins[0]?.sequence || 0, 
-    txLocktime: tx.locktime,
-    witnessCommitmentNonce: witnessCommitmentNonce
-  };
 } 

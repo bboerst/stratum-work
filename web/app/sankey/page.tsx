@@ -5,6 +5,7 @@ import { StreamDataType } from '@/lib/types';
 import { useMemo, useState, useEffect, useCallback } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
+import { usePoolFilter } from "@/components/PoolFilterContext";
 import SankeyMenu from "@/components/SankeyMenu";
 
 export default function SankeyPage() {
@@ -28,11 +29,13 @@ export default function SankeyPage() {
   // Global state
   const { filterByType, paused, setPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
+  const { isPoolVisible } = usePoolFilter();
   
-  // Get only Stratum V1 data for this visualization
+  // Get only Stratum V1 data, respecting pool visibility filter
   const stratumV1Data = useMemo(() => {
-    return filterByType(StreamDataType.STRATUM_V1);
-  }, [filterByType]);
+    return filterByType(StreamDataType.STRATUM_V1)
+      .filter(item => item.type === StreamDataType.STRATUM_V1 && isPoolVisible(item.data.pool_name));
+  }, [filterByType, isPoolVisible]);
   
   // Calculate dynamic height based on pool count using square root scaling
   const dynamicHeight = useMemo(() => {

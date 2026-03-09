@@ -7,6 +7,7 @@ import { StratumV1Data, StreamDataType } from "@/lib/types";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
+import { usePoolFilter } from "@/components/PoolFilterContext";
 import { SortedRow, RealtimeTableProps, SortDirection } from "@/types/tableTypes";
 import { useColumnVisibility, useColumnResizing, useSorting, usePagination } from "@/hooks/useTableState";
 import { useTableData } from "@/hooks/useTableData";
@@ -37,11 +38,16 @@ export default function RealtimeTable({
   // Get selected template context
   const { setSelectedTemplate } = useSelectedTemplate();
   
-  // Filter for only Stratum V1 data
+  // Pool visibility filter
+  const { isPoolVisible, allPools, hiddenPools } = usePoolFilter();
+  
+  // Filter for only Stratum V1 data, respecting pool visibility
   const stratumV1Data = useMemo(() => {
     const filtered = filterByType(StreamDataType.STRATUM_V1);
-    return filtered.map(item => item.data as StratumV1Data);
-  }, [filterByType]);
+    return filtered
+      .map(item => item.data as StratumV1Data)
+      .filter(item => isPoolVisible(item.pool_name));
+  }, [filterByType, isPoolVisible]);
   
   // Use hooks for table state management
   const { columnsVisible, toggleColumn } = useColumnVisibility();
@@ -159,19 +165,13 @@ export default function RealtimeTable({
     tableDataHandleSort(key, newSortConfig);
   }, [sortConfig, setSortConfig, tableDataHandleSort]);
   
-  // Get the rows to display based on filtering and sorting
+  // Get the rows to display based on filtering and sorting, then apply pool visibility
   const displayedRows = useMemo(() => {
-    if (isFiltering) {
-      // If we're filtering, the visibleRows are already filtered and sorted
-      // The sorting is now done in the useTableData hook's handleSort function
-      // This ensures that the entire dataset is sorted, not just the visible rows
-      return visibleRows;
-    } else {
-      // For realtime data, we need to sort the rows using the current sort configuration
-      const sortedRows = sortData(rows);
-      return sortedRows;
-    }
-  }, [isFiltering, visibleRows, rows, sortData]);
+    const base = isFiltering
+      ? visibleRows
+      : sortData(rows);
+    return base.filter(row => isPoolVisible(row.pool_name));
+  }, [isFiltering, visibleRows, rows, sortData, isPoolVisible]);
   
 
   // Handle template selection for BlockTemplateCard
@@ -314,13 +314,23 @@ export default function RealtimeTable({
       {displayedRows.length === 0 && !isLoading && (
         <div className="text-center text-black dark:text-white py-20 flex items-center justify-center min-h-[150px]">
           <div>
-            {isFiltering ? (
+            {allPools.length > 0 && hiddenPools.size >= allPools.length ? (
+              <>
+                <div className="text-xl mb-2">All pools are filtered out</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Adjust the Pools filter to display data</div>
+              </>
+            ) : hiddenPools.size > 0 && !isFiltering ? (
+              <>
+                <div className="text-xl mb-2">No data from selected pools yet</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Waiting for messages or adjust the Pools filter</div>
+              </>
+            ) : isFiltering ? (
               <>
                 <div className="text-xl mb-2">No data found for this block</div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">Try selecting a different block</div>
               </>
             ) : (
-              "Wait for new stratum messages..."
+              "Waiting for new stratum messages..."
             )}
           </div>
         </div>

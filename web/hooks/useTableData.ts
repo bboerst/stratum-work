@@ -3,7 +3,6 @@ import { StratumV1Data, StreamDataType } from '@/lib/types';
 import { SortedRow, SortConfig, SortDirection } from '@/types/tableTypes';
 import { formatCoinbaseRaw } from '@/utils/formatters';
 import { 
-    //formatCoinbaseScriptASCII, // No longer needed directly here 
     computeCoinbaseOutputValue, 
     computeFirstTransaction, 
     computeCoinbaseOutputs, 
@@ -12,7 +11,8 @@ import {
     isRequestInFlight, 
     markRequestInFlight, 
     clearRequestInFlight,
-    getFormattedCoinbaseAsciiTag // Import the correct function
+    getFormattedCoinbaseAsciiTag,
+    reportParseFailure,
 } from '@/utils/bitcoinUtils';
 import { sortRowsByKey } from '@/utils/sortUtils';
 
@@ -120,6 +120,7 @@ export function useTableData(
           row.extranonce2_length,
           row.coinbase2
         );
+        reportParseFailure(coinbaseRaw, row.pool_name, row.height);
         const coinbase_outputs = computeCoinbaseOutputs(coinbaseRaw);
         const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
           row.coinbase1,
@@ -242,6 +243,7 @@ export function useTableData(
                   item.extranonce2_length,
                   item.coinbase2
                 );
+                reportParseFailure(coinbaseRaw, item.pool_name, item.height);
                 const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
                   item.coinbase1,
                   item.extranonce1,

@@ -18,6 +18,38 @@ const MAX_CACHE_SIZE = 1000;
 const transactionCache = new Map<string, Transaction>();
 const failedParseCache = new Set<string>();
 
+// Sentinel class so downstream catch blocks can identify cached failures and skip re-logging
+export class CachedParseError extends Error {
+  constructor() {
+    super("Previously failed to parse coinbase hex (cached)");
+    this.name = "CachedParseError";
+  }
+}
+
+function isCachedParseError(err: unknown): boolean {
+  return err instanceof CachedParseError;
+}
+
+// Set of coinbaseRaw values already reported with pool context by callers
+const reportedFailures = new Set<string>();
+
+// Call from code that knows the pool name to get a one-time log per bad coinbase hex.
+// Returns true if the coinbase hex is known to be unparseable.
+export function reportParseFailure(coinbaseRaw: string, poolName: string, height?: number): boolean {
+  if (!failedParseCache.has(coinbaseRaw)) return false;
+  if (reportedFailures.has(coinbaseRaw)) return true;
+  reportedFailures.add(coinbaseRaw);
+  if (reportedFailures.size > MAX_CACHE_SIZE) {
+    const first = reportedFailures.values().next().value;
+    if (first !== undefined) reportedFailures.delete(first);
+  }
+  console.warn(
+    `[coinbase parse failure] pool="${poolName}" height=${height ?? "?"} ` +
+    `hex(first 60)="${coinbaseRaw.slice(0, 60)}…" len=${coinbaseRaw.length}`
+  );
+  return true;
+}
+
 // Cache for coinbase script ASCII
 const coinbaseScriptAsciiCache = new Map<string, string>();
 const coinbaseOutputValueCache = new Map<string, number>();
@@ -85,16 +117,17 @@ export interface CoinbaseTxDetails {
 
 // Helper function to get a transaction from cache or parse it.
 // Throws on malformed hex but caches failures to avoid repeated parse attempts and log spam.
+// On first failure, logs the error with hex context. On subsequent failures, throws a
+// silent CachedParseError that downstream catch blocks can recognize and skip logging.
 export function getTransaction(coinbaseRaw: string): Transaction {
   const cached = transactionCache.get(coinbaseRaw);
   if (cached) return cached;
 
   if (failedParseCache.has(coinbaseRaw)) {
-    throw new Error("Previously failed to parse coinbase hex (cached)");
+    throw new CachedParseError();
   }
 
   try {
-    // Manage cache size
     if (transactionCache.size >= MAX_CACHE_SIZE) {
       const firstKey = transactionCache.keys().next().value;
       if (firstKey !== undefined) {
@@ -105,7 +138,6 @@ export function getTransaction(coinbaseRaw: string): Transaction {
     transactionCache.set(coinbaseRaw, tx);
     return tx;
   } catch (err) {
-    // Cache the failure so subsequent calls with the same hex skip parsing
     if (failedParseCache.size >= MAX_CACHE_SIZE) {
       const first = failedParseCache.values().next().value;
       if (first !== undefined) failedParseCache.delete(first);
@@ -147,8 +179,10 @@ export function getFormattedCoinbaseAsciiTag(
     // 4. Format remaining hex to ASCII (use cache)
     return formatCoinbaseScriptASCII(scriptSigInfo.remainingScriptHex);
   } catch (error) {
-    console.error("Error in getFormattedCoinbaseAsciiTag:", error);
-    return ""; // Return empty string on error
+    if (!isCachedParseError(error)) {
+      console.error("Error in getFormattedCoinbaseAsciiTag:", error);
+    }
+    return "";
   }
 }
 
@@ -196,7 +230,9 @@ export function computeCoinbaseOutputValue(coinbaseRaw: string): number {
     manageCache(coinbaseOutputValueCache, coinbaseRaw, totalValue);
     return totalValue;
   } catch (err) {
-    console.error("Error computing coinbase output value:", err);
+    if (!isCachedParseError(err)) {
+      console.error("Error computing coinbase output value:", err);
+    }
     return 0;
   }
 }
@@ -477,7 +513,9 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
       manageCache(coinbaseOutputsCache, coinbaseRaw, outputs);
       return outputs;
     } catch (err) {
-      console.error("Error computing coinbase outputs:", err);
+      if (!isCachedParseError(err)) {
+        console.error("Error computing coinbase outputs:", err);
+      }
       return [];
     }
 }
@@ -672,7 +710,9 @@ export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScrip
     const scriptSigBuffer = tx.ins[0].script;
     return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
   } catch (error) {
-    console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    if (!isCachedParseError(error)) {
+      console.error("Error in computeCoinbaseScriptSigInfo:", error);
+    }
     return {
       height: null,
       auxPowData: null,
@@ -701,7 +741,9 @@ export function getCoinbaseTxDetails(coinbaseRaw: string): CoinbaseTxDetails {
       witnessCommitmentNonce: witnessCommitmentNonce
     };
   } catch (err) {
-    console.error("Error in getCoinbaseTxDetails:", err);
+    if (!isCachedParseError(err)) {
+      console.error("Error in getCoinbaseTxDetails:", err);
+    }
     return { txVersion: 0, inputSequence: 0, txLocktime: 0, witnessCommitmentNonce: null };
   }
 } 

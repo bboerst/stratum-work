@@ -5,6 +5,7 @@ import {
   getFormattedCoinbaseAsciiTag,
   computeCoinbaseOutputValue,
   getCoinbaseTxDetails,
+  reportParseFailure,
   CoinbaseOutputDetail,
   AuxPowData,
   CoinbaseTxDetails,
@@ -108,6 +109,7 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
       data.extranonce2_length,
       data.coinbase2
     );
+    reportParseFailure(coinbaseRaw, data.pool_name, data.height);
 
     coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
     scriptSigInfo = computeCoinbaseScriptSigInfo(coinbaseRaw);

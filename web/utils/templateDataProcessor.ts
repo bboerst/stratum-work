@@ -88,39 +88,50 @@ function extractAuxPowData(auxPowData?: AuxPowData | null): {
 }
 
 export function processTemplateData(data: StratumV1Data): ProcessedTemplateData {
-  // Create cache key based on critical fields that would affect processing
   const cacheKey = `${data.pool_name}-${data.job_id}-${data.height}-${data.timestamp}-${data.coinbase1}-${data.coinbase2}`;
   
   if (processedDataCache.has(cacheKey)) {
     return processedDataCache.get(cacheKey)!;
   }
 
-  // Build coinbase raw
-  const coinbaseRaw = formatCoinbaseRaw(
-    data.coinbase1,
-    data.extranonce1,
-    data.extranonce2_length,
-    data.coinbase2
-  );
+  let coinbaseRaw = '';
+  let coinbaseOutputs: CoinbaseOutputDetail[] = [];
+  let scriptSigInfo: CoinbaseScriptSigInfo | null = null;
+  let coinbaseOutputValue = 0;
+  let txDetails: CoinbaseTxDetails | null = null;
+  let asciiTag = '';
 
-  // Parse all coinbase data
-  const coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
-  const scriptSigInfo = computeCoinbaseScriptSigInfo(coinbaseRaw);
-  const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
-  const txDetails = getCoinbaseTxDetails(coinbaseRaw);
-  const asciiTag = getFormattedCoinbaseAsciiTag(
-    data.coinbase1,
-    data.extranonce1,
-    data.extranonce2_length,
-    data.coinbase2
-  );
+  try {
+    coinbaseRaw = formatCoinbaseRaw(
+      data.coinbase1,
+      data.extranonce1,
+      data.extranonce2_length,
+      data.coinbase2
+    );
 
-  // Extract auxpow data
+    coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
+    scriptSigInfo = computeCoinbaseScriptSigInfo(coinbaseRaw);
+    coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
+    txDetails = getCoinbaseTxDetails(coinbaseRaw);
+    asciiTag = getFormattedCoinbaseAsciiTag(
+      data.coinbase1,
+      data.extranonce1,
+      data.extranonce2_length,
+      data.coinbase2
+    );
+  } catch (err) {
+    console.error(
+      `[processTemplateData] Error processing template for pool="${data.pool_name}" ` +
+      `job=${data.job_id} height=${data.height} ` +
+      `coinbaseRaw(first 40 chars)="${coinbaseRaw.slice(0, 40)}...":`,
+      err
+    );
+  }
+
   const auxPowInfo = extractAuxPowData(scriptSigInfo?.auxPowData);
   const opReturnProtocols = extractOpReturnProtocols(coinbaseOutputs);
 
   const processed: ProcessedTemplateData = {
-    // Core stratum fields
     poolName: data.pool_name,
     jobId: data.job_id,
     height: data.height,
@@ -132,28 +143,23 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
     merkleBranches: [...data.merkle_branches],
     extranonce2Length: data.extranonce2_length,
 
-    // Derived coinbase fields
     coinbaseRaw,
     coinbaseScriptASCII: asciiTag,
     coinbaseOutputValue,
     coinbaseOutputs,
 
-    // Transaction details
     txVersion: txDetails?.txVersion,
     inputSequence: txDetails?.inputSequence,
     txLocktime: txDetails?.txLocktime,
     witnessCommitmentNonce: txDetails?.witnessCommitmentNonce,
 
-    // AuxPOW data
     auxPowHash: auxPowInfo.hash,
     auxPowMerkleSize: auxPowInfo.merkleSize,
     auxPowNonce: auxPowInfo.nonce,
 
-    // Individual OP_RETURN protocols
     opReturnProtocols
   };
 
-  // Manage cache size
   if (processedDataCache.size >= MAX_PROCESSED_DATA_CACHE_SIZE) {
     const firstKey = processedDataCache.keys().next().value;
     if (firstKey !== undefined) {

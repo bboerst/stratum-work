@@ -3,6 +3,7 @@
 import React from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
 import { ConnectionIndicator } from "./ConnectionIndicator";
+import { PoolFilterDropdown } from "./PoolFilterDropdown";
 
 export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
@@ -23,6 +24,9 @@ export function GlobalMenu() {
           <div className="h-6 w-px bg-gray-500"></div>
         </>
       )}
+      
+      {/* Global pool filter - always present */}
+      <PoolFilterDropdown />
       
       {/* GitHub link - always present on the far right */}
       <a

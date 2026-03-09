@@ -273,7 +273,11 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                 witnessCommitmentNonce: txDetails?.witnessCommitmentNonce || null
             };
         } catch (error) {
-            console.error("Error preparing row data in BlockTemplateCard:", error);
+            console.error(
+              `[BlockTemplateCard] Error preparing row data for pool="${displayMessage.pool_name}" ` +
+              `height=${displayMessage.height} job=${displayMessage.job_id}:`,
+              error
+            );
             return null;
         }
     }, [displayMessage]);

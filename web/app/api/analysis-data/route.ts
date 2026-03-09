@@ -108,21 +108,30 @@ export async function GET(request: NextRequest) {
       const currentBlock = await getBlockByHeight(height);
       const previousBlock = await getBlockByHeight(height - 1);
       
-      // Process the mining notifications to include all decoded fields
       const processedData = miningNotifications.map(notification => {
-        // Reconstruct the coinbase transaction
-        const coinbaseRaw = formatCoinbaseRaw(
-          notification.coinbase1,
-          notification.extranonce1,
-          notification.extranonce2_length,
-          notification.coinbase2
-        );
-        
-        // Compute all the derived fields
-        const coinbaseScriptASCII = formatCoinbaseScriptASCII(coinbaseRaw);
-        const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
-        const firstTransaction = computeFirstTransaction(notification.merkle_branches);
-        const coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
+        let coinbaseRaw = '';
+        let coinbaseScriptASCII = '';
+        let coinbaseOutputValue = 0;
+        let firstTransaction = 'empty block';
+        let coinbaseOutputs: ReturnType<typeof computeCoinbaseOutputs> = [];
+
+        try {
+          coinbaseRaw = formatCoinbaseRaw(
+            notification.coinbase1,
+            notification.extranonce1,
+            notification.extranonce2_length,
+            notification.coinbase2
+          );
+          coinbaseScriptASCII = formatCoinbaseScriptASCII(coinbaseRaw);
+          coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
+          firstTransaction = computeFirstTransaction(notification.merkle_branches);
+          coinbaseOutputs = computeCoinbaseOutputs(coinbaseRaw);
+        } catch (err) {
+          console.error(
+            `[analysis-data] Error processing notification for pool="${notification.pool_name}" height=${notification.height}:`,
+            err
+          );
+        }
         
         // Handle prev_hash endianness - use only the reversed (big-endian) format
         const prevHash = reverseHex(notification.prev_hash);

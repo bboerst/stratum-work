@@ -14,8 +14,9 @@ import { formatCoinbaseRaw } from './formatters'; // Import necessary formatter
 // Maximum size for all caches to prevent memory leaks
 const MAX_CACHE_SIZE = 1000;
 
-// Shared transaction cache
+// Shared transaction cache — stores parsed transactions and known-bad hex strings
 const transactionCache = new Map<string, Transaction>();
+const failedParseCache = new Set<string>();
 
 // Cache for coinbase script ASCII
 const coinbaseScriptAsciiCache = new Map<string, string>();
@@ -82,9 +83,17 @@ export interface CoinbaseTxDetails {
   witnessCommitmentNonce?: string | null;
 }
 
-// Helper function to get a transaction from cache or parse it
+// Helper function to get a transaction from cache or parse it.
+// Throws on malformed hex but caches failures to avoid repeated parse attempts and log spam.
 export function getTransaction(coinbaseRaw: string): Transaction {
-  if (!transactionCache.has(coinbaseRaw)) {
+  const cached = transactionCache.get(coinbaseRaw);
+  if (cached) return cached;
+
+  if (failedParseCache.has(coinbaseRaw)) {
+    throw new Error("Previously failed to parse coinbase hex (cached)");
+  }
+
+  try {
     // Manage cache size
     if (transactionCache.size >= MAX_CACHE_SIZE) {
       const firstKey = transactionCache.keys().next().value;
@@ -92,12 +101,18 @@ export function getTransaction(coinbaseRaw: string): Transaction {
         transactionCache.delete(firstKey);
       }
     }
-    // Parse and cache the transaction
     const tx = Transaction.fromHex(coinbaseRaw);
     transactionCache.set(coinbaseRaw, tx);
     return tx;
+  } catch (err) {
+    // Cache the failure so subsequent calls with the same hex skip parsing
+    if (failedParseCache.size >= MAX_CACHE_SIZE) {
+      const first = failedParseCache.values().next().value;
+      if (first !== undefined) failedParseCache.delete(first);
+    }
+    failedParseCache.add(coinbaseRaw);
+    throw err;
   }
-  return transactionCache.get(coinbaseRaw)!;
 }
 
 // Helper function to manage cache size
@@ -512,11 +527,10 @@ export async function fetchFeeRate(firstTxid: string): Promise<number | string> 
 // Clear a coinbase transaction from all caches
 export function clearCoinbaseFromCaches(coinbaseRaw: string): void {
   transactionCache.delete(coinbaseRaw);
+  failedParseCache.delete(coinbaseRaw);
   coinbaseOutputsCache.delete(coinbaseRaw);
   coinbaseScriptAsciiCache.delete(coinbaseRaw);
   coinbaseOutputValueCache.delete(coinbaseRaw);
-  // Note: outputScriptAddressCache is not cleared here as it's keyed by script hex,
-  // not coinbase raw, and should persist across different coinbase transactions
 }
 
 // Check if a request is in flight
@@ -669,24 +683,25 @@ export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScrip
 
 // Function to get other coinbase transaction details
 export function getCoinbaseTxDetails(coinbaseRaw: string): CoinbaseTxDetails {
-  const tx = getTransaction(coinbaseRaw);
-  let witnessCommitmentNonce: string | null = null;
+  try {
+    const tx = getTransaction(coinbaseRaw);
+    let witnessCommitmentNonce: string | null = null;
 
-  // Witness data exists on the first input, and has exactly one element
-  // This element is typically the nonce for the witness commitment
-  if (tx.ins && tx.ins.length > 0 && tx.ins[0].witness && tx.ins[0].witness.length === 1) {
-      // Double-check by ensuring a witness commitment output actually exists
-      const hasWitnessCommitmentOutput = tx.outs.some(out => out.script.toString('hex').startsWith('6a24aa21a9ed'));
-      if (hasWitnessCommitmentOutput) {
-           witnessCommitmentNonce = tx.ins[0].witness[0].toString('hex');
-      }
+    if (tx.ins && tx.ins.length > 0 && tx.ins[0].witness && tx.ins[0].witness.length === 1) {
+        const hasWitnessCommitmentOutput = tx.outs.some(out => out.script.toString('hex').startsWith('6a24aa21a9ed'));
+        if (hasWitnessCommitmentOutput) {
+             witnessCommitmentNonce = tx.ins[0].witness[0].toString('hex');
+        }
+    }
+
+    return {
+      txVersion: tx.version,
+      inputSequence: tx.ins[0]?.sequence || 0, 
+      txLocktime: tx.locktime,
+      witnessCommitmentNonce: witnessCommitmentNonce
+    };
+  } catch (err) {
+    console.error("Error in getCoinbaseTxDetails:", err);
+    return { txVersion: 0, inputSequence: 0, txLocktime: 0, witnessCommitmentNonce: null };
   }
-
-  return {
-    txVersion: tx.version,
-    // Coinbase input sequence is typically 0xffffffff, but read it anyway
-    inputSequence: tx.ins[0]?.sequence || 0, 
-    txLocktime: tx.locktime,
-    witnessCommitmentNonce: witnessCommitmentNonce
-  };
 } 

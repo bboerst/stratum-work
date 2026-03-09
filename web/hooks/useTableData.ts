@@ -113,31 +113,47 @@ export function useTableData(
   // Compute derived fields without fee rate
   const computedRowsBase: Omit<SortedRow, 'feeRateComputed'>[] = useMemo(() => {
     return rows.map((row) => {
-      const coinbaseRaw = formatCoinbaseRaw(
-        row.coinbase1,
-        row.extranonce1,
-        row.extranonce2_length,
-        row.coinbase2
-      );
-      const coinbase_outputs = computeCoinbaseOutputs(coinbaseRaw);
-      const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
-        row.coinbase1,
-        row.extranonce1,
-        row.extranonce2_length,
-        row.coinbase2
-      );
-      const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
-      const computedFirstTx = computeFirstTransaction(row.merkle_branches);
+      try {
+        const coinbaseRaw = formatCoinbaseRaw(
+          row.coinbase1,
+          row.extranonce1,
+          row.extranonce2_length,
+          row.coinbase2
+        );
+        const coinbase_outputs = computeCoinbaseOutputs(coinbaseRaw);
+        const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
+          row.coinbase1,
+          row.extranonce1,
+          row.extranonce2_length,
+          row.coinbase2
+        );
+        const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
+        const computedFirstTx = computeFirstTransaction(row.merkle_branches);
 
-      return {
-        ...row,
-        coinbaseRaw,
-        coinbaseScriptASCII,
-        coinbaseOutputValue,
-        first_transaction: computedFirstTx,
-        coinbase_outputs,
-        signaling_bip110: isSignalingBip110(row.version),
-      };
+        return {
+          ...row,
+          coinbaseRaw,
+          coinbaseScriptASCII,
+          coinbaseOutputValue,
+          first_transaction: computedFirstTx,
+          coinbase_outputs,
+          signaling_bip110: isSignalingBip110(row.version),
+        };
+      } catch (err) {
+        console.error(
+          `[useTableData] Error processing row for pool="${row.pool_name}" height=${row.height}:`,
+          err
+        );
+        return {
+          ...row,
+          coinbaseRaw: '',
+          coinbaseScriptASCII: '',
+          coinbaseOutputValue: 0,
+          first_transaction: 'error',
+          coinbase_outputs: [],
+          signaling_bip110: false,
+        };
+      }
     });
   }, [rows]);
 
@@ -218,31 +234,48 @@ export function useTableData(
           if (Array.isArray(data)) {
             // Process all items from the API response
             const processedData = data.map(item => {
-              const firstTx = computeFirstTransaction(item.merkle_branches);
-              const coinbaseRaw = formatCoinbaseRaw(
-                item.coinbase1,
-                item.extranonce1,
-                item.extranonce2_length,
-                item.coinbase2
-              );
-              const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
-                item.coinbase1,
-                item.extranonce1,
-                item.extranonce2_length,
-                item.coinbase2
-              );
-              const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
+              try {
+                const firstTx = computeFirstTransaction(item.merkle_branches);
+                const coinbaseRaw = formatCoinbaseRaw(
+                  item.coinbase1,
+                  item.extranonce1,
+                  item.extranonce2_length,
+                  item.coinbase2
+                );
+                const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
+                  item.coinbase1,
+                  item.extranonce1,
+                  item.extranonce2_length,
+                  item.coinbase2
+                );
+                const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
 
-              return {
-                ...item,
-                first_transaction: firstTx,
-                coinbaseRaw,
-                coinbaseScriptASCII,
-                coinbaseOutputValue: computeCoinbaseOutputValue(coinbaseRaw),
-                feeRateComputed: firstTx && firstTx !== "empty block" ? "fetching..." : "N/A",
-                coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
-                signaling_bip110: isSignalingBip110(item.version),
-              };
+                return {
+                  ...item,
+                  first_transaction: firstTx,
+                  coinbaseRaw,
+                  coinbaseScriptASCII,
+                  coinbaseOutputValue,
+                  feeRateComputed: firstTx && firstTx !== "empty block" ? "fetching..." : "N/A",
+                  coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
+                  signaling_bip110: isSignalingBip110(item.version),
+                };
+              } catch (err) {
+                console.error(
+                  `[useTableData] Error processing historical row for pool="${item.pool_name}" height=${item.height}:`,
+                  err
+                );
+                return {
+                  ...item,
+                  first_transaction: 'error',
+                  coinbaseRaw: '',
+                  coinbaseScriptASCII: '',
+                  coinbaseOutputValue: 0,
+                  feeRateComputed: 'N/A' as string | number,
+                  coinbase_outputs: [],
+                  signaling_bip110: false,
+                };
+              }
             });
             
             // Sort the data by timestamp ascending (oldest first)

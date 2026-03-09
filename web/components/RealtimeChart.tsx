@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
+import { usePoolFilter } from "@/components/PoolFilterContext";
 import { CHART_POINT_SIZES } from "@/lib/constants";
 import { 
   detectTemplateChanges, 
@@ -208,6 +209,9 @@ function RealtimeChartBase({
   // Get historical data from context
   const { historicalData, isHistoricalDataLoaded } = useHistoricalData();
   
+  // Pool visibility filter
+  const { isPoolVisible } = usePoolFilter();
+  
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
   
@@ -252,28 +256,35 @@ function RealtimeChartBase({
   const [allPoolNames, setAllPoolNames] = useState<string[]>([]); // Track all pools we've ever seen
   const [maxPoolCount, setMaxPoolCount] = useState<number>(10); // Track maximum pool count for stable scaling
   
+  // Filtered views for rendering - data pipeline keeps everything, display respects pool filter
+  const visibleChartData = useMemo(
+    () => chartData.filter(p => isPoolVisible(p.poolName)),
+    [chartData, isPoolVisible]
+  );
+  const visiblePoolNames = useMemo(
+    () => allPoolNames.filter(n => isPoolVisible(n)),
+    [allPoolNames, isPoolVisible]
+  );
+  const visibleMaxPoolCount = useMemo(
+    () => Math.max(visiblePoolNames.length, 10),
+    [visiblePoolNames]
+  );
+  
   // Define point size based on mode and props with dynamic sizing
   const basePointSize = useMemo(() => {
     if (pointSize) {
-      // Use provided pointSize if specified
       return pointSize;
     }
     
-    // Get the number of pools for dynamic calculation
-    const poolCount = Math.max(allPoolNames.length, maxPoolCount, 5);
-    const availableHeight = dimensions.height - 60; // Account for margins (top: 30, bottom: 20, extra padding)
-    
-    // Calculate maximum point size that prevents overlap
-    // Each pool should have at least enough space for a circle plus some padding
-    const maxPointSize = Math.floor(availableHeight / poolCount / 3.5); // Divide by 3.5 for balanced spacing between circles
-    
-    // Set reasonable bounds: minimum 2px, maximum 12px
+    const poolCount = Math.max(visiblePoolNames.length, visibleMaxPoolCount, 5);
+    const availableHeight = dimensions.height - 60;
+    const maxPointSize = Math.floor(availableHeight / poolCount / 3.5);
     const dynamicSize = Math.max(2, Math.min(12, maxPointSize));
     
     return isHistoricalBlock 
       ? Math.min(dynamicSize, CHART_POINT_SIZES.HISTORICAL) 
       : dynamicSize;
-  }, [pointSize, allPoolNames.length, maxPoolCount, dimensions.height, isHistoricalBlock]);
+  }, [pointSize, visiblePoolNames.length, visibleMaxPoolCount, dimensions.height, isHistoricalBlock]);
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
@@ -364,14 +375,12 @@ function RealtimeChartBase({
     // Clear the canvas
     ctx.clearRect(0, 0, dimensions.width, dimensions.height);
     
-    // Skip if no data
-    if (chartData.length === 0) {
-      // Draw empty chart message
+    // Skip if no visible data
+    if (visibleChartData.length === 0) {
       ctx.fillStyle = 'rgba(150, 150, 150, 0.5)';
       ctx.font = '14px sans-serif';
       ctx.textAlign = 'center';
       
-      // Special message for historical blocks with no data
       if (isHistoricalBlock && isHistoricalDataLoaded) {
         ctx.fillText('No data available for this block', dimensions.width / 2, dimensions.height / 2);
       } else {
@@ -387,24 +396,23 @@ function RealtimeChartBase({
     
     // Group data by pool name
     const groupedData = new Map<string, ChartDataPoint[]>();
-    chartData.forEach(point => {
+    visibleChartData.forEach(point => {
       if (!groupedData.has(point.poolName)) {
         groupedData.set(point.poolName, []);
       }
       groupedData.get(point.poolName)!.push(point);
     });
     
-    // Use allPoolNames for stable vertical positioning
-    // If allPoolNames is empty, fall back to current pool names
-    const basePoolNames = allPoolNames.length > 0 
-      ? allPoolNames 
+    // Use visible pool names for stable vertical positioning
+    const basePoolNames = visiblePoolNames.length > 0 
+      ? visiblePoolNames 
       : Array.from(groupedData.keys());
     
     // Apply sorting based on current sorting mode
-    const stablePoolNames = sortPoolNames(basePoolNames, chartData);
+    const stablePoolNames = sortPoolNames(basePoolNames, visibleChartData);
     
     // Get min/max timestamps for domain calculation
-    const timestamps = chartData.map(point => point.timestamp);
+    const timestamps = visibleChartData.map(point => point.timestamp);
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
     
@@ -433,12 +441,9 @@ function RealtimeChartBase({
       // If pool is not in stable list, use a fallback
       const effectivePoolIndex = poolIndex >= 0 ? poolIndex : (stablePoolNames.length + index % 5);
       
-      // Use a fixed denominator based on the length of the stable pool names list
-      // This ensures the vertical positions remain stable
-      const denominator = Math.max(stablePoolNames.length, maxPoolCount, 10);
+      const denominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
       const ratio = effectivePoolIndex / denominator;
       
-      // Remove the random offset to prevent points from moving when hovering
       return margin.top + ratio * availableHeight;
     };
     
@@ -649,7 +654,7 @@ function RealtimeChartBase({
       ctx.stroke();
       
       // Calculate row height for horizontal separators
-      const denominator = Math.max(stablePoolNames.length, maxPoolCount, 10);
+      const denominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
       const rowHeight = availableHeight / denominator;
       
       // Draw horizontal row separator lines between pools
@@ -693,7 +698,7 @@ function RealtimeChartBase({
         const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
         
         // Get ASCII tag for this pool (from latest data point)
-        const poolDataPoints = chartData.filter(point => point.poolName === poolName);
+        const poolDataPoints = visibleChartData.filter(point => point.poolName === poolName);
         const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
         const asciiTag = showPoolAsciiTag ? (latestPoint?.asciiTag || '') : '';
         
@@ -777,7 +782,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, chartData, hoveredPoint, showLabels, poolColors, maxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, allPoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
+  }, [dimensions, visibleChartData, hoveredPoint, showLabels, poolColors, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -996,82 +1001,61 @@ function RealtimeChartBase({
     
     const rect = canvas.getBoundingClientRect();
     
-    // Calculate mouse position accounting for pixel ratio and canvas scaling
     const x = (e.clientX - rect.left);
     const y = (e.clientY - rect.top);
     
-    // Find the closest point
     let closestPoint: ChartDataPoint | null = null;
     let minDistance = Infinity;
     
-    // Ensure we have data to work with
-    if (chartData.length === 0) {
+    if (visibleChartData.length === 0) {
       setHoveredPoint(null);
       return;
     }
     
-    // Calculate margins (must match drawChart exactly)
     const margin = chartMargin;
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
     
-    // Use allPoolNames for stable vertical positioning (same as in drawChart)
-    const currentPoolNames = Array.from(new Set(chartData.map(point => point.poolName)));
-    const basePoolNames = allPoolNames.length > 0 
-      ? allPoolNames 
+    const currentPoolNames = Array.from(new Set(visibleChartData.map(point => point.poolName)));
+    const basePoolNames = visiblePoolNames.length > 0 
+      ? visiblePoolNames 
       : currentPoolNames;
     
-    // Apply sorting based on current sorting mode
-    const stablePoolNames = sortPoolNames(basePoolNames, chartData);
+    const stablePoolNames = sortPoolNames(basePoolNames, visibleChartData);
     
-    // Calculate timestamps for domain determination
-    const timestamps = chartData.map(point => point.timestamp);
+    const timestamps = visibleChartData.map(point => point.timestamp);
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
     
-    // Get current time domain from ref
     const currentTimeDomain = timeDomainRef.current;
     
-    // Use calculated domain if current domain is invalid (must match drawChart exactly)
     const useCalculatedDomain = currentTimeDomain[0] === 0 && currentTimeDomain[1] === 0;
     const effectiveTimeDomain: [number, number] = useCalculatedDomain 
       ? [minTime, maxTime] 
       : currentTimeDomain;
     
-    // Helper functions for coordinate conversion - must be identical to drawChart
     const timestampToPixel = (timestamp: number): number => {
-      // Check for invalid domain that would cause division by zero
       if (effectiveTimeDomain[1] === effectiveTimeDomain[0]) {
-        return margin.left + availableWidth / 2; // Center point
+        return margin.left + availableWidth / 2;
       }
-      
       const ratio = (timestamp - effectiveTimeDomain[0]) / (effectiveTimeDomain[1] - effectiveTimeDomain[0]);
       return margin.left + ratio * availableWidth;
     };
     
     const poolIndexToPixel = (index: number, poolName: string): number => {
-      // Get the index of the pool in the stable pool names list (must match drawChart)
       const poolIndex = stablePoolNames.indexOf(poolName);
-      
-      // If pool is not in stable list, use a fallback
       const effectivePoolIndex = poolIndex >= 0 ? poolIndex : (stablePoolNames.length + index % 5);
-      
-      // Use a fixed denominator based on the length of the stable pool names list
-      const denominator = Math.max(stablePoolNames.length, maxPoolCount, 10);
+      const denominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
       const ratio = effectivePoolIndex / denominator;
-      
-      // Must match drawChart exactly - no randomness here
       return margin.top + ratio * availableHeight;
     };
     
-    // Use constants for hover tolerance
     const hoverTolerance = basePointSize * CHART_POINT_SIZES.HOVER_TOLERANCE_MULTIPLIER;
     
-    chartData.forEach(point => {
+    visibleChartData.forEach(point => {
       const pointX = timestampToPixel(point.timestamp);
       const pointY = poolIndexToPixel(point.poolIndex, point.poolName);
       
-      // Calculate distance using actual screen coordinates
       const distance = Math.sqrt(
         Math.pow((pointX - x), 2) + 
         Math.pow((pointY - y), 2)
@@ -1084,7 +1068,7 @@ function RealtimeChartBase({
     });
     
     setHoveredPoint(closestPoint);
-  }, [chartData, dimensions, maxPoolCount, allPoolNames, basePointSize, sortPoolNames, chartMargin]);
+  }, [visibleChartData, dimensions, visibleMaxPoolCount, visiblePoolNames, basePointSize, sortPoolNames, chartMargin]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);

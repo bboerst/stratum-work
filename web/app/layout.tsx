@@ -7,6 +7,7 @@ import { BlocksProvider } from "@/lib/BlocksContext";
 import { VisualizationProvider } from "@/components/VisualizationContext";
 import { HistoricalDataProvider } from "@/lib/HistoricalDataContext";
 import { SelectedTemplateProvider } from "@/lib/SelectedTemplateContext";
+import { PoolFilterProvider } from "@/components/PoolFilterContext";
 import ClientNavigation from "@/components/ClientNavigation";
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({
       <body>
         <ThemeProvider attribute="class" defaultTheme="dark" storageKey="theme-default-dark">
           <DataStreamProvider>
+            <PoolFilterProvider>
             <BlocksProvider>
               <HistoricalDataProvider>
                 <SelectedTemplateProvider>
@@ -36,6 +38,7 @@ export default function RootLayout({
                 </SelectedTemplateProvider>
               </HistoricalDataProvider>
             </BlocksProvider>
+            </PoolFilterProvider>
           </DataStreamProvider>
         </ThemeProvider>
       </body>

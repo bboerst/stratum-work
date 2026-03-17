@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { formatPrevBlockHash } from "@/utils/formatters";
+import { formatPrevBlockHash, reverseHex } from "@/utils/formatters";
 
 interface MiningNotification {
   pool_name?: string | null;
@@ -11,6 +11,7 @@ interface MiningNotification {
 
 interface ForkTimelineProps {
   notifications: MiningNotification[];
+  canonicalBlockHash?: string;
 }
 
 const PREV_HASH_COLORS = [
@@ -21,6 +22,8 @@ const PREV_HASH_COLORS = [
   "#8b5cf6", // violet-500
   "#06b6d4", // cyan-500
 ];
+const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
+const STALE_HASH_COLOR = "#64748b"; // slate-500 (muted/disabled look)
 
 function parseTimestampToNs(ts: string): number {
   if (!ts) return 0;
@@ -64,6 +67,7 @@ interface VisualSegment {
   widthPct: number;
   prevHash: string;
   tooltip: string;
+  isStale: boolean;
 }
 
 interface PoolTimelineData {
@@ -196,8 +200,12 @@ function splitSegmentAtGaps(
   return result;
 }
 
-export default function ForkTimeline({ notifications }: ForkTimelineProps) {
+export default function ForkTimeline({ notifications, canonicalBlockHash }: ForkTimelineProps) {
   const computed = useMemo(() => {
+    // Convert big-endian block_hash to raw stratum format for comparison
+    const canonicalRaw = canonicalBlockHash
+      ? reverseHex(canonicalBlockHash).toLowerCase()
+      : null;
     const parsed = notifications
       .filter((n) => n.pool_name && n.prev_hash && n.timestamp)
       .map((n) => ({
@@ -307,11 +315,14 @@ export default function ForkTimeline({ notifications }: ForkTimelineProps) {
           const widthPct = Math.max(rightPct - leftPct, 0.3);
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
+          const isStale = canonicalRaw !== null && seg.prevHash !== canonicalRaw;
+          const staleLabel = canonicalRaw !== null ? (isStale ? " (stale)" : " (canonical)") : "";
           visualSegments.push({
             leftPct,
             widthPct,
             prevHash: seg.prevHash,
-            tooltip: `${raw.poolName}\n${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
+            isStale,
+            tooltip: `${raw.poolName}${staleLabel}\n${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
           });
         }
       }
@@ -407,17 +418,37 @@ export default function ForkTimeline({ notifications }: ForkTimelineProps) {
       }
     }
 
+    // Build a map of hash → canonical/stale status
+    const hashStatus = new Map<string, "canonical" | "stale" | null>();
+    sortedHashes.forEach((h) => {
+      if (canonicalRaw === null) {
+        hashStatus.set(h, null);
+      } else {
+        hashStatus.set(h, h === canonicalRaw ? "canonical" : "stale");
+      }
+    });
+
+    // Force semantic colors when canonical side is known.
+    if (canonicalRaw !== null) {
+      sortedHashes.forEach((h) => {
+        const status = hashStatus.get(h);
+        if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
+        else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
+      });
+    }
+
     return {
       poolTimelines,
       sortedHashes,
       colorMap,
+      hashStatus,
       ticks,
       gridLines: [...new Set(gridLines)],
       gapIndicators,
       duration,
       compressed,
     };
-  }, [notifications]);
+  }, [notifications, canonicalBlockHash]);
 
   if (!computed || computed.poolTimelines.length === 0) return null;
 
@@ -425,6 +456,7 @@ export default function ForkTimeline({ notifications }: ForkTimelineProps) {
     poolTimelines,
     sortedHashes,
     colorMap,
+    hashStatus,
     ticks,
     gridLines,
     gapIndicators,
@@ -441,19 +473,40 @@ export default function ForkTimeline({ notifications }: ForkTimelineProps) {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-5 gap-y-1.5 mb-4">
-        {sortedHashes.map((hash) => (
-          <div key={hash} className="flex items-center gap-2 min-w-0">
-            <div
-              className="w-3 h-3 rounded-sm flex-shrink-0"
-              style={{ backgroundColor: colorMap.get(hash) }}
-            />
-            <span
-              className="text-[10px] opacity-75 font-mono break-all"
-            >
-              {formatPrevBlockHash(hash)}
-            </span>
-          </div>
-        ))}
+        {sortedHashes.map((hash) => {
+          const status = hashStatus.get(hash);
+          return (
+            <div key={hash} className="flex items-center gap-2 min-w-0">
+              <div
+                className="w-3 h-3 rounded-sm flex-shrink-0 relative"
+                style={{ backgroundColor: colorMap.get(hash) }}
+              >
+                {status === "stale" && (
+                  <div
+                    className="absolute inset-0 rounded-sm"
+                    style={{
+                      background:
+                        "repeating-linear-gradient(-45deg, transparent, transparent 1.5px, rgba(0,0,0,0.45) 1.5px, rgba(0,0,0,0.45) 3px)",
+                    }}
+                  />
+                )}
+              </div>
+              <span className="text-[10px] opacity-75 font-mono break-all">
+                {formatPrevBlockHash(hash)}
+              </span>
+              {status === "canonical" && (
+                <span className="text-[9px] font-semibold text-emerald-400 flex-shrink-0">
+                  Canonical
+                </span>
+              )}
+              {status === "stale" && (
+                <span className="text-[9px] font-semibold text-red-400 flex-shrink-0">
+                  Stale
+                </span>
+              )}
+            </div>
+          );
+        })}
         {compressed && (
           <span className="text-[9px] text-muted-foreground/50 italic self-center ml-2">
             (quiet periods compressed)
@@ -549,10 +602,20 @@ export default function ForkTimeline({ notifications }: ForkTimelineProps) {
                         left: `${vs.leftPct}%`,
                         width: `${Math.max(vs.widthPct, 0.3)}%`,
                         backgroundColor: colorMap.get(vs.prevHash) || "#666",
-                        opacity: 0.82,
+                        opacity: vs.isStale ? 0.55 : 0.82,
                       }}
                       title={vs.tooltip}
-                    />
+                    >
+                      {vs.isStale && (
+                        <div
+                          className="absolute inset-0"
+                          style={{
+                            background:
+                              "repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(0,0,0,0.3) 2px, rgba(0,0,0,0.3) 4px)",
+                          }}
+                        />
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>

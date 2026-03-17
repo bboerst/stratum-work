@@ -31,15 +31,17 @@ export default function AnalyticsPanel({ height }: { height: number }) {
   const [block, setBlock] = useState<BlockWithAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [miningNotifications, setMiningNotifications] = useState<RawMiningNotify[]>([]);
+  const [prevBlockHash, setPrevBlockHash] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         setLoading(true);
-        const [blockRes, notifyRes] = await Promise.all([
+        const [blockRes, notifyRes, prevBlockRes] = await Promise.all([
           fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" }),
           fetch(`/api/mining-notify?height=${height}`, { cache: "no-store" }),
+          fetch(`/api/blocks?height=${height - 1}&n=1`, { cache: "no-store" }),
         ]);
         const blockData = await blockRes.json();
         const items: BlockWithAnalysis[] = Array.isArray(blockData.blocks) ? blockData.blocks : [];
@@ -51,14 +53,24 @@ export default function AnalyticsPanel({ height }: { height: number }) {
           notifs = Array.isArray(notifyData) ? notifyData : [];
         } catch { /* ignore parse errors */ }
 
+        let canonicalHash: string | undefined;
+        try {
+          const prevData = await prevBlockRes.json();
+          const prevItems: BlockWithAnalysis[] = Array.isArray(prevData.blocks) ? prevData.blocks : [];
+          const prevBlock = prevItems.find((b) => b.height === height - 1);
+          canonicalHash = prevBlock?.block_hash;
+        } catch { /* ignore */ }
+
         if (!cancelled) {
           setBlock(found);
           setMiningNotifications(notifs);
+          setPrevBlockHash(canonicalHash);
         }
       } catch {
         if (!cancelled) {
           setBlock(null);
           setMiningNotifications([]);
+          setPrevBlockHash(undefined);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -89,7 +101,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
 
   function renderPrevHashFork() {
     if (miningNotifications.length === 0) return null;
-    return <ForkTimeline notifications={miningNotifications} />;
+    return <ForkTimeline notifications={miningNotifications} canonicalBlockHash={prevBlockHash} />;
   }
 
   function renderInvalidTemplates(flag: AnalysisFlag) {

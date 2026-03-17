@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { formatPrevBlockHash } from "@/utils/formatters";
+import ForkTimeline from "./ForkTimeline";
 
 type AnalysisFlag = {
   key?: string;
@@ -21,22 +21,45 @@ interface BlockWithAnalysis {
   analysis?: AnalysisData;
 }
 
+interface RawMiningNotify {
+  pool_name?: string | null;
+  timestamp: string;
+  prev_hash: string;
+}
+
 export default function AnalyticsPanel({ height }: { height: number }) {
   const [block, setBlock] = useState<BlockWithAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
+  const [miningNotifications, setMiningNotifications] = useState<RawMiningNotify[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" });
-        const data = await res.json();
-        const items: BlockWithAnalysis[] = Array.isArray(data.blocks) ? data.blocks : [];
+        const [blockRes, notifyRes] = await Promise.all([
+          fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" }),
+          fetch(`/api/mining-notify?height=${height}`, { cache: "no-store" }),
+        ]);
+        const blockData = await blockRes.json();
+        const items: BlockWithAnalysis[] = Array.isArray(blockData.blocks) ? blockData.blocks : [];
         const found = items.find((b) => b.height === height) || null;
-        if (!cancelled) setBlock(found);
+
+        let notifs: RawMiningNotify[] = [];
+        try {
+          const notifyData = await notifyRes.json();
+          notifs = Array.isArray(notifyData) ? notifyData : [];
+        } catch { /* ignore parse errors */ }
+
+        if (!cancelled) {
+          setBlock(found);
+          setMiningNotifications(notifs);
+        }
       } catch {
-        if (!cancelled) setBlock(null);
+        if (!cancelled) {
+          setBlock(null);
+          setMiningNotifications([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -64,30 +87,9 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     );
   }
 
-  function renderPrevHashFork(flag: AnalysisFlag) {
-    const groups = (flag.details && (flag.details as { groups?: Array<{ prev_hash?: string; pools?: string[] }> }).groups) || [];
-    if (!groups || groups.length === 0) return null;
-    return (
-      <div className="mt-2">
-        <div className="text-sm font-semibold mb-2">Fork</div>
-        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${groups.length}, minmax(0, 1fr))` }}>
-          {groups.map((g, idx) => (
-            <div key={idx} className="border border-border rounded-md p-2 bg-background/60">
-              <div className="text-[10px] opacity-75 mb-2 break-all">
-                {g.prev_hash ? formatPrevBlockHash(g.prev_hash) : "(unknown prev_hash)"}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(g.pools || []).map((p) => (
-                  <span key={p} className="px-2 py-0.5 text-[10px] rounded-full bg-muted text-foreground border border-border">
-                    {p || "Unknown"}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+  function renderPrevHashFork() {
+    if (miningNotifications.length === 0) return null;
+    return <ForkTimeline notifications={miningNotifications} />;
   }
 
   function renderInvalidTemplates(flag: AnalysisFlag) {
@@ -139,7 +141,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     <div className="border border-border rounded-md p-3 bg-card">
       {flags.map((f, i) => (
         <div key={`${f.key || i}`}>
-          {f.key === "prev_hash_fork" && renderPrevHashFork(f)}
+          {f.key === "prev_hash_fork" && renderPrevHashFork()}
           {f.key === "invalid_coinbase_no_merkle" && renderInvalidTemplates(f)}
         </div>
       ))}

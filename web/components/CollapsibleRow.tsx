@@ -30,8 +30,8 @@ export default function CollapsibleRow({ title, children, defaultExpanded = fals
       </div>
       
       <div 
-        className={`bg-white dark:bg-gray-900 rounded-b-lg border-l border-r border-b border-gray-200 dark:border-gray-700 transition-all duration-300 overflow-hidden ${
-          isExpanded ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
+        className={`bg-white dark:bg-gray-900 rounded-b-lg border-l border-r border-b border-gray-200 dark:border-gray-700 transition-all duration-300 ${
+          isExpanded ? 'max-h-[10000px] opacity-100 overflow-visible' : 'max-h-0 opacity-0 overflow-hidden'
         }`}
       >
         {children}

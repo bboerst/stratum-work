@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { formatPrevBlockHash, reverseHex } from "@/utils/formatters";
 
 interface MiningNotification {
@@ -284,10 +284,13 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
       });
     });
 
-    // Sort pools only by first-seen time (top to bottom = earliest to latest)
+    // Sort pools: majority hash first, non-switchers first, then by first appearance
     rawTimelines.sort((a, b) => {
-      if (a.firstNs !== b.firstNs) return a.firstNs - b.firstNs;
-      return a.poolName.localeCompare(b.poolName);
+      const aIdx = sortedHashes.indexOf(a.initialHash);
+      const bIdx = sortedHashes.indexOf(b.initialHash);
+      if (aIdx !== bIdx) return aIdx - bIdx;
+      if (a.switched !== b.switched) return a.switched ? 1 : -1;
+      return a.firstNs - b.firstNs;
     });
 
     // Build time zones for compression
@@ -309,19 +312,13 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
         for (const sub of subSegs) {
           const leftPct = toVisual(sub.startNs);
           const rightPct = toVisual(sub.endNs);
-          const clampedLeftPct = Math.max(0, Math.min(leftPct, 100));
-          const rawWidthPct = Math.max(rightPct - leftPct, 0);
-          const maxAllowedWidthPct = Math.max(0, 100 - clampedLeftPct);
-          const widthPct = Math.min(
-            Math.max(rawWidthPct, Math.min(0.3, maxAllowedWidthPct)),
-            maxAllowedWidthPct,
-          );
+          const widthPct = Math.max(rightPct - leftPct, 0.3);
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
           const isStale = canonicalRaw !== null && seg.prevHash !== canonicalRaw;
           const staleLabel = canonicalRaw !== null ? (isStale ? " (stale)" : " (canonical)") : "";
           visualSegments.push({
-            leftPct: clampedLeftPct,
+            leftPct,
             widthPct,
             prevHash: seg.prevHash,
             isStale,
@@ -453,6 +450,8 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
     };
   }, [notifications, canonicalBlockHash]);
 
+  const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
+
   if (!computed || computed.poolTimelines.length === 0) return null;
 
   const {
@@ -467,14 +466,48 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
     compressed,
   } = computed;
 
+  const displayTimelines =
+    sortMode === "time"
+      ? [...poolTimelines].sort((a, b) => a.firstNs - b.firstNs)
+      : poolTimelines;
+
   const LABEL_W = 140;
 
   return (
-    <div className="mt-2 pr-1 pb-1">
-      <div className="text-sm font-semibold mb-3">Fork</div>
+    <div className="mt-2">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="text-sm font-semibold">Fork</div>
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-muted-foreground">Sort:</span>
+          <div className="flex items-center rounded-md border border-border overflow-hidden">
+            <button
+              type="button"
+              className={`px-2.5 py-0.5 transition-colors ${
+                sortMode === "grouped"
+                  ? "bg-blue-600 text-white"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              }`}
+              onClick={() => setSortMode("grouped")}
+            >
+              By Chain
+            </button>
+            <button
+              type="button"
+              className={`px-2.5 py-0.5 transition-colors ${
+                sortMode === "time"
+                  ? "bg-blue-600 text-white"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              }`}
+              onClick={() => setSortMode("time")}
+            >
+              By Time
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-x-5 gap-y-1.5 mb-4">
+      <div className="flex flex-col gap-1.5 mb-4">
         {sortedHashes.map((hash) => {
           const status = hashStatus.get(hash);
           return (
@@ -493,9 +526,6 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                   />
                 )}
               </div>
-              <span className="text-[10px] opacity-75 font-mono break-all">
-                {formatPrevBlockHash(hash)}
-              </span>
               {status === "canonical" && (
                 <span className="text-[9px] font-semibold text-emerald-400 flex-shrink-0">
                   Canonical
@@ -506,11 +536,14 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                   Stale
                 </span>
               )}
+              <span className="text-[10px] opacity-75 font-mono break-all">
+                {formatPrevBlockHash(hash)}
+              </span>
             </div>
           );
         })}
         {compressed && (
-          <span className="text-[9px] text-muted-foreground/50 italic self-center ml-2">
+          <span className="text-[9px] text-muted-foreground/50 italic">
             (quiet periods compressed)
           </span>
         )}
@@ -551,11 +584,10 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
       )}
 
       {/* Pool rows */}
-      <div className="pb-1">
-        {poolTimelines.map((pool) => {
+      <div>
+        {displayTimelines.map((pool) => {
           return (
-            <React.Fragment key={pool.poolName}>
-              <div className="flex items-center h-[22px] group">
+            <div key={pool.poolName} className="flex items-center h-[22px] group">
                 <div
                   className="flex-shrink-0 text-[11px] truncate text-right pr-2.5 text-muted-foreground"
                   style={{ width: `${LABEL_W}px` }}
@@ -614,7 +646,6 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                   ))}
                 </div>
               </div>
-            </React.Fragment>
           );
         })}
       </div>

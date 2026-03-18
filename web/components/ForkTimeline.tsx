@@ -23,7 +23,7 @@ const PREV_HASH_COLORS = [
   "#06b6d4", // cyan-500
 ];
 const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
-const STALE_HASH_COLOR = "#64748b"; // slate-500 (muted/disabled look)
+const STALE_HASH_COLOR = "#1550a4"; // slate-500 (muted/disabled look)
 
 function parseTimestampToNs(ts: string): number {
   if (!ts) return 0;
@@ -284,13 +284,10 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
       });
     });
 
-    // Sort pools: majority hash first, non-switchers first, then by first appearance
+    // Sort pools only by first-seen time (top to bottom = earliest to latest)
     rawTimelines.sort((a, b) => {
-      const aIdx = sortedHashes.indexOf(a.initialHash);
-      const bIdx = sortedHashes.indexOf(b.initialHash);
-      if (aIdx !== bIdx) return aIdx - bIdx;
-      if (a.switched !== b.switched) return a.switched ? 1 : -1;
-      return a.firstNs - b.firstNs;
+      if (a.firstNs !== b.firstNs) return a.firstNs - b.firstNs;
+      return a.poolName.localeCompare(b.poolName);
     });
 
     // Build time zones for compression
@@ -312,13 +309,19 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
         for (const sub of subSegs) {
           const leftPct = toVisual(sub.startNs);
           const rightPct = toVisual(sub.endNs);
-          const widthPct = Math.max(rightPct - leftPct, 0.3);
+          const clampedLeftPct = Math.max(0, Math.min(leftPct, 100));
+          const rawWidthPct = Math.max(rightPct - leftPct, 0);
+          const maxAllowedWidthPct = Math.max(0, 100 - clampedLeftPct);
+          const widthPct = Math.min(
+            Math.max(rawWidthPct, Math.min(0.3, maxAllowedWidthPct)),
+            maxAllowedWidthPct,
+          );
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
           const isStale = canonicalRaw !== null && seg.prevHash !== canonicalRaw;
           const staleLabel = canonicalRaw !== null ? (isStale ? " (stale)" : " (canonical)") : "";
           visualSegments.push({
-            leftPct,
+            leftPct: clampedLeftPct,
             widthPct,
             prevHash: seg.prevHash,
             isStale,
@@ -465,10 +468,9 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
   } = computed;
 
   const LABEL_W = 140;
-  let lastInitialHash = "";
 
   return (
-    <div className="mt-2">
+    <div className="mt-2 pr-1 pb-1">
       <div className="text-sm font-semibold mb-3">Fork</div>
 
       {/* Legend */}
@@ -549,17 +551,10 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
       )}
 
       {/* Pool rows */}
-      <div>
-        {poolTimelines.map((pool, idx) => {
-          const initHash = pool.initialHash;
-          const showDivider = idx > 0 && initHash !== lastInitialHash;
-          lastInitialHash = initHash;
-
+      <div className="pb-1">
+        {poolTimelines.map((pool) => {
           return (
             <React.Fragment key={pool.poolName}>
-              {showDivider && (
-                <div className="border-t border-border/40 my-1.5" />
-              )}
               <div className="flex items-center h-[22px] group">
                 <div
                   className="flex-shrink-0 text-[11px] truncate text-right pr-2.5 text-muted-foreground"
@@ -602,7 +597,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                         left: `${vs.leftPct}%`,
                         width: `${Math.max(vs.widthPct, 0.3)}%`,
                         backgroundColor: colorMap.get(vs.prevHash) || "#666",
-                        opacity: vs.isStale ? 0.55 : 0.82,
+                        opacity: 0.82,
                       }}
                       title={vs.tooltip}
                     >

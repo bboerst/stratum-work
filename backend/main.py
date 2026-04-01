@@ -12,7 +12,7 @@ import random
 from distutils.util import strtobool
 from typing import List, Dict, Any
 from bitcoin_utils import extract_coinbase_data
-from integrations import db, blocks_coll, pools_coll, mongodb_enabled, publish_to_rabbitmq, rabbitmq_manager
+from integrations import db, blocks_coll, pools_coll, mongodb_enabled, publish_to_rabbitmq, rabbitmq_manager, post_analysis_flags
 from integrations.rabbitmq import start_heartbeat_thread
 
 # Global mining pool definitions cache
@@ -359,6 +359,10 @@ def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coin
 
     if flags:
         analysis["flags"] = flags
+        try:
+            post_analysis_flags(height, flags)
+        except Exception as post_err:
+            logger.error("Error posting to X for height %d: %s", height, post_err)
     return analysis
 
 

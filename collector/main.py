@@ -360,7 +360,12 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
 
 def insert_notification(document, db_url, db_name, db_username, db_password):
     LOG.debug(f"Attempting to insert document into MongoDB: {document}")
-    client = MongoClient(f"mongodb://{db_username}:{db_password}@{db_url}")
+    host = db_url
+    for prefix in ("mongodb+srv://", "mongodb://"):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+            break
+    client = MongoClient(f"mongodb://{db_username}:{db_password}@{host}")
     db = client[db_name]
     collection = db["mining_notify"]
     result = collection.insert_one(document)

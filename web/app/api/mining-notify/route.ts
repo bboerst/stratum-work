@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
+import { filterBlacklistedItems } from "@/lib/poolBlacklist";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -10,10 +11,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Use our Prisma service to get mining notifications
     const records = await getMiningNotifyByHeight(parseInt(height));
+    const filtered = filterBlacklistedItems(records, r => r.pool_name);
     
-    return NextResponse.json(records);
+    return NextResponse.json(filtered);
   } catch (error: Error | unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: errorMessage }, { status: 500 });

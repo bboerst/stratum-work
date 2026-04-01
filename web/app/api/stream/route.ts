@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { isPoolBlacklisted } from '../../../lib/poolBlacklist';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from '../../../lib/rabbitmq';
 import type { Channel, ConsumeMessage, Replies } from 'amqplib';
 
@@ -105,7 +106,17 @@ export async function GET(request: NextRequest) {
 
           try {
             const data = msg.content.toString();
-            // Send an SSE event using the safe enqueue method
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.pool_name && isPoolBlacklisted(parsed.pool_name)) {
+                channel?.ack(msg);
+                return;
+              }
+            } catch {
+              // JSON parse failed — forward message unfiltered (fail-open)
+            }
+
             safeEnqueue(data);
             channel?.ack(msg);
           } catch (err) {

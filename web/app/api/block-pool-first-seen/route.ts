@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/db/prisma';
 import { enableHistoricalData } from '@/lib/db/blocks';
+import { filterBlacklistedItems } from '@/lib/poolBlacklist';
 
 // Define the shape of the data returned by the aggregation
 interface PoolFirstSeenData {
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
     const result = rawResult as unknown as AggregationResult;
 
     if (result && result.cursor && result.cursor.firstBatch) {
-      const data = result.cursor.firstBatch;
+      const data = filterBlacklistedItems(result.cursor.firstBatch, d => d.poolName);
       return NextResponse.json(data);
     } else {
       console.error("Unexpected MongoDB aggregation response structure:", result);

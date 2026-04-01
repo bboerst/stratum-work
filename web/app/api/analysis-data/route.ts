@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
 import { getBlockByHeight } from "@/lib/db/blocks";
 import { prisma } from "@/lib/db/prisma";
+import { filterBlacklistedItems } from "@/lib/poolBlacklist";
 
 interface InterestingBlockItem {
   height: number;
@@ -80,7 +81,11 @@ export async function GET(request: NextRequest) {
         limit: 200
       }) as unknown as MongoCursorResult<InterestingBlockItem>;
       const items: InterestingBlockItem[] = raw?.cursor?.firstBatch || [];
-      return NextResponse.json({ items });
+      const filtered = filterBlacklistedItems(
+        items,
+        item => (item.mining_pool?.name as string | undefined)
+      );
+      return NextResponse.json({ items: filtered });
     } catch (e) {
       console.error('Error fetching interesting blocks:', e);
       return NextResponse.json({ items: [] });
@@ -108,7 +113,8 @@ export async function GET(request: NextRequest) {
       const currentBlock = await getBlockByHeight(height);
       const previousBlock = await getBlockByHeight(height - 1);
       
-      const processedData = miningNotifications.map(notification => {
+      const filteredNotifications = filterBlacklistedItems(miningNotifications, n => n.pool_name);
+      const processedData = filteredNotifications.map(notification => {
         let coinbaseRaw = '';
         let coinbaseScriptASCII = '';
         let coinbaseOutputValue = 0;

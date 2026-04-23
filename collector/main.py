@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import threading
 import socket
 import sys
 import time
@@ -9,12 +10,159 @@ from datetime import datetime
 from urllib.parse import urlparse
 import select
 
-import pika
-from pymongo import MongoClient
-from pycoin.symbols.btc import network
-import socks
+try:
+    import pika
+except ImportError:  # pragma: no cover - exercised in lightweight test envs
+    pika = None
+
+try:
+    from pymongo import MongoClient
+except ImportError:  # pragma: no cover - exercised in lightweight test envs
+    MongoClient = None
+
+try:
+    from pycoin.symbols.btc import network
+except ImportError:  # pragma: no cover - exercised in lightweight test envs
+    network = None
+
+try:
+    import socks
+except ImportError:  # pragma: no cover - exercised in lightweight test envs
+    socks = None
+
+try:
+    import zmq
+except ImportError:  # pragma: no cover - exercised in lightweight test envs
+    zmq = None
+
+try:
+    from collector.chain_detection import (
+        BCHConfirmationCache,
+        BCHConfirmer,
+        ChainClassifier,
+        TipState,
+    )
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    from chain_detection import (  # type: ignore
+        BCHConfirmationCache,
+        BCHConfirmer,
+        ChainClassifier,
+        TipState,
+    )
 
 LOG = logging.getLogger()
+
+tip_state = TipState(
+    current_height=None,
+    last_update_monotonic=None,
+    stale_after_seconds=1800,
+)
+bch_confirmer = BCHConfirmer(
+    "https://api.blockchair.com/bitcoin-cash/raw/block",
+    3.0,
+    BCHConfirmationCache(),
+)
+chain_classifier = ChainClassifier(
+    tip_state=tip_state,
+    divergence_threshold=5,
+    confirmer=bch_confirmer,
+)
+tip_state_lock = threading.Lock()
+
+
+def require_dependency(module, name):
+    if module is None:
+        raise RuntimeError(f"Missing optional dependency '{name}'")
+    return module
+
+
+def configure_chain_detection(args):
+    tip_state.stale_after_seconds = args.btc_tip_stale_seconds
+    chain_classifier.divergence_threshold = args.btc_chain_divergence_threshold
+    bch_confirmer.api_base_url = args.bch_confirmation_url.rstrip("/")
+    bch_confirmer.timeout_seconds = args.bch_confirmation_timeout
+
+
+def update_tip_state(height):
+    with tip_state_lock:
+        tip_state.current_height = height
+        tip_state.last_update_monotonic = time.monotonic()
+
+
+def fetch_local_btc_tip_height(args):
+    try:
+        from bitcoinrpc.authproxy import AuthServiceProxy
+    except ImportError as exc:  # pragma: no cover - depends on local env
+        raise RuntimeError("Missing optional dependency 'python-bitcoinrpc'") from exc
+
+    rpc_url = (
+        f"http://{args.bitcoin_rpc_user}:{args.bitcoin_rpc_password}"
+        f"@{args.bitcoin_rpc_host}:{args.bitcoin_rpc_port}"
+    )
+    conn = AuthServiceProxy(rpc_url, timeout=args.bitcoin_rpc_timeout)
+    return int(conn.getblockcount())
+
+
+def initialize_tip_state(args):
+    height = fetch_local_btc_tip_height(args)
+    update_tip_state(height)
+    LOG.info("Initialized BTC tip state at height %s", height)
+
+
+def listen_for_btc_tip_updates(args):
+    require_dependency(zmq, "pyzmq")
+    context = zmq.Context.instance()
+    while True:
+        socket_obj = None
+        try:
+            socket_obj = context.socket(zmq.SUB)
+            socket_obj.setsockopt(zmq.SUBSCRIBE, b"rawblock")
+            socket_obj.setsockopt(zmq.SUBSCRIBE, b"hashblock")
+            socket_obj.connect(args.bitcoin_zmq_block)
+            LOG.info("BTC tip listener connected to %s", args.bitcoin_zmq_block)
+            while True:
+                parts = socket_obj.recv_multipart()
+                if len(parts) < 2:
+                    continue
+                height = fetch_local_btc_tip_height(args)
+                update_tip_state(height)
+                LOG.debug("Updated BTC tip state to height %s", height)
+        except Exception as exc:
+            LOG.warning("BTC tip listener error: %s", exc)
+            time.sleep(5)
+        finally:
+            if socket_obj is not None:
+                socket_obj.close()
+
+
+def start_tip_listener(args):
+    if zmq is None:
+        LOG.warning("BTC tip listener unavailable: missing optional dependency 'pyzmq'")
+        return None
+    listener = threading.Thread(
+        target=listen_for_btc_tip_updates,
+        args=(args,),
+        name="btc-tip-listener",
+        daemon=True,
+    )
+    listener.start()
+    return listener
+
+
+def classify_notification_chain(height: int, prev_hash: str) -> str | None:
+    try:
+        if height <= 0 or not prev_hash:
+            return None
+        with tip_state_lock:
+            return chain_classifier.classify(height=height, prev_hash=prev_hash)
+    except Exception as exc:
+        LOG.warning(
+            "Chain classification skipped for height=%s prev_hash=%s: %s",
+            height,
+            prev_hash[:16],
+            exc,
+        )
+        return None
 
 class Watcher:
     def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True):
@@ -67,6 +215,7 @@ class Watcher:
     def init_socket(self):
         LOG.info("Initializing socket")
         if self.use_proxy:
+            require_dependency(socks, "PySocks")
             LOG.info(f"Using proxy: {self.proxy_host}:{self.proxy_port}")
             self.sock = socks.socksocket()
             self.sock.set_proxy(socks.SOCKS5, self.proxy_host, self.proxy_port)
@@ -150,6 +299,7 @@ class Watcher:
             self.pending_notifications.append((msg, ts))
 
     def connect_to_rabbitmq(self):
+        require_dependency(pika, "pika")
         for attempt in range(self.max_retries):
             try:
                 credentials = pika.PlainCredentials(self.rabbitmq_username, self.rabbitmq_password)
@@ -335,10 +485,12 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
     coinbase = None
     height = 0
     try:
+        if network is None:
+            raise RuntimeError("Missing optional dependency 'pycoin'")
         coinbase = network.Tx.from_hex(coinbase1 + extranonce1 + "00"*extranonce2_length + coinbase2)
         height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
     except Exception as e:
-        print(e)
+        LOG.debug("Failed to derive template height from coinbase: %s", e)
     document = {
         "_id": notification_id,
         "timestamp": timestamp,
@@ -356,9 +508,13 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         "extranonce1": extranonce1,
         "extranonce2_length": extranonce2_length
     }
+    chain_family = classify_notification_chain(height, data["params"][1])
+    if chain_family is not None:
+        document["chain_family"] = chain_family
     return document
 
 def insert_notification(document, db_url, db_name, db_username, db_password):
+    require_dependency(MongoClient, "pymongo")
     LOG.debug(f"Attempting to insert document into MongoDB: {document}")
     host = db_url
     for prefix in ("mongodb+srv://", "mongodb://"):
@@ -433,10 +589,66 @@ def main():
     parser.add_argument(
         "--stratum-client-port", type=int, default=3333, help="Port to listen for Stratum client connections (default: 3333)"
     )
+    parser.add_argument(
+        "--bitcoin-zmq-block",
+        default="tcp://bitcoin-node:28332",
+        help="Bitcoin node ZMQ block endpoint (default: tcp://bitcoin-node:28332)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-user",
+        default="user",
+        help="Bitcoin RPC username (default: user)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-password",
+        default="password",
+        help="Bitcoin RPC password",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-host",
+        default="localhost",
+        help="Bitcoin RPC host (default: localhost)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-port",
+        default="8332",
+        help="Bitcoin RPC port (default: 8332)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-timeout",
+        type=float,
+        default=3.0,
+        help="Bitcoin RPC timeout in seconds (default: 3.0)",
+    )
+    parser.add_argument(
+        "--btc-chain-divergence-threshold",
+        type=int,
+        default=5,
+        help="Height divergence threshold before non-BTC confirmation (default: 5)",
+    )
+    parser.add_argument(
+        "--btc-tip-stale-seconds",
+        type=int,
+        default=1800,
+        help="Seconds before local BTC tip data is considered stale (default: 1800)",
+    )
+    parser.add_argument(
+        "--bch-confirmation-url",
+        default="https://api.blockchair.com/bitcoin-cash/raw/block",
+        help="BCH block confirmation API base URL",
+    )
+    parser.add_argument(
+        "--bch-confirmation-timeout",
+        type=float,
+        default=3.0,
+        help="BCH confirmation timeout in seconds (default: 3.0)",
+    )
     args = parser.parse_args()
 
     if args.pool_name is None:
         args.pool_name = urlparse(args.url).hostname
+
+    configure_chain_detection(args)
 
     rabbitmq_enabled = args.rabbitmq_username is not None and args.rabbitmq_password is not None
     db_enabled = args.db_username is not None and args.db_password is not None
@@ -452,6 +664,12 @@ def main():
     )
     LOG.info(f"Logging level set to {args.log_level.upper()}")
     LOG.info(f"Pool name: {args.pool_name}")
+    try:
+        initialize_tip_state(args)
+    except Exception as exc:
+        LOG.warning("Initial BTC tip setup failed; classification disabled until tip data is available: %s", exc)
+    start_tip_listener(args)
+
     backends = []
     if rabbitmq_enabled:
         backends.append("RabbitMQ")

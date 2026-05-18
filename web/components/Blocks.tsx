@@ -1,3 +1,4 @@
+
 "use client";
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
@@ -6,20 +7,20 @@ import { useBlocks } from "@/lib/BlocksContext";
 import { Block } from '../types/blockTypes';
 import { BlockItem } from '@/components/BlockItem'; // Use named import
 
-interface BlocksProps { 
+interface BlocksProps {
   onBlockClick?: (height: number) => void;
   selectedBlockHeight?: number | null;
 }
 
 export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProps) {
-  const { 
-    blocks, 
-    setBlocks, 
-    scrollPosition, 
-    setScrollPosition, 
-    hasMore, 
-    setHasMore, 
-    lastLoadedHeight: contextLastLoadedHeight, 
+  const {
+    blocks,
+    setBlocks,
+    scrollPosition,
+    setScrollPosition,
+    hasMore,
+    setHasMore,
+    lastLoadedHeight: contextLastLoadedHeight,
     setLastLoadedHeight,
     containerRef,
     selectedBlockRef,
@@ -27,7 +28,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     setShouldAutoScroll,
     resetBlocksState
   } = useBlocks();
-  
+
   const [currentBlockHeight, setCurrentBlockHeight] = useState<number | null>(null);
   const [pendingBlockHeights, setPendingBlockHeights] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
@@ -79,12 +80,12 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       // Only update the scroll position if this is a user-initiated scroll
       if (!isUserScrolling) {
         isUserScrolling = true;
-        
+
         // Clear any existing timeout
         if (scrollTimeout) {
           clearTimeout(scrollTimeout);
         }
-        
+
         // Set a timeout to update the scroll position after scrolling stops
         scrollTimeout = setTimeout(() => {
           const position = container.scrollLeft;
@@ -93,10 +94,10 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           if (leftFadeElement) {
             leftFadeElement.classList.toggle('visible', position > 0);
           }
-          
+
           // Save scroll position to context
           setScrollPosition(position);
-          
+
           // Reset the flag
           isUserScrolling = false;
         }, 100);
@@ -118,7 +119,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     if (isRequestingRef.current) {
       return Promise.resolve();
     }
-    
+
     return new Promise<void>((resolve) => {
       isRequestingRef.current = true;
       setIsLoading(true);
@@ -128,10 +129,10 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
         // If we have a lastHeight, request blocks at and before that height
         // and adjust batch size when approaching block 0
         const batchSize = lastHeight && lastHeight < 100 ? lastHeight : 20;
-        
+
         // Determine the endpoint based on whether we have blocks already
         let endpoint;
-        
+
         if (lastHeight) {
           // If we have a specific height, fetch blocks before that height
           endpoint = `/api/blocks?n=${batchSize}&before=${lastHeight}`;
@@ -150,7 +151,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           // If we have no blocks, fetch the latest blocks
           endpoint = '/api/blocks?n=20';
         }
-              
+
         fetch(endpoint, {
           headers: {
             'Cache-Control': 'no-cache',
@@ -158,140 +159,140 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           },
           cache: 'no-store'
         })
-        .then(res => {
-          if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
-          }
-          return res.json();
-        })
-        .then(data => {
-          // Validate response structure
-          if (!data || typeof data !== 'object') {
-            throw new Error('Invalid response format');
-          }
+          .then(res => {
+            if (!res.ok) {
+              throw new Error(`HTTP error! status: ${res.status}`);
+            }
+            return res.json();
+          })
+          .then(data => {
+            // Validate response structure
+            if (!data || typeof data !== 'object') {
+              throw new Error('Invalid response format');
+            }
 
-          // Ensure blocks array exists
-          const receivedBlocks = Array.isArray(data.blocks) ? data.blocks : [];
-          const hasMore = !!data.has_more;
-          const nextHeight = data.next_height;
-          
-          // If we got no blocks at all, we're done paginating
-          if (receivedBlocks.length === 0) {
-            setHasMore(false);
-            resolve();
-            return;
-          }
-          
-          // Filter out any blocks that we already have and ensure proper typing
-          const existingHeights = new Set(blocksRef.current.map((b: Block) => b.height));
-          const filteredData = receivedBlocks.filter((block: unknown): block is Block => {
-            if (!block || typeof block !== 'object' || block === null) {
-              return false;
-            }
-            
-            const b = block as { height?: number; block_hash?: string };
-            return (
-              'height' in b &&
-              typeof b.height === 'number' &&
-              'block_hash' in b &&
-              typeof b.block_hash === 'string' &&
-              !existingHeights.has(b.height)
-            );
-          }).map((block: Block) => ({
-            ...block,
-            isRealtime: false // Mark these as historical blocks
-          }));
-          
-          if (filteredData.length === 0) {
-            // If we got blocks but they were all filtered, update pagination state
-            if (nextHeight !== undefined && nextHeight !== null) {
-              lastLoadedHeight.current = nextHeight;
-              setHasMore(hasMore);
-            } else {
+            // Ensure blocks array exists
+            const receivedBlocks = Array.isArray(data.blocks) ? data.blocks : [];
+            const hasMore = !!data.has_more;
+            const nextHeight = data.next_height;
+
+            // If we got no blocks at all, we're done paginating
+            if (receivedBlocks.length === 0) {
               setHasMore(false);
+              resolve();
+              return;
             }
-          } else {
-            setBlocks((prev: Block[]) => {
-              // Create a map of existing blocks for quick lookup
-              const existingBlocks = new Map(prev.map((b: Block) => [b.height, b]));
-              
-              // Add new historical blocks
-              filteredData.forEach((block: Block) => {
-                existingBlocks.set(block.height, block);
-              });
-              
-              // Convert back to array and sort by height in descending order
-              const sorted = Array.from(existingBlocks.values())
-                .sort((a: Block, b: Block) => b.height - a.height);
-              
-              // Update lastLoadedHeight with the next height from the response
+
+            // Filter out any blocks that we already have and ensure proper typing
+            const existingHeights = new Set(blocksRef.current.map((b: Block) => b.height));
+            const filteredData = receivedBlocks.filter((block: unknown): block is Block => {
+              if (!block || typeof block !== 'object' || block === null) {
+                return false;
+              }
+
+              const b = block as { height?: number; block_hash?: string };
+              return (
+                'height' in b &&
+                typeof b.height === 'number' &&
+                'block_hash' in b &&
+                typeof b.block_hash === 'string' &&
+                !existingHeights.has(b.height)
+              );
+            }).map((block: Block) => ({
+              ...block,
+              isRealtime: false // Mark these as historical blocks
+            }));
+
+            if (filteredData.length === 0) {
+              // If we got blocks but they were all filtered, update pagination state
               if (nextHeight !== undefined && nextHeight !== null) {
                 lastLoadedHeight.current = nextHeight;
+                setHasMore(hasMore);
               } else {
-                // If no nextHeight is provided, use the lowest height we have minus 1
-                const historicalBlocks = sorted.filter((b: Block) => !b.isRealtime);
-                if (historicalBlocks.length > 0) {
-                  const lowestHeight = Math.min(...historicalBlocks.map((b: Block) => b.height));
-                  lastLoadedHeight.current = lowestHeight - 1;
-                }
+                setHasMore(false);
               }
-              
-              // Update the highest historical block reference
-              const historicalBlocks = sorted.filter(
-                (b: Block) => !b.isRealtime && b.block_hash !== 'pending' && b.height > 0
-              );
-              if (historicalBlocks.length > 0) {
-                const highestHeight = Math.max(...historicalBlocks.map((b: Block) => b.height));
-                highestHistoricalBlockRef.current = highestHeight;
-              }
-              
-              // Check if we have contiguous blocks among the historical blocks
-              const historicalHeights = historicalBlocks.map((b: Block) => b.height).sort((a, b) => a - b);
-              let isContiguous = true;
-              
-              // Only check for contiguity if we have more than one historical block
-              if (historicalHeights.length > 1) {
-                // Find the largest gap between consecutive heights
-                let maxGap = 0;
-                for (let i = 1; i < historicalHeights.length; i++) {
-                  const gap = historicalHeights[i] - historicalHeights[i-1];
-                  if (gap > maxGap) {
-                    maxGap = gap;
+            } else {
+              setBlocks((prev: Block[]) => {
+                // Create a map of existing blocks for quick lookup
+                const existingBlocks = new Map(prev.map((b: Block) => [b.height, b]));
+
+                // Add new historical blocks
+                filteredData.forEach((block: Block) => {
+                  existingBlocks.set(block.height, block);
+                });
+
+                // Convert back to array and sort by height in descending order
+                const sorted = Array.from(existingBlocks.values())
+                  .sort((a: Block, b: Block) => b.height - a.height);
+
+                // Update lastLoadedHeight with the next height from the response
+                if (nextHeight !== undefined && nextHeight !== null) {
+                  lastLoadedHeight.current = nextHeight;
+                } else {
+                  // If no nextHeight is provided, use the lowest height we have minus 1
+                  const historicalBlocks = sorted.filter((b: Block) => !b.isRealtime);
+                  if (historicalBlocks.length > 0) {
+                    const lowestHeight = Math.min(...historicalBlocks.map((b: Block) => b.height));
+                    lastLoadedHeight.current = lowestHeight - 1;
                   }
-                  if (gap > 1) {
+                }
+
+                // Update the highest historical block reference
+                const historicalBlocks = sorted.filter(
+                  (b: Block) => !b.isRealtime && b.block_hash !== 'pending' && b.height > 0
+                );
+                if (historicalBlocks.length > 0) {
+                  const highestHeight = Math.max(...historicalBlocks.map((b: Block) => b.height));
+                  highestHistoricalBlockRef.current = highestHeight;
+                }
+
+                // Check if we have contiguous blocks among the historical blocks
+                const historicalHeights = historicalBlocks.map((b: Block) => b.height).sort((a, b) => a - b);
+                let isContiguous = true;
+
+                // Only check for contiguity if we have more than one historical block
+                if (historicalHeights.length > 1) {
+                  // Find the largest gap between consecutive heights
+                  let maxGap = 0;
+                  for (let i = 1; i < historicalHeights.length; i++) {
+                    const gap = historicalHeights[i] - historicalHeights[i - 1];
+                    if (gap > maxGap) {
+                      maxGap = gap;
+                    }
+                    if (gap > 1) {
+                      isContiguous = false;
+                    }
+                  }
+
+                  // If the largest gap is too big, we don't have contiguous blocks
+                  if (maxGap > 1) {
                     isContiguous = false;
                   }
                 }
-                
-                // If the largest gap is too big, we don't have contiguous blocks
-                if (maxGap > 1) {
-                  isContiguous = false;
-                }
-              }
-              
-              // Update hasMore based on the response and whether we have contiguous blocks
-              setHasMore(hasMore && isContiguous);
-              
-              return sorted;
-            });
-          }
-          
-          resolve();
-        })
-        .catch(err => {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          setError(`Error fetching blocks: ${errorMessage}`);
-          console.error("Error fetching blocks:", err);
-          setHasMore(false);
-          setIsLoading(false);
-          isRequestingRef.current = false;
-          resolve();
-        })
-        .finally(() => {
-          setIsLoading(false);
-          isRequestingRef.current = false;
-        });
-        
+
+                // Update hasMore based on the response and whether we have contiguous blocks
+                setHasMore(hasMore && isContiguous);
+
+                return sorted;
+              });
+            }
+
+            resolve();
+          })
+          .catch(err => {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setError(`Error fetching blocks: ${errorMessage}`);
+            console.error("Error fetching blocks:", err);
+            setHasMore(false);
+            setIsLoading(false);
+            isRequestingRef.current = false;
+            resolve();
+          })
+          .finally(() => {
+            setIsLoading(false);
+            isRequestingRef.current = false;
+          });
+
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Error fetching blocks: ${errorMessage}`);
@@ -310,21 +311,21 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     if (isRequestingNewerRef.current) {
       return;
     }
-    
+
     // Set loading state
     isRequestingNewerRef.current = true;
     setIsLoadingNewer(true);
-    
+
     // Get the highest historical block we have
     const highestHistoricalBlock = highestHistoricalBlockRef.current;
-    
+
     // Skip if we don't have a reference point
     if (highestHistoricalBlock === null) {
       setIsLoadingNewer(false);
       isRequestingNewerRef.current = false;
       return;
     }
-    
+
     // Fetch blocks after our highest historical block
     fetch(`/api/blocks?n=10&after=${highestHistoricalBlock}`, {
       headers: {
@@ -333,123 +334,123 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       },
       cache: 'no-store'
     })
-    .then(res => {
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
-      }
-      return res.json();
-    })
-    .then(data => {
-      // Validate response structure
-      if (!data || typeof data !== 'object') {
-        throw new Error('Invalid response format');
-      }
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        // Validate response structure
+        if (!data || typeof data !== 'object') {
+          throw new Error('Invalid response format');
+        }
 
-      // Ensure blocks array exists
-      const receivedBlocks = Array.isArray(data.blocks) ? data.blocks : [];
-      
-      // Skip if no blocks received
-      if (receivedBlocks.length === 0) {
-        return;
-      }
-      
-      // Filter out any blocks that we already have
-      const existingHeights = new Set(blocksRef.current.map((b: Block) => b.height));
-      const filteredData = receivedBlocks
-        .filter((block: unknown): block is Block => {
-          if (!block || typeof block !== 'object' || block === null) {
-            return false;
-          }
-          
-          const b = block as { height?: number; block_hash?: string };
-          return (
-            'height' in b &&
-            typeof b.height === 'number' &&
-            'block_hash' in b &&
-            typeof b.block_hash === 'string' &&
-            !existingHeights.has(b.height)
+        // Ensure blocks array exists
+        const receivedBlocks = Array.isArray(data.blocks) ? data.blocks : [];
+
+        // Skip if no blocks received
+        if (receivedBlocks.length === 0) {
+          return;
+        }
+
+        // Filter out any blocks that we already have
+        const existingHeights = new Set(blocksRef.current.map((b: Block) => b.height));
+        const filteredData = receivedBlocks
+          .filter((block: unknown): block is Block => {
+            if (!block || typeof block !== 'object' || block === null) {
+              return false;
+            }
+
+            const b = block as { height?: number; block_hash?: string };
+            return (
+              'height' in b &&
+              typeof b.height === 'number' &&
+              'block_hash' in b &&
+              typeof b.block_hash === 'string' &&
+              !existingHeights.has(b.height)
+            );
+          })
+          .map((block: Block) => ({
+            ...block,
+            isRealtime: false // Mark these as historical blocks
+          }));
+
+        // Skip if no new blocks after filtering
+        if (filteredData.length === 0) {
+          return;
+        }
+
+        // Remember current scroll position
+        const savedScrollLeft = containerRef.current?.scrollLeft || 0;
+
+        // Update the state with new blocks
+        setBlocks((prev: Block[]) => {
+          // Create a map of existing blocks for quick lookup
+          const existingBlocks = new Map(prev.map((b: Block) => [b.height, b]));
+
+          // Add new blocks
+          filteredData.forEach((block: Block) => {
+            existingBlocks.set(block.height, block);
+          });
+
+          // Convert back to array and sort by height in descending order
+          const sorted = Array.from(existingBlocks.values())
+            .sort((a, b) => b.height - a.height);
+
+          // Update the highest historical block reference
+          const historicalBlocks = sorted.filter(
+            b => !b.isRealtime && b.block_hash !== 'pending' && b.height > 0
           );
-        })
-        .map((block: Block) => ({
-          ...block,
-          isRealtime: false // Mark these as historical blocks
-        }));
-      
-      // Skip if no new blocks after filtering
-      if (filteredData.length === 0) {
-        return;
-      }
-      
-      // Remember current scroll position
-      const savedScrollLeft = containerRef.current?.scrollLeft || 0;
-      
-      // Update the state with new blocks
-      setBlocks((prev: Block[]) => {
-        // Create a map of existing blocks for quick lookup
-        const existingBlocks = new Map(prev.map((b: Block) => [b.height, b]));
-        
-        // Add new blocks
-        filteredData.forEach((block: Block) => {
-          existingBlocks.set(block.height, block);
+
+          if (historicalBlocks.length > 0) {
+            const highestHeight = Math.max(...historicalBlocks.map(b => b.height));
+            highestHistoricalBlockRef.current = highestHeight;
+          }
+
+          return sorted;
         });
-        
-        // Convert back to array and sort by height in descending order
-        const sorted = Array.from(existingBlocks.values())
-          .sort((a, b) => b.height - a.height);
-        
-        // Update the highest historical block reference
-        const historicalBlocks = sorted.filter(
-          b => !b.isRealtime && b.block_hash !== 'pending' && b.height > 0
-        );
-        
-        if (historicalBlocks.length > 0) {
-          const highestHeight = Math.max(...historicalBlocks.map(b => b.height));
-          highestHistoricalBlockRef.current = highestHeight;
-        }
-        
-        return sorted;
+
+        // Restore scroll position after a short delay
+        setTimeout(() => {
+          if (containerRef.current) {
+            containerRef.current.scrollLeft = savedScrollLeft;
+          }
+        }, 50);
+      })
+      .catch(err => {
+        console.error("Error fetching newer blocks:", err);
+      })
+      .finally(() => {
+        setIsLoadingNewer(false);
+        isRequestingNewerRef.current = false;
       });
-      
-      // Restore scroll position after a short delay
-      setTimeout(() => {
-        if (containerRef.current) {
-          containerRef.current.scrollLeft = savedScrollLeft;
-        }
-      }, 50);
-    })
-    .catch(err => {
-      console.error("Error fetching newer blocks:", err);
-    })
-    .finally(() => {
-      setIsLoadingNewer(false);
-      isRequestingNewerRef.current = false;
-    });
   }, [setBlocks, containerRef]);
 
   // Set up intersection observer for infinite scroll with debounce
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     let isIntersecting = false;
-    
+
     const observer = new IntersectionObserver(
       (entries) => {
         // Update intersection state
         isIntersecting = entries[0].isIntersecting;
-        
+
         const shouldFetch = isIntersecting && hasMore && !isLoading && !isRequestingRef.current;
-                
+
         if (shouldFetch) {
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
-          
+
           timeoutId = setTimeout(() => {
             // Double check conditions
             const currentHeight = lastLoadedHeight.current;
             if (isIntersecting && hasMore && !isLoading && !isRequestingRef.current) {
               // Set loading older blocks flag to true
               isLoadingOlderRef.current = true;
-              
+
               // If this is the first load, use the lowest height we have
               if (currentHeight === null && blocksRef.current.length > 0) {
                 // Filter to only consider historical blocks
@@ -457,10 +458,10 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
                 if (historicalBlocks.length > 0) {
                   const lowestHeight = Math.min(...historicalBlocks.map(b => b.height));
                   lastLoadedHeight.current = lowestHeight;
-                  
+
                   // Remember current scroll position
                   const savedScrollPosition = containerRef.current?.scrollLeft || 0;
-                  
+
                   fetchBlocksWithPromise(lowestHeight).then(() => {
                     // Restore scroll position after a short delay
                     setTimeout(() => {
@@ -476,14 +477,14 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
                     isLoadingOlderRef.current = false;
                   });
                 }
-              } 
+              }
               // Otherwise use the current height
               else if (currentHeight !== null) {
                 // Only fetch if we haven't reached block 0
                 if (currentHeight > 0) {
                   // Remember current scroll position
                   const savedScrollPosition = containerRef.current?.scrollLeft || 0;
-                  
+
                   fetchBlocksWithPromise(currentHeight).then(() => {
                     // Restore scroll position after a short delay
                     setTimeout(() => {
@@ -507,7 +508,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           }, 250);
         }
       },
-      { 
+      {
         threshold: 0.1,
         rootMargin: '200px' // Increased margin to start loading earlier
       }
@@ -517,7 +518,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     if (observerTarget) {
       observer.observe(observerTarget);
     }
-    
+
     return () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -530,42 +531,42 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     let isIntersecting = false;
-    
+
     const observer = new IntersectionObserver(
       (entries) => {
         // Update intersection state
         isIntersecting = entries[0].isIntersecting;
-        
+
         // Only consider the observer if we're actually scrolled away from the beginning
         // This prevents triggers when the list is at its initial position
         const shouldConsiderObserver = containerRef.current && containerRef.current.scrollLeft > 50;
-        
-        const shouldFetch = isIntersecting && 
-                          shouldConsiderObserver && 
-                          !isLoadingNewer && 
-                          !isRequestingNewerRef.current && 
-                          highestHistoricalBlockRef.current !== null;
-                
+
+        const shouldFetch = isIntersecting &&
+          shouldConsiderObserver &&
+          !isLoadingNewer &&
+          !isRequestingNewerRef.current &&
+          highestHistoricalBlockRef.current !== null;
+
         if (shouldFetch) {
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
-          
+
           timeoutId = setTimeout(() => {
             // Double check conditions
             const stillShouldConsiderObserver = containerRef.current && containerRef.current.scrollLeft > 50;
-            
-            if (isIntersecting && 
-                stillShouldConsiderObserver && 
-                !isLoadingNewer && 
-                !isRequestingNewerRef.current && 
-                highestHistoricalBlockRef.current !== null) {
+
+            if (isIntersecting &&
+              stillShouldConsiderObserver &&
+              !isLoadingNewer &&
+              !isRequestingNewerRef.current &&
+              highestHistoricalBlockRef.current !== null) {
               fetchNewerBlocks();
             }
           }, 250);
         }
       },
-      { 
+      {
         threshold: 0.1,
         rootMargin: '200px' // Increased margin to start loading earlier
       }
@@ -575,7 +576,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     if (observerTarget) {
       observer.observe(observerTarget);
     }
-    
+
     return () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -596,16 +597,16 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   useEffect(() => {
     // Get stratum updates from the stream
     const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
-    
+
     if (stratumUpdates.length > 0) {
       // Get the latest stratum update
       const latestStratum = stratumUpdates[stratumUpdates.length - 1].data;
-      
+
       // Update current block height if it's different
       if (latestStratum.height && latestStratum.height !== currentBlockHeight) {
         const newHeight = latestStratum.height;
         setCurrentBlockHeight(newHeight);
-        
+
         // Only add pending blocks if they're newer than our highest historical block
         // AND we're not viewing a specific historical block (selectedBlockHeight is null or -1)
         if (highestHistoricalBlockRef.current === null || newHeight > highestHistoricalBlockRef.current) {
@@ -614,7 +615,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           if (selectedBlockHeight === null || selectedBlockHeight === -1) {
             // Find the highest block we have
             const highestBlock = blocks.length > 0 ? Math.max(...blocks.map((b: Block) => b.height)) : newHeight - 1;
-            
+
             // Add all missing block heights between our highest block and the new height - 1
             const newPendingHeights = new Set(pendingBlockHeights);
             for (let height = highestBlock + 1; height < newHeight; height++) {
@@ -625,7 +626,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
                 }
               }
             }
-            
+
             if (newPendingHeights.size !== pendingBlockHeights.size) {
               setPendingBlockHeights(newPendingHeights);
             }
@@ -639,50 +640,65 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   useEffect(() => {
     // Get block messages from the stream
     const blockUpdates = filterByType(StreamDataType.BLOCK);
-    
+
     if (blockUpdates.length > 0) {
-      // Get the latest block update
-      const latestBlock = blockUpdates[blockUpdates.length - 1].data;
-      
-      // Type check that this is a BlockData
-      if ('hash' in latestBlock && 'timestamp' in latestBlock) {
-        // Only add real-time blocks if they're newer than our highest historical block
-        // AND we're not viewing a specific historical block (selectedBlockHeight is null or -1)
-        if ((highestHistoricalBlockRef.current === null || latestBlock.height > highestHistoricalBlockRef.current) &&
+      let hasNewRealtimeBlocks = false;
+      const newPendingHeights = new Set(pendingBlockHeights);
+      const newBlocksToAdd: Block[] = [];
+
+      for (const update of blockUpdates) {
+        const latestBlock = update.data;
+
+        // Type check that this is a BlockData
+        if ('hash' in latestBlock && 'timestamp' in latestBlock) {
+          // Only add real-time blocks if they're newer than our highest historical block
+          // AND we're not viewing a specific historical block (selectedBlockHeight is null or -1)
+          if ((highestHistoricalBlockRef.current === null || latestBlock.height > highestHistoricalBlockRef.current) &&
             (selectedBlockHeight === null || selectedBlockHeight === -1)) {
-          // Update the blocks list with the new block
-          setBlocks((prev) => {
-            // Check if we already have this block
-            const existingIndex = prev.findIndex(b => b.block_hash === latestBlock.hash);
-            
-            // Convert the BlockData to our Block interface format
-            const newBlock: Block = {
+
+            newBlocksToAdd.push({
               block_hash: latestBlock.hash,
               height: latestBlock.height,
               timestamp: new Date(latestBlock.timestamp).getTime(),
               mining_pool: latestBlock.mining_pool || { id: 0, name: 'Unknown' },
               analysis: latestBlock.analysis,
               isRealtime: true // Mark this as a real-time block
-            };
-            
-            if (existingIndex >= 0) {
-              // Replace the existing block
-              const newBlocks = [...prev];
-              newBlocks[existingIndex] = newBlock;
-              return newBlocks;
-            } else {
-              // Add the new block
-              return [...prev, newBlock].sort((a, b) => b.height - a.height);
+            });
+
+            // Remove this height from pending blocks if it exists
+            if (newPendingHeights.has(latestBlock.height)) {
+              newPendingHeights.delete(latestBlock.height);
+              hasNewRealtimeBlocks = true;
             }
-          });
-          
-          // Remove this height from pending blocks if it exists
-          if (pendingBlockHeights.has(latestBlock.height)) {
-            const newPendingHeights = new Set(pendingBlockHeights);
-            newPendingHeights.delete(latestBlock.height);
-            setPendingBlockHeights(newPendingHeights);
           }
         }
+      }
+
+      if (newBlocksToAdd.length > 0) {
+        setBlocks((prev) => {
+          const newBlocks = [...prev];
+          let updated = false;
+
+          for (const newBlock of newBlocksToAdd) {
+            const existingIndex = newBlocks.findIndex(b => b.block_hash === newBlock.block_hash || b.height === newBlock.height);
+            if (existingIndex >= 0) {
+              // Only update if it's a pending block or we have new data
+              if (newBlocks[existingIndex].block_hash === 'pending' || newBlocks[existingIndex].block_hash !== newBlock.block_hash) {
+                newBlocks[existingIndex] = newBlock;
+                updated = true;
+              }
+            } else {
+              newBlocks.push(newBlock);
+              updated = true;
+            }
+          }
+
+          return updated ? newBlocks.sort((a, b) => b.height - a.height) : prev;
+        });
+      }
+
+      if (hasNewRealtimeBlocks) {
+        setPendingBlockHeights(newPendingHeights);
       }
     }
   }, [filterByType, setBlocks, pendingBlockHeights, selectedBlockHeight]);
@@ -702,7 +718,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           timestamp: Math.floor(Date.now() / 1000),
           isRealtime: true // Mark pending blocks as real-time
         }));
-      
+
       // Add pending blocks and sort everything by height
       displayList.push(...pendingBlocks);
       displayList.sort((a, b) => b.height - a.height);
@@ -727,10 +743,10 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
 
     // Update the selected block ref
     selectedBlockRef.current = selectedBlockHeight;
-    
+
     // Find the block in our current blocks
     const blockIndex = blocks.findIndex(b => b.height === selectedBlockHeight);
-    
+
     if (blockIndex >= 0) {
       // If we have the block, scroll to it once
       setTimeout(() => {
@@ -741,13 +757,13 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       // First, clear existing blocks to avoid confusion
       setBlocks([]);
       setIsLoading(true);
-      
+
       // Clear pending block heights to prevent "Receiving..." blocks
       setPendingBlockHeights(new Set());
-      
+
       // Remember the current selectedBlockHeight to compare in the fetch callback
       const targetHeight = selectedBlockHeight;
-      
+
       // Then fetch the block and surrounding blocks using the API endpoint
       fetch(`/api/blocks?height=${targetHeight}&n=40`)
         .then(res => res.json())
@@ -757,33 +773,33 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
             setIsLoading(false);
             return;
           }
-          
+
           if (data.blocks && Array.isArray(data.blocks)) {
             // Mark these as historical blocks
             const historicalBlocks = data.blocks.map((block: Block) => ({
               ...block,
               isRealtime: false
             }));
-            
+
             setBlocks(historicalBlocks);
-            
+
             // Update the highest historical block reference
             if (historicalBlocks.length > 0) {
               // Filter out being-mined and pending blocks
               const validHistoricalBlocks = historicalBlocks.filter(
                 (b: Block) => b.block_hash !== 'pending' && b.height > 0
               );
-              
+
               if (validHistoricalBlocks.length > 0) {
                 const highestHeight = Math.max(...validHistoricalBlocks.map((b: Block) => b.height));
                 highestHistoricalBlockRef.current = highestHeight;
-              
+
                 // Update lastLoadedHeight to the lowest height we have
                 const lowestHeight = Math.min(...validHistoricalBlocks.map((b: Block) => b.height));
                 lastLoadedHeight.current = lowestHeight;
               }
             }
-            
+
             // After blocks are loaded, scroll to the selected one with a delay
             // but only do this once
             setTimeout(() => {
@@ -821,18 +837,18 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   const handleBlockClick = useCallback((block: Block) => {
     // Enable auto-scrolling for user clicks
     setShouldAutoScroll(true);
-    
+
     // Special handling for being-mined block
     if (block.height === -1) {
       // Reset all state to start fresh using the context function
       resetBlocksState();
-      
+
       // Reset component-specific state
       setPendingBlockHeights(new Set());
       setIsLoading(true);
       highestHistoricalBlockRef.current = null;
       lastLoadedHeight.current = null;
-      
+
       // Fetch the latest blocks to start fresh
       fetch('/api/blocks?n=20')
         .then(res => res.json())
@@ -843,20 +859,20 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
               ...block,
               isRealtime: false
             }));
-            
+
             setBlocks(historicalBlocks);
-            
+
             // Update the highest historical block reference
             if (historicalBlocks.length > 0) {
               // Filter out being-mined and pending blocks
               const validHistoricalBlocks = historicalBlocks.filter(
                 (b: Block) => b.block_hash !== 'pending' && b.height > 0
               );
-              
+
               if (validHistoricalBlocks.length > 0) {
                 const highestHeight = Math.max(...validHistoricalBlocks.map((b: Block) => b.height));
                 highestHistoricalBlockRef.current = highestHeight;
-              
+
                 // Update lastLoadedHeight to the lowest height we have
                 const lowestHeight = Math.min(...validHistoricalBlocks.map((b: Block) => b.height));
                 lastLoadedHeight.current = lowestHeight;
@@ -871,7 +887,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           setIsLoading(false);
         });
     }
-    
+
     // Call onBlockClick if provided, regardless of block height
     if (onBlockClick) {
       onBlockClick(block.height);
@@ -881,7 +897,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
   // Update blocks ref when blocks change
   useEffect(() => {
     blocksRef.current = blocks;
-    
+
     // Update the highest historical block reference
     const historicalBlocks = blocks.filter(
       (b: Block) => !b.isRealtime && b.block_hash !== 'pending' && b.height > 0
@@ -903,10 +919,10 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       {/* Outer container with overflow hidden */}
       <div className="absolute inset-0 overflow-hidden">
         {/* Scrollable container */}
-        <div 
-          ref={containerRef} 
+        <div
+          ref={containerRef}
           className="blocks-container absolute inset-0 flex items-center overflow-x-auto overflow-y-hidden"
-          style={{ 
+          style={{
             msOverflowStyle: 'none',
             scrollbarWidth: 'none',
             overscrollBehavior: 'none'
@@ -920,12 +936,12 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
               width: '45px',
               left: '0'
             }}></div>
-            
+
             {/* Fade effect on the right side of the background shield - only shown when scrolled */}
             {scrollPosition > 0 && (
               <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-white from-50% dark:from-black to-transparent" style={{ left: '45px', zIndex: 1 }}></div>
             )}
-            
+
             <div
               key="being-mined"
               data-block-height={-1}
@@ -933,9 +949,9 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
               title={currentBlockHeight ? `Block ${currentBlockHeight} (being mined) – click for realtime` : "Waiting for updates..."}
               onClick={() => {
                 // Handle click on being-mined block
-                handleBlockClick({ 
-                  height: -1, 
-                  block_hash: 'being-mined', 
+                handleBlockClick({
+                  height: -1,
+                  block_hash: 'being-mined',
                   timestamp: Math.floor(Date.now() / 1000),
                   isRealtime: true
                 });
@@ -959,7 +975,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500"></div>
               )}
             </div>
-            
+
             {blocksToDisplay.map((block) => (
               <BlockItem
                 key={block.height} // Keep the key here for React's list diffing
@@ -970,8 +986,8 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
             ))}
 
             {/* Loading indicator and intersection observer target for older blocks */}
-            <div 
-              ref={observerRef} 
+            <div
+              ref={observerRef}
               className="shrink-0 w-20 flex items-center justify-center h-[64px]"
             >
               {isLoading && (

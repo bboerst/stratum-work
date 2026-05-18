@@ -42,6 +42,7 @@ export async function GET(request: Request) {
         {
           $match: {
             height: height,
+            clean_jobs: true,
             $and: [
               { pool_name: { $ne: null } },
               { pool_name: { $ne: "" } }
@@ -78,7 +79,7 @@ export async function GET(request: Request) {
       return NextResponse.json(data);
     } else {
       console.error("Unexpected MongoDB aggregation response structure:", result);
-      return NextResponse.json([]); 
+      return NextResponse.json([]);
     }
 
   } catch (error) {

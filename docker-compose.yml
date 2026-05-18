@@ -1,4 +1,34 @@
-version: '3.8'
+# Template for collector services
+x-collector-base: &collector-base
+  build: ./collector
+  restart: unless-stopped
+  deploy:
+    restart_policy:
+      condition: on-failure
+      delay: 10s
+      max_attempts: 5
+      window: 120s
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    mongodb:
+      condition: service_started
+  environment:
+    ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
+    RABBITMQ_HOST: rabbitmq
+    RABBITMQ_PORT: 5672
+    RABBITMQ_USERNAME: mquser
+    RABBITMQ_PASSWORD: mqpassword
+    RABBITMQ_EXCHANGE: mining_notify_exchange
+    MONGODB_USERNAME: mongouser
+    MONGODB_PASSWORD: mongopassword
+    MONGODB_HOSTS: mongodb
+    SOCKET_URL: http://localhost:8000
 
 services:
   rabbitmq:
@@ -9,6 +39,12 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: mquser
       RABBITMQ_DEFAULT_PASS: mqpassword
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity" ]
+      interval: 10s
+      timeout: 15s
+      retries: 10
+      start_period: 30s
 
   mongodb:
     image: mongo:latest
@@ -20,24 +56,6 @@ services:
       - MONGO_INITDB_ROOT_USERNAME=mongouser
       - MONGO_INITDB_ROOT_PASSWORD=mongopassword
       - MONGO_INITDB_DATABASE=stratum-logger
-
-  # Template for collector services
-  collector-base: &collector-base
-    build: ./collector
-    depends_on:
-      - rabbitmq
-      - mongodb
-    environment:
-      ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USERNAME: mquser
-      RABBITMQ_PASSWORD: mqpassword
-      RABBITMQ_EXCHANGE: mining_notify_exchange
-      MONGODB_USERNAME: mongouser
-      MONGODB_PASSWORD: mongopassword
-      MONGODB_HOSTS: mongodb
-      SOCKET_URL: http://localhost:8000
 
   collector-antpool:
     <<: *collector-base
@@ -133,7 +151,6 @@ services:
       --db-username "mongouser"
       --db-password "mongopassword"
       --log-level "DEBUG"
-
   web:
     build:
       context: ./web
@@ -154,13 +171,18 @@ services:
       MONGODB_USERNAME: mongouser
       MONGODB_PASSWORD: mongopassword
       MONGODB_HOSTS: mongodb
+      DATABASE_URL: "mongodb://mongouser:mongopassword@mongodb:27017/stratum-logger?authSource=admin"
     volumes:
       - ./web:/app
       - /app/node_modules
+      - /app/.next
     depends_on:
-      - rabbitmq
-      - mongodb
-      - backend
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+      backend:
+        condition: service_started
 
   backend:
     build: ./backend
@@ -192,8 +214,10 @@ services:
     expose:
       - "${BACKEND_PORT:-8001}"
     depends_on:
-      - mongodb
-      - rabbitmq
+      mongodb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
 
 volumes:
   mongo-data:

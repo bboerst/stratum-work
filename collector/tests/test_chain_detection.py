@@ -335,5 +335,117 @@ class RuntimeConfigTests(unittest.TestCase):
             collector_main.bch_confirmer.timeout_seconds = original["confirmer_timeout"]
 
 
+class TipListenerTests(unittest.TestCase):
+    def test_fetch_local_btc_tip_height_closes_underlying_rpc_connection(self):
+        args = Namespace(
+            bitcoin_rpc_user="rpcuser",
+            bitcoin_rpc_password="rpcpass",
+            bitcoin_rpc_host="btc-node",
+            bitcoin_rpc_port="18443",
+            bitcoin_rpc_timeout=7.5,
+        )
+        http_conn = Mock()
+        proxy = types.SimpleNamespace(
+            getblockcount=Mock(return_value=101),
+            _AuthServiceProxy__conn=http_conn,
+        )
+        auth_proxy_cls = Mock(return_value=proxy)
+
+        with patch.dict(
+            sys.modules,
+            {
+                "bitcoinrpc": types.SimpleNamespace(),
+                "bitcoinrpc.authproxy": types.SimpleNamespace(
+                    AuthServiceProxy=auth_proxy_cls
+                ),
+            },
+        ):
+            height = collector_main.fetch_local_btc_tip_height(args)
+
+        self.assertEqual(height, 101)
+        auth_proxy_cls.assert_called_once_with(
+            "http://rpcuser:rpcpass@btc-node:18443",
+            timeout=7.5,
+        )
+        proxy.getblockcount.assert_called_once_with()
+        http_conn.close.assert_called_once_with()
+
+    def test_close_rpc_connection_uses_underlying_http_connection_not_rpc_method(self):
+        http_conn = Mock()
+
+        class FakeProxy:
+            def __init__(self):
+                self._AuthServiceProxy__conn = http_conn
+
+            def close(self):
+                raise AssertionError("RPC close() method should not be invoked")
+
+        collector_main.close_rpc_connection(FakeProxy())
+
+        http_conn.close.assert_called_once_with()
+
+
+class MongoClientReuseTests(unittest.TestCase):
+    def setUp(self):
+        collector_main.cached_mongo_client = None
+        collector_main.cached_mongo_collection = None
+        collector_main.cached_mongo_config = None
+
+    def tearDown(self):
+        collector_main.cached_mongo_client = None
+        collector_main.cached_mongo_collection = None
+        collector_main.cached_mongo_config = None
+
+    @patch("collector.main.MongoClient")
+    def test_get_mongo_collection_reuses_cached_client_for_same_config(
+        self, mongo_client_cls
+    ):
+        client = Mock()
+        database = Mock()
+        collection = Mock()
+        mongo_client_cls.return_value = client
+        client.__getitem__ = Mock(return_value=database)
+        database.__getitem__ = Mock(return_value=collection)
+
+        first = collector_main.get_mongo_collection(
+            "mongodb://mongo:27017",
+            "stratum-logger",
+            "user",
+            "pass",
+        )
+        second = collector_main.get_mongo_collection(
+            "mongodb://mongo:27017",
+            "stratum-logger",
+            "user",
+            "pass",
+        )
+
+        self.assertIs(first, collection)
+        self.assertIs(second, collection)
+        mongo_client_cls.assert_called_once_with("mongodb://user:pass@mongo:27017")
+
+    @patch("collector.main.MongoClient")
+    def test_close_cached_mongo_client_closes_shared_client(self, mongo_client_cls):
+        client = Mock()
+        database = Mock()
+        collection = Mock()
+        mongo_client_cls.return_value = client
+        client.__getitem__ = Mock(return_value=database)
+        database.__getitem__ = Mock(return_value=collection)
+
+        collector_main.get_mongo_collection(
+            "mongodb://mongo:27017",
+            "stratum-logger",
+            "user",
+            "pass",
+        )
+        collector_main.close_cached_mongo_client()
+
+        client.close.assert_called_once_with()
+        self.assertIsNone(collector_main.cached_mongo_client)
+        self.assertIsNone(collector_main.cached_mongo_collection)
+        self.assertIsNone(collector_main.cached_mongo_config)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,10 @@ chain_classifier = ChainClassifier(
     confirmer=bch_confirmer,
 )
 tip_state_lock = threading.Lock()
+mongo_client_lock = threading.Lock()
+cached_mongo_client = None
+cached_mongo_collection = None
+cached_mongo_config = None
 
 
 def require_dependency(module, name):
@@ -89,6 +93,58 @@ def update_tip_state(height):
         tip_state.last_update_monotonic = time.monotonic()
 
 
+def close_rpc_connection(conn):
+    raw_conn = getattr(conn, "_AuthServiceProxy__conn", None)
+    raw_close = getattr(raw_conn, "close", None)
+    if callable(raw_close):
+        raw_close()
+        return
+
+    close_method = getattr(conn, "close", None)
+    if callable(close_method):
+        close_method()
+
+
+def normalize_mongo_host(db_url):
+    host = db_url
+    for prefix in ("mongodb+srv://", "mongodb://"):
+        if host.startswith(prefix):
+            return host[len(prefix):]
+    return host
+
+
+def get_mongo_collection(db_url, db_name, db_username, db_password):
+    require_dependency(MongoClient, "pymongo")
+    global cached_mongo_client, cached_mongo_collection, cached_mongo_config
+
+    config = (db_url, db_name, db_username, db_password)
+    with mongo_client_lock:
+        if cached_mongo_collection is not None and cached_mongo_config == config:
+            return cached_mongo_collection
+
+        if cached_mongo_client is not None:
+            cached_mongo_client.close()
+
+        host = normalize_mongo_host(db_url)
+        cached_mongo_client = MongoClient(
+            f"mongodb://{db_username}:{db_password}@{host}"
+        )
+        cached_mongo_collection = cached_mongo_client[db_name]["mining_notify"]
+        cached_mongo_config = config
+        return cached_mongo_collection
+
+
+def close_cached_mongo_client():
+    global cached_mongo_client, cached_mongo_collection, cached_mongo_config
+
+    with mongo_client_lock:
+        if cached_mongo_client is not None:
+            cached_mongo_client.close()
+        cached_mongo_client = None
+        cached_mongo_collection = None
+        cached_mongo_config = None
+
+
 def fetch_local_btc_tip_height(args):
     try:
         from bitcoinrpc.authproxy import AuthServiceProxy
@@ -100,7 +156,10 @@ def fetch_local_btc_tip_height(args):
         f"@{args.bitcoin_rpc_host}:{args.bitcoin_rpc_port}"
     )
     conn = AuthServiceProxy(rpc_url, timeout=args.bitcoin_rpc_timeout)
-    return int(conn.getblockcount())
+    try:
+        return int(conn.getblockcount())
+    finally:
+        close_rpc_connection(conn)
 
 
 def initialize_tip_state(args):
@@ -514,20 +573,10 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
     return document
 
 def insert_notification(document, db_url, db_name, db_username, db_password):
-    require_dependency(MongoClient, "pymongo")
     LOG.debug(f"Attempting to insert document into MongoDB: {document}")
-    host = db_url
-    for prefix in ("mongodb+srv://", "mongodb://"):
-        if host.startswith(prefix):
-            host = host[len(prefix):]
-            break
-    client = MongoClient(f"mongodb://{db_username}:{db_password}@{host}")
-    db = client[db_name]
-    collection = db["mining_notify"]
+    collection = get_mongo_collection(db_url, db_name, db_username, db_password)
     result = collection.insert_one(document)
     LOG.info(f"Inserted document with id {result.inserted_id}")
-    client.close()
-    LOG.debug("MongoDB connection closed")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -711,6 +760,8 @@ def main():
                     w.close()
                     if rabbitmq_enabled and w.connection:
                         w.connection.close()
+                    if db_enabled:
+                        close_cached_mongo_client()
                 except Exception:
                     pass
                 try:
@@ -738,6 +789,8 @@ def main():
                 w.close()
                 if rabbitmq_enabled and w.connection:
                     w.connection.close()
+                if db_enabled:
+                    close_cached_mongo_client()
 
 if __name__ == "__main__":
     main()

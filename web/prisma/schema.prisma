@@ -48,6 +48,7 @@ model MiningNotify {
   id                String   @id @default(auto()) @map("_id") @db.ObjectId
   height            Int
   pool_name         String?
+  chain_family      String?
   coinbase1         String
   coinbase2         String
   merkle_branches   String[]

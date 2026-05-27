@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
 import { getBlockByHeight } from "@/lib/db/blocks";
 import { prisma } from "@/lib/db/prisma";
-import { filterBlacklistedItems } from "@/lib/poolBlacklist";
 
 interface InterestingBlockItem {
   height: number;
@@ -21,6 +19,8 @@ import {
   computeFirstTransaction, 
   computeCoinbaseOutputs 
 } from "@/utils/bitcoinUtils";
+
+const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? "true").toLowerCase() === "true";
 
 /**
  * API endpoint that returns Bitcoin mining data with all computed values for analysis
@@ -81,11 +81,7 @@ export async function GET(request: NextRequest) {
         limit: 200
       }) as unknown as MongoCursorResult<InterestingBlockItem>;
       const items: InterestingBlockItem[] = raw?.cursor?.firstBatch || [];
-      const filtered = filterBlacklistedItems(
-        items,
-        item => (item.mining_pool?.name as string | undefined)
-      );
-      return NextResponse.json({ items: filtered });
+      return NextResponse.json({ items });
     } catch (e) {
       console.error('Error fetching interesting blocks:', e);
       return NextResponse.json({ items: [] });
@@ -107,14 +103,17 @@ export async function GET(request: NextRequest) {
     // Process each height in parallel
     const results = await Promise.all(heights.map(async (height) => {
       // Fetch mining notifications for the requested height
-      const miningNotifications = await getMiningNotifyByHeight(height);
+      const miningNotifications = enableHistoricalData
+        ? await prisma.miningNotify.findMany({
+            where: { height },
+          })
+        : [];
       
       // Fetch block details for the requested height and previous height
       const currentBlock = await getBlockByHeight(height);
       const previousBlock = await getBlockByHeight(height - 1);
       
-      const filteredNotifications = filterBlacklistedItems(miningNotifications, n => n.pool_name);
-      const processedData = filteredNotifications.map(notification => {
+      const processedData = miningNotifications.map(notification => {
         let coinbaseRaw = '';
         let coinbaseScriptASCII = '';
         let coinbaseOutputValue = 0;
@@ -147,6 +146,7 @@ export async function GET(request: NextRequest) {
           // Original fields from the notification (excluding coinbase1 and coinbase2)
           id: notification.id,
           pool_name: notification.pool_name,
+          chain_family: notification.chain_family ?? undefined,
           timestamp: notification.timestamp,
           height: notification.height,
           prev_hash: prevHash, // Use only the reversed (big-endian) format

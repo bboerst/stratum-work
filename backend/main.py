@@ -366,120 +366,129 @@ def sync_blocks():
     """
     Sync blocks from the Bitcoin node
     """
-    import time
-    while True:
-        try:
-            # Get the current best block
-            best_block_hash = retry_rpc(
-                get_best_block_hash,
-                "getbestblockhash"
-            )
-            best_block = retry_rpc(
-                get_block,
-                f"getblock({best_block_hash})",
-                best_block_hash
-            )
-            best_height = best_block["height"]
+    try:
+        # Get the current best block
+        best_block_hash = retry_rpc(
+            get_best_block_hash,
+            "getbestblockhash"
+        )
+        best_block = retry_rpc(
+            get_block,
+            f"getblock({best_block_hash})",
+            best_block_hash
+        )
+        best_height = best_block["height"]
+        
+        # Get the highest block we've already processed
+        highest_processed = db.blocks.find_one(sort=[("height", -1)])
+        highest_processed_height = highest_processed["height"] if highest_processed else None
+        
+        # Get the lowest block we've already processed
+        lowest_processed = db.blocks.find_one(sort=[("height", 1)])
+        lowest_processed_height = lowest_processed["height"] if lowest_processed else None
+        
+        # Check if we need to sync from the tip down to the highest processed block
+        if highest_processed_height is not None and highest_processed_height < best_height:
+            logger.info(f"Syncing from tip ({best_height}) down to highest processed block ({highest_processed_height + 1})")
+            sync_range(best_height, highest_processed_height + 1)
+        elif highest_processed_height is None:
+            logger.info(f"No blocks processed yet. Syncing from tip ({best_height}) down to MIN_BLOCK_HEIGHT ({MIN_BLOCK_HEIGHT})")
+            sync_range(best_height, MIN_BLOCK_HEIGHT)
+        else:
+            logger.info(f"Already synced to tip at height {best_height}")
+        
+        # Check if we need to sync any missing blocks between MIN_BLOCK_HEIGHT and the lowest processed block
+        if lowest_processed_height is not None and lowest_processed_height > MIN_BLOCK_HEIGHT:
+            logger.info(f"Checking for missing blocks between MIN_BLOCK_HEIGHT ({MIN_BLOCK_HEIGHT}) and lowest processed block ({lowest_processed_height})")
             
-            # Get the highest block we've already processed
-            highest_processed = db.blocks.find_one(sort=[("height", -1)])
-            highest_processed_height = highest_processed["height"] if highest_processed else None
-            
-            # Get the lowest block we've already processed
-            lowest_processed = db.blocks.find_one(sort=[("height", 1)])
-            lowest_processed_height = lowest_processed["height"] if lowest_processed else None
-            
-            # Check if we need to sync from the tip down to the highest processed block
-            if highest_processed_height is not None and highest_processed_height < best_height:
-                logger.info(f"Syncing from tip ({best_height}) down to highest processed block ({highest_processed_height + 1})")
-                sync_range(best_height, highest_processed_height + 1)
-            elif highest_processed_height is None:
-                logger.info(f"No blocks processed yet. Syncing from tip ({best_height}) down to MIN_BLOCK_HEIGHT ({MIN_BLOCK_HEIGHT})")
-                sync_range(best_height, MIN_BLOCK_HEIGHT)
-            else:
-                pass # Already at tip
-            
-            # Check if we need to sync any missing blocks between MIN_BLOCK_HEIGHT and the lowest processed block
-            if lowest_processed_height is not None and lowest_processed_height > MIN_BLOCK_HEIGHT:
-                logger.info(f"Checking for missing blocks between MIN_BLOCK_HEIGHT ({MIN_BLOCK_HEIGHT}) and lowest processed block ({lowest_processed_height})")
-                
-                # First, get all heights in the range that are already processed
-                processed_heights_in_range = set(
-                    doc["height"] for doc in db.blocks.find(
-                        {"height": {"$gte": MIN_BLOCK_HEIGHT, "$lt": lowest_processed_height}},
-                        {"height": 1, "_id": 0}
-                    )
+            # First, get all heights in the range that are already processed
+            processed_heights_in_range = set(
+                doc["height"] for doc in db.blocks.find(
+                    {"height": {"$gte": MIN_BLOCK_HEIGHT, "$lt": lowest_processed_height}},
+                    {"height": 1, "_id": 0}
                 )
-                
-                # Then find the missing heights
-                expected_heights = set(range(MIN_BLOCK_HEIGHT, lowest_processed_height))
-                missing_blocks = sorted(list(expected_heights - processed_heights_in_range))
-                
-                if missing_blocks:
-                    logger.info(f"Found {len(missing_blocks)} missing blocks between MIN_BLOCK_HEIGHT and lowest processed block")
-                    
-                    # If there are a large number of missing blocks, use a more efficient approach
-                    if len(missing_blocks) > 100:
-                        logger.info(f"Large number of missing blocks detected ({len(missing_blocks)}). Using range-based processing.")
-                        
-                        # Find consecutive ranges of missing blocks
-                        ranges = []
-                        range_start = missing_blocks[0]
-                        prev_height = missing_blocks[0]
-                        
-                        for height in missing_blocks[1:]:
-                            if height != prev_height + 1:
-                                # End of a consecutive range
-                                ranges.append((prev_height, range_start))  # reversed for sync_range (high to low)
-                                range_start = height
-                            prev_height = height
-                        
-                        # Add the last range
-                        ranges.append((prev_height, range_start))  # reversed for sync_range (high to low)
-                        
-                        # Process each range using sync_range
-                        for range_end, range_start in ranges:  # reversed order for sync_range
-                            sync_range(range_end, range_start)
-                    else:
-                        # Process individual missing blocks in batches
-                        batch_size = 5
-                        for i in range(0, len(missing_blocks), batch_size):
-                            batch = missing_blocks[i:i+batch_size]
-                            logger.info(f"Processing batch of {len(batch)} missing blocks: {batch}")
-                            
-                            for height in batch:
-                                try:
-                                    # Get the block hash for this height
-                                    block_hash = retry_rpc(
-                                        get_block_hash,
-                                        f"getblockhash({height})",
-                                        height
-                                    )
-                                    
-                                    logger.info(f"Syncing missing block at height {height} (hash: {block_hash})")
-                                    
-                                    # Process the block
-                                    process_block(block_hash, is_new_block=False)
-                                    
-                                    # Add a small delay between blocks
-                                    time.sleep(0.5)
-                                    
-                                except Exception as e:
-                                    logger.error(f"Error processing missing block at height {height}: {e}")
-                                    continue
-                            
-                            # Add a delay between batches
-                            time.sleep(5)
-                            
-                            # Recreate the connection pool between batches
-                            rpc_pool.recreate_pool()
+            )
+            
+            # Then find the missing heights
+            expected_heights = set(range(MIN_BLOCK_HEIGHT, lowest_processed_height))
+            missing_blocks = sorted(list(expected_heights - processed_heights_in_range))
+            
+            logger.info(f"Expected {len(expected_heights)} blocks in range, found {len(processed_heights_in_range)} processed blocks")
+            
+            if missing_blocks:
+                logger.info(f"Found {len(missing_blocks)} missing blocks between MIN_BLOCK_HEIGHT and lowest processed block")
+                if len(missing_blocks) < 20:
+                    logger.info(f"Missing blocks: {missing_blocks}")
                 else:
-                    pass # No missing blocks
-            
-        except Exception as e:
-            logger.error(f"Error during block sync: {e}")
-            
-        time.sleep(15)
+                    logger.info(f"First 10 missing blocks: {missing_blocks[:10]}")
+                    logger.info(f"Last 10 missing blocks: {missing_blocks[-10:]}")
+                
+                # If there are a large number of missing blocks, use a more efficient approach
+                if len(missing_blocks) > 100:
+                    logger.info(f"Large number of missing blocks detected ({len(missing_blocks)}). Using range-based processing.")
+                    
+                    # Find consecutive ranges of missing blocks
+                    ranges = []
+                    range_start = missing_blocks[0]
+                    prev_height = missing_blocks[0]
+                    
+                    for height in missing_blocks[1:]:
+                        if height != prev_height + 1:
+                            # End of a consecutive range
+                            ranges.append((prev_height, range_start))  # reversed for sync_range (high to low)
+                            range_start = height
+                        prev_height = height
+                    
+                    # Add the last range
+                    ranges.append((prev_height, range_start))  # reversed for sync_range (high to low)
+                    
+                    logger.info(f"Identified {len(ranges)} consecutive ranges of missing blocks")
+                    
+                    # Process each range using sync_range
+                    for range_end, range_start in ranges:  # reversed order for sync_range
+                        logger.info(f"Processing range from height {range_end} down to {range_start}")
+                        sync_range(range_end, range_start)
+                else:
+                    # Process individual missing blocks in batches
+                    batch_size = 5
+                    for i in range(0, len(missing_blocks), batch_size):
+                        batch = missing_blocks[i:i+batch_size]
+                        logger.info(f"Processing batch of {len(batch)} missing blocks: {batch}")
+                        
+                        for height in batch:
+                            try:
+                                # Get the block hash for this height
+                                block_hash = retry_rpc(
+                                    get_block_hash,
+                                    f"getblockhash({height})",
+                                    height
+                                )
+                                
+                                logger.info(f"Syncing missing block at height {height} (hash: {block_hash})")
+                                
+                                # Process the block
+                                process_block(block_hash, is_new_block=False)
+                                
+                                # Add a small delay between blocks
+                                time.sleep(0.5)
+                                
+                            except Exception as e:
+                                logger.error(f"Error processing missing block at height {height}: {e}")
+                                continue
+                        
+                        # Add a delay between batches
+                        logger.info(f"Completed batch of missing blocks, sleeping before next batch")
+                        time.sleep(5)
+                        
+                        # Recreate the connection pool between batches
+                        rpc_pool.recreate_pool()
+            else:
+                logger.info(f"No missing blocks found between MIN_BLOCK_HEIGHT and lowest processed block")
+        
+        logger.info("Block sync completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error during block sync: {e}")
 
 
 def sync_range(start_height, end_height):

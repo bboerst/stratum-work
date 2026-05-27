@@ -1,6 +1,5 @@
 import os, time, threading, logging
 from bitcoinrpc.authproxy import AuthServiceProxy
-from io import BytesIO
 import zmq
 import uuid
 from datetime import datetime
@@ -584,8 +583,8 @@ def zmq_listener():
                     topic, msg = parts[0], parts[1]
                     
                     if topic == b"hashblock":
-                        # msg is a 32-byte little-endian block hash
-                        bhash = msg[::-1].hex()
+                        # msg is already in RPC/display byte order (reversed by Bitcoin Core before sending)
+                        bhash = msg.hex()
                         logger.info("ZMQ received new block hash: %s", bhash)
                         # Submit new block to the block processor
                         block_processor.submit(process_block, bhash, True)

@@ -43,6 +43,7 @@ export async function GET(request: Request) {
           $match: {
             height: height,
             $and: [
+              { chain_family: { $exists: false } },
               { pool_name: { $ne: null } },
               { pool_name: { $ne: "" } }
             ]

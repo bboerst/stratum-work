@@ -44,6 +44,7 @@ export async function GET(request: Request) {
             height: height,
             clean_jobs: true,
             $and: [
+              { chain_family: { $exists: false } },
               { pool_name: { $ne: null } },
               { pool_name: { $ne: "" } }
             ]

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import ForkTimeline from "./ForkTimeline";
+import { reverseHex } from "@/utils/formatters";
 
 type AnalysisFlag = {
   key?: string;
@@ -23,8 +24,21 @@ interface BlockWithAnalysis {
 
 interface RawMiningNotify {
   pool_name?: string | null;
+  chain_family?: string | null;
   timestamp: string;
   prev_hash: string;
+}
+
+interface AnalysisDataResult {
+  height: number;
+  mining_notifications?: RawMiningNotify[];
+  previous_block?: {
+    hash?: string;
+  } | null;
+}
+
+interface AnalysisDataResponse {
+  results?: AnalysisDataResult[];
 }
 
 export default function AnalyticsPanel({ height }: { height: number }) {
@@ -38,27 +52,25 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     async function load() {
       try {
         setLoading(true);
-        const [blockRes, notifyRes, prevBlockRes] = await Promise.all([
+        const [blockRes, analysisRes] = await Promise.all([
           fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" }),
-          fetch(`/api/mining-notify?height=${height}`, { cache: "no-store" }),
-          fetch(`/api/blocks?height=${height - 1}&n=1`, { cache: "no-store" }),
+          fetch(`/api/analysis-data?height=${height}`, { cache: "no-store" }),
         ]);
         const blockData = await blockRes.json();
         const items: BlockWithAnalysis[] = Array.isArray(blockData.blocks) ? blockData.blocks : [];
         const found = items.find((b) => b.height === height) || null;
 
         let notifs: RawMiningNotify[] = [];
-        try {
-          const notifyData = await notifyRes.json();
-          notifs = Array.isArray(notifyData) ? notifyData : [];
-        } catch { /* ignore parse errors */ }
-
         let canonicalHash: string | undefined;
         try {
-          const prevData = await prevBlockRes.json();
-          const prevItems: BlockWithAnalysis[] = Array.isArray(prevData.blocks) ? prevData.blocks : [];
-          const prevBlock = prevItems.find((b) => b.height === height - 1);
-          canonicalHash = prevBlock?.block_hash;
+          const analysisData = await analysisRes.json();
+          const analysisResponse = analysisData as AnalysisDataResponse;
+          const analysisResults: AnalysisDataResult[] = Array.isArray(analysisResponse.results)
+            ? analysisResponse.results
+            : [];
+          const analysisResult = analysisResults.find((result) => result.height === height) || null;
+          notifs = analysisResult?.mining_notifications ?? [];
+          canonicalHash = analysisResult?.previous_block?.hash;
         } catch { /* ignore */ }
 
         if (!cancelled) {
@@ -87,21 +99,37 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     return block.analysis.flags as AnalysisFlag[];
   }, [block]);
 
+  const hasBchTemplate = useMemo(
+    () => miningNotifications.some((notification) => notification.chain_family === "bch"),
+    [miningNotifications]
+  );
+
+  const btcOnlyMiningNotifications = useMemo(
+    () =>
+      miningNotifications.filter(
+        (notification) => notification.chain_family == null || notification.chain_family !== "bch"
+      ),
+    [miningNotifications]
+  );
+
+  const forkTimelineNotifications = useMemo(
+    () =>
+      btcOnlyMiningNotifications.map((notification) => ({
+        ...notification,
+        prev_hash: reverseHex(notification.prev_hash),
+      })),
+    [btcOnlyMiningNotifications]
+  );
+
   if (loading) {
     return (
       <div className="border border-border rounded-md p-3 bg-card text-xs opacity-70">Loading analytics…</div>
     );
   }
 
-  if (!flags || flags.length === 0) {
-    return (
-      <div className="border border-border rounded-md p-3 bg-card text-xs opacity-70">None</div>
-    );
-  }
-
   function renderPrevHashFork() {
-    if (miningNotifications.length === 0) return null;
-    return <ForkTimeline notifications={miningNotifications} canonicalBlockHash={prevBlockHash} />;
+    if (forkTimelineNotifications.length === 0) return null;
+    return <ForkTimeline notifications={forkTimelineNotifications} canonicalBlockHash={prevBlockHash} />;
   }
 
   function renderInvalidTemplates(flag: AnalysisFlag) {
@@ -151,14 +179,27 @@ export default function AnalyticsPanel({ height }: { height: number }) {
 
   return (
     <div className="border border-border rounded-md p-3 bg-card">
-      {flags.map((f, i) => (
-        <div key={`${f.key || i}`}>
-          {f.key === "prev_hash_fork" && renderPrevHashFork()}
-          {f.key === "invalid_coinbase_no_merkle" && renderInvalidTemplates(f)}
+      {hasBchTemplate ? (
+        <div className="mb-3">
+          <span
+            className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300"
+            title="Confirmed BCH template"
+            aria-label="Confirmed BCH template"
+          >
+            Confirmed BCH template
+          </span>
         </div>
-      ))}
+      ) : null}
+      {flags.length === 0 ? (
+        <div className="text-xs opacity-70">None</div>
+      ) : (
+        flags.map((f, i) => (
+          <div key={`${f.key || i}`}>
+            {f.key === "prev_hash_fork" && renderPrevHashFork()}
+            {f.key === "invalid_coinbase_no_merkle" && renderInvalidTemplates(f)}
+          </div>
+        ))
+      )}
     </div>
   );
 }
-
-

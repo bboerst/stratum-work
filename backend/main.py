@@ -331,7 +331,9 @@ def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coin
     analysis: Dict[str, Any] = {}
     logger.info("Running analyses for height %d", height)
     try:
-        templates = list(db.mining_notify.find({"height": height})) if db is not None else []
+        templates = list(
+            db.mining_notify.find({"height": height, "chain_family": {"$exists": False}})
+        ) if db is not None else []
     except Exception as e:
         logger.error(f"Error fetching mining.notify templates for height {height}: {e}")
         templates = []

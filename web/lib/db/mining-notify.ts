@@ -39,7 +39,13 @@ export async function getMiningNotifyByHeight(height: number): Promise<MiningNot
 
     // If not in cache, fetch from database
     const records = await prisma.miningNotify.findMany({
-      where: { height: height },
+      where: {
+        height,
+        OR: [
+          { chain_family: null },
+          { chain_family: { isSet: false } },
+        ],
+      },
     });
 
     // Store in cache

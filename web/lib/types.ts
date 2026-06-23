@@ -7,6 +7,7 @@
  */
 export interface StratumV1Data {
   pool_name: string;
+  chain_family?: string;
   timestamp: string;
   job_id: string;
   height: number;

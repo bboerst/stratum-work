@@ -42,7 +42,6 @@ export async function GET(request: Request) {
         {
           $match: {
             height: height,
-            clean_jobs: true,
             $and: [
               { chain_family: { $exists: false } },
               { pool_name: { $ne: null } },

@@ -298,43 +298,34 @@ class Watcher:
 
     def get_msg(self):
         """Return (parsed_msg, receipt_ts_ns). Timestamp is captured at the
-        earliest moment a complete line is available, before JSON parsing."""
-        receipt_ts_ns = None
+        exact moment the socket read returns."""
         while True:
-            split_buf = self.buf.split(b"\n", maxsplit=1)
-            r = split_buf[0]
-            if r == b'':
+            while b"\n" not in self.buf:
                 try:
                     new_buf = self.sock.recv(4096)
-                    if receipt_ts_ns is None:
-                        receipt_ts_ns = time.time_ns()
+                    if len(new_buf) == 0:
+                        raise EOFError
+                    self.buf += new_buf
+                    # Capture the timestamp of the actual network receive event
+                    self.last_recv_ts_ns = time.time_ns()
                 except Exception as e:
                     LOG.debug(f"Error receiving data: {e}")
                     raise EOFError
-                if len(new_buf) == 0:
-                    raise EOFError
-                self.buf += new_buf
+
+            line, self.buf = self.buf.split(b"\n", 1)
+            
+            if not line:
                 continue
-            if receipt_ts_ns is None:
-                receipt_ts_ns = time.time_ns()
+
+            receipt_ts_ns = getattr(self, 'last_recv_ts_ns', time.time_ns())
+
             try:
-                resp = json.loads(r)
-                if len(split_buf) == 2:
-                    self.buf = split_buf[1]
-                else:
-                    self.buf = b""
+                resp = json.loads(line)
                 return resp, receipt_ts_ns
-            except (json.decoder.JSONDecodeError, ConnectionResetError) as e:
-                LOG.debug(f"Error decoding JSON: {e} | raw ({len(r)} bytes): {r[:500]}")
-                new_buf = b""
-                try:
-                    new_buf = self.sock.recv(4096)
-                except Exception as e:
-                    LOG.debug(f"Error receiving data: {e}")
-                    raise EOFError
-                if len(new_buf) == 0:
-                    raise EOFError
-                self.buf += new_buf
+            except Exception as e:
+                LOG.debug(f"Error decoding JSON: {e} | raw ({len(line)} bytes): {line[:500]}")
+                # If we fail to decode, skip this garbage line and try the next one
+                continue
 
     def send_jsonrpc(self, method, params):
         request_id = self.id

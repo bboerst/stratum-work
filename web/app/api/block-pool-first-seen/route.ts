@@ -79,7 +79,7 @@ export async function GET(request: Request) {
       return NextResponse.json(data);
     } else {
       console.error("Unexpected MongoDB aggregation response structure:", result);
-      return NextResponse.json([]); 
+      return NextResponse.json([]);
     }
 
   } catch (error) {

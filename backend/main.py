@@ -1,6 +1,5 @@
 import os, time, threading, logging
 from bitcoinrpc.authproxy import AuthServiceProxy
-from io import BytesIO
 import zmq
 import uuid
 from datetime import datetime
@@ -574,24 +573,24 @@ def zmq_listener():
     while True:
         try:
             socket = context.socket(zmq.SUB)
-            # Use recv_multipart for a more robust read
-            socket.setsockopt(zmq.SUBSCRIBE, b"rawblock")
+            # Subscribe to hashblock instead of rawblock
+            socket.setsockopt(zmq.SUBSCRIBE, b"hashblock")
             socket.connect(ZMQ_BLOCK)
-            logger.info("ZMQ listener connected to %s", ZMQ_BLOCK)
-            from bitcoin.core import CBlock
+            logger.info("ZMQ listener connected to %s (topic: hashblock)", ZMQ_BLOCK)
             while True:
                 try:
                     parts = socket.recv_multipart()
                     if len(parts) < 2:
                         continue
                     topic, msg = parts[0], parts[1]
-                    stream = BytesIO(msg)
-                    block = CBlock.stream_deserialize(stream)
-                    # Get block hash in correct little-endian format
-                    bhash = block.GetHash()[::-1].hex()
-                    logger.info("ZMQ received new block: %s", bhash)
-                    # Submit new block to the block processor
-                    block_processor.submit(process_block, bhash, True)
+                    
+                    if topic == b"hashblock":
+                        # msg is already in RPC/display byte order (reversed by Bitcoin Core before sending)
+                        bhash = msg.hex()
+                        logger.info("ZMQ received new block hash: %s", bhash)
+                        # Submit new block to the block processor
+                        block_processor.submit(process_block, bhash, True)
+                        
                 except Exception as inner_e:
                     logger.error("Error processing ZMQ message: %s", inner_e)
                     time.sleep(1)

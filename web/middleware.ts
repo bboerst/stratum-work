@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
+import { getCorsHeaders } from "./lib/cors"
 
 const corsOrigins = process.env.CORS_ORIGINS?.split(",") || []
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": corsOrigins.join(","),
-  "Access-Control-Allow-Methods": "GET",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-}
-
 export function middleware(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request.headers.get("host"), corsOrigins)
+
   // Handle CORS
   if (request.method === "OPTIONS") {
     return NextResponse.json({}, { headers: corsHeaders })
   }
   const response = NextResponse.next()
   Object.entries(corsHeaders).forEach(([key, value]) => {
-    response.headers.append(key, value)
+    response.headers.set(key, value)
   })
 
   return response

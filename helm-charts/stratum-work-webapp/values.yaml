@@ -29,6 +29,7 @@ serviceAccount:
 env:
   DATABASE_URL: "mongodb://admin:c5sTZ3nlH1vukbcw@mongodb-stratum-work-1-0.mongodb-stratum-work-1-svc.stratum-work.svc.cluster.local:27017,mongodb-stratum-work-1-1.mongodb-stratum-work-1-svc.stratum-work.svc.cluster.local:27017/stratum-logger?replicaSet=mongodb-stratum-work-1&authSource=admin"
   CORS_ORIGINS: "http://127.0.0.1:8000,http://localhost:8000"
+  STREAM_ENDPOINT: ""
 
 arguments: []
 
@@ -148,7 +149,7 @@ extraManifests: []
   #     routes:
   #       - middlewares:
   #         - name: rate-limiter
-  #       - match: Host(`stratum.work`)
+  #       - match: Host(`example.com`)
   #         kind: Rule
   #         services:
   #         - name: {{ template "stratum-work-webapp.fullname" . }}

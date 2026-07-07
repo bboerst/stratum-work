@@ -15,7 +15,7 @@ export function middleware(request: NextRequest) {
   }
   const response = NextResponse.next()
   Object.entries(corsHeaders).forEach(([key, value]) => {
-    response.headers.append(key, value)
+    response.headers.set(key, value)
   })
 
   return response

@@ -1,8 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useTransition } from "react";
+import { getStreamEndpoint } from "./streamEndpoint";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
 
 interface UseDataStreamOptions {
   endpoint?: string;
+  enabled?: boolean;
   initialReconnectFrequency?: number;
   maxReconnectFrequency?: number;
   paused?: boolean;
@@ -25,7 +27,8 @@ interface UseDataStreamResult {
  * @returns Object containing the current data, connection status, and utility functions
  */
 export function useDataStream({
-  endpoint = "/api/stream",
+  endpoint = getStreamEndpoint(),
+  enabled = true,
   initialReconnectFrequency = 1,
   maxReconnectFrequency = 60,
   paused = false,
@@ -148,6 +151,11 @@ export function useDataStream({
 
   // Set up and tear down the EventSource
   useEffect(() => {
+    if (!enabled) {
+      setIsConnected(false);
+      return;
+    }
+
     const setupEventSource = () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -200,7 +208,7 @@ export function useDataStream({
         reconnectTimeoutRef.current = null;
       }
     };
-  }, [endpoint, initialReconnectFrequency, maxReconnectFrequency, processMessage]);
+  }, [enabled, endpoint, initialReconnectFrequency, maxReconnectFrequency, processMessage]);
 
   return { data, isConnected, clearData, filterByType, latestMessagesByPool };
-} 
+}

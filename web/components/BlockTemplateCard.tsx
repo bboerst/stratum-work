@@ -245,6 +245,9 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
             return {
                 pool_name: displayMessage.pool_name,
                 timestamp: displayMessage.timestamp,
+                raw_timestamp: displayMessage.timestamp,
+                lat_ms: displayMessage.lat_ms,
+                lat_m: displayMessage.lat_m,
                 job_id: displayMessage.job_id,
                 height: displayMessage.height,
                 prev_hash: displayMessage.prev_hash,

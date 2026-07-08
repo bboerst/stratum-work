@@ -7,6 +7,7 @@ import { filterBlacklistedItems } from '@/lib/poolBlacklist';
 interface PoolFirstSeenData {
   poolName: string;
   firstSeenTimestamp: string;
+  firstSeenLatencyMs?: number | null;
 }
 
 // Minimal interface for the expected aggregation result structure
@@ -55,14 +56,16 @@ export async function GET(request: Request) {
         {
           $group: {
             _id: "$pool_name",
-            firstSeenTimestamp: { $first: "$timestamp" }
+            firstSeenTimestamp: { $first: "$timestamp" },
+            firstSeenLatencyMs: { $first: "$lat_ms" }
           }
         },
         {
           $project: {
             _id: 0,
             poolName: "$_id",
-            firstSeenTimestamp: 1
+            firstSeenTimestamp: 1,
+            firstSeenLatencyMs: 1
           }
         },
         {

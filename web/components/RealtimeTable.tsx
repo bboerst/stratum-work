@@ -14,14 +14,17 @@ import { useTableData } from "@/hooks/useTableData";
 import RealtimeTableHeader from "./RealtimeTableHeader";
 import RealtimeTableRowComponent from "./RealtimeTableRow";
 import RealtimeTableSettings from "./RealtimeTableSettings";
+import { tableLatencySettingKey } from "@/utils/latencySettingKey";
 
 export default function RealtimeTable({ 
   paused = false, 
   showSettings = false,
   onShowSettingsChange,
-  filterBlockHeight
+  filterBlockHeight,
+  latencySettingKey
 }: RealtimeTableProps) {
   const router = useRouter();
+  const effectiveLatencySettingKey = latencySettingKey ?? tableLatencySettingKey(filterBlockHeight);
   
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
@@ -63,7 +66,7 @@ export default function RealtimeTable({
     loadMore,
     handleSort: tableDataHandleSort,
     filteredData
-  } = useTableData(stratumV1Data, paused, filterBlockHeight);
+  } = useTableData(stratumV1Data, paused, filterBlockHeight, effectiveLatencySettingKey);
   
   // Update historical data context when filtered data changes
   useEffect(() => {
@@ -73,7 +76,9 @@ export default function RealtimeTable({
         // Map SortedRow[] back to StratumV1Data[] for the context
         const historicalStratumData: StratumV1Data[] = filteredData.map(row => ({
           pool_name: row.pool_name,
-          timestamp: row.timestamp,
+          timestamp: row.raw_timestamp ?? row.timestamp,
+          lat_ms: row.lat_ms,
+          lat_m: row.lat_m,
           job_id: row.job_id,
           height: row.height,
           prev_hash: row.prev_hash,
@@ -186,7 +191,9 @@ export default function RealtimeTable({
     // For historical data, show in side panel
     const stratumData: StratumV1Data = {
       pool_name: row.pool_name,
-      timestamp: row.timestamp,
+      timestamp: row.raw_timestamp ?? row.timestamp,
+      lat_ms: row.lat_ms,
+      lat_m: row.lat_m,
       job_id: row.job_id,
       height: row.height,
       prev_hash: row.prev_hash,
@@ -269,6 +276,7 @@ export default function RealtimeTable({
         onShowSettingsChange={onShowSettingsChange || (() => {})}
         columnsVisible={columnsVisible}
         toggleColumn={toggleColumn}
+        latencySettingKey={effectiveLatencySettingKey}
       />
 
       {/* The Table */}

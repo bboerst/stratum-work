@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import PauseButton from "./PauseButton";
 import SettingsButton from "./SettingsButton";
+import { useLatencyAdjusted } from "./TimingDisplayContext";
 
 interface TimingPageControlsProps {
   paused: boolean;
@@ -27,6 +28,7 @@ export default function TimingPageControls({
 }: TimingPageControlsProps) {
   const [showSettings, setShowSettings] = useState(false);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const [latencyAdjusted, setLatencyAdjusted] = useLatencyAdjusted("timing-chart");
 
   // Handle time window adjustment
   const adjustTimeWindow = (change: number) => {
@@ -123,6 +125,26 @@ export default function TimingPageControls({
                 }`}
               >
                 {sortByTimeReceived ? "Time" : "A-Z"}
+              </button>
+            </div>
+
+            {/* Latency adjustment toggle */}
+            <div className="flex items-center justify-between">
+              <span
+                className="text-xs font-medium"
+                title="Subtract each pool's measured network latency (RTT/2) so timestamps approximate when the pool sent the message"
+              >
+                Latency adjusted:
+              </span>
+              <button
+                onClick={() => setLatencyAdjusted(!latencyAdjusted)}
+                className={`px-2 py-1 text-xs rounded ${
+                  latencyAdjusted
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700'
+                }`}
+              >
+                {latencyAdjusted ? "On" : "Off"}
               </button>
             </div>
           </div>

@@ -1,21 +1,26 @@
 import React, { useRef, useEffect } from 'react';
 import ModeToggle from "@/components/ModeToggle";
 import { SortedRow } from '@/types/tableTypes';
+import { useLatencyAdjusted } from "./TimingDisplayContext";
+import type { TimingVisualKey } from "./TimingDisplayContext";
 
 interface RealtimeTableSettingsProps {
   showSettings: boolean;
   onShowSettingsChange: (showSettings: boolean) => void;
   columnsVisible: { [key: string]: boolean };
   toggleColumn: (colKey: string) => void;
+  latencySettingKey?: TimingVisualKey;
 }
 
 export default function RealtimeTableSettings({
   showSettings,
   onShowSettingsChange,
   columnsVisible,
-  toggleColumn
+  toggleColumn,
+  latencySettingKey = "table"
 }: RealtimeTableSettingsProps) {
   const settingsRef = useRef<HTMLDivElement>(null);
+  const [latencyAdjusted, setLatencyAdjusted] = useLatencyAdjusted(latencySettingKey);
 
   // Column settings to be toggled in the UI
   const mainColumns: { key: keyof SortedRow; label: string }[] = [
@@ -64,10 +69,28 @@ export default function RealtimeTableSettings({
         top: '60px', // Position below the header
         right: '20px' // Position from the right edge
       }}
-    >          
-      <div>
+    >
+      <div className="pb-1 border-b border-gray-200 dark:border-gray-700 mb-1">
         <ModeToggle />
-        <div className="font-bold text-sm">Toggle Columns</div>
+      </div>
+      <div className="flex items-center justify-between px-2 py-1 border-b border-gray-200 dark:border-gray-700 mb-1">
+        <span
+          className="text-sm font-medium"
+          title="Subtract each pool's measured network latency (RTT/2) from Time Received"
+        >
+          Latency adjusted
+        </span>
+        <button
+          onClick={() => setLatencyAdjusted(!latencyAdjusted)}
+          className={`px-2 py-1 text-sm rounded ${
+            latencyAdjusted ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700'
+          }`}
+        >
+          {latencyAdjusted ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="font-bold text-sm px-2 py-1">
+        Toggle Columns
       </div>
       {mainColumns.map((col) => (
         <label key={col.key} className="block text-sm">

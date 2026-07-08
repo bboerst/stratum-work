@@ -60,6 +60,8 @@ model MiningNotify {
   clean_jobs        Boolean
   extranonce1       String
   extranonce2_length Int
-  
+  lat_ms            Float?
+  lat_m             String?
+
   @@map("mining_notify")
 }

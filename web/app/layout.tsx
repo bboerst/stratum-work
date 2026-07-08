@@ -5,6 +5,7 @@ import { GlobalMenuProvider } from "@/components/GlobalMenuContext";
 import { DataStreamProvider } from "@/lib/DataStreamContext";
 import { BlocksProvider } from "@/lib/BlocksContext";
 import { VisualizationProvider } from "@/components/VisualizationContext";
+import { TimingDisplayProvider } from "@/components/TimingDisplayContext";
 import { HistoricalDataProvider } from "@/lib/HistoricalDataContext";
 import { SelectedTemplateProvider } from "@/lib/SelectedTemplateContext";
 import { PoolFilterProvider } from "@/components/PoolFilterContext";
@@ -29,10 +30,12 @@ export default function RootLayout({
                 <SelectedTemplateProvider>
                   <GlobalMenuProvider>
                     <VisualizationProvider>
+                    <TimingDisplayProvider>
                       {/* ClientNavigation handles passing the blockHeight to Navigation */}
                       <ClientNavigation>
                         {children}
                       </ClientNavigation>
+                    </TimingDisplayProvider>
                     </VisualizationProvider>
                   </GlobalMenuProvider>
                 </SelectedTemplateProvider>

@@ -50,6 +50,11 @@ except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
         TipState,
     )
 
+try:
+    from collector.latency import LatencyTracker, sample_tcp_rtt_us
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    from latency import LatencyTracker, sample_tcp_rtt_us  # type: ignore
+
 LOG = logging.getLogger()
 
 tip_state = TipState(
@@ -224,7 +229,7 @@ def classify_notification_chain(height: int, prev_hash: str) -> str | None:
         return None
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
@@ -256,6 +261,12 @@ class Watcher:
         self.retry_delay = 5
         self.enable_stratum_client = enable_stratum_client
         self.stratum_client_port = stratum_client_port
+        self.latency_probe_interval = latency_probe_interval
+        self.latency_tracker = LatencyTracker(proxied=use_proxy)
+        self.send_lock = threading.Lock()
+        self.last_recv_monotonic_ns = 0
+        self._probe_stop = threading.Event()
+        self._probe_thread = None
 
     def parse_url(self, url):
         purl = urlparse(url)
@@ -308,6 +319,7 @@ class Watcher:
                     self.buf += new_buf
                     # Capture the timestamp of the actual network receive event
                     self.last_recv_ts_ns = time.time_ns()
+                    self.last_recv_monotonic_ns = time.monotonic_ns()
                 except Exception as e:
                     LOG.debug(f"Error receiving data: {e}")
                     raise EOFError
@@ -328,25 +340,75 @@ class Watcher:
                 continue
 
     def send_jsonrpc(self, method, params):
-        request_id = self.id
-        data = {
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }
-        self.id += 1
-
-        LOG.debug(f"Sending: {data}")
-        json_data = json.dumps(data) + "\n"
-        self.sock.send(json_data.encode())
+        with self.send_lock:
+            request_id = self.id
+            self.id += 1
+            data = {
+                "id": request_id,
+                "method": method,
+                "params": params,
+            }
+            LOG.debug(f"Sending: {data}")
+            json_data = json.dumps(data) + "\n"
+            self.latency_tracker.record_send(request_id, time.monotonic_ns())
+            self.sock.sendall(json_data.encode())
+        self._sample_tcp_rtt()
 
         while True:
             msg, ts = self.get_msg()
             if isinstance(msg, dict) and msg.get("id") == request_id:
+                self.latency_tracker.try_resolve(msg, self.last_recv_monotonic_ns)
                 LOG.debug(f"Received response for request {request_id}: {msg}")
                 return msg
+            if self.latency_tracker.try_resolve(msg, self.last_recv_monotonic_ns):
+                continue  # answered a latency probe; not a notification
             LOG.info(f"Queued server notification while awaiting response {request_id}: {msg}")
             self.pending_notifications.append((msg, ts))
+
+    def _sample_tcp_rtt(self):
+        # Kernel RTT through a SOCKS proxy only measures the local hop.
+        if self.use_proxy:
+            return
+        sock = self.sock
+        if sock is None:
+            return
+        self.latency_tracker.record_tcp_rtt_us(sample_tcp_rtt_us(sock))
+
+    def _latency_probe_loop(self):
+        interval = self.latency_probe_interval
+        while not self._probe_stop.wait(interval):
+            sock = self.sock
+            if sock is None:
+                continue
+            try:
+                with self.send_lock:
+                    request_id = self.id
+                    self.id += 1
+                    payload = json.dumps(
+                        {"id": request_id, "method": "mining.subscribe", "params": []}
+                    ) + "\n"
+                    self.latency_tracker.record_send(request_id, time.monotonic_ns())
+                    sock.sendall(payload.encode())
+                self._sample_tcp_rtt()
+                self.latency_tracker.prune_pending(
+                    time.monotonic_ns(), int(2 * interval * 1e9)
+                )
+            except Exception as e:
+                LOG.debug(f"Latency probe send failed: {e}")
+
+    def start_latency_probes(self):
+        if self.latency_probe_interval <= 0 or self._probe_thread is not None:
+            return
+        self._probe_thread = threading.Thread(
+            target=self._latency_probe_loop,
+            name=f"latency-probe-{self.pool_name}",
+            daemon=True,
+        )
+        self._probe_thread.start()
+
+    def stop_latency_probes(self):
+        self._probe_stop.set()
+        self._probe_thread = None
 
     def connect_to_rabbitmq(self):
         require_dependency(pika, "pika")
@@ -382,6 +444,7 @@ class Watcher:
     def connect_to_stratum(self):
         for attempt in range(self.max_retries):
             try:
+                self.latency_tracker.reset()
                 self.init_socket()
                 LOG.info(f"Attempting to connect to {self.purl.hostname}:{self.purl.port}")
                 self.sock.connect((self.purl.hostname, self.purl.port))
@@ -424,7 +487,10 @@ class Watcher:
             event_time = hex(receipt_ts_ns)[2:]
             LOG.info(f"mining.notify job_id={msg['params'][0]} prev_hash={msg['params'][1][:16]}... clean={msg['params'][8]}")
             LOG.debug(f"mining.notify full payload: {msg}")
-            document = create_notification_document(msg, self.pool_name, self.extranonce1, self.extranonce2_length, event_time)
+            document = create_notification_document(
+                msg, self.pool_name, self.extranonce1, self.extranonce2_length,
+                event_time, latency=self.latency_tracker.estimate(),
+            )
             if self.db_enabled:
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
             if self.rabbitmq_enabled:
@@ -439,6 +505,7 @@ class Watcher:
 
     def get_stratum_work(self, keep_alive=False):
         LOG.info("Starting get_stratum_work")
+        self.start_latency_probes()
         last_subscribe_time = time.time()
         while True:
             try:
@@ -446,6 +513,8 @@ class Watcher:
                     self.connect_to_stratum()
                     self._drain_pending_notifications()
                 n, receipt_ts = self.get_msg()
+                if self.latency_tracker.try_resolve(n, self.last_recv_monotonic_ns):
+                    continue  # response to a latency probe / keep-alive
                 self._process_notification(n, None, receipt_ts)
                 if keep_alive and time.time() - last_subscribe_time > 480:
                     LOG.info("Keep-alive interval reached")
@@ -524,11 +593,12 @@ class Watcher:
                         continue
                     try:
                         self.sock.sendall(line + b"\n")
+                        self._sample_tcp_rtt()
                     except Exception as e:
                         LOG.error(f"Error sending to pool: {e}")
                         break
 
-def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp):
+def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp, latency=None):
     notification_id = str(uuid.uuid4())
     coinbase1 = data["params"][2]
     coinbase2 = data["params"][3]
@@ -558,6 +628,10 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         "extranonce1": extranonce1,
         "extranonce2_length": extranonce2_length
     }
+    if latency is not None:
+        latency_ms, latency_method = latency
+        document["lat_ms"] = latency_ms
+        document["lat_m"] = latency_method
     chain_family = classify_notification_chain(height, data["params"][1])
     if chain_family is not None:
         document["chain_family"] = chain_family
@@ -683,6 +757,12 @@ def main():
         default=3.0,
         help="BCH confirmation timeout in seconds (default: 3.0)",
     )
+    parser.add_argument(
+        "--latency-probe-interval",
+        type=float,
+        default=60.0,
+        help="Seconds between latency probe requests to the pool (0 disables; default: 60)",
+    )
     args = parser.parse_args()
 
     if args.pool_name is None:
@@ -736,7 +816,8 @@ def main():
                     args.db_url, args.db_name, args.db_username, args.db_password,
                     args.use_proxy, args.proxy_host, args.proxy_port,
                     enable_stratum_client=True, stratum_client_port=args.stratum_client_port,
-                    rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled
+                    rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
+                    latency_probe_interval=args.latency_probe_interval
                 )
                 if rabbitmq_enabled:
                     w.connect_to_rabbitmq()
@@ -768,7 +849,8 @@ def main():
                 args.db_url, args.db_name, args.db_username, args.db_password,
                 args.use_proxy, args.proxy_host, args.proxy_port,
                 enable_stratum_client=False,
-                rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled
+                rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
+                latency_probe_interval=args.latency_probe_interval
             )
             try:
                 if rabbitmq_enabled:
@@ -777,6 +859,7 @@ def main():
             except KeyboardInterrupt:
                 break
             finally:
+                w.stop_latency_probes()
                 w.close()
                 if rabbitmq_enabled and w.connection:
                     w.connection.close()

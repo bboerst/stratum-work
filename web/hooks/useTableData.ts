@@ -2,6 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { StratumV1Data, StreamDataType } from '@/lib/types';
 import { SortedRow, SortConfig, SortDirection } from '@/types/tableTypes';
 import { formatCoinbaseRaw } from '@/utils/formatters';
+import { effectiveTimestamp } from '@/utils/latency';
+import { useLatencyAdjusted } from '@/components/TimingDisplayContext';
+import type { TimingVisualKey } from '@/components/TimingDisplayContext';
 import { 
     computeCoinbaseOutputValue, 
     computeFirstTransaction, 
@@ -29,8 +32,11 @@ function isSignalingBip110(version: string): boolean {
 export function useTableData(
   stratumV1Data: StratumV1Data[],
   paused: boolean,
-  filterBlockHeight?: number
+  filterBlockHeight?: number,
+  latencySettingKey: TimingVisualKey = 'table'
 ) {
+  const [latencyAdjusted] = useLatencyAdjusted(latencySettingKey);
+
   // State for the table rows
   const [rows, setRows] = useState<StratumV1Data[]>([]);
   
@@ -47,8 +53,19 @@ export function useTableData(
   const [isLoading, setIsLoading] = useState(false);
   const fetchInProgress = useRef(false);
 
+  // Raw records fetched for a historical block; SortedRows are derived from
+  // these separately so toggling latency adjustment never refetches
+  const [historicalRawItems, setHistoricalRawItems] = useState<StratumV1Data[]>([]);
+
   // Cached fee rates: txid -> (fee rate or "not found"/"error")
   const [feeRateMap, setFeeRateMap] = useState<{ [txid: string]: number | string }>({});
+
+  // Ref mirror of feeRateMap so the historical derive effect can seed rows
+  // with already-resolved rates without depending on the map itself
+  const feeRateMapRef = useRef(feeRateMap);
+  useEffect(() => {
+    feeRateMapRef.current = feeRateMap;
+  }, [feeRateMap]);
 
   // Track if this is the first update for filtered data
   const isFirstFilteredDataRun = useRef(true);
@@ -113,6 +130,13 @@ export function useTableData(
   // Compute derived fields without fee rate
   const computedRowsBase: Omit<SortedRow, 'feeRateComputed'>[] = useMemo(() => {
     return rows.map((row) => {
+      // Effective timestamp drives display/sorting; raw + latency ride along
+      const timingFields = {
+        timestamp: effectiveTimestamp(row, latencyAdjusted),
+        raw_timestamp: row.timestamp,
+        lat_ms: row.lat_ms,
+        lat_m: row.lat_m,
+      };
       try {
         const coinbaseRaw = formatCoinbaseRaw(
           row.coinbase1,
@@ -133,6 +157,7 @@ export function useTableData(
 
         return {
           ...row,
+          ...timingFields,
           coinbaseRaw,
           coinbaseScriptASCII,
           coinbaseOutputValue,
@@ -147,6 +172,7 @@ export function useTableData(
         );
         return {
           ...row,
+          ...timingFields,
           coinbaseRaw: '',
           coinbaseScriptASCII: '',
           coinbaseOutputValue: 0,
@@ -156,7 +182,7 @@ export function useTableData(
         };
       }
     });
-  }, [rows]);
+  }, [rows, latencyAdjusted]);
 
   // Add fee rates to computed rows
   const computedRows: SortedRow[] = useMemo(() => {
@@ -208,109 +234,35 @@ export function useTableData(
     });
   }, [computedRows, paused]);
 
-  // Modified effect to fetch data for a specific block height
+  // Modified effect to fetch data for a specific block height.
+  // Fetch only — row-building happens in the derive effect below, so
+  // toggling latency adjustment never refetches or shows the spinner.
   useEffect(() => {
     // Clear the table immediately when filterBlockHeight changes
     setFilteredData([]);
-    
+    setHistoricalRawItems([]);
+
     // Reset the fetch in progress flag when filterBlockHeight changes
     fetchInProgress.current = false;
-    
+
     // Special case for the being-mined block (height -1)
     if (filterBlockHeight === -1) {
       // Reset to realtime data for the being-mined block
       setIsFiltering(false);
       return;
     }
-    
+
     // Regular case for historical blocks
     if (filterBlockHeight && filterBlockHeight > 0) {
       fetchInProgress.current = true;
       setIsFiltering(true);
       setIsLoading(true);
-      
+
       fetch(`/api/mining-notify?height=${filterBlockHeight}`)
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) {
-            // Process all items from the API response
-            const processedData = data.map(item => {
-              try {
-                const firstTx = computeFirstTransaction(item.merkle_branches);
-                const coinbaseRaw = formatCoinbaseRaw(
-                  item.coinbase1,
-                  item.extranonce1,
-                  item.extranonce2_length,
-                  item.coinbase2
-                );
-                reportParseFailure(coinbaseRaw, item.pool_name, item.height);
-                const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
-                  item.coinbase1,
-                  item.extranonce1,
-                  item.extranonce2_length,
-                  item.coinbase2
-                );
-                const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
-
-                return {
-                  ...item,
-                  first_transaction: firstTx,
-                  coinbaseRaw,
-                  coinbaseScriptASCII,
-                  coinbaseOutputValue,
-                  feeRateComputed: firstTx && firstTx !== "empty block" ? "fetching..." : "N/A",
-                  coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
-                  signaling_bip110: isSignalingBip110(item.version),
-                };
-              } catch (err) {
-                console.error(
-                  `[useTableData] Error processing historical row for pool="${item.pool_name}" height=${item.height}:`,
-                  err
-                );
-                return {
-                  ...item,
-                  first_transaction: 'error',
-                  coinbaseRaw: '',
-                  coinbaseScriptASCII: '',
-                  coinbaseOutputValue: 0,
-                  feeRateComputed: 'N/A' as string | number,
-                  coinbase_outputs: [],
-                  signaling_bip110: false,
-                };
-              }
-            });
-            
-            // Sort the data by timestamp ascending (oldest first)
-            const sortedData = [...processedData].sort((a, b) => {
-              return a.timestamp.localeCompare(b.timestamp);
-            });
-            
-            // Store the processed data for pagination
-            setAllData(sortedData);
-            setVisibleData(sortedData.slice(0, ITEMS_PER_PAGE));
-            setHasMore(sortedData.length > ITEMS_PER_PAGE);
-            setPage(1);
-            
-            // Also update filteredData for compatibility with existing code
-            setFilteredData(sortedData);
-            
-            // Trigger fee rate fetching for all transactions in the historical data
-            // by updating the feeRateMap with "fetching..." for each transaction
-            const newFeeRateMap = { ...feeRateMap };
-            let hasNewTxids = false;
-            
-            sortedData.forEach(item => {
-              const firstTx = item.first_transaction;
-              if (firstTx && firstTx !== "empty block" && firstTx !== "N/A" && newFeeRateMap[firstTx] === undefined) {
-                newFeeRateMap[firstTx] = "fetching...";
-                hasNewTxids = true;
-              }
-            });
-            
-            // Only update the feeRateMap if we have new transactions
-            if (hasNewTxids) {
-              setFeeRateMap(newFeeRateMap);
-            }
+            setHistoricalRawItems(data);
           }
           setIsLoading(false);
           fetchInProgress.current = false;
@@ -325,6 +277,102 @@ export function useTableData(
       setIsFiltering(false);
     }
   }, [filterBlockHeight]);
+
+  // Derive SortedRows from the fetched historical records. Re-runs when the
+  // records arrive or the latency-adjusted toggle flips — no network involved.
+  useEffect(() => {
+    if (!isFiltering) return;
+
+    // Process all items from the API response
+    const processedData = historicalRawItems.map(item => {
+      // Effective timestamp drives display/sorting; raw + latency ride along
+      const timingFields = {
+        timestamp: effectiveTimestamp(item, latencyAdjusted),
+        raw_timestamp: item.timestamp,
+        lat_ms: item.lat_ms,
+        lat_m: item.lat_m,
+      };
+      try {
+        const firstTx = computeFirstTransaction(item.merkle_branches);
+        const coinbaseRaw = formatCoinbaseRaw(
+          item.coinbase1,
+          item.extranonce1,
+          item.extranonce2_length,
+          item.coinbase2
+        );
+        reportParseFailure(coinbaseRaw, item.pool_name, item.height);
+        const coinbaseScriptASCII = getFormattedCoinbaseAsciiTag(
+          item.coinbase1,
+          item.extranonce1,
+          item.extranonce2_length,
+          item.coinbase2
+        );
+        const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
+
+        return {
+          ...item,
+          ...timingFields,
+          first_transaction: firstTx,
+          coinbaseRaw,
+          coinbaseScriptASCII,
+          coinbaseOutputValue,
+          feeRateComputed: firstTx && firstTx !== "empty block"
+            ? feeRateMapRef.current[firstTx] ?? "fetching..."
+            : "N/A",
+          coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
+          signaling_bip110: isSignalingBip110(item.version),
+        };
+      } catch (err) {
+        console.error(
+          `[useTableData] Error processing historical row for pool="${item.pool_name}" height=${item.height}:`,
+          err
+        );
+        return {
+          ...item,
+          ...timingFields,
+          first_transaction: 'error',
+          coinbaseRaw: '',
+          coinbaseScriptASCII: '',
+          coinbaseOutputValue: 0,
+          feeRateComputed: 'N/A' as string | number,
+          coinbase_outputs: [],
+          signaling_bip110: false,
+        };
+      }
+    });
+
+    // Sort the data by timestamp ascending (oldest first)
+    const sortedData = [...processedData].sort((a, b) => {
+      return a.timestamp.localeCompare(b.timestamp);
+    });
+
+    // Store the processed data for pagination
+    setAllData(sortedData);
+    setVisibleData(sortedData.slice(0, ITEMS_PER_PAGE));
+    setHasMore(sortedData.length > ITEMS_PER_PAGE);
+    setPage(1);
+
+    // Also update filteredData for compatibility with existing code
+    setFilteredData(sortedData);
+
+    // Trigger fee rate fetching for all transactions in the historical data
+    // by updating the feeRateMap with "fetching..." for each transaction
+    setFeeRateMap(prev => {
+      const newFeeRateMap = { ...prev };
+      let hasNewTxids = false;
+
+      sortedData.forEach(item => {
+        const firstTx = item.first_transaction;
+        if (firstTx && firstTx !== "empty block" && firstTx !== "N/A" && newFeeRateMap[firstTx] === undefined) {
+          newFeeRateMap[firstTx] = "fetching...";
+          hasNewTxids = true;
+        }
+      });
+
+      // Only update the feeRateMap if we have new transactions
+      return hasNewTxids ? newFeeRateMap : prev;
+    });
+  }, [historicalRawItems, latencyAdjusted, isFiltering]);
 
   // Separate effect to fetch fee rates for filtered data
   useEffect(() => {

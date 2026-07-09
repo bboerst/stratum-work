@@ -4,27 +4,23 @@ import React, { useEffect, useRef, useState } from "react";
 import PauseButton from "./PauseButton";
 import SettingsButton from "./SettingsButton";
 
-interface LatencyPageControlsProps {
+interface InfraPageControlsProps {
   paused: boolean;
   setPaused: (paused: boolean) => void;
   timeWindow: number;
   setTimeWindow: (timeWindow: number) => void;
   showLabels: boolean;
   setShowLabels: (showLabels: boolean) => void;
-  sortByLatest: boolean;
-  setSortByLatest: (sortByLatest: boolean) => void;
 }
 
-export default function LatencyPageControls({
+export default function InfraPageControls({
   paused,
   setPaused,
   timeWindow,
   setTimeWindow,
   showLabels,
   setShowLabels,
-  sortByLatest,
-  setSortByLatest,
-}: LatencyPageControlsProps) {
+}: InfraPageControlsProps) {
   const [showSettings, setShowSettings] = useState(false);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -59,7 +55,7 @@ export default function LatencyPageControls({
       <div className="relative">
         <SettingsButton
           onClick={() => setShowSettings((prev) => !prev)}
-          title="Latency Settings"
+          title="Infra Metrics Settings"
           buttonRef={settingsButtonRef}
         />
 
@@ -96,18 +92,6 @@ export default function LatencyPageControls({
                   }`}
                 >
                   {showLabels ? "On" : "Off"}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium">Legend order:</span>
-                <button
-                  onClick={() => setSortByLatest(!sortByLatest)}
-                  className={`px-2 py-1 text-xs rounded ${
-                    sortByLatest ? "bg-blue-500 text-white" : "bg-gray-200 dark:bg-gray-700"
-                  }`}
-                >
-                  {sortByLatest ? "Latest" : "A-Z"}
                 </button>
               </div>
             </div>

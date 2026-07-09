@@ -6,17 +6,17 @@ import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import {
   buildLatencyPlot,
+  headerLegendStartX,
   latencySampleFromMessage,
   LatencyPlot,
   LatencySample,
   pruneLatencySamples,
 } from "@/utils/latencyPlot";
 
-interface LatencyHeatmapProps {
+interface InfraLatencyChartProps {
   paused: boolean;
   timeWindow: number;
   showLabels: boolean;
-  sortByLatest: boolean;
 }
 
 type HoveredSample = LatencySample & {
@@ -77,12 +77,11 @@ function truncateLabel(ctx: CanvasRenderingContext2D, label: string, maxWidth: n
   return result.length > 3 ? result + "..." : label.slice(0, 3);
 }
 
-export default function LatencyHeatmap({
+export default function InfraLatencyChart({
   paused,
   timeWindow,
   showLabels,
-  sortByLatest,
-}: LatencyHeatmapProps) {
+}: InfraLatencyChartProps) {
   const { filterByType } = useGlobalDataStream();
   const { isPoolVisible } = usePoolFilter();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -143,14 +142,13 @@ export default function LatencyHeatmap({
     const visibleSamples = prunedSamples.filter(sample => isPoolVisible(sample.poolName));
     const nextPlot = buildLatencyPlot(visibleSamples, {
       timeWindowSeconds: timeWindow,
-      sortByLatest,
       newestTimestampMs: newestForWindow,
     });
 
     samplesRef.current = prunedSamples;
     seenSampleIdsRef.current = new Set(prunedSamples.map(sample => sample.id));
     setPlot(nextPlot);
-  }, [filterByType, isPoolVisible, paused, sortByLatest, timeWindow]);
+  }, [filterByType, isPoolVisible, paused, timeWindow]);
 
   const chartGeometry = useMemo(() => {
     const margin = {
@@ -259,13 +257,20 @@ export default function LatencyHeatmap({
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+    const poolsText = `${plot.poolNames.length} pools`;
+    const samplesText = `${plot.samples.length} latency samples`;
+    const poolsTextX = margin.left;
+    const samplesTextX = margin.left + 92;
     ctx.fillStyle = primaryText;
-    ctx.fillText(`${plot.poolNames.length} pools`, margin.left, 10);
+    ctx.fillText(poolsText, poolsTextX, 10);
     ctx.fillStyle = mutedText;
-    ctx.fillText(`${plot.samples.length} latency samples`, margin.left + 92, 10);
+    ctx.fillText(samplesText, samplesTextX, 10);
 
     if (showLabels) {
-      const legendX = margin.left + 220;
+      const legendX = headerLegendStartX([
+        { x: poolsTextX, width: ctx.measureText(poolsText).width },
+        { x: samplesTextX, width: ctx.measureText(samplesText).width },
+      ], 28);
       const legendY = 10;
       const maxLegendX = dimensions.width - 16;
       let offsetX = 0;

@@ -1,42 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import LatencyHeatmap from "@/components/LatencyHeatmap";
-import LatencyPageControls from "@/components/LatencyPageControls";
+import InfraLatencyChart from "@/components/InfraLatencyChart";
+import InfraPageControls from "@/components/InfraPageControls";
+import { DEFAULT_INFRA_LATENCY_WINDOW_SECONDS } from "@/components/infraMetricsConfig";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
 
-export default function LatencyPage() {
+export default function InfraPage() {
   const { paused, setPaused } = useGlobalDataStream();
   const { setMenuContent } = useGlobalMenu();
-  const [timeWindow, setTimeWindow] = useState(180);
+  const [timeWindow, setTimeWindow] = useState(DEFAULT_INFRA_LATENCY_WINDOW_SECONDS);
   const [showLabels, setShowLabels] = useState(true);
-  const [sortByLatest, setSortByLatest] = useState(true);
 
   useEffect(() => {
     setMenuContent(
-      <LatencyPageControls
+      <InfraPageControls
         paused={paused}
         setPaused={setPaused}
         timeWindow={timeWindow}
         setTimeWindow={setTimeWindow}
         showLabels={showLabels}
         setShowLabels={setShowLabels}
-        sortByLatest={sortByLatest}
-        setSortByLatest={setSortByLatest}
       />
     );
 
     return () => setMenuContent(null);
-  }, [paused, setMenuContent, setPaused, showLabels, sortByLatest, timeWindow]);
+  }, [paused, setMenuContent, setPaused, showLabels, timeWindow]);
 
   return (
     <main className="h-[calc(100vh-4rem)] w-full p-4">
-      <LatencyHeatmap
+      <InfraLatencyChart
         paused={paused}
         timeWindow={timeWindow}
         showLabels={showLabels}
-        sortByLatest={sortByLatest}
       />
     </main>
   );

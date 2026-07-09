@@ -3,8 +3,8 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from 'next/navigation';
-import { Activity, Table, Workflow, ScatterChart } from "lucide-react";
 import { GlobalMenu } from "./GlobalMenu";
+import { navItems } from "./navigationItems";
 
 interface NavigationProps {
   children: React.ReactNode;
@@ -13,33 +13,6 @@ interface NavigationProps {
 
 export default function Navigation({ children }: NavigationProps) {
   const pathname = usePathname();
-
-  const navItems = [
-    {
-      href: "/",
-      label: "Table",
-      icon: Table,
-      description: "Main view with table and timing chart"
-    },
-    {
-      href: "/timing",
-      label: "Timing",
-      icon: ScatterChart,
-      description: "Full screen pool timing visualization"
-    },
-    {
-      href: "/sankey",
-      label: "Sankey",
-      icon: Workflow,
-      description: "Sankey diagram visualization"
-    },
-    {
-      href: "/latency",
-      label: "Latency",
-      icon: Activity,
-      description: "Realtime pool latency visualization"
-    }
-  ];
   
   return (
     <>

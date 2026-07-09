@@ -73,11 +73,21 @@ export function latencyColorIntensity(latencyMs: number, maxLatencyMs: number): 
   return Math.max(0, Math.min(1, latencyMs / maxLatencyMs));
 }
 
+export function headerLegendStartX(
+  statItems: Array<{ x: number; width: number }>,
+  padding: number
+): number {
+  const statsRightEdge = statItems.reduce(
+    (rightEdge, item) => Math.max(rightEdge, item.x + item.width),
+    0
+  );
+  return statsRightEdge + padding;
+}
+
 export function buildLatencyPlot(
   samples: LatencySample[],
   options: {
     timeWindowSeconds: number;
-    sortByLatest: boolean;
     newestTimestampMs?: number;
   }
 ): LatencyPlot {
@@ -85,20 +95,15 @@ export function buildLatencyPlot(
   const visibleSamples = pruneLatencySamples(samples, newestTimestampMs, options.timeWindowSeconds)
     .sort((a, b) => a.timestampMs - b.timestampMs);
 
-  const poolLatest = new Map<string, number>();
+  const poolNamesSeen = new Set<string>();
   let maxLatencyMs = 0;
 
   visibleSamples.forEach(sample => {
-    poolLatest.set(sample.poolName, Math.max(poolLatest.get(sample.poolName) ?? 0, sample.timestampMs));
+    poolNamesSeen.add(sample.poolName);
     maxLatencyMs = Math.max(maxLatencyMs, sample.latencyMs);
   });
 
-  const poolNames = Array.from(poolLatest.keys()).sort((a, b) => {
-    if (!options.sortByLatest) return a.localeCompare(b);
-
-    const latestDelta = (poolLatest.get(b) ?? 0) - (poolLatest.get(a) ?? 0);
-    return latestDelta !== 0 ? latestDelta : a.localeCompare(b);
-  });
+  const poolNames = Array.from(poolNamesSeen).sort((a, b) => a.localeCompare(b));
 
   return {
     samples: visibleSamples,

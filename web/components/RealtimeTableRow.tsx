@@ -2,7 +2,7 @@ import React from 'react';
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SortedRow } from '@/types/tableTypes';
-import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
+import { formatPrevBlockHash, formatTimeReceived, formatNtime, formatNtimeTooltip } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
 import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
 
@@ -167,8 +167,29 @@ export default function RealtimeTableRowComponent({
             border: row.ntime ? `1px solid ${getTimeColor(formatNtime(row.ntime))}` : "1px solid transparent"
           }}
           className="p-1 truncate text-black"
+          title={row.ntime ? formatNtimeTooltip(row.ntime) : "N/A"}
         >
           {row.ntime ? formatNtime(row.ntime) : "N/A"}
+        </TableCell>
+      )}
+      
+      {columnsVisible.opReturnProtocols && (
+        <TableCell
+          style={{ width: columnWidths.opReturnProtocols || 120 }}
+          className="p-1 truncate text-xs"
+          title={row.opReturnDetails || row.opReturnProtocols || 'No OP_RETURN data'}
+        >
+          {row.opReturnProtocols || 'N/A'}
+        </TableCell>
+      )}
+      
+      {columnsVisible.auxPowHash && (
+        <TableCell
+          style={{ width: columnWidths.auxPowHash || 100 }}
+          className="p-1 truncate font-mono text-xs"
+          title={row.auxPowHash || 'No AuxPOW data'}
+        >
+          {row.auxPowHash ? `${row.auxPowHash.substring(0, 12)}...` : 'N/A'}
         </TableCell>
       )}
       

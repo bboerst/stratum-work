@@ -256,6 +256,8 @@ class Watcher:
         self.retry_delay = 5
         self.enable_stratum_client = enable_stratum_client
         self.stratum_client_port = stratum_client_port
+        self.avg_rtt = 0  # Exponential moving average of RTT in nanoseconds
+        self.last_recv_ts_ns = 0
 
     def parse_url(self, url):
         purl = urlparse(url)
@@ -339,11 +341,18 @@ class Watcher:
         LOG.debug(f"Sending: {data}")
         json_data = json.dumps(data) + "\n"
         self.sock.send(json_data.encode())
+        rtt_start = time.time_ns()
 
         while True:
             msg, ts = self.get_msg()
             if isinstance(msg, dict) and msg.get("id") == request_id:
                 LOG.debug(f"Received response for request {request_id}: {msg}")
+                # Calculate RTT and update EMA
+                rtt = time.time_ns() - rtt_start
+                if self.avg_rtt == 0:
+                    self.avg_rtt = rtt
+                else:
+                    self.avg_rtt = int(self.avg_rtt * 0.8 + rtt * 0.2)
                 return msg
             LOG.info(f"Queued server notification while awaiting response {request_id}: {msg}")
             self.pending_notifications.append((msg, ts))
@@ -383,6 +392,8 @@ class Watcher:
         for attempt in range(self.max_retries):
             try:
                 self.init_socket()
+                # Reset RTT average on new connection
+                self.avg_rtt = 0
                 LOG.info(f"Attempting to connect to {self.purl.hostname}:{self.purl.port}")
                 self.sock.connect((self.purl.hostname, self.purl.port))
                 LOG.info(f"Successfully connected to server {self.purl.geturl()}")
@@ -421,7 +432,12 @@ class Watcher:
     def _process_notification(self, msg, raw_bytes, receipt_ts_ns):
         method = msg.get("method") if isinstance(msg, dict) else None
         if method == "mining.notify":
-            event_time = hex(receipt_ts_ns)[2:]
+            # Subtract estimated one-way latency from receipt timestamp
+            if self.avg_rtt > 0:
+                latency_adjusted_ts = receipt_ts_ns - int(self.avg_rtt / 2)
+            else:
+                latency_adjusted_ts = receipt_ts_ns
+            event_time = hex(latency_adjusted_ts)[2:]
             LOG.info(f"mining.notify job_id={msg['params'][0]} prev_hash={msg['params'][1][:16]}... clean={msg['params'][8]}")
             LOG.debug(f"mining.notify full payload: {msg}")
             document = create_notification_document(msg, self.pool_name, self.extranonce1, self.extranonce2_length, event_time)

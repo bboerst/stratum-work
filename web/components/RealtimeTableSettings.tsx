@@ -32,6 +32,8 @@ export default function RealtimeTableSettings({
     { key: "coinbaseRaw", label: "Coinbase RAW" },
     { key: "timestamp", label: "Time Received" },
     { key: "ntime", label: "Ntime" },
+    { key: "opReturnProtocols", label: "OP_RETURN Protocols" },
+    { key: "auxPowHash", label: "AuxPOW Hash" },
     { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
   ];

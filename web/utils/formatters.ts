@@ -47,11 +47,49 @@ export function formatCoinbaseRaw(
   return coinbase1 + extranonce1 + "00".repeat(extranonce2_length) + coinbase2;
 }
 
-// Format ntime as unix time
-export function formatNtime(ntimeHex: string): string {
+// Format ntime hex string in various formats
+export type NtimeFormat = 'unix' | 'iso' | 'relative' | 'hex';
+
+export function formatNtime(ntimeHex: string, format: NtimeFormat = 'unix'): string {
   try {
-    const unixTime = parseInt(ntimeHex, 16)
-    return unixTime.toString()
+    const unixSeconds = parseInt(ntimeHex, 16);
+    if (isNaN(unixSeconds)) throw new Error('Invalid hex');
+
+    switch (format) {
+      case 'hex':
+        return `0x${ntimeHex}`;
+      case 'iso':
+        return new Date(unixSeconds * 1000).toISOString().replace('T', ' ').substring(0, 19);
+      case 'relative': {
+        const now = Date.now() / 1000;
+        const diff = now - unixSeconds;
+        if (diff < 0) {
+          const absDiff = Math.abs(diff);
+          if (absDiff < 60) return `in ${Math.round(absDiff)}s`;
+          if (absDiff < 3600) return `in ${Math.round(absDiff / 60)}m`;
+          return `in ${Math.round(absDiff / 3600)}h`;
+        }
+        if (diff < 60) return `${Math.round(diff)}s ago`;
+        if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+        return `${Math.round(diff / 86400)}d ago`;
+      }
+      case 'unix':
+      default:
+        return unixSeconds.toString();
+    }
+  } catch {
+    return "N/A";
+  }
+}
+
+// Get tooltip text for ntime (always shows all formats)
+export function formatNtimeTooltip(ntimeHex: string): string {
+  try {
+    const unixSeconds = parseInt(ntimeHex, 16);
+    if (isNaN(unixSeconds)) return "N/A";
+    const iso = new Date(unixSeconds * 1000).toISOString().replace('T', ' ').substring(0, 19);
+    return `Unix: ${unixSeconds}\nISO: ${iso}\nHex: 0x${ntimeHex}`;
   } catch {
     return "N/A";
   }

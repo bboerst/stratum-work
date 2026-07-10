@@ -192,7 +192,7 @@ To simplify local development and testing, you can use `docker-compose` to run a
 
 3. **Build and start the services**:
    ```bash
-   docker-compose up --build
+   ENVIRONMENT=production docker compose up --build
    ```
    This command will:
 	- Build the images for the webapp and collector services.
@@ -207,13 +207,13 @@ To simplify local development and testing, you can use `docker-compose` to run a
 
 6. **Stop the services**:
 
-    To stop and remove the containers, press `Ctrl + C` in your terminal. To remove containers, networks, and images created by docker-compose, run:
+    To stop and remove the containers, press `Ctrl + C` in your terminal. To remove containers, networks, and images created by docker compose, run:
 
     ```bash
-    docker-compose down
+    docker compose down
     ```
 
     To also remove the mongodb volume:
     ```bash
-    docker-compose down -v
+    docker compose down -v
     ```

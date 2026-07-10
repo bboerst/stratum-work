@@ -175,6 +175,62 @@ def identify_pool_from_data(
     return {}
 
 
+def identify_pool_from_templates(
+    pools: Dict[str, Dict[str, Any]], 
+    templates: List[Dict[str, Any]],
+    coinbase_addresses: List[str]
+) -> Dict[str, Any]:
+    """
+    Use block template data (mining.notify messages) to identify mining pools.
+    Complements standard tag/address matching using template attributes.
+    Returns the best matching pool or empty dict.
+    """
+    if not templates:
+        return {}
+    
+    template_tags: set = set()
+    template_addresses: set = set()
+    
+    for tpl in templates:
+        coinbase1 = tpl.get('coinbase1', '')
+        coinbase2 = tpl.get('coinbase2', '')
+        if coinbase1:
+            try:
+                cb_bytes = bytes.fromhex(coinbase1)
+                cb_text = cb_bytes.decode('ascii', errors='replace')
+                for match in re.finditer(r'[A-Za-z][A-Za-z0-9/]{2,}', cb_text):
+                    tag = match.group()
+                    if len(tag) >= 2:
+                        template_tags.add(tag)
+            except Exception:
+                pass
+    
+    for addr in coinbase_addresses:
+        template_addresses.add(addr)
+    
+    if template_addresses:
+        result = identify_by_address(pools, list(template_addresses))
+        if result:
+            result['identification_method'] = 'template_address'
+            return result
+    
+    for tag_str in template_tags:
+        for pool_id, pool in pools.items():
+            for pool_tag in pool.get('tags', []):
+                if pool_tag.lower() in tag_str.lower() or tag_str.lower() in pool_tag.lower():
+                    return {
+                        'id': pool_id,
+                        'name': pool.get('name'),
+                        'slug': pool.get('slug', pool.get('name', '').lower().replace(' ', '-')),
+                        'link': pool.get('link'),
+                        'match_type': 'template_tag',
+                        'identification_method': 'template_tag',
+                        'matched_tag': tag_str,
+                    }
+    
+    return {}
+
+
 def load_pools(db, pool_json_url: str, local_pool_file: str, previous_hash: Optional[int] = None) -> Tuple[Dict[str, Dict[str, Any]], Optional[int], bool]:
     max_retries = 3
     retry_delay = 5

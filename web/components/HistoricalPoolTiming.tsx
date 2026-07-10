@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useLatencyAdjusted } from './TimingDisplayContext';
 
 interface PoolTimingData {
   poolName: string;
   firstSeenTimestamp: string; // Assuming timestamp is a string (e.g., ISO 8601 or Unix ms)
+  firstSeenLatencyMs?: number | null;
   relativeTimeNs?: number; // Add optional field for processed data
 }
 
@@ -73,6 +75,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
   const [timingData, setTimingData] = useState<PoolTimingData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [latencyAdjusted] = useLatencyAdjusted('timing-chart');
 
   useEffect(() => {
     if (blockHeight === null || blockHeight <= 0) {
@@ -93,7 +96,20 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
         
         if (data.length > 0) {
             // Convert mixed-format timestamps (hex ns or ISO) to epoch nanoseconds
-            const timestampsAsNumbers = data.map(d => parseFirstSeenTimestampToNs(d.firstSeenTimestamp));
+            const timestampsAsNumbers = data.map(d => {
+              const rawNs = parseFirstSeenTimestampToNs(d.firstSeenTimestamp);
+              const latencyMs = d.firstSeenLatencyMs;
+              if (
+                latencyAdjusted &&
+                rawNs > 0 &&
+                latencyMs != null &&
+                Number.isFinite(latencyMs) &&
+                latencyMs > 0
+              ) {
+                return rawNs - latencyMs * 1_000_000;
+              }
+              return rawNs;
+            });
             const earliestTimestampValue = Math.min(...timestampsAsNumbers);
 
             const processedData = data.map((d, index) => {
@@ -123,7 +139,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
     };
 
     fetchData();
-  }, [blockHeight]);
+  }, [blockHeight, latencyAdjusted]);
 
   if (blockHeight === null || blockHeight <= 0) {
     return null; // Don't render anything if no valid block is selected

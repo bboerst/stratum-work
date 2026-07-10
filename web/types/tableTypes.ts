@@ -1,10 +1,14 @@
 import { CoinbaseOutputDetail, AuxPowData } from "@/utils/bitcoinUtils";
+import type { TimingVisualKey } from "@/components/TimingDisplayContext";
 
 // Enhanced row with derived fields
 export interface SortedRow {
   // Fields from StratumV1Data (excluding coinbase_outputs)
   pool_name: string;
   timestamp: string; // ISO string format from collector
+  raw_timestamp: string;    // unadjusted receipt timestamp from the collector
+  lat_ms?: number;          // stored short key: one-way latency estimate
+  lat_m?: string;
   job_id: string;
   height: number;
   prev_hash: string;
@@ -57,4 +61,5 @@ export interface RealtimeTableProps {
   showSettings?: boolean;
   onShowSettingsChange?: (showSettings: boolean) => void;
   filterBlockHeight?: number;
-} 
+  latencySettingKey?: TimingVisualKey;
+}

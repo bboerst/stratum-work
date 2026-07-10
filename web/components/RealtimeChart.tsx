@@ -5,6 +5,8 @@ import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType, StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
+import { useLatencyAdjusted } from "./TimingDisplayContext";
+import { effectiveTimestamp } from "@/utils/latency";
 import { CHART_POINT_SIZES } from "@/lib/constants";
 import { 
   detectTemplateChanges, 
@@ -211,7 +213,10 @@ function RealtimeChartBase({
   
   // Pool visibility filter
   const { isPoolVisible } = usePoolFilter();
-  
+
+  // Latency-adjusted display setting (shared with height page via "timing-chart" key)
+  const [latencyAdjusted] = useLatencyAdjusted("timing-chart");
+
   // Check if we're in historical mode (viewing a specific historical block)
   const isHistoricalBlock = filterBlockHeight !== undefined && filterBlockHeight !== -1;
   
@@ -887,12 +892,15 @@ function RealtimeChartBase({
       // Create a map of pool names to indices for consistent y-axis positioning
       const basePoolNames = Array.from(new Set(historicalData.map(item => item.pool_name || 'unknown')));
       // For historical data, we'll temporarily use all points for sorting calculation
-      const tempPoints = historicalData.map(item => ({
-        poolName: item.pool_name || 'unknown',
-        timestamp: typeof item.timestamp === 'string' && item.timestamp.startsWith('0x') 
-          ? parseInt(item.timestamp.replace(/^0x/, ''), 16) / 1000000
-          : parseTimestamp(item.timestamp || 0)
-      }));
+      const tempPoints = historicalData.map(item => {
+        const ts = effectiveTimestamp(item, latencyAdjusted);
+        return {
+          poolName: item.pool_name || 'unknown',
+          timestamp: typeof ts === 'string' && ts.startsWith('0x')
+            ? parseInt(ts.replace(/^0x/, ''), 16) / 1000000
+            : parseTimestamp(ts || 0)
+        };
+      });
       const poolNames = sortPoolNames(basePoolNames, tempPoints as ChartDataPoint[]);
       
       // Create data points directly from historical records
@@ -902,17 +910,18 @@ function RealtimeChartBase({
         // Parse timestamp - try several formats
         let timestamp: number;
         try {
-          if (record.timestamp) {
-            if (typeof record.timestamp === 'string' && record.timestamp.startsWith('0x')) {
+          const effectiveTs = effectiveTimestamp(record, latencyAdjusted);
+          if (effectiveTs) {
+            if (typeof effectiveTs === 'string' && effectiveTs.startsWith('0x')) {
               // Hex-encoded timestamp (nanoseconds)
-              const cleaned = record.timestamp.replace(/^0x/, '');
+              const cleaned = effectiveTs.replace(/^0x/, '');
               timestamp = parseInt(cleaned, 16) / 1000000; // Convert to milliseconds
-            } else if (typeof record.timestamp === 'string' && /^[0-9a-f]+$/i.test(record.timestamp)) {
+            } else if (typeof effectiveTs === 'string' && /^[0-9a-f]+$/i.test(effectiveTs)) {
               // Non-prefixed hex timestamp
-              timestamp = parseInt(record.timestamp, 16) / 1000000; // Convert to milliseconds
+              timestamp = parseInt(effectiveTs, 16) / 1000000; // Convert to milliseconds
             } else {
               // Try as a regular timestamp
-              timestamp = parseTimestamp(record.timestamp);
+              timestamp = parseTimestamp(effectiveTs);
             }
           } else {
             timestamp = Date.now() - Math.random() * 1000; // Random timestamp in last second
@@ -983,7 +992,7 @@ function RealtimeChartBase({
       setChartData(points);
       setHistoricalDataLoaded(true);
     }
-  }, [isHistoricalBlock, historicalData, parseTimestamp, sortPoolNames]);
+  }, [isHistoricalBlock, historicalData, parseTimestamp, sortPoolNames, latencyAdjusted]);
   
   // Prune old data beyond the time window to prevent memory leaks
   const pruneOldData = useCallback((cutoffTimeMs: number) => {
@@ -1154,7 +1163,7 @@ function RealtimeChartBase({
     // Create temporary data points for sorting calculation
     const tempDataForSorting = filteredData.map(item => ({
       poolName: item.pool_name || 'Unknown',
-      timestamp: parseTimestamp(item.timestamp)
+      timestamp: parseTimestamp(effectiveTimestamp(item, latencyAdjusted))
     }));
     
     // Apply sorting to current pool names
@@ -1217,7 +1226,7 @@ function RealtimeChartBase({
     // Transform the data for the chart
     const processedData = filteredData.map(item => {
       // Parse timestamp from the data
-      const timestamp = parseTimestamp(item.timestamp);
+      const timestamp = parseTimestamp(effectiveTimestamp(item, latencyAdjusted));
       
       // Update min/max for domain calculation
       minTimestamp = Math.min(minTimestamp, timestamp);
@@ -1326,7 +1335,7 @@ function RealtimeChartBase({
         maxTimestamp
       }
     };
-  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings, sortPoolNames]);
+  }, [filterBlockHeight, parseTimestamp, pruneOldData, isHistoricalBlock, allPoolNames, maxPoolCount, poolColors, poolRankings, sortPoolNames, latencyAdjusted]);
   
   // Reset pool data history when block height changes
   useEffect(() => {
@@ -1335,6 +1344,19 @@ function RealtimeChartBase({
     // Clear template change detection cache to prevent stale comparisons
     clearTemplateCache();
   }, [filterBlockHeight]);
+
+  // When the latency-adjustment toggle flips, previously plotted points keyed
+  // by their old timestamps would coexist with recomputed ones; drop them and
+  // let the buffered stream repopulate with the new timings. Historical blocks
+  // fully rebuild via their own effect, so they don't need this reset.
+  useEffect(() => {
+    if (!isHistoricalBlock) {
+      poolDataHistoryRef.current.clear();
+      setChartData([]);
+      // Clear template change detection cache to prevent stale comparisons
+      clearTemplateCache();
+    }
+  }, [latencyAdjusted, isHistoricalBlock]);
   
   // Fetch and update data from the global stream or historical data
   useEffect(() => {

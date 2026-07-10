@@ -25,6 +25,8 @@ export interface StratumV1Data {
   coinbase_outputs?: { address: string; value: number }[];
   nbits?: string;
   ntime?: string;
+  lat_ms?: number;          // stored short key: estimated one-way latency at receipt
+  lat_m?: string;           // stored short key: "tcp" (kernel RTT) or "app" (stratum round trip)
 } 
 
 /**

@@ -13,6 +13,7 @@ import {
     clearRequestInFlight,
     getFormattedCoinbaseAsciiTag,
     reportParseFailure,
+    computeCoinbaseScriptSigInfo,
 } from '@/utils/bitcoinUtils';
 import { sortRowsByKey } from '@/utils/sortUtils';
 
@@ -131,6 +132,20 @@ export function useTableData(
         const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
         const computedFirstTx = computeFirstTransaction(row.merkle_branches);
 
+        // Extract OP_RETURN protocol summary
+        const outputProtocols = coinbase_outputs
+          .filter(o => o.type === 'nulldata' && o.decodedData && o.decodedData.protocol !== 'Unknown')
+          .map(o => o.decodedData!.protocol);
+        const opReturnProtocols = outputProtocols.length > 0 ? outputProtocols.join(', ') : undefined;
+        const opReturnDetails = coinbase_outputs
+          .filter(o => o.type === 'nulldata' && o.decodedData && o.decodedData.details)
+          .map(o => `${o.decodedData!.protocol}: ${JSON.stringify(o.decodedData!.details)}`)
+          .join(' | ');
+
+        // Extract AuxPOW hash
+        const scriptSigInfo = computeCoinbaseScriptSigInfo(coinbaseRaw);
+        const auxPowHash = scriptSigInfo?.auxPowData?.auxHashOrRoot || undefined;
+
         return {
           ...row,
           coinbaseRaw,
@@ -139,6 +154,9 @@ export function useTableData(
           first_transaction: computedFirstTx,
           coinbase_outputs,
           signaling_bip110: isSignalingBip110(row.version),
+          opReturnProtocols,
+          opReturnDetails: opReturnDetails || undefined,
+          auxPowHash,
         };
       } catch (err) {
         console.error(
@@ -153,6 +171,8 @@ export function useTableData(
           first_transaction: 'error',
           coinbase_outputs: [],
           signaling_bip110: false,
+          opReturnProtocols: undefined,
+          auxPowHash: undefined,
         };
       }
     });

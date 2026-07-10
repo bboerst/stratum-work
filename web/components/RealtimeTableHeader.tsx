@@ -46,6 +46,8 @@ export default function RealtimeTableHeader({
     { key: "coinbaseRaw", label: "Coinbase RAW" },
     { key: "timestamp", label: "Time Received" },
     { key: "ntime", label: "Ntime" },
+    { key: "opReturnProtocols", label: "OP_RETURN" },
+    { key: "auxPowHash", label: "AuxPOW Hash" },
   ];
 
   // Add a special handler for the timestamp column

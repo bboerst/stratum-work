@@ -228,10 +228,26 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
             )
         else:
             mining_pool = identify_pool_from_data(pools_cache, coinbase_script_sig, coinbase_addresses)
+            # If standard matching failed, try template-based matching
+            if not mining_pool and mongodb_enabled and db is not None:
+                try:
+                    templates = list(
+                        db.mining_notify.find({"height": height, "chain_family": {"$exists": False}}).limit(100)
+                    )
+                    if templates:
+                        mining_pool = identify_pool_from_templates(pools_cache, templates, coinbase_addresses)
+                        if mining_pool:
+                            logger.info(
+                                "Pool identification via templates: name=%s id=%s",
+                                mining_pool.get('name', 'Unknown'),
+                                mining_pool.get('id', 'unknown')
+                            )
+                except Exception as tpl_err:
+                    logger.debug("Template-based pool matching skipped: %s", tpl_err)
             logger.info(
                 "Pool identification via fallback: name=%s id=%s",
-                mining_pool.get('name', 'Unknown'),
-                mining_pool.get('id', 'unknown')
+                mining_pool.get('name', 'Unknown') if mining_pool else 'Unknown',
+                mining_pool.get('id', 'unknown') if mining_pool else 'unknown'
             )
     except Exception as pool_err:
         logger.error(f"Error identifying mining pool at height {height}: {pool_err}")
@@ -324,7 +340,7 @@ def start_full_reindex_background():
 
 from analytics.prev_hash_divergence import analyze_prev_hash_divergence
 from analytics.invalid_coinbase_no_merkle import analyze_invalid_coinbase_without_merkle
-from analytics.pool_identification import analyze_pool_identification, identify_pool_from_data, load_pools
+from analytics.pool_identification import analyze_pool_identification, identify_pool_from_data, load_pools, identify_pool_from_templates
 
 def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coinbase_addresses: List[str] | None = None) -> Dict[str, Any]:
     flags: List[Dict[str, Any]] = []

@@ -20,6 +20,8 @@ export function useColumnVisibility() {
     coinbaseRaw: false,
     timestamp: true,
     ntime: true,
+    opReturnProtocols: false,
+    auxPowHash: false,
     coinbase_outputs: true,
     coinbaseOutputValue: true,
   });
@@ -69,6 +71,8 @@ export function useColumnResizing() {
     nbits: 60,
     timestamp: 85,
     ntime: 72,
+    opReturnProtocols: 120,
+    auxPowHash: 100,
     coinbaseRaw: 120,
     coinbaseOutputValue: 65,
   });

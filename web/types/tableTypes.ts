@@ -35,6 +35,13 @@ export interface SortedRow {
   txLocktime?: number;
   witnessCommitmentNonce?: string | null;
   signaling_bip110?: boolean; // True if bit 4 is set in version (BIP-110 Reduced Data UASF)
+  
+  // OP_RETURN protocol summary (comma-separated protocol names)
+  opReturnProtocols?: string;
+  // AuxPOW hash for display
+  auxPowHash?: string;
+  // OP_RETURN detail string for tooltip
+  opReturnDetails?: string;
 }
 
 // Sort direction type

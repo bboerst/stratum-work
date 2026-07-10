@@ -589,40 +589,36 @@ export function clearRequestInFlight(txid: string): void {
 // Helper function to decode AuxPOW data from coinbase scriptSig 
 const AUXPOW_MAGIC_BYTES = Buffer.from('fabe6d6d', 'hex');
 
-export function decodeAuxPowData(scriptSig: Buffer): AuxPowData | null {
-  const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES);
+export function decodeAuxPowData(scriptSig: Buffer, searchStartIndex: number = 0): AuxPowData | null {
+  const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES, searchStartIndex);
   if (magicIndex === -1) {
     return null; // Magic bytes not found
   }
 
   const dataStartIndex = magicIndex + AUXPOW_MAGIC_BYTES.length;
   
-  // Check minimum length for the hash/root
-  const minLengthForHash = dataStartIndex + 32;
-  if (scriptSig.length < minLengthForHash) {
-    console.warn("AuxPOW: scriptSig too short for aux hash/root after magic bytes.");
+  // Check minimum length for the 32-byte hash
+  if (scriptSig.length < dataStartIndex + 32) {
     return null;
   }
 
-  let auxPowResult: Partial<AuxPowData> = {};
+  const auxPowResult: Partial<AuxPowData> = {};
 
   try {
-    // Always extract the 32-byte hash/root
+    // Always extract the 32-byte hash/root, reversed for display (internal byte order)
     auxPowResult.auxHashOrRoot = scriptSig.slice(dataStartIndex, dataStartIndex + 32).reverse().toString('hex');
 
-    // Check if there's enough data for size and nonce (Dogecoin style)
+    // Check if there's enough data for merkle size (4 bytes) and nonce (4 bytes) - 40 bytes total after magic
     const expectedFullLength = dataStartIndex + 32 + 4 + 4;
     if (scriptSig.length >= expectedFullLength) {
-      // Attempt to read size and nonce
       auxPowResult.merkleSize = scriptSig.readUInt32LE(dataStartIndex + 32);
-      auxPowResult.nonce = scriptSig.readUInt32LE(dataStartIndex + 32 + 4);
-    } // else -> Size and nonce are not present immediately after hash
+      auxPowResult.nonce = scriptSig.readUInt32LE(dataStartIndex + 36);
+    }
 
     return auxPowResult as AuxPowData;
     
   } catch (error) {
     console.error("Error decoding AuxPOW data:", error);
-    // Return at least the hash if possible, even if size/nonce parsing failed unexpectedly after length check
     if (auxPowResult.auxHashOrRoot) {
        return { auxHashOrRoot: auxPowResult.auxHashOrRoot };
     }
@@ -662,15 +658,15 @@ export function decodeCoinbaseScriptSigInfo(scriptSig: Buffer): CoinbaseScriptSi
     remainingParts = []; // Clear parts in case partial push was added
   }
 
-  // Try parsing AuxPOW data from the *entire* original script
-  auxPowData = decodeAuxPowData(scriptSig); 
+  // Try parsing AuxPOW data from the script, starting *after* the parsed height push
+  auxPowData = decodeAuxPowData(scriptSig, currentIndex); 
 
   // Determine remaining parts excluding height (if parsed) and AuxPOW (if found)
   if (auxPowData) {
-    const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES);
+    const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES, currentIndex);
     if (magicIndex !== -1) {
       const auxDataStart = magicIndex;
-      const auxDataEnd = magicIndex + AUXPOW_MAGIC_BYTES.length + 32 + (auxPowData.merkleSize !== undefined ? 8 : 0); // End includes root + optional size/nonce
+      const auxDataEnd = magicIndex + AUXPOW_MAGIC_BYTES.length + 32 + (auxPowData.merkleSize !== undefined ? 8 : 0); 
       
       // Add segment before AuxPOW, respecting already processed height bytes
       if (auxDataStart > currentIndex) {

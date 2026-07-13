@@ -229,7 +229,7 @@ def classify_notification_chain(height: int, prev_hash: str) -> str | None:
         return None
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0, stratum_user_agent=None):
         self.buf = b""
         self.id = 1
         self.userpass = userpass
@@ -262,11 +262,17 @@ class Watcher:
         self.enable_stratum_client = enable_stratum_client
         self.stratum_client_port = stratum_client_port
         self.latency_probe_interval = latency_probe_interval
+        self.stratum_user_agent = stratum_user_agent
         self.latency_tracker = LatencyTracker(proxied=use_proxy)
         self.send_lock = threading.Lock()
         self.last_recv_monotonic_ns = 0
         self._probe_stop = threading.Event()
         self._probe_thread = None
+
+    def subscribe_params(self):
+        if self.stratum_user_agent is None:
+            return []
+        return [self.stratum_user_agent]
 
     def parse_url(self, url):
         purl = urlparse(url)
@@ -385,7 +391,11 @@ class Watcher:
                     request_id = self.id
                     self.id += 1
                     payload = json.dumps(
-                        {"id": request_id, "method": "mining.subscribe", "params": []}
+                        {
+                            "id": request_id,
+                            "method": "mining.subscribe",
+                            "params": self.subscribe_params(),
+                        }
                     ) + "\n"
                     self.latency_tracker.record_send(request_id, time.monotonic_ns())
                     sock.sendall(payload.encode())
@@ -452,7 +462,9 @@ class Watcher:
 
                 if not self.enable_stratum_client:
                     LOG.info("Sending mining.subscribe request")
-                    sub_resp = self.send_jsonrpc("mining.subscribe", [])
+                    sub_resp = self.send_jsonrpc(
+                        "mining.subscribe", self.subscribe_params()
+                    )
                     if sub_resp.get("error"):
                         LOG.warning(f"Subscribe error from pool: {sub_resp}")
                     if sub_resp.get("result") is not None:
@@ -518,7 +530,7 @@ class Watcher:
                 self._process_notification(n, None, receipt_ts)
                 if keep_alive and time.time() - last_subscribe_time > 480:
                     LOG.info("Keep-alive interval reached")
-                    self.send_jsonrpc("mining.subscribe", [])
+                    self.send_jsonrpc("mining.subscribe", self.subscribe_params())
                     last_subscribe_time = time.time()
                     LOG.info("Keep-alive cycle completed")
             except (EOFError, ConnectionResetError, socket.timeout) as e:
@@ -643,7 +655,7 @@ def insert_notification(document, db_url, db_name, db_username, db_password):
     result = collection.insert_one(document)
     LOG.info(f"Inserted document with id {result.inserted_id}")
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Subscribe to a Stratum endpoint and listen for new work"
     )
@@ -702,6 +714,14 @@ def main():
     )
     parser.add_argument(
         "--stratum-client-port", type=int, default=3333, help="Port to listen for Stratum client connections (default: 3333)"
+    )
+    parser.add_argument(
+        "--stratum-user-agent",
+        default=None,
+        help=(
+            "Client identifier sent with mining.subscribe "
+            "(default: omit the identifier)"
+        ),
     )
     parser.add_argument(
         "--bitcoin-zmq-block",
@@ -763,7 +783,11 @@ def main():
         default=60.0,
         help="Seconds between latency probe requests to the pool (0 disables; default: 60)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     if args.pool_name is None:
         args.pool_name = urlparse(args.url).hostname
@@ -817,7 +841,8 @@ def main():
                     args.use_proxy, args.proxy_host, args.proxy_port,
                     enable_stratum_client=True, stratum_client_port=args.stratum_client_port,
                     rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
-                    latency_probe_interval=args.latency_probe_interval
+                    latency_probe_interval=args.latency_probe_interval,
+                    stratum_user_agent=args.stratum_user_agent,
                 )
                 if rabbitmq_enabled:
                     w.connect_to_rabbitmq()
@@ -850,7 +875,8 @@ def main():
                 args.use_proxy, args.proxy_host, args.proxy_port,
                 enable_stratum_client=False,
                 rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
-                latency_probe_interval=args.latency_probe_interval
+                latency_probe_interval=args.latency_probe_interval,
+                stratum_user_agent=args.stratum_user_agent,
             )
             try:
                 if rabbitmq_enabled:

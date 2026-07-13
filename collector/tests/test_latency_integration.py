@@ -17,7 +17,7 @@ sys.modules.setdefault("pycoin", types.SimpleNamespace())
 sys.modules.setdefault("pycoin.symbols", types.SimpleNamespace())
 sys.modules.setdefault("pycoin.symbols.btc", types.SimpleNamespace(network=fake_network))
 
-from collector.main import Watcher, create_notification_document
+from collector.main import Watcher, build_parser, create_notification_document
 
 NOTIFY_PARAMS = [
     "job1",
@@ -32,7 +32,7 @@ NOTIFY_PARAMS = [
 ]
 
 
-def make_watcher():
+def make_watcher(**kwargs):
     return Watcher(
         "stratum+tcp://pool.example:3333",
         "user:pass",
@@ -40,6 +40,7 @@ def make_watcher():
         "localhost", 5672, None, None, "exchange",
         "localhost", "db", None, None,
         rabbitmq_enabled=False, db_enabled=False,
+        **kwargs,
     )
 
 
@@ -60,6 +61,32 @@ class DocumentLatencyFieldsTests(unittest.TestCase):
         )
         self.assertNotIn("lat_ms", doc)
         self.assertNotIn("lat_m", doc)
+
+
+class WatcherSubscribeParamsTests(unittest.TestCase):
+    def test_subscribe_params_are_empty_when_user_agent_is_omitted(self):
+        self.assertEqual(make_watcher().subscribe_params(), [])
+
+    def test_subscribe_params_include_configured_user_agent(self):
+        watcher = make_watcher(stratum_user_agent="cgminer/4.12.1")
+        self.assertEqual(watcher.subscribe_params(), ["cgminer/4.12.1"])
+
+
+class StratumUserAgentArgumentTests(unittest.TestCase):
+    def test_user_agent_defaults_to_none(self):
+        args = build_parser().parse_args([
+            "--url", "stratum+tcp://pool.example:3333",
+            "--userpass", "user:pass",
+        ])
+        self.assertIsNone(args.stratum_user_agent)
+
+    def test_user_agent_accepts_override(self):
+        args = build_parser().parse_args([
+            "--url", "stratum+tcp://pool.example:3333",
+            "--userpass", "user:pass",
+            "--stratum-user-agent", "cgminer/4.12.1",
+        ])
+        self.assertEqual(args.stratum_user_agent, "cgminer/4.12.1")
 
 
 class WatcherLatencyWiringTests(unittest.TestCase):

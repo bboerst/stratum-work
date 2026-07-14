@@ -154,7 +154,7 @@ Guidelines:
 
 ## Local Development with Docker-Compose
 
-To simplify local development and testing, you can use `docker-compose` to run all the components on your machine. This allows you to quickly spin up RabbitMQ, MongoDB, a web application container, and one or more collector containers.
+To simplify local development and testing, you can use `docker compose` to run all the components on your machine. This allows you to quickly spin up RabbitMQ, MongoDB, a web application container, and one or more collector containers.
 
 ### Prerequisites
 
@@ -192,7 +192,7 @@ To simplify local development and testing, you can use `docker-compose` to run a
 
 3. **Build and start the services**:
    ```bash
-   docker-compose up --build
+   ENVIRONMENT=production docker compose up --build
    ```
    This command will:
 	- Build the images for the webapp and collector services.
@@ -210,10 +210,10 @@ To simplify local development and testing, you can use `docker-compose` to run a
     To stop and remove the containers, press `Ctrl + C` in your terminal. To remove containers, networks, and images created by docker-compose, run:
 
     ```bash
-    docker-compose down
+    ENVIRONMENT=production docker compose down
     ```
 
     To also remove the mongodb volume:
     ```bash
-    docker-compose down -v
+    ENVIRONMENT=production docker compose down -v
     ```

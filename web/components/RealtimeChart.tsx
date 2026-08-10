@@ -11,6 +11,7 @@ import {
   detectTemplateChanges, 
   getChangeTypeDisplay,
   TemplateChangeResult,
+  TemplateChangeType,
   clearTemplateCache
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
@@ -97,6 +98,98 @@ const stringToColor = (str: string): string => {
   // Convert to HSL with fixed saturation and lightness for better visibility
   const h = Math.abs(hash % 360);
   return `hsl(${h}, 70%, 50%)`;
+};
+
+// Neutral gray for segments with no visible changes
+const NO_CHANGE_COLOR = 'hsl(0, 0%, 35%)';
+
+// Change types that are filtered from display (mirrors hiddenChangeTypes in getChangeTypeDisplay)
+const HIDDEN_CHANGE_TYPES = new Set([
+  TemplateChangeType.NTIME,
+  TemplateChangeType.COINBASE_OUTPUT_VALUE,
+  TemplateChangeType.OP_RETURN_WITNESS,
+  TemplateChangeType.COINBASE_ASCII,
+]);
+
+// Extract a deterministic content string from the new values of visible changes.
+// Two pools with the same actual changes (e.g. same RSK hash + same merkle branches)
+// produce the same content string and thus the same color.
+const extractChangeContentKey = (changeInfo: TemplateChangeResult): string => {
+  if (!changeInfo.hasChanges || changeInfo.changeTypes.length === 0) return '';
+
+  const visibleTypes = changeInfo.changeTypes.filter(t => !HIDDEN_CHANGE_TYPES.has(t));
+  if (visibleTypes.length === 0) return '';
+
+  const parts: string[] = [];
+  const d = changeInfo.changeDetails;
+
+  // Add content for each visible change type, sorted for determinism
+  const sortedTypes = [...visibleTypes].sort();
+  for (const type of sortedTypes) {
+    switch (type) {
+      case TemplateChangeType.AUXPOW_HASH:
+        parts.push(`A:${d.auxPowHash?.new ?? ''}`);
+        break;
+      case TemplateChangeType.MERKLE_BRANCHES:
+        parts.push(`M:${(d.merkleBranches?.new ?? []).join(',')}`);
+        break;
+      case TemplateChangeType.CLEAN_JOBS:
+        parts.push(`C:${d.cleanJobs?.new ?? ''}`);
+        break;
+      case TemplateChangeType.PREV_HASH:
+        parts.push(`P:${d.prevHash?.new ?? ''}`);
+        break;
+      case TemplateChangeType.HEIGHT:
+        parts.push(`H:${d.height?.new ?? ''}`);
+        break;
+      case TemplateChangeType.VERSION:
+        parts.push(`V:${d.version?.new ?? ''}`);
+        break;
+      case TemplateChangeType.NBITS:
+        parts.push(`N:${d.nbits?.new ?? ''}`);
+        break;
+      case TemplateChangeType.EXTRANONCE2_LENGTH:
+        parts.push(`E:${d.extranonce2Length?.new ?? ''}`);
+        break;
+      case TemplateChangeType.TX_VERSION:
+        parts.push(`X:${d.txVersion?.new ?? ''}`);
+        break;
+      case TemplateChangeType.TX_LOCKTIME:
+        parts.push(`L:${d.txLocktime?.new ?? ''}`);
+        break;
+      case TemplateChangeType.INPUT_SEQUENCE:
+        parts.push(`I:${d.inputSequence?.new ?? ''}`);
+        break;
+      case TemplateChangeType.WITNESS_NONCE:
+        parts.push(`W:${d.witnessNonce?.new ?? ''}`);
+        break;
+      case TemplateChangeType.COINBASE_OUTPUTS:
+        parts.push(`U:${JSON.stringify(d.coinbaseOutputs?.new ?? [])}`);
+        break;
+      case TemplateChangeType.AUXPOW_MERKLE_SIZE:
+        parts.push(`K:${d.auxPowMerkleSize?.new ?? ''}`);
+        break;
+      case TemplateChangeType.AUXPOW_NONCE:
+        parts.push(`J:${d.auxPowNonce?.new ?? ''}`);
+        break;
+      default: {
+        // OP_RETURN protocol changes — include protocol name and new data
+        if (d.opReturnProtocols) {
+          // Find the protocol name(s) that map to this change type
+          for (const protocol of d.opReturnProtocols.changed) {
+            const newData = d.opReturnProtocols.new.get(protocol);
+            const contentStr = newData?.dataHex ?? JSON.stringify(newData?.details ?? '');
+            parts.push(`${type}:${protocol}:${contentStr}`);
+          }
+        } else {
+          parts.push(`${type}:`);
+        }
+        break;
+      }
+    }
+  }
+
+  return parts.join('|');
 };
 
 // Determine if a color is light or dark to choose appropriate text color
@@ -496,11 +589,22 @@ function RealtimeChartBase({
     const barRowHeight = availableHeight / barDenominator;
     const barHeight = Math.max(barRowHeight, 1); // Full row height — no vertical padding
 
-    groupedData.forEach((points, poolName) => {
-      const color = poolColors[poolName] || stringToColor(poolName);
-      const rgbColor = hslToRgb(color);
-      const textColor = getContrastingTextColor(color);
+    // Cache computed segment colors keyed by change content to avoid redundant conversions
+    const segmentColorCache = new Map<string, { hsl: string; rgb: string; text: string }>();
+    const getSegmentColor = (changeInfo: TemplateChangeResult | undefined) => {
+      const contentKey = changeInfo ? extractChangeContentKey(changeInfo) : '';
+      let cached = segmentColorCache.get(contentKey);
+      if (!cached) {
+        const hsl = contentKey ? stringToColor(contentKey) : NO_CHANGE_COLOR;
+        const rgb = hslToRgb(hsl);
+        const text = getContrastingTextColor(hsl);
+        cached = { hsl, rgb, text };
+        segmentColorCache.set(contentKey, cached);
+      }
+      return cached;
+    };
 
+    groupedData.forEach((points, poolName) => {
       // Sort points oldest to newest (should already be sorted, but ensure)
       const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
 
@@ -528,8 +632,11 @@ function RealtimeChartBase({
         const xEnd = Math.min(rawXEnd, dimensions.width - margin.right);
         const barWidth = Math.max(xEnd - xStart, 1);
 
+        // Color from the segment's change content (deterministic per unique change set)
+        const segColor = getSegmentColor(point.changeInfo);
+
         // Draw bar fill
-        ctx.fillStyle = rgbColor;
+        ctx.fillStyle = segColor.rgb;
         ctx.fillRect(xStart, barTop, barWidth, barHeight);
 
         // Draw a dark divider at the segment boundary (right edge of this bar)
@@ -549,7 +656,7 @@ function RealtimeChartBase({
 
           const textWidth = ctx.measureText(text).width;
           if (textWidth + 4 <= barWidth) {
-            ctx.fillStyle = textColor;
+            ctx.fillStyle = segColor.text;
             ctx.fillText(text, xStart + barWidth / 2, y);
           } else if (barWidth >= 3) {
             // Too narrow for text — draw thin white tick at segment start
@@ -560,7 +667,7 @@ function RealtimeChartBase({
 
         // Draw pool name label once per pool on the first segment where it fits
         if (showLabels && !labelDrawn) {
-          ctx.fillStyle = textColor;
+          ctx.fillStyle = segColor.text;
           ctx.font = `${Math.max(7, Math.round(9 * uiFontScale))}px sans-serif`;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
@@ -619,25 +726,26 @@ function RealtimeChartBase({
       
       stablePoolNames.forEach((poolName, index) => {
         const y = poolIndexToPixel(index, poolName);
-        const color = poolColors[poolName] || stringToColor(poolName);
-        const rgbColor = hslToRgb(color);
-        
+
+        // Use the latest segment's change-based color for the pool label
+        const poolDataPoints = visibleChartData.filter(point => point.poolName === poolName);
+        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        const segColor = getSegmentColor(latestPoint?.changeInfo);
+
         // Calculate background width extending to right edge with padding
         const rightPadding = poolNamesInnerPadding;
         const backgroundWidth = dimensions.width - (poolNamesX - 2) - rightPadding;
-        
+
         // Draw colored background rectangle extending full row height and to right edge
-        ctx.fillStyle = rgbColor;
+        ctx.fillStyle = segColor.rgb;
         ctx.fillRect(poolNamesX - 2, y - rowHeight/2, backgroundWidth, rowHeight);
-        
+
         // Draw pool name with contrasting text color and left padding
-        const textColor = getContrastingTextColor(color);
+        const textColor = segColor.text;
         const textPadding = Math.max(4, poolNamesInnerPadding - 2); // Left padding for the text
         const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
         
-        // Get ASCII tag for this pool (from latest data point)
-        const poolDataPoints = visibleChartData.filter(point => point.poolName === poolName);
-        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        // Get ASCII tag from the latest data point (already computed above)
         const asciiTag = showPoolAsciiTag ? (latestPoint?.asciiTag || '') : '';
         
         // Draw pool name: either truncate with ellipsis, or reduce font size to fit.
@@ -720,7 +828,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, visibleChartData, hoveredPoint, showLabels, poolColors, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
+  }, [dimensions, visibleChartData, hoveredPoint, showLabels, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {

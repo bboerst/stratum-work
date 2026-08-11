@@ -587,7 +587,7 @@ function RealtimeChartBase({
     // Draw contiguous bar segments for each pool
     const barDenominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
     const barRowHeight = availableHeight / barDenominator;
-    const barHeight = Math.max(barRowHeight, 1); // Full row height — no vertical padding
+    const barHeight = Math.max(barRowHeight - 1, 1); // 1px vertical gap between rows
 
     // Cache computed segment colors keyed by change content to avoid redundant conversions
     const segmentColorCache = new Map<string, { hsl: string; rgb: string; text: string }>();
@@ -1035,11 +1035,18 @@ function RealtimeChartBase({
     }
   }, [isHistoricalBlock, historicalData, parseTimestamp, sortPoolNames, latencyAdjusted]);
   
-  // Prune old data beyond the time window to prevent memory leaks
+  // Prune old data beyond the time window to prevent memory leaks.
+  // Keeps one extra point before the cutoff so the bar segment straddling
+  // the left edge retains its starting point and scrolls off naturally.
   const pruneOldData = useCallback((cutoffTimeMs: number) => {
     poolDataHistoryRef.current.forEach((history, poolName) => {
-      const prunedHistory = history.filter(point => point.timestamp >= cutoffTimeMs);
-      poolDataHistoryRef.current.set(poolName, prunedHistory);
+      const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
+      if (firstInWindowIdx === -1) {
+        poolDataHistoryRef.current.set(poolName, []);
+        return;
+      }
+      const startIdx = Math.max(0, firstInWindowIdx - 1);
+      poolDataHistoryRef.current.set(poolName, history.slice(startIdx));
     });
   }, []);
   
@@ -1105,7 +1112,7 @@ function RealtimeChartBase({
       if (poolIndex < 0) return;
 
       const rowCenterY = margin.top + (poolIndex / denominator) * availableHeight;
-      const barHeight = Math.max(rowHeight, 1);
+      const barHeight = Math.max(rowHeight - 1, 1);
 
       // Check if mouse y is within this pool's row
       if (y < rowCenterY - barHeight / 2 || y > rowCenterY + barHeight / 2) return;
@@ -1352,8 +1359,12 @@ function RealtimeChartBase({
       const resultPoints: ChartDataPoint[] = [];
       
       poolDataHistoryRef.current.forEach((history) => {
-        const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
-        resultPoints.push(...pointsInTimeWindow);
+        // Include one point before the cutoff so the bar segment straddling
+        // the left edge still has its starting point and can scroll off naturally
+        const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
+        if (firstInWindowIdx === -1) return; // No points in window
+        const startIdx = Math.max(0, firstInWindowIdx - 1);
+        resultPoints.push(...history.slice(startIdx));
       });
 
       // Global ordering: render oldest first, newest last for consistent overlap behavior.

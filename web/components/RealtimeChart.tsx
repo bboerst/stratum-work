@@ -7,12 +7,11 @@ import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
 import { useLatencyAdjusted } from "./TimingDisplayContext";
 import { effectiveTimestamp } from "@/utils/latency";
-import { 
-  detectTemplateChanges, 
+import {
+  TemplateChangeTracker,
   getChangeTypeDisplay,
   TemplateChangeResult,
   TemplateChangeType,
-  clearTemplateCache
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 
@@ -370,6 +369,10 @@ function RealtimeChartBase({
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
   const dimensionsRef = useRef(dimensions);
+  // Change detection is stateful per pool; keep the tracker in a ref so the
+  // baselines survive re-renders and batched updates. Reset when the viewed
+  // block height changes or when latency adjustment re-keys the timeline.
+  const changeTrackerRef = useRef<TemplateChangeTracker>(new TemplateChangeTracker());
   
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
@@ -416,9 +419,9 @@ function RealtimeChartBase({
       // Clear existing data when switching between blocks
       poolDataHistoryRef.current.clear();
       setChartData([]);
-      
-      // Clear template change detection cache to prevent stale comparisons
-      clearTemplateCache();
+
+      // Reset change-detection baselines to prevent stale cross-height comparisons
+      changeTrackerRef.current.reset();
       
       // Reset pool tracking when switching blocks
       if (isHistoricalBlock) {
@@ -943,10 +946,36 @@ function RealtimeChartBase({
         };
       });
       const poolNames = sortPoolNames(basePoolNames, tempPoints as ChartDataPoint[]);
-      
+
+      // Compute change detection per pool in chronological order. Historical
+      // records are grouped by pool and fed through a fresh tracker so that
+      // each template is compared against the previous template from the same
+      // pool — the historical view previously never computed changes at all.
+      const tracker = new TemplateChangeTracker();
+      const recordsByPool = new Map<string, StratumV1Data[]>();
+      historicalData.forEach(record => {
+        const poolName = record.pool_name || 'unknown';
+        const list = recordsByPool.get(poolName);
+        if (list) {
+          list.push(record);
+        } else {
+          recordsByPool.set(poolName, [record]);
+        }
+      });
+      const changeInfoByRecord = new Map<StratumV1Data, TemplateChangeResult>();
+      recordsByPool.forEach(records => {
+        records.sort((a, b) =>
+          parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
+          parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
+        );
+        records.forEach(record => {
+          changeInfoByRecord.set(record, tracker.process(record));
+        });
+      });
+
       // Create data points directly from historical records
       const points: ChartDataPoint[] = [];
-      
+
       historicalData.forEach(record => {
         // Parse timestamp - try several formats
         let timestamp: number;
@@ -982,6 +1011,8 @@ function RealtimeChartBase({
               )
             : '';
 
+          const changeInfo = changeInfoByRecord.get(record);
+
           points.push({
             timestamp,
             poolName,
@@ -993,6 +1024,8 @@ function RealtimeChartBase({
             nbits: record.nbits,
             ntime: record.ntime,
             asciiTag,
+            changeInfo,
+            changeDisplay: changeInfo ? getChangeTypeDisplay(changeInfo.changeTypes) : '',
             // Fields needed for asciiTag calculation
             coinbase1: record.coinbase1,
             coinbase2: record.coinbase2,
@@ -1280,22 +1313,47 @@ function RealtimeChartBase({
     let minTimestamp = Number.MAX_SAFE_INTEGER;
     let maxTimestamp = 0;
     
+    // Change detection is sequential per pool: each message must be compared
+    // against the chronologically-previous message from the same pool. The
+    // incoming batch may interleave pools, so group by pool and process each
+    // pool's messages in timestamp order before mapping to chart points.
+    const changeInfoByItem = new Map<StratumV1Data, TemplateChangeResult>();
+    const itemsByPool = new Map<string, StratumV1Data[]>();
+    filteredData.forEach(item => {
+      const poolName = item.pool_name || 'Unknown';
+      const list = itemsByPool.get(poolName);
+      if (list) {
+        list.push(item);
+      } else {
+        itemsByPool.set(poolName, [item]);
+      }
+    });
+    const tracker = changeTrackerRef.current;
+    itemsByPool.forEach(items => {
+      items.sort((a, b) =>
+        parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
+        parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
+      );
+      items.forEach(item => {
+        changeInfoByItem.set(item, tracker.process(item));
+      });
+    });
+
     // Transform the data for the chart
     const processedData = filteredData.map(item => {
       // Parse timestamp from the data
       const timestamp = parseTimestamp(effectiveTimestamp(item, latencyAdjusted));
-      
+
       // Update min/max for domain calculation
       minTimestamp = Math.min(minTimestamp, timestamp);
       maxTimestamp = Math.max(maxTimestamp, timestamp);
-      
+
       // Use current rankings or default to an evenly distributed value
       const poolName = item.pool_name || 'Unknown';
-      const poolIndex = poolRankings.get(poolName) || 
+      const poolIndex = poolRankings.get(poolName) ||
         (sortedCurrentPoolNames.indexOf(poolName) + 1) || 1;
-      
-      // Detect template changes using the new simplified interface
-      const changeInfo = detectTemplateChanges(item);
+
+      const changeInfo = changeInfoByItem.get(item)!;
       const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
       
       // Get ASCII tag from coinbase script sig
@@ -1402,8 +1460,8 @@ function RealtimeChartBase({
   useEffect(() => {
     poolDataHistoryRef.current.clear();
     setChartData([]);
-    // Clear template change detection cache to prevent stale comparisons
-    clearTemplateCache();
+    // Reset change-detection baselines to prevent stale comparisons
+    changeTrackerRef.current.reset();
   }, [filterBlockHeight]);
 
   // When the latency-adjustment toggle flips, previously plotted points keyed
@@ -1414,8 +1472,8 @@ function RealtimeChartBase({
     if (!isHistoricalBlock) {
       poolDataHistoryRef.current.clear();
       setChartData([]);
-      // Clear template change detection cache to prevent stale comparisons
-      clearTemplateCache();
+      // Reset change-detection baselines to prevent stale comparisons
+      changeTrackerRef.current.reset();
     }
   }, [latencyAdjusted, isHistoricalBlock]);
   

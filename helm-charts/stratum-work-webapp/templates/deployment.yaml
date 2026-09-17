@@ -62,7 +62,11 @@ spec:
       automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -79,8 +83,24 @@ spec:
               fieldRef:
                 fieldPath: status.podIP
           {{- range $key, $val := .Values.env }}
+          {{- if hasKey $.Values.envValueFrom $key }}
+          {{- fail (printf "env and envValueFrom both define %s" $key) }}
+          {{- end }}
           - name: {{ $key }}
             value: {{ $val | quote }}
+          {{- end }}
+          {{- range $key, $ref := .Values.envValueFrom }}
+          - name: {{ $key }}
+            valueFrom:
+              {{- toYaml $ref | nindent 14 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - name: "nextjs"

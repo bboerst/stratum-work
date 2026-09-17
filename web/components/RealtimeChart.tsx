@@ -7,12 +7,11 @@ import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
 import { useLatencyAdjusted } from "./TimingDisplayContext";
 import { effectiveTimestamp } from "@/utils/latency";
-import { CHART_POINT_SIZES } from "@/lib/constants";
-import { 
-  detectTemplateChanges, 
+import {
+  TemplateChangeTracker,
   getChangeTypeDisplay,
   TemplateChangeResult,
-  clearTemplateCache
+  TemplateChangeType,
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 
@@ -98,6 +97,98 @@ const stringToColor = (str: string): string => {
   // Convert to HSL with fixed saturation and lightness for better visibility
   const h = Math.abs(hash % 360);
   return `hsl(${h}, 70%, 50%)`;
+};
+
+// Neutral gray for segments with no visible changes
+const NO_CHANGE_COLOR = 'hsl(0, 0%, 35%)';
+
+// Change types that are filtered from display (mirrors hiddenChangeTypes in getChangeTypeDisplay)
+const HIDDEN_CHANGE_TYPES = new Set([
+  TemplateChangeType.NTIME,
+  TemplateChangeType.COINBASE_OUTPUT_VALUE,
+  TemplateChangeType.OP_RETURN_WITNESS,
+  TemplateChangeType.COINBASE_ASCII,
+]);
+
+// Extract a deterministic content string from the new values of visible changes.
+// Two pools with the same actual changes (e.g. same RSK hash + same merkle branches)
+// produce the same content string and thus the same color.
+const extractChangeContentKey = (changeInfo: TemplateChangeResult): string => {
+  if (!changeInfo.hasChanges || changeInfo.changeTypes.length === 0) return '';
+
+  const visibleTypes = changeInfo.changeTypes.filter(t => !HIDDEN_CHANGE_TYPES.has(t));
+  if (visibleTypes.length === 0) return '';
+
+  const parts: string[] = [];
+  const d = changeInfo.changeDetails;
+
+  // Add content for each visible change type, sorted for determinism
+  const sortedTypes = [...visibleTypes].sort();
+  for (const type of sortedTypes) {
+    switch (type) {
+      case TemplateChangeType.AUXPOW_HASH:
+        parts.push(`A:${d.auxPowHash?.new ?? ''}`);
+        break;
+      case TemplateChangeType.MERKLE_BRANCHES:
+        parts.push(`M:${(d.merkleBranches?.new ?? []).join(',')}`);
+        break;
+      case TemplateChangeType.CLEAN_JOBS:
+        parts.push(`C:${d.cleanJobs?.new ?? ''}`);
+        break;
+      case TemplateChangeType.PREV_HASH:
+        parts.push(`P:${d.prevHash?.new ?? ''}`);
+        break;
+      case TemplateChangeType.HEIGHT:
+        parts.push(`H:${d.height?.new ?? ''}`);
+        break;
+      case TemplateChangeType.VERSION:
+        parts.push(`V:${d.version?.new ?? ''}`);
+        break;
+      case TemplateChangeType.NBITS:
+        parts.push(`N:${d.nbits?.new ?? ''}`);
+        break;
+      case TemplateChangeType.EXTRANONCE2_LENGTH:
+        parts.push(`E:${d.extranonce2Length?.new ?? ''}`);
+        break;
+      case TemplateChangeType.TX_VERSION:
+        parts.push(`X:${d.txVersion?.new ?? ''}`);
+        break;
+      case TemplateChangeType.TX_LOCKTIME:
+        parts.push(`L:${d.txLocktime?.new ?? ''}`);
+        break;
+      case TemplateChangeType.INPUT_SEQUENCE:
+        parts.push(`I:${d.inputSequence?.new ?? ''}`);
+        break;
+      case TemplateChangeType.WITNESS_NONCE:
+        parts.push(`W:${d.witnessNonce?.new ?? ''}`);
+        break;
+      case TemplateChangeType.COINBASE_OUTPUTS:
+        parts.push(`U:${JSON.stringify(d.coinbaseOutputs?.new ?? [])}`);
+        break;
+      case TemplateChangeType.AUXPOW_MERKLE_SIZE:
+        parts.push(`K:${d.auxPowMerkleSize?.new ?? ''}`);
+        break;
+      case TemplateChangeType.AUXPOW_NONCE:
+        parts.push(`J:${d.auxPowNonce?.new ?? ''}`);
+        break;
+      default: {
+        // OP_RETURN protocol changes — include protocol name and new data
+        if (d.opReturnProtocols) {
+          // Find the protocol name(s) that map to this change type
+          for (const protocol of d.opReturnProtocols.changed) {
+            const newData = d.opReturnProtocols.new.get(protocol);
+            const contentStr = newData?.dataHex ?? JSON.stringify(newData?.details ?? '');
+            parts.push(`${type}:${protocol}:${contentStr}`);
+          }
+        } else {
+          parts.push(`${type}:`);
+        }
+        break;
+      }
+    }
+  }
+
+  return parts.join('|');
 };
 
 // Determine if a color is light or dark to choose appropriate text color
@@ -192,7 +283,6 @@ function RealtimeChartBase({
   paused = false, 
   filterBlockHeight,
   timeWindow = 30, // Default to 30 seconds
-  pointSize,
   fontScale = 1,
   chartSidePadding = 20,
   hideHeader = false,
@@ -241,7 +331,7 @@ function RealtimeChartBase({
     [showPoolNames, poolNamesPanelWidth]
   );
   const chartMargin = useMemo(
-    () => ({ top: 30, right: chartSidePadding + effectivePoolNamesWidth, bottom: 20, left: chartSidePadding }),
+    () => ({ top: 30, right: effectivePoolNamesWidth, bottom: 20, left: chartSidePadding }),
     [effectivePoolNamesWidth, chartSidePadding]
   );
   
@@ -275,25 +365,14 @@ function RealtimeChartBase({
     [visiblePoolNames]
   );
   
-  // Define point size based on mode and props with dynamic sizing
-  const basePointSize = useMemo(() => {
-    if (pointSize) {
-      return pointSize;
-    }
-    
-    const poolCount = Math.max(visiblePoolNames.length, visibleMaxPoolCount, 5);
-    const availableHeight = dimensions.height - 60;
-    const maxPointSize = Math.floor(availableHeight / poolCount / 3.5);
-    const dynamicSize = Math.max(2, Math.min(12, maxPointSize));
-    
-    return isHistoricalBlock 
-      ? Math.min(dynamicSize, CHART_POINT_SIZES.HISTORICAL) 
-      : dynamicSize;
-  }, [pointSize, visiblePoolNames.length, visibleMaxPoolCount, dimensions.height, isHistoricalBlock]);
   const poolDataHistoryRef = useRef<Map<string, ChartDataPoint[]>>(new Map());
   const timeDomainRef = useRef<[number, number]>([0, 0]);
   const localTimeWindowRef = useRef<number>(timeWindow);
   const dimensionsRef = useRef(dimensions);
+  // Change detection is stateful per pool; keep the tracker in a ref so the
+  // baselines survive re-renders and batched updates. Reset when the viewed
+  // block height changes or when latency adjustment re-keys the timeline.
+  const changeTrackerRef = useRef<TemplateChangeTracker>(new TemplateChangeTracker());
   
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
@@ -340,9 +419,9 @@ function RealtimeChartBase({
       // Clear existing data when switching between blocks
       poolDataHistoryRef.current.clear();
       setChartData([]);
-      
-      // Clear template change detection cache to prevent stale comparisons
-      clearTemplateCache();
+
+      // Reset change-detection baselines to prevent stale cross-height comparisons
+      changeTrackerRef.current.reset();
       
       // Reset pool tracking when switching blocks
       if (isHistoricalBlock) {
@@ -508,144 +587,108 @@ function RealtimeChartBase({
       ctx.fillText(formatTickLabel(timestamp), x, dimensions.height - margin.bottom + 15);
     }
     
-    // Draw data points for each pool
+    // Draw contiguous bar segments for each pool
+    const barDenominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
+    const barRowHeight = availableHeight / barDenominator;
+    const barHeight = Math.max(barRowHeight - 1, 1); // 1px vertical gap between rows
+
+    // Cache computed segment colors keyed by change content to avoid redundant conversions
+    const segmentColorCache = new Map<string, { hsl: string; rgb: string; text: string }>();
+    const getSegmentColor = (changeInfo: TemplateChangeResult | undefined) => {
+      const contentKey = changeInfo ? extractChangeContentKey(changeInfo) : '';
+      let cached = segmentColorCache.get(contentKey);
+      if (!cached) {
+        const hsl = contentKey ? stringToColor(contentKey) : NO_CHANGE_COLOR;
+        const rgb = hslToRgb(hsl);
+        const text = getContrastingTextColor(hsl);
+        cached = { hsl, rgb, text };
+        segmentColorCache.set(contentKey, cached);
+      }
+      return cached;
+    };
+
     groupedData.forEach((points, poolName) => {
-      const isHovered = hoveredPoint?.poolName === poolName;
-      const color = poolColors[poolName] || stringToColor(poolName);
-      
-      ctx.fillStyle = color;
-      ctx.strokeStyle = color;
-      
-      points.forEach(point => {
-        const x = timestampToPixel(point.timestamp);
+      // Sort points oldest to newest (should already be sorted, but ensure)
+      const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
+
+      let labelDrawn = false;
+
+      for (let i = 0; i < sorted.length; i++) {
+        const point = sorted[i];
+        const nextPoint = i + 1 < sorted.length ? sorted[i + 1] : null;
+
         const y = poolIndexToPixel(point.poolIndex, point.poolName);
-        
-        // Skip points outside the visible area
-        if (x < margin.left || x > dimensions.width - margin.right || 
-            y < margin.top || y > dimensions.height - margin.bottom) {
-          return;
+        const barTop = y - barHeight / 2;
+
+        // Raw pixel positions (unclamped) for segment start and end
+        const rawXStart = timestampToPixel(point.timestamp);
+        const rawXEnd = nextPoint
+          ? timestampToPixel(nextPoint.timestamp)
+          : dimensions.width - margin.right;
+
+        // Skip segments entirely outside the visible area
+        if (rawXEnd <= margin.left || rawXStart >= dimensions.width - margin.right) continue;
+        if (y < margin.top - barHeight || y > dimensions.height - margin.bottom + barHeight) continue;
+
+        // Clamp to visible area so bars scroll naturally at the left edge
+        const xStart = Math.max(rawXStart, margin.left);
+        const xEnd = Math.min(rawXEnd, dimensions.width - margin.right);
+        const barWidth = Math.max(xEnd - xStart, 1);
+
+        // Color from the segment's change content (deterministic per unique change set)
+        const segColor = getSegmentColor(point.changeInfo);
+
+        // Draw bar fill
+        ctx.fillStyle = segColor.rgb;
+        ctx.fillRect(xStart, barTop, barWidth, barHeight);
+
+        // Draw a dark divider at the segment boundary (right edge of this bar)
+        if (nextPoint) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fillRect(xEnd - 1, barTop, 2, barHeight);
         }
-        
-        // Check if we should draw a change indicator or regular point
-        // Draw larger circles for any detected changes, even if untracked (empty changeDisplay)
+
+        // Draw change indicator text on the bar if it fits
         const hasChangeInfo = point.changeInfo && point.changeInfo.hasChanges;
-        
-        // Calculate size for both cases
-        const size = isHovered ? basePointSize * CHART_POINT_SIZES.HOVER_MULTIPLIER : basePointSize;
-        
-        if (hasChangeInfo) {
-          // Draw change indicator letter(s) in fixed-size circle
-          const text = point.changeDisplay || '';
-          const circleRadius = size * 1.8; // Balanced circle size for readability
-          
-          // Use contrasting text color based on background
-          const textColor = getContrastingTextColor(color);
-          
-          // Draw colored background circle
-          // Convert HSL to RGB since canvas might not support HSL properly
-          const rgbColor = hslToRgb(color);
-          ctx.beginPath();
-          ctx.arc(x, y, circleRadius, 0, Math.PI * 2);
-          ctx.fillStyle = rgbColor;
-          ctx.fill();
-          
-          // Draw subtle border
-          ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          
-          // Auto-adjust font size to fit text in circle - start with larger font
-          let fontSize = Math.max(8, Math.round((basePointSize + 2) * uiFontScale)); // Start with larger font size
+        if (hasChangeInfo && point.changeDisplay) {
+          const text = point.changeDisplay;
+          const fontSize = Math.max(7, Math.min(12, Math.round(barHeight * 0.5 * uiFontScale)));
           ctx.font = `${fontSize}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          
-          // Measure text and scale down font if needed
-          let textMetrics = ctx.measureText(text);
-          const maxTextWidth = circleRadius * 1.4; // Leave some padding (diameter * 0.7)
-          
-          // Scale down font size if text is too wide, but don't go below 8px
-          while (textMetrics.width > maxTextWidth && fontSize > Math.max(6, Math.floor(8 * uiFontScale))) {
-            fontSize--;
-            ctx.font = `${fontSize}px monospace`;
-            textMetrics = ctx.measureText(text);
+
+          const textWidth = ctx.measureText(text).width;
+          if (textWidth + 4 <= barWidth) {
+            ctx.fillStyle = segColor.text;
+            ctx.fillText(text, xStart + barWidth / 2, y);
+          } else if (barWidth >= 3) {
+            // Too narrow for text — draw thin white tick at segment start
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.fillRect(xStart, barTop, 1, barHeight);
           }
-          
-          // Draw text with appropriate color
-          ctx.fillStyle = textColor;
-          ctx.fillText(text, x, y);
-          
-        } else {
-          // Draw regular circle point
-          const rgbColor = hslToRgb(color);
-          ctx.beginPath();
-          ctx.arc(x, y, size, 0, Math.PI * 2);
-          ctx.fillStyle = rgbColor;
-          ctx.fill();
-          
-          // Add a subtle outline for better visibility against dark backgrounds
-          ctx.lineWidth = 1;
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-          ctx.stroke();
-          ctx.strokeStyle = color; // Reset stroke style
         }
-        
-        // Draw label if showLabels is true
-        if (showLabels) {
-          ctx.fillStyle = color;
+
+        // Draw pool name label once per pool on the first segment where it fits
+        if (showLabels && !labelDrawn) {
+          ctx.fillStyle = segColor.text;
           ctx.font = `${Math.max(7, Math.round(9 * uiFontScale))}px sans-serif`;
           ctx.textAlign = 'left';
-          // Position label to the right of the circle, accounting for circle size
-          const labelOffset = hasChangeInfo ? size * 1.8 + 4 : size + 4;
-          ctx.fillText(poolName, x + labelOffset, y + 3);
-          ctx.fillStyle = color; // Reset fill style for next point
-        }
-        
-        // Highlight if this is the exact hovered point
-        if (hoveredPoint && point.timestamp === hoveredPoint.timestamp && point.poolName === hoveredPoint.poolName) {
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-          
-          if (hasChangeInfo) {
-            // For change indicators, use fixed circle size
-            const highlightRadius = size * 1.8 + 3; // Same as change indicator circle + highlight border
-            ctx.beginPath();
-            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
-            ctx.stroke();
-          } else {
-            // For regular points
-            const highlightRadius = size + 3;
-            ctx.beginPath();
-            ctx.arc(x, y, highlightRadius, 0, Math.PI * 2);
-            ctx.stroke();
+          ctx.textBaseline = 'middle';
+          const labelX = xStart + 3;
+          if (labelX + ctx.measureText(poolName).width < xEnd) {
+            ctx.fillText(poolName, labelX, y);
+            labelDrawn = true;
           }
         }
-      });
+
+        // Highlight hovered segment
+        if (hoveredPoint && point.timestamp === hoveredPoint.timestamp && point.poolName === hoveredPoint.poolName) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(xStart, barTop, barWidth, barHeight);
+        }
+      }
     });
-    
-    // Draw crosshair if hovering
-    if (hoveredPoint) {
-      const x = timestampToPixel(hoveredPoint.timestamp);
-      const y = poolIndexToPixel(hoveredPoint.poolIndex, hoveredPoint.poolName);
-      
-      ctx.strokeStyle = 'rgba(200, 200, 200, 0.4)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      
-      // Vertical line
-      ctx.beginPath();
-      ctx.moveTo(x, margin.top);
-      ctx.lineTo(x, dimensions.height - margin.bottom);
-      ctx.stroke();
-      
-      // Horizontal line
-      ctx.beginPath();
-      ctx.moveTo(margin.left, y);
-      ctx.lineTo(dimensions.width - margin.right, y);
-      ctx.stroke();
-      
-      ctx.setLineDash([]); // Reset line dash
-    }
     
     // Draw pool names on the right side if enabled
     if (showPoolNames && stablePoolNames.length > 0) {
@@ -686,25 +729,26 @@ function RealtimeChartBase({
       
       stablePoolNames.forEach((poolName, index) => {
         const y = poolIndexToPixel(index, poolName);
-        const color = poolColors[poolName] || stringToColor(poolName);
-        const rgbColor = hslToRgb(color);
-        
+
+        // Use the latest segment's change-based color for the pool label
+        const poolDataPoints = visibleChartData.filter(point => point.poolName === poolName);
+        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        const segColor = getSegmentColor(latestPoint?.changeInfo);
+
         // Calculate background width extending to right edge with padding
         const rightPadding = poolNamesInnerPadding;
         const backgroundWidth = dimensions.width - (poolNamesX - 2) - rightPadding;
-        
+
         // Draw colored background rectangle extending full row height and to right edge
-        ctx.fillStyle = rgbColor;
+        ctx.fillStyle = segColor.rgb;
         ctx.fillRect(poolNamesX - 2, y - rowHeight/2, backgroundWidth, rowHeight);
-        
+
         // Draw pool name with contrasting text color and left padding
-        const textColor = getContrastingTextColor(color);
+        const textColor = segColor.text;
         const textPadding = Math.max(4, poolNamesInnerPadding - 2); // Left padding for the text
         const maxTextWidth = backgroundWidth - textPadding - 10; // Reserve space for padding and right margin
         
-        // Get ASCII tag for this pool (from latest data point)
-        const poolDataPoints = visibleChartData.filter(point => point.poolName === poolName);
-        const latestPoint = poolDataPoints.sort((a, b) => b.timestamp - a.timestamp)[0];
+        // Get ASCII tag from the latest data point (already computed above)
         const asciiTag = showPoolAsciiTag ? (latestPoint?.asciiTag || '') : '';
         
         // Draw pool name: either truncate with ellipsis, or reduce font size to fit.
@@ -787,7 +831,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, visibleChartData, hoveredPoint, showLabels, poolColors, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, basePointSize, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
+  }, [dimensions, visibleChartData, hoveredPoint, showLabels, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -902,10 +946,36 @@ function RealtimeChartBase({
         };
       });
       const poolNames = sortPoolNames(basePoolNames, tempPoints as ChartDataPoint[]);
-      
+
+      // Compute change detection per pool in chronological order. Historical
+      // records are grouped by pool and fed through a fresh tracker so that
+      // each template is compared against the previous template from the same
+      // pool — the historical view previously never computed changes at all.
+      const tracker = new TemplateChangeTracker();
+      const recordsByPool = new Map<string, StratumV1Data[]>();
+      historicalData.forEach(record => {
+        const poolName = record.pool_name || 'unknown';
+        const list = recordsByPool.get(poolName);
+        if (list) {
+          list.push(record);
+        } else {
+          recordsByPool.set(poolName, [record]);
+        }
+      });
+      const changeInfoByRecord = new Map<StratumV1Data, TemplateChangeResult>();
+      recordsByPool.forEach(records => {
+        records.sort((a, b) =>
+          parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
+          parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
+        );
+        records.forEach(record => {
+          changeInfoByRecord.set(record, tracker.process(record));
+        });
+      });
+
       // Create data points directly from historical records
       const points: ChartDataPoint[] = [];
-      
+
       historicalData.forEach(record => {
         // Parse timestamp - try several formats
         let timestamp: number;
@@ -941,6 +1011,8 @@ function RealtimeChartBase({
               )
             : '';
 
+          const changeInfo = changeInfoByRecord.get(record);
+
           points.push({
             timestamp,
             poolName,
@@ -952,6 +1024,8 @@ function RealtimeChartBase({
             nbits: record.nbits,
             ntime: record.ntime,
             asciiTag,
+            changeInfo,
+            changeDisplay: changeInfo ? getChangeTypeDisplay(changeInfo.changeTypes) : '',
             // Fields needed for asciiTag calculation
             coinbase1: record.coinbase1,
             coinbase2: record.coinbase2,
@@ -994,11 +1068,18 @@ function RealtimeChartBase({
     }
   }, [isHistoricalBlock, historicalData, parseTimestamp, sortPoolNames, latencyAdjusted]);
   
-  // Prune old data beyond the time window to prevent memory leaks
+  // Prune old data beyond the time window to prevent memory leaks.
+  // Keeps one extra point before the cutoff so the bar segment straddling
+  // the left edge retains its starting point and scrolls off naturally.
   const pruneOldData = useCallback((cutoffTimeMs: number) => {
     poolDataHistoryRef.current.forEach((history, poolName) => {
-      const prunedHistory = history.filter(point => point.timestamp >= cutoffTimeMs);
-      poolDataHistoryRef.current.set(poolName, prunedHistory);
+      const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
+      if (firstInWindowIdx === -1) {
+        poolDataHistoryRef.current.set(poolName, []);
+        return;
+      }
+      const startIdx = Math.max(0, firstInWindowIdx - 1);
+      poolDataHistoryRef.current.set(poolName, history.slice(startIdx));
     });
   }, []);
   
@@ -1007,42 +1088,39 @@ function RealtimeChartBase({
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     const rect = canvas.getBoundingClientRect();
-    
-    const x = (e.clientX - rect.left);
-    const y = (e.clientY - rect.top);
-    
-    let closestPoint: ChartDataPoint | null = null;
-    let minDistance = Infinity;
-    
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
     if (visibleChartData.length === 0) {
       setHoveredPoint(null);
       return;
     }
-    
+
     const margin = chartMargin;
     const availableWidth = dimensions.width - margin.left - margin.right;
     const availableHeight = dimensions.height - margin.top - margin.bottom;
-    
+
     const currentPoolNames = Array.from(new Set(visibleChartData.map(point => point.poolName)));
-    const basePoolNames = visiblePoolNames.length > 0 
-      ? visiblePoolNames 
+    const basePoolNames = visiblePoolNames.length > 0
+      ? visiblePoolNames
       : currentPoolNames;
-    
     const stablePoolNames = sortPoolNames(basePoolNames, visibleChartData);
-    
+
+    const denominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
+    const rowHeight = availableHeight / denominator;
+
     const timestamps = visibleChartData.map(point => point.timestamp);
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
-    
+
     const currentTimeDomain = timeDomainRef.current;
-    
     const useCalculatedDomain = currentTimeDomain[0] === 0 && currentTimeDomain[1] === 0;
-    const effectiveTimeDomain: [number, number] = useCalculatedDomain 
-      ? [minTime, maxTime] 
+    const effectiveTimeDomain: [number, number] = useCalculatedDomain
+      ? [minTime, maxTime]
       : currentTimeDomain;
-    
+
     const timestampToPixel = (timestamp: number): number => {
       if (effectiveTimeDomain[1] === effectiveTimeDomain[0]) {
         return margin.left + availableWidth / 2;
@@ -1050,34 +1128,46 @@ function RealtimeChartBase({
       const ratio = (timestamp - effectiveTimeDomain[0]) / (effectiveTimeDomain[1] - effectiveTimeDomain[0]);
       return margin.left + ratio * availableWidth;
     };
-    
-    const poolIndexToPixel = (index: number, poolName: string): number => {
-      const poolIndex = stablePoolNames.indexOf(poolName);
-      const effectivePoolIndex = poolIndex >= 0 ? poolIndex : (stablePoolNames.length + index % 5);
-      const denominator = Math.max(stablePoolNames.length, visibleMaxPoolCount, 10);
-      const ratio = effectivePoolIndex / denominator;
-      return margin.top + ratio * availableHeight;
-    };
-    
-    const hoverTolerance = basePointSize * CHART_POINT_SIZES.HOVER_TOLERANCE_MULTIPLIER;
-    
-    visibleChartData.forEach(point => {
-      const pointX = timestampToPixel(point.timestamp);
-      const pointY = poolIndexToPixel(point.poolIndex, point.poolName);
-      
-      const distance = Math.sqrt(
-        Math.pow((pointX - x), 2) + 
-        Math.pow((pointY - y), 2)
-      );
 
-      if (distance < minDistance && distance < hoverTolerance) { 
-        minDistance = distance;
-        closestPoint = point;
+    // Group data by pool and sort each group by timestamp
+    const grouped = new Map<string, ChartDataPoint[]>();
+    visibleChartData.forEach(point => {
+      if (!grouped.has(point.poolName)) grouped.set(point.poolName, []);
+      grouped.get(point.poolName)!.push(point);
+    });
+
+    let hovered: ChartDataPoint | null = null;
+
+    grouped.forEach((points, poolName) => {
+      if (hovered) return;
+
+      const poolIndex = stablePoolNames.indexOf(poolName);
+      if (poolIndex < 0) return;
+
+      const rowCenterY = margin.top + (poolIndex / denominator) * availableHeight;
+      const barHeight = Math.max(rowHeight - 1, 1);
+
+      // Check if mouse y is within this pool's row
+      if (y < rowCenterY - barHeight / 2 || y > rowCenterY + barHeight / 2) return;
+
+      const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
+
+      for (let i = 0; i < sorted.length; i++) {
+        const rawXStart = timestampToPixel(sorted[i].timestamp);
+        const rawXEnd = i + 1 < sorted.length
+          ? timestampToPixel(sorted[i + 1].timestamp)
+          : dimensions.width - margin.right;
+
+        // Use unclamped ranges so partially visible segments still match
+        if (x >= rawXStart && x < rawXEnd) {
+          hovered = sorted[i];
+          return;
+        }
       }
     });
-    
-    setHoveredPoint(closestPoint);
-  }, [visibleChartData, dimensions, visibleMaxPoolCount, visiblePoolNames, basePointSize, sortPoolNames, chartMargin]);
+
+    setHoveredPoint(hovered);
+  }, [visibleChartData, dimensions, visibleMaxPoolCount, visiblePoolNames, sortPoolNames, chartMargin]);
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
@@ -1223,22 +1313,47 @@ function RealtimeChartBase({
     let minTimestamp = Number.MAX_SAFE_INTEGER;
     let maxTimestamp = 0;
     
+    // Change detection is sequential per pool: each message must be compared
+    // against the chronologically-previous message from the same pool. The
+    // incoming batch may interleave pools, so group by pool and process each
+    // pool's messages in timestamp order before mapping to chart points.
+    const changeInfoByItem = new Map<StratumV1Data, TemplateChangeResult>();
+    const itemsByPool = new Map<string, StratumV1Data[]>();
+    filteredData.forEach(item => {
+      const poolName = item.pool_name || 'Unknown';
+      const list = itemsByPool.get(poolName);
+      if (list) {
+        list.push(item);
+      } else {
+        itemsByPool.set(poolName, [item]);
+      }
+    });
+    const tracker = changeTrackerRef.current;
+    itemsByPool.forEach(items => {
+      items.sort((a, b) =>
+        parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
+        parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
+      );
+      items.forEach(item => {
+        changeInfoByItem.set(item, tracker.process(item));
+      });
+    });
+
     // Transform the data for the chart
     const processedData = filteredData.map(item => {
       // Parse timestamp from the data
       const timestamp = parseTimestamp(effectiveTimestamp(item, latencyAdjusted));
-      
+
       // Update min/max for domain calculation
       minTimestamp = Math.min(minTimestamp, timestamp);
       maxTimestamp = Math.max(maxTimestamp, timestamp);
-      
+
       // Use current rankings or default to an evenly distributed value
       const poolName = item.pool_name || 'Unknown';
-      const poolIndex = poolRankings.get(poolName) || 
+      const poolIndex = poolRankings.get(poolName) ||
         (sortedCurrentPoolNames.indexOf(poolName) + 1) || 1;
-      
-      // Detect template changes using the new simplified interface
-      const changeInfo = detectTemplateChanges(item);
+
+      const changeInfo = changeInfoByItem.get(item)!;
       const changeDisplay = getChangeTypeDisplay(changeInfo.changeTypes);
       
       // Get ASCII tag from coinbase script sig
@@ -1302,8 +1417,12 @@ function RealtimeChartBase({
       const resultPoints: ChartDataPoint[] = [];
       
       poolDataHistoryRef.current.forEach((history) => {
-        const pointsInTimeWindow = history.filter(point => point.timestamp >= cutoffTimeMs);
-        resultPoints.push(...pointsInTimeWindow);
+        // Include one point before the cutoff so the bar segment straddling
+        // the left edge still has its starting point and can scroll off naturally
+        const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
+        if (firstInWindowIdx === -1) return; // No points in window
+        const startIdx = Math.max(0, firstInWindowIdx - 1);
+        resultPoints.push(...history.slice(startIdx));
       });
 
       // Global ordering: render oldest first, newest last for consistent overlap behavior.
@@ -1341,8 +1460,8 @@ function RealtimeChartBase({
   useEffect(() => {
     poolDataHistoryRef.current.clear();
     setChartData([]);
-    // Clear template change detection cache to prevent stale comparisons
-    clearTemplateCache();
+    // Reset change-detection baselines to prevent stale comparisons
+    changeTrackerRef.current.reset();
   }, [filterBlockHeight]);
 
   // When the latency-adjustment toggle flips, previously plotted points keyed
@@ -1353,8 +1472,8 @@ function RealtimeChartBase({
     if (!isHistoricalBlock) {
       poolDataHistoryRef.current.clear();
       setChartData([]);
-      // Clear template change detection cache to prevent stale comparisons
-      clearTemplateCache();
+      // Reset change-detection baselines to prevent stale comparisons
+      changeTrackerRef.current.reset();
     }
   }, [latencyAdjusted, isHistoricalBlock]);
   

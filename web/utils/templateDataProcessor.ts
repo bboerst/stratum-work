@@ -89,7 +89,23 @@ function extractAuxPowData(auxPowData?: AuxPowData | null): {
 }
 
 export function processTemplateData(data: StratumV1Data): ProcessedTemplateData {
-  const cacheKey = `${data.pool_name}-${data.job_id}-${data.height}-${data.timestamp}-${data.coinbase1}-${data.coinbase2}`;
+  // The cache key must capture every field that can affect the processed
+  // output. The previous key omitted merkle_branches/height/prev_hash/version,
+  // so two messages that shared a coinbase but differed in those fields would
+  // collide and the second message would inherit the first message's data.
+  const cacheKey = [
+    data.pool_name,
+    data.job_id,
+    data.height,
+    data.timestamp,
+    data.prev_hash,
+    data.version,
+    data.merkle_branches.join(','),
+    data.coinbase1,
+    data.extranonce1,
+    data.extranonce2_length,
+    data.coinbase2,
+  ].join('|');
   
   if (processedDataCache.has(cacheKey)) {
     return processedDataCache.get(cacheKey)!;

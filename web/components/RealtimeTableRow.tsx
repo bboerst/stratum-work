@@ -118,19 +118,6 @@ export default function RealtimeTableRowComponent({
         </TableCell>
       )}
 
-      {columnsVisible.signaling_bip110 && (
-        <TableCell
-          style={{
-            width: columnWidths.signaling_bip110,
-            backgroundColor: row.signaling_bip110 ? '#22c55e' : 'transparent',
-          }}
-          className="p-1 truncate text-center font-semibold text-white"
-          title={row.signaling_bip110 ? 'Signaling BIP-110 (Reduced Data UASF)' : 'Not signaling BIP-110'}
-        >
-          {row.signaling_bip110 ? 'Y' : 'N'}
-        </TableCell>
-      )}
-
       {columnsVisible.nbits && (
         <TableCell
           style={{ width: columnWidths.nbits }}

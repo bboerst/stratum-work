@@ -39,10 +39,10 @@ jobs:
         tags: |
           ${{ env.DOCKER_IMAGE }}:latest
           ${{ env.DOCKER_IMAGE }}:${{ github.event.release.tag_name }}
+        # No linux/arm/v7: pyzmq publishes no armv7 wheels, and its source build fails under QEMU.
         platforms: |
           linux/amd64
           linux/arm64
-          linux/arm/v7
 
     - name: Image digest
       run: echo ${{ steps.docker_build.outputs.digest }}

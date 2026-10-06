@@ -115,6 +115,16 @@ class FakePool:
         with self.lock:
             return [r for r in self.requests if r.get("method") == method]
 
+    def stop_listening(self):
+        # close() alone does not wake a thread blocked in accept() on Linux: the kernel
+        # socket keeps listening and accepts reconnects. shutdown() wakes it there; on
+        # macOS it raises ENOTCONN for a listening socket, where close() already suffices.
+        try:
+            self.listener.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.listener.close()
+
     def drop_connection(self):
         with self.lock:
             conn = self.conn
@@ -122,7 +132,7 @@ class FakePool:
         conn.close()
 
     def close(self):
-        self.listener.close()
+        self.stop_listening()
         with self.lock:
             if self.conn is not None:
                 try:
@@ -306,12 +316,13 @@ class WorkProxyTest(unittest.TestCase):
         router.handshake()
         router.recv()
         router.recv()
-        pool.listener.close()  # refuse reconnects
+        pool.stop_listening()  # refuse reconnects
         pool.drop_connection()
         with self.assertRaises((EOFError, ConnectionResetError)):
             while True:
                 router.recv()
         self.assertFalse(proxy._ready.is_set())
+        self.assertEqual(pool.connections, 1)
         again = self.router(port)
         sub, _ = again.recv_response(again.call("mining.subscribe", []))
         self.assertEqual(sub["error"], [20, "Upstream unavailable", None])

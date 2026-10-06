@@ -1,0 +1,19 @@
+mode: ingest
+replicaCount: 1
+existingSecret: ingest-env
+priorityClassName: stratum-critical
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+# Must not render for ingest
+ingress:
+  enabled: true
+  hosts:
+    - ingest.example.com
+hpa:
+  enabled: true
+serviceMonitor:
+  enabled: true

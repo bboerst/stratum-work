@@ -5,21 +5,50 @@ image:
 
 poolName: "Best Stratum Pool"
 
+# --userpass may be omitted when STRATUM_USERPASS comes from existingSecret
 arguments:
   - --url
   - "stratum+tcp://beststratumpool.com:3333"
-  - --userpass
-  - "username:password"
-  - --db-url
-  - "mongodb://localhost:27017"
-  - --db-name
-  - "stratum_db"
-  - --db-username
-  - "admin"
-  - --db-password
-  - "password"
   - --log-level
   - "INFO"
+
+# Connection metadata; each is passed as an env var (SITE, MODE, CONNECTION_ID,
+# ACCOUNT) only when set. Unset values keep the collector's own defaults.
+site: ""
+# observe | work
+mode: ""
+connectionId: ""
+account: ""
+
+# Work mode: the collector runs as a router-facing proxy (MODE=work) on
+# workMode.port (--stratum-client-port). Requires existingSecret with keys
+# STRATUM_USERPASS and WORK_TOKEN (the internal router token).
+workMode:
+  enabled: false
+  port: 3333
+  # Only router pods (label stratum.work/component=router, set by the router
+  # chart regardless of nameOverride) may reach the work port.
+  networkPolicy:
+    enabled: true
+    routerPodLabels:
+      stratum.work/component: router
+    # Restrict which namespaces the router may run in. {} = any namespace;
+    # sites should pin it, e.g.
+    #   matchLabels: {kubernetes.io/metadata.name: stratum-router}
+    routerNamespaceSelector: {}
+
+# Name of a Secret referenced for the optional keys STRATUM_USERPASS,
+# RABBITMQ_PASSWORD, BITCOIN_RPC_PASSWORD and WORK_TOKEN. The collector reads
+# them when the matching CLI flag is omitted.
+existingSecret: ""
+
+# Extra non-secret environment variables
+env: {}
+#   ENABLE_HISTORICAL_DATA: "true"
+#   NOSTR_ENABLED: "true"
+#   NOSTR_RELAY_URLS: ""
+
+priorityClassName: ""
 
 service:
   enabled: false
@@ -54,3 +83,52 @@ service:
 resources:
   requests:
     memory: 40Mi
+
+# ---------------------------------------------------------------------------
+# Multi-pool mode. When `pools` is non-empty, the single-pool values above
+# (poolName, arguments, mode, connectionId, account, existingSecret, env,
+# service, workMode.enabled/port) are ignored, and one StatefulSet per pool is
+# rendered, named collector-<slug>-<mode> (slug = name lowercased, runs of
+# non-alphanumerics -> "-", max 34 chars). Work pools also get a ClusterIP
+# Service collector-<slug>-work and, if workMode.networkPolicy.enabled, a
+# router-only NetworkPolicy (workMode.networkPolicy settings are shared).
+# `site` (above) is required; CONNECTION_ID is <site>/<slug>/<mode>.
+# ---------------------------------------------------------------------------
+defaults:
+  # Merged over `image` above.
+  image: {}
+  #   repository: bboerst/stratum-work-collector
+  #   tag: v1.1.0
+  # Falls back to top-level `resources` when empty.
+  resources: {}
+  rabbitmq:
+    host: ""        # --rabbitmq-host
+    port: ""        # --rabbitmq-port
+    username: ""    # --rabbitmq-username
+  # Secret with optional keys RABBITMQ_PASSWORD, BITCOIN_RPC_PASSWORD,
+  # STRATUM_USERPASS (shared fallback) and WORK_TOKEN (required for work pools).
+  existingSecret: ""
+  bitcoin:
+    rpcHost: ""     # --bitcoin-rpc-host
+    rpcPort: ""     # --bitcoin-rpc-port
+    rpcUser: ""     # --bitcoin-rpc-user
+  # --bitcoin-zmq-block (collector default tcp://bitcoin-node:28332)
+  zmqEndpoint: ""
+  # Falls back to top-level priorityClassName.
+  priorityClassName: ""
+  # Extra non-secret env vars for every pool.
+  env: {}
+  logLevel: INFO
+
+# Each entry:
+#   name: "Foundry USA"          # --pool-name; slug source (required)
+#   url: stratum+tcp://...       # --url (required)
+#   mode: observe | work         # required
+#   userpass: addr.worker:x      # plain STRATUM_USERPASS (non-secret)
+#   userpassSecretKey: KEY       # or: key in defaults.existingSecret
+#                                # neither: shared STRATUM_USERPASS key
+#   account: addr.worker         # ACCOUNT env (work mode upstream worker)
+#   targetPort: 3333             # work mode listen/Service port
+#   resources: {}                # per-pool override
+#   extraArgs: []                # appended verbatim to the collector args
+pools: []

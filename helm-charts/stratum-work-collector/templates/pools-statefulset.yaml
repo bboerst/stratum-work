@@ -1,0 +1,178 @@
+{{- /*
+Multi-pool path: one StatefulSet per entry in .Values.pools, named
+collector-<slug>-<mode>. Rendered only when pools is non-empty; the legacy
+single-pool templates (deployment.yaml, service.yaml, networkpolicy.yaml)
+render only when pools is empty.
+
+serviceName: set to the pool's own resource name. For work pools that is the
+ClusterIP Service below; for observe pools no Service exists. The governing
+Service is only needed for per-pod DNS (<pod>.<svc>), which single-replica
+collectors never use, so a missing one is harmless.
+*/ -}}
+{{- if .Values.pools }}
+{{- if not .Values.site }}
+{{- fail "pools requires site (e.g. us-ash-1)" }}
+{{- end }}
+{{- $d := .Values.defaults | default dict }}
+{{- $img := merge (deepCopy ($d.image | default dict)) (deepCopy .Values.image) }}
+{{- $rmq := $d.rabbitmq | default dict }}
+{{- $btc := $d.bitcoin | default dict }}
+{{- $secret := $d.existingSecret | default "" }}
+{{- $seen := dict }}
+{{- range $pool := .Values.pools }}
+{{- if not $pool.name }}{{ fail "pools[]: name is required" }}{{ end }}
+{{- if not $pool.url }}{{ fail (printf "pools[%s]: url is required" $pool.name) }}{{ end }}
+{{- if not (has $pool.mode (list "observe" "work")) }}
+{{- fail (printf "pools[%s]: mode must be observe or work (got %q)" $pool.name ($pool.mode | toString)) }}
+{{- end }}
+{{- $slug := include "collector.poolSlug" $pool.name }}
+{{- $name := include "collector.poolResourceName" $pool }}
+{{- if hasKey $seen $name }}{{ fail (printf "pools: duplicate resource name %s" $name) }}{{ end }}
+{{- $_ := set $seen $name true }}
+{{- $work := eq $pool.mode "work" }}
+{{- if and $work (not $secret) }}
+{{- fail (printf "pools[%s]: mode work requires defaults.existingSecret (key WORK_TOKEN)" $pool.name) }}
+{{- end }}
+{{- if and $pool.userpassSecretKey (not $secret) }}
+{{- fail (printf "pools[%s]: userpassSecretKey requires defaults.existingSecret" $pool.name) }}
+{{- end }}
+{{- $port := $pool.targetPort | default 3333 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "collector.poolLabels" (dict "root" $ "pool" $pool) | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "collector.poolLabels" (dict "root" $ "pool" $pool) | nindent 8 }}
+    spec:
+      {{- with ($d.priorityClassName | default $.Values.priorityClassName) }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: {{ $.Chart.Name }}
+        image: "{{ $img.repository }}:{{ $img.tag | default $.Chart.AppVersion }}"
+        imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
+        command:
+        - "/usr/local/bin/python"
+        - "main.py"
+        args:
+        - "--pool-name"
+        - {{ $pool.name | quote }}
+        - "--url"
+        - {{ $pool.url | quote }}
+        {{- with $rmq.host }}
+        - "--rabbitmq-host"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $rmq.port }}
+        - "--rabbitmq-port"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $rmq.username }}
+        - "--rabbitmq-username"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $btc.rpcHost }}
+        - "--bitcoin-rpc-host"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $btc.rpcPort }}
+        - "--bitcoin-rpc-port"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $btc.rpcUser }}
+        - "--bitcoin-rpc-user"
+        - {{ . | quote }}
+        {{- end }}
+        {{- with $d.zmqEndpoint }}
+        - "--bitcoin-zmq-block"
+        - {{ . | quote }}
+        {{- end }}
+        - "--log-level"
+        - {{ $d.logLevel | default "INFO" | quote }}
+        {{- if $work }}
+        - "--stratum-client-port"
+        - {{ $port | quote }}
+        {{- end }}
+        {{- range $pool.extraArgs }}
+        - {{ . | quote }}
+        {{- end }}
+        env:
+        - name: SITE
+          value: {{ $.Values.site | quote }}
+        - name: MODE
+          value: {{ $pool.mode | quote }}
+        - name: CONNECTION_ID
+          value: {{ printf "%s/%s/%s" $.Values.site $slug $pool.mode | quote }}
+        {{- with $pool.account }}
+        - name: ACCOUNT
+          value: {{ . | quote }}
+        {{- end }}
+        {{- range $key, $val := ($d.env | default dict) }}
+        - name: {{ $key }}
+          value: {{ $val | quote }}
+        {{- end }}
+        {{- if $pool.userpass }}
+        - name: STRATUM_USERPASS
+          value: {{ $pool.userpass | quote }}
+        {{- else if $pool.userpassSecretKey }}
+        - name: STRATUM_USERPASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: {{ $pool.userpassSecretKey }}
+        {{- else if $secret }}
+        {{- /* Same as the legacy path: shared STRATUM_USERPASS key, required
+               in work mode, optional otherwise. */}}
+        - name: STRATUM_USERPASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: STRATUM_USERPASS
+              {{- if not $work }}
+              optional: true
+              {{- end }}
+        {{- end }}
+        {{- if $secret }}
+        {{- /* Optional so observe pools run without RabbitMQ/RPC creds (the
+               collector then runs connect-only / uses its RPC default). */}}
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: RABBITMQ_PASSWORD
+              optional: true
+        - name: BITCOIN_RPC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: BITCOIN_RPC_PASSWORD
+              optional: true
+        {{- if $work }}
+        - name: WORK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: WORK_TOKEN
+        {{- end }}
+        {{- end }}
+        {{- if $work }}
+        ports:
+          - name: "stratum"
+            containerPort: {{ $port }}
+            protocol: TCP
+        {{- end }}
+        resources:
+          {{- toYaml ($pool.resources | default $d.resources | default $.Values.resources) | nindent 10 }}
+{{- end }}
+{{- end }}

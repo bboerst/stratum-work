@@ -1,0 +1,30 @@
+{{- /*
+Multi-pool path: a ClusterIP Service per work-mode pool, named
+collector-<slug>-work. The router targets
+collector-<slug>-work.<namespace>.svc:<targetPort>. Selects on the pool's
+unique "app" label so it only reaches that pool's pod.
+*/ -}}
+{{- if .Values.pools }}
+{{- range $pool := .Values.pools }}
+{{- if eq $pool.mode "work" }}
+{{- $name := include "collector.poolResourceName" $pool }}
+{{- $port := $pool.targetPort | default 3333 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "collector.poolLabels" (dict "root" $ "pool" $pool) | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: "stratum"
+      port: {{ $port }}
+      protocol: TCP
+      targetPort: "stratum"
+  selector:
+    app: {{ $name }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,38 @@
+{
+  "bitcoind": {
+    "rpcuser": "regtest",
+    "rpcpassword": "regtest-only-not-secret",
+    "rpcurl": "http://bitcoind:18443",
+    "work_update_seconds": 10,
+    "notify_fallback": true
+  },
+  "stratum": {
+    "listen_port": 23334,
+    "vardiff_min": 1,
+    "vardiff_target_shares_min": 30,
+    "idle_timeout_no_shares": 0,
+    "fingerprint_miners": false
+  },
+  "mining": {
+    "pool_address": "msoHcP9iN4wboXhcyLpp4YRVLp9qP4SRjg",
+    "coinbase_tag_primary": "Pool A",
+    "coinbase_tag_secondary": "regtest-pool-a",
+    "coinbase_unique_id": 2
+  },
+  "api": {
+    "admin_password": "regtest-only-not-secret",
+    "listen_port": 7152,
+    "modify_conf": false
+  },
+  "logger": {
+    "log_to_console": true,
+    "log_to_file": false,
+    "log_level_console": 2
+  },
+  "datum": {
+    "pool_host": "",
+    "pool_pass_workers": true,
+    "pool_pass_full_users": false,
+    "pooled_mining_only": false
+  }
+}

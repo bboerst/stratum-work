@@ -1,22 +1,7 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/db/prisma';
 import { enableHistoricalData } from '@/lib/db/blocks';
+import { getBlockPoolFirstSeen } from '@/lib/db/mining-notify';
 import { filterBlacklistedItems } from '@/lib/poolBlacklist';
-
-// Define the shape of the data returned by the aggregation
-interface PoolFirstSeenData {
-  poolName: string;
-  firstSeenTimestamp: string;
-  firstSeenLatencyMs?: number | null;
-}
-
-// Minimal interface for the expected aggregation result structure
-interface AggregationResult {
-  cursor: {
-    firstBatch: Array<PoolFirstSeenData>;
-  };
-  ok: number;
-}
 
 export async function GET(request: Request) {
   if (!enableHistoricalData) {
@@ -37,56 +22,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const rawResult = await prisma.$runCommandRaw({
-      aggregate: 'mining_notify', // The collection name for MiningNotify
-      pipeline: [
-        {
-          $match: {
-            height: height,
-            $and: [
-              { chain_family: { $exists: false } },
-              { pool_name: { $ne: null } },
-              { pool_name: { $ne: "" } }
-            ]
-          }
-        },
-        {
-          $sort: { timestamp: 1 } // Sort by timestamp to get the earliest
-        },
-        {
-          $group: {
-            _id: "$pool_name",
-            firstSeenTimestamp: { $first: "$timestamp" },
-            firstSeenLatencyMs: { $first: "$lat_ms" }
-          }
-        },
-        {
-          $project: {
-            _id: 0,
-            poolName: "$_id",
-            firstSeenTimestamp: 1,
-            firstSeenLatencyMs: 1
-          }
-        },
-        {
-          $sort: { firstSeenTimestamp: 1 } // Sort final results by time
-        }
-      ],
-      cursor: {} // Required for aggregation command
-    });
-
-    const result = rawResult as unknown as AggregationResult;
-
-    if (result && result.cursor && result.cursor.firstBatch) {
-      const data = filterBlacklistedItems(result.cursor.firstBatch, d => d.poolName);
-      return NextResponse.json(data);
-    } else {
-      console.error("Unexpected MongoDB aggregation response structure:", result);
-      return NextResponse.json([]);
-    }
-
+    const data = filterBlacklistedItems(await getBlockPoolFirstSeen(height), d => d.poolName);
+    return NextResponse.json(data);
   } catch (error) {
     console.error(`Error fetching first seen pool data for height ${height}:`, error);
     return NextResponse.json({ error: 'Failed to fetch data' }, { status: 500 });
   }
-} 
+}

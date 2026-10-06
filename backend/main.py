@@ -8,10 +8,9 @@ from queue import Queue, Empty
 from contextlib import contextmanager
 from threading import Lock
 import random
-from distutils.util import strtobool
 from typing import List, Dict, Any
 from bitcoin_utils import extract_coinbase_data
-from integrations import db, blocks_coll, pools_coll, mongodb_enabled, publish_to_rabbitmq, rabbitmq_manager
+from integrations import postgres, publish_to_rabbitmq, rabbitmq_manager
 from integrations.rabbitmq import start_heartbeat_thread
 
 # Global mining pool definitions cache
@@ -39,7 +38,8 @@ logger.info("Connecting to bitcoin RPC at %s:%s", RPC_HOST, RPC_PORT)
 ZMQ_BLOCK = os.getenv("BITCOIN_ZMQ_BLOCK", "tcp://bitcoin-node:28332")
 MIN_BLOCK_HEIGHT = int(os.getenv("MIN_BLOCK_HEIGHT", "882000"))
 
-# MongoDB configuration is managed inside integrations.mongodb
+# Postgres configuration (DATABASE_URL, ENABLE_HISTORICAL_DATA) is managed inside integrations.postgres
+postgres.connect()
 
 POOL_LIST_URL = os.getenv("POOL_LIST_URL", "https://raw.githubusercontent.com/mempool/mining-pools/refs/heads/master/pools-v2.json")
 POOL_UPDATE_INTERVAL = int(os.getenv("POOL_UPDATE_INTERVAL", "86400"))  # Default: once per day
@@ -209,7 +209,7 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
 
     analysis = {}
     try:
-        if mongodb_enabled and db is not None:
+        if postgres.is_enabled():
             analysis = run_block_analyses(height, coinbase_script_sig, coinbase_addresses)
     except Exception as analysis_err:
         logger.error(f"Error running analyses for height {height}: {analysis_err}")
@@ -251,12 +251,7 @@ def process_block(block_hash: str, is_new_block: bool = False):
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
-        # For new blocks, use update_one with upsert to avoid duplicates
-        # For old blocks during sync, use insert_one since we already checked for existence
-        if is_new_block:
-            blocks_coll.update_one({"block_hash": block_hash}, {"$set": doc}, upsert=True)
-        else:
-            blocks_coll.insert_one(doc)
+        postgres.upsert_block(doc)
 
         logger.info("%s block %d (%s) mined by %s",
                    "Processed new" if is_new_block else "Synced old",
@@ -283,7 +278,7 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
-        blocks_coll.replace_one({"block_hash": block_hash}, doc, upsert=True)
+        postgres.upsert_block(doc)
         logger.info("Reindexed block %d (%s) with full overwrite", height, block_hash)
         if publish_update:
             rabbitmq_doc = {
@@ -304,13 +299,12 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
 
 def start_full_reindex_background():
     try:
-        if not mongodb_enabled or db is None:
-            logger.warning("Historical data disabled or DB unavailable; skipping full reindex")
+        if not postgres.is_enabled():
+            logger.warning("Historical data disabled; skipping full reindex")
             return
         logger.info("Starting full background reindex of all blocks in descending height order")
         count = 0
-        cursor = db.blocks.find({}, {"block_hash": 1, "height": 1, "_id": 0}).sort("height", -1)
-        for doc in cursor:
+        for doc in postgres.list_block_hashes():
             bhash = doc.get("block_hash")
             if not bhash:
                 continue
@@ -331,9 +325,7 @@ def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coin
     analysis: Dict[str, Any] = {}
     logger.info("Running analyses for height %d", height)
     try:
-        templates = list(
-            db.mining_notify.find({"height": height, "chain_family": {"$exists": False}})
-        ) if db is not None else []
+        templates = postgres.btc_templates_for_height(height)
     except Exception as e:
         logger.error(f"Error fetching mining.notify templates for height {height}: {e}")
         templates = []
@@ -367,6 +359,9 @@ def sync_blocks():
     """
     Sync blocks from the Bitcoin node
     """
+    if not postgres.is_enabled():
+        logger.warning("Historical data disabled; skipping block sync")
+        return
     try:
         # Get the current best block
         best_block_hash = retry_rpc(
@@ -381,11 +376,11 @@ def sync_blocks():
         best_height = best_block["height"]
         
         # Get the highest block we've already processed
-        highest_processed = db.blocks.find_one(sort=[("height", -1)])
+        highest_processed = postgres.highest_block()
         highest_processed_height = highest_processed["height"] if highest_processed else None
         
         # Get the lowest block we've already processed
-        lowest_processed = db.blocks.find_one(sort=[("height", 1)])
+        lowest_processed = postgres.lowest_block()
         lowest_processed_height = lowest_processed["height"] if lowest_processed else None
         
         # Check if we need to sync from the tip down to the highest processed block
@@ -404,10 +399,7 @@ def sync_blocks():
             
             # First, get all heights in the range that are already processed
             processed_heights_in_range = set(
-                doc["height"] for doc in db.blocks.find(
-                    {"height": {"$gte": MIN_BLOCK_HEIGHT, "$lt": lowest_processed_height}},
-                    {"height": 1, "_id": 0}
-                )
+                postgres.heights_between(MIN_BLOCK_HEIGHT, lowest_processed_height)
             )
             
             # Then find the missing heights
@@ -514,7 +506,7 @@ def sync_range(start_height, end_height):
                 )
                 
                 # Check if we already have this block
-                existing_block = db.blocks.find_one({"height": height})
+                existing_block = postgres.get_block(height)
                 if existing_block:
                     logger.info(f"Block at height {height} already processed, skipping")
                     continue
@@ -542,7 +534,7 @@ def sync_range(start_height, end_height):
 def load_pools_once():
     global pools_cache, pools_hash
     try:
-        pools, new_hash, _ = load_pools(db, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
+        pools, new_hash, _ = load_pools(POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
         pools_cache = pools or {}
         pools_hash = new_hash
         logger.info(f"Initialized pools cache with {len(pools_cache)} entries")
@@ -556,7 +548,7 @@ def pool_updater_task():
         try:
             logger.info("Checking for updates to mining pool definitions")
             global pools_cache, pools_hash
-            pools, new_hash, changed = load_pools(db, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
+            pools, new_hash, changed = load_pools(POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
             if pools:
                 pools_cache = pools
                 if new_hash is not None and new_hash != pools_hash:

@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stratum-work-router.fullname" . }}
+  labels:
+    {{- include "stratum-work-router.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if and (has .Values.service.type (list "LoadBalancer" "NodePort")) .Values.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if eq .Values.service.type "LoadBalancer" }}
+  {{- with .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  ports:
+    - name: stratum
+      port: {{ .Values.service.port }}
+      targetPort: stratum
+      protocol: TCP
+  selector:
+    {{- include "stratum-work-router.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stratum-work-router.fullname" . }}-admin
+  labels:
+    {{- include "stratum-work-router.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+  {{- with .Values.adminService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Never exposed outside the cluster
+  type: ClusterIP
+  ports:
+    - name: admin
+      port: {{ .Values.adminService.port }}
+      targetPort: admin
+      protocol: TCP
+  selector:
+    {{- include "stratum-work-router.selectorLabels" . | nindent 4 }}

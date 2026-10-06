@@ -1,0 +1,28 @@
+{{- if and (not .Values.pools) .Values.workMode.enabled .Values.workMode.networkPolicy.enabled }}
+{{- $name := printf "%s-%s" .Chart.Name (.Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- with .Values.workMode.networkPolicy.routerNamespaceSelector }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }} {}
+            {{- end }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.workMode.networkPolicy.routerPodLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.workMode.port }}
+{{- end }}

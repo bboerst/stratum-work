@@ -1,4 +1,5 @@
 
 helm-charts/values*_collector.yaml
 *.pyc
+.venv/
 .aider*

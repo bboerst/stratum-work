@@ -1,0 +1,14 @@
+existingSecret: backend-env
+priorityClassName: stratum-critical
+env:
+  BITCOIN_RPC_USER: "backend"
+  BITCOIN_RPC_HOST: "bitcoind-core.stratum-work.svc"
+  BITCOIN_RPC_PORT: "8332"
+  BITCOIN_ZMQ_BLOCK: "tcp://bitcoind-core.stratum-work.svc:28333"
+  RABBITMQ_HOST: "rabbitmq.stratum-work.svc"
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi

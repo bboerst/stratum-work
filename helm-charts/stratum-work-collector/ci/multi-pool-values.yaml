@@ -1,0 +1,46 @@
+site: us-ash-1
+workMode:
+  networkPolicy:
+    routerNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: stratum-router
+defaults:
+  image:
+    tag: v1.1.0
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  rabbitmq:
+    host: rabbitmq.stratum-work.svc
+    port: 5672
+    username: collector
+  existingSecret: collector-env
+  bitcoin:
+    rpcHost: bitcoin-node.bitcoin.svc
+    rpcPort: 8332
+    rpcUser: collector
+  zmqEndpoint: tcp://bitcoin-node.bitcoin.svc:28332
+  priorityClassName: stratum-critical
+  env:
+    ENABLE_HISTORICAL_DATA: "false"
+  logLevel: INFO
+pools:
+  - name: "Foundry USA"
+    url: stratum+tcp://stratum.foundryusapool.com:3333
+    mode: observe
+    userpass: bc1qexampleaddress.observer:x
+  - name: "OCEAN.xyz"
+    url: stratum+tcp://mine.ocean.xyz:3334
+    mode: observe
+    userpassSecretKey: OCEAN_USERPASS
+    extraArgs:
+      - --keep-alive
+  - name: "Braiins Pool"
+    url: stratum+tcp://stratum.braiins.com:3333
+    mode: work
+    account: example.worker
+    userpassSecretKey: BRAIINS_USERPASS
+    targetPort: 3333

@@ -1,0 +1,116 @@
+{{- $configSecret := .Values.configSecret | default (printf "%s-config" (include "stratum-work-datum.fullname" .)) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "stratum-work-datum.fullname" . }}
+  labels:
+    {{- include "stratum-work-datum.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "stratum-work-datum.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "stratum-work-datum.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: datum
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/app/config/config.json"]
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: stratum
+              containerPort: {{ .Values.ports.stratum }}
+              protocol: TCP
+            - name: api
+              containerPort: {{ .Values.ports.api }}
+              protocol: TCP
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/config.json
+              subPath: config.json
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        {{- if .Values.notifier.enabled }}
+        - name: notifier
+          image: "{{ .Values.notifier.image.repository }}:{{ .Values.notifier.image.tag }}"
+          imagePullPolicy: {{ .Values.notifier.image.pullPolicy }}
+          {{- with .Values.notifier.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: ZMQ_ENDPOINT
+              value: {{ required "notifier.zmqEndpoint is required" .Values.notifier.zmqEndpoint | quote }}
+            - name: NOTIFY_URL
+              value: {{ printf "http://127.0.0.1:%d/NOTIFY" (int .Values.ports.api) | quote }}
+          resources:
+            {{- toYaml .Values.notifier.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ $configSecret }}
+            items:
+              - key: config.json
+                path: config.json
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

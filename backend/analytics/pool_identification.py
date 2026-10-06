@@ -9,6 +9,8 @@ import re
 from datetime import datetime
 import uuid
 
+from integrations import postgres
+
 logger = logging.getLogger("backend")
 
 
@@ -175,7 +177,7 @@ def identify_pool_from_data(
     return {}
 
 
-def load_pools(db, pool_json_url: str, local_pool_file: str, previous_hash: Optional[int] = None) -> Tuple[Dict[str, Dict[str, Any]], Optional[int], bool]:
+def load_pools(pool_json_url: str, local_pool_file: str, previous_hash: Optional[int] = None) -> Tuple[Dict[str, Dict[str, Any]], Optional[int], bool]:
     max_retries = 3
     retry_delay = 5
     for attempt in range(1, max_retries + 1):
@@ -194,10 +196,9 @@ def load_pools(db, pool_json_url: str, local_pool_file: str, previous_hash: Opti
             definitions_changed = previous_hash is not None and previous_hash != new_hash
             pools = {pool.get("id"): pool for pool in pool_data}
             try:
-                db.pools.delete_many({})
-                db.pools.insert_many(pool_data)
+                postgres.replace_pools(pool_data)
             except Exception as db_err:
-                logger.warning(f"Could not update pools collection: {db_err}")
+                logger.warning(f"Could not update pools table: {db_err}")
             logger.info(f"Successfully loaded {len(pools)} mining pool definitions from GitHub")
             return pools, new_hash, definitions_changed
         except requests.exceptions.SSLError as ssl_err:
@@ -243,10 +244,9 @@ def load_pools(db, pool_json_url: str, local_pool_file: str, previous_hash: Opti
             with open(local_pool_file, "r") as f:
                 pool_data = json.load(f)
             try:
-                db.pools.delete_many({})
-                db.pools.insert_many(pool_data)
+                postgres.replace_pools(pool_data)
             except Exception as db_err:
-                logger.warning(f"Could not update pools collection from local file: {db_err}")
+                logger.warning(f"Could not update pools table from local file: {db_err}")
             pools = {pool.get("id"): pool for pool in pool_data}
             logger.info(f"Successfully loaded {len(pools)} mining pool definitions from local file")
             new_hash = hash(json.dumps(pool_data, sort_keys=True))
@@ -258,7 +258,7 @@ def load_pools(db, pool_json_url: str, local_pool_file: str, previous_hash: Opti
         logger.error(f"Error loading pool definitions from local file: {file_err}")
 
     try:
-        pool_data = list(db.pools.find({}, {"_id": 0}))
+        pool_data = postgres.list_pools()
         if pool_data:
             logger.info(f"Loaded {len(pool_data)} mining pool definitions from database")
             pools = {pool.get("id"): pool for pool in pool_data}

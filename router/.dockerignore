@@ -1,0 +1,10 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+/bin/
+/router
+/zmqnotify
+*.test
+*.out
+coverage.*

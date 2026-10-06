@@ -1,0 +1,160 @@
+{
+  "cases": [
+    {
+      "addresses": [
+        "1AntAddr"
+      ],
+      "expected": {
+        "id": 1,
+        "identification_method": "address",
+        "link": "https://antpool.com",
+        "match_type": "address",
+        "name": "AntPool",
+        "slug": "antpool"
+      },
+      "name": "address wins over tag",
+      "scriptHex": "036162632f4632506f6f6c2f"
+    },
+    {
+      "addresses": [],
+      "expected": {
+        "id": 1,
+        "identification_method": "tag",
+        "link": "https://antpool.com",
+        "match_type": "tag",
+        "name": "AntPool",
+        "slug": "antpool"
+      },
+      "name": "tag match",
+      "scriptHex": "03a0cd0c2f416e74506f6f6c2f78797a"
+    },
+    {
+      "addresses": [],
+      "expected": {
+        "id": 2,
+        "identification_method": "tag",
+        "link": "https://f2pool.com",
+        "match_type": "tag",
+        "name": "F2Pool",
+        "slug": "f2pool"
+      },
+      "name": "regex match, case-insensitive",
+      "scriptHex": "03a0cd0c6d696e6564206279204632504f4f4c"
+    },
+    {
+      "addresses": [
+        "bc1qnobody"
+      ],
+      "expected": {},
+      "name": "no match",
+      "scriptHex": "03a0cd0c68656c6c6f"
+    },
+    {
+      "addresses": [],
+      "expected": {},
+      "name": "empty inputs",
+      "scriptHex": ""
+    },
+    {
+      "addresses": [
+        "bc1qocean"
+      ],
+      "expected": {
+        "datum_template_creator": "SomeMiner",
+        "id": 3,
+        "identification_method": "address",
+        "link": "https://ocean.xyz",
+        "match_type": "address",
+        "name": "OCEAN",
+        "slug": "ocean"
+      },
+      "name": "ocean by address with datum creator",
+      "scriptHex": "03a0cd0c134f4345414e2e58595a0f536f6d654d696e6572080000000000000000"
+    },
+    {
+      "addresses": [],
+      "expected": {
+        "id": 3,
+        "identification_method": "tag",
+        "link": "https://ocean.xyz",
+        "match_type": "tag",
+        "name": "OCEAN",
+        "slug": "ocean"
+      },
+      "name": "ocean by tag, datum names only markers",
+      "scriptHex": "03a0cd0c174f4345414e2e58595a0f444154554d2047617465776179080000000000000000"
+    },
+    {
+      "addresses": [],
+      "expected": {
+        "datum_template_creator": "Miner42",
+        "id": 3,
+        "identification_method": "tag",
+        "link": "https://ocean.xyz",
+        "match_type": "tag",
+        "name": "OCEAN",
+        "slug": "ocean"
+      },
+      "name": "ocean datum strips non-alnum",
+      "scriptHex": "03a0cd0c144f4345414e2e58595a0f4d692d6e65725f343221080000000000000000"
+    },
+    {
+      "addresses": [],
+      "expected": {},
+      "name": "invalid hex",
+      "scriptHex": "zz"
+    }
+  ],
+  "pools": [
+    {
+      "addresses": [
+        "1AntAddr"
+      ],
+      "id": 1,
+      "link": "https://antpool.com",
+      "name": "AntPool",
+      "regexes": [],
+      "slug": "antpool",
+      "tags": [
+        "/AntPool/"
+      ]
+    },
+    {
+      "addresses": [],
+      "id": 2,
+      "link": "https://f2pool.com",
+      "name": "F2Pool",
+      "regexes": [
+        "f2pool"
+      ],
+      "tags": [
+        "/F2Pool/"
+      ]
+    },
+    {
+      "addresses": [
+        "bc1qocean"
+      ],
+      "id": 3,
+      "link": "https://ocean.xyz",
+      "name": "OCEAN",
+      "regexes": [],
+      "slug": "ocean",
+      "tags": [
+        "OCEAN.XYZ"
+      ]
+    },
+    {
+      "addresses": [
+        "bc1qfoundry"
+      ],
+      "id": 4,
+      "link": "",
+      "name": "Foundry USA",
+      "regexes": [],
+      "tags": [
+        "Foundry USA Pool"
+      ]
+    }
+  ]
+}

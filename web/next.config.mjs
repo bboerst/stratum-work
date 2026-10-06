@@ -3,18 +3,6 @@
 const isDev = process.env.NODE_ENV === "development";
 
 const nextConfig = {
-  // Rewrites configuration from next.config.mjs
-  async rewrites() {
-    return [
-      {
-        // Rewrite /table to / so that direct access to /table
-        // will show the same content as the root URL
-        source: '/table',
-        destination: '/',
-      },
-    ];
-  },
-  
   // Development configuration
   ...(isDev && {
     webpack: (config, { dev }) => {
@@ -30,4 +18,4 @@ const nextConfig = {
   }),
 };
 
-export default nextConfig; 
+export default nextConfig;

@@ -568,24 +568,121 @@ export function createTemplateChangeTracker(): TemplateChangeTracker {
   return new TemplateChangeTracker();
 }
 
+const HIDDEN_CHANGE_TYPES: ReadonlySet<TemplateChangeType> = new Set([
+  TemplateChangeType.NTIME,
+  TemplateChangeType.COINBASE_OUTPUT_VALUE,
+  TemplateChangeType.OP_RETURN_WITNESS,
+  TemplateChangeType.COINBASE_ASCII,
+]);
+
+export interface ChangeColorToken {
+  type: TemplateChangeType;
+  label: string;
+  contentKey: string;
+}
+
+export function getVisibleChangeTypes(changeTypes: TemplateChangeType[]): TemplateChangeType[] {
+  return [...new Set(changeTypes.filter(type => !HIDDEN_CHANGE_TYPES.has(type)))].sort();
+}
+
+function getProtocolContentKey(changeInfo: TemplateChangeResult, type: TemplateChangeType): string {
+  const protocols = changeInfo.changeDetails.opReturnProtocols;
+  if (!protocols) return `${type}:`;
+
+  return protocols.changed
+    .filter(protocol => getProtocolChangeType(protocol) === type)
+    .sort()
+    .map(protocol => {
+      const newData = protocols.new.get(protocol);
+      const content = newData?.dataHex ?? JSON.stringify(newData?.details ?? '');
+      return `${type}:${protocol}:${content}`;
+    })
+    .join(';');
+}
+
+function getChangeTypeContentKey(
+  changeInfo: TemplateChangeResult,
+  type: TemplateChangeType,
+): string {
+  const details = changeInfo.changeDetails;
+
+  switch (type) {
+    case TemplateChangeType.AUXPOW_HASH:
+      return `A:${details.auxPowHash?.new ?? ''}`;
+    case TemplateChangeType.MERKLE_BRANCHES:
+      return `M:${(details.merkleBranches?.new ?? []).join(',')}`;
+    case TemplateChangeType.CLEAN_JOBS:
+      return `C:${details.cleanJobs?.new ?? ''}`;
+    case TemplateChangeType.PREV_HASH:
+      return `P:${details.prevHash?.new ?? ''}`;
+    case TemplateChangeType.HEIGHT:
+      return `H:${details.height?.new ?? ''}`;
+    case TemplateChangeType.VERSION:
+      return `V:${details.version?.new ?? ''}`;
+    case TemplateChangeType.NBITS:
+      return `N:${details.nbits?.new ?? ''}`;
+    case TemplateChangeType.NTIME:
+      return `T:${details.ntime?.new ?? ''}`;
+    case TemplateChangeType.EXTRANONCE2_LENGTH:
+      return `E:${details.extranonce2Length?.new ?? ''}`;
+    case TemplateChangeType.TX_VERSION:
+      return `X:${details.txVersion?.new ?? ''}`;
+    case TemplateChangeType.TX_LOCKTIME:
+      return `L:${details.txLocktime?.new ?? ''}`;
+    case TemplateChangeType.INPUT_SEQUENCE:
+      return `I:${details.inputSequence?.new ?? ''}`;
+    case TemplateChangeType.WITNESS_NONCE:
+      return `W:${details.witnessNonce?.new ?? ''}`;
+    case TemplateChangeType.COINBASE_ASCII:
+      return `Z:${details.coinbaseAscii?.new ?? ''}`;
+    case TemplateChangeType.COINBASE_OUTPUT_VALUE:
+      return `Q:${details.coinbaseOutputValue?.new ?? ''}`;
+    case TemplateChangeType.COINBASE_OUTPUTS:
+      return `U:${JSON.stringify(details.coinbaseOutputs?.new ?? [])}`;
+    case TemplateChangeType.AUXPOW_MERKLE_SIZE:
+      return `K:${details.auxPowMerkleSize?.new ?? ''}`;
+    case TemplateChangeType.AUXPOW_NONCE:
+      return `J:${details.auxPowNonce?.new ?? ''}`;
+    case TemplateChangeType.OP_RETURN_RSK:
+    case TemplateChangeType.OP_RETURN_COREDAO:
+    case TemplateChangeType.OP_RETURN_SYSCOIN:
+    case TemplateChangeType.OP_RETURN_HATHOR:
+    case TemplateChangeType.OP_RETURN_EXSAT:
+    case TemplateChangeType.OP_RETURN_OMNI:
+    case TemplateChangeType.OP_RETURN_RUNESTONE:
+    case TemplateChangeType.OP_RETURN_WITNESS:
+    case TemplateChangeType.OP_RETURN_STACKS:
+    case TemplateChangeType.OP_RETURN_BIP47:
+    case TemplateChangeType.OP_RETURN_EMPTY:
+    case TemplateChangeType.OP_RETURN_OTHER:
+      return getProtocolContentKey(changeInfo, type);
+    case TemplateChangeType.OTHER:
+      return `O:${JSON.stringify(
+        (details.otherChanges ?? []).map(change => ({ field: change.field, new: change.new })),
+      )}`;
+    default: {
+      const exhaustive: never = type;
+      return exhaustive;
+    }
+  }
+}
+
+export function getChangeColorTokens(changeInfo: TemplateChangeResult): ChangeColorToken[] {
+  if (!changeInfo.hasChanges) return [];
+
+  return getVisibleChangeTypes(changeInfo.changeTypes).map(type => ({
+    type,
+    label: type,
+    contentKey: getChangeTypeContentKey(changeInfo, type),
+  }));
+}
+
+export function getChangeContentKey(changeInfo: TemplateChangeResult): string {
+  return getChangeColorTokens(changeInfo).map(token => token.contentKey).join('|');
+}
+
 export function getChangeTypeDisplay(changeTypes: TemplateChangeType[]): string {
-  if (changeTypes.length === 0) return ''; // Empty string for untracked changes (will show empty circle)
-
-  // Filter out change types that should not be displayed in circle plots
-  const hiddenChangeTypes = new Set([
-    TemplateChangeType.NTIME,              // nTime changes
-    TemplateChangeType.COINBASE_OUTPUT_VALUE, // Output value changes
-    TemplateChangeType.OP_RETURN_WITNESS,  // Witness Commit changes
-    TemplateChangeType.COINBASE_ASCII      // Coinbase ASCII tag changes
-  ]);
-
-  const visibleChangeTypes = changeTypes.filter(type => !hiddenChangeTypes.has(type));
-
-  if (visibleChangeTypes.length === 0) return ''; // Empty string if only hidden changes
-
-  // For multiple changes, combine them (deduplicated, sorted for determinism)
-  const uniqueTypes = [...new Set(visibleChangeTypes)].sort();
-  return uniqueTypes.join('');
+  return getVisibleChangeTypes(changeTypes).join('');
 }
 
 export function getChangeTypeDescription(changeType: TemplateChangeType): string {

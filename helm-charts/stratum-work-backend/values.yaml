@@ -10,29 +10,28 @@ args: []
   # - --update-pools
   # - --reindex-blocks
 
-# Environment variables
+# Name of a Secret whose keys are exposed as environment variables.
+# Expected keys: DATABASE_URL, RABBITMQ_USERNAME, RABBITMQ_PASSWORD, BITCOIN_RPC_PASSWORD
+existingSecret: ""
+
+# Non-secret environment variables
 env:
   # Bitcoin RPC connection
   BITCOIN_RPC_USER: "user"
-  BITCOIN_RPC_PASSWORD: "password"
   BITCOIN_RPC_HOST: "bitcoin-node"
   BITCOIN_RPC_PORT: "8332"
   
   # ZMQ configuration
-  BITCOIN_ZMQ_BLOCK: "tcp://bitcoin-node:28332"
+  # backend subscribes to `hashblock` (zmqpubhashblock), not rawblock
+  BITCOIN_ZMQ_BLOCK: "tcp://bitcoin-node:28333"
   MIN_BLOCK_HEIGHT: "882000"
   
-  # MongoDB connection
-  MONGODB_URL: "mongodb://mongodb:27017"
-  MONGODB_DB: "stratum-logger"
-  MONGODB_USERNAME: "mongouser"
-  MONGODB_PASSWORD: "mongopassword"
+  # Postgres writes (DATABASE_URL comes from existingSecret)
+  ENABLE_HISTORICAL_DATA: "true"
   
   # RabbitMQ connection
   RABBITMQ_HOST: "rabbitmq"
   RABBITMQ_PORT: "5672"
-  RABBITMQ_USERNAME: "mquser"
-  RABBITMQ_PASSWORD: "mqpassword"
   RABBITMQ_EXCHANGE: "blocks"
   
   # Pool definitions
@@ -75,6 +74,8 @@ resources:
   limits:
     memory: 512Mi
     cpu: 500m
+
+priorityClassName: ""
 
 # Pod Security Context
 securityContext: {}

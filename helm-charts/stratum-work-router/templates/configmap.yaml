@@ -1,0 +1,11 @@
+{{- if not .Values.configSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "stratum-work-router.fullname" . }}
+  labels:
+    {{- include "stratum-work-router.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
+{{- end }}

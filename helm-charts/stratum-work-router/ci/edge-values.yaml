@@ -1,0 +1,34 @@
+existingSecret: router-env
+priorityClassName: stratum-critical
+env:
+  AMQP_EXCHANGE: mining_notify_exchange
+  LOG_LEVEL: info
+config:
+  site: us-ash-1
+  listen: ":3333"
+  adminListen: ":9100"
+  slice:
+    minSliceMs: 2000
+  targets:
+    - id: example-pool
+      pool: Example Pool
+      upstream: stratum-work-collector-example-pool-work.collectors.svc:3333
+      targetThs: 1
+  remainder:
+    id: datum
+    upstream: stratum-work-datum.collectors.svc:23334
+    username: ".router"
+    password: "x"
+  fallbackRemainder:
+    id: ocean-direct
+    upstream: mine.ocean.xyz:3334
+    username: "bc1qexampleexampleexampleexampleexample0.router-fallback"
+    password: "x"
+  limits:
+    maxConnectionsPerIp: 4
+    maxConnections: 500
+  thanksMinWorkMinutes: 60
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack

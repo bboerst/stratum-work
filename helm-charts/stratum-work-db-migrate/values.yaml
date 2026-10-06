@@ -1,0 +1,52 @@
+image:
+  repository: bboerst/stratum-work-db-migrate
+  # Defaults to the chart appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Part of the Job name. Jobs are immutable, so bump this (e.g. to the newest
+# migration file name) to run a new Job. The image reference is also hashed
+# into the name, so a new image tag always gets a new Job.
+migrationsVersion: "0003"
+
+# Secret with key DATABASE_URL (a role allowed to run DDL).
+existingSecret: db-migrate-env
+
+backoffLimit: 6
+ttlSecondsAfterFinished: 86400
+activeDeadlineSeconds: 600
+
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# uid 70 is the postgres user in postgres:*-alpine
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 70
+  runAsGroup: 70
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    memory: 32Mi
+    cpu: 10m
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

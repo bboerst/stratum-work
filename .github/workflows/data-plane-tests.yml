@@ -1,0 +1,94 @@
+name: Data Plane Tests
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: timescale/timescaledb:2.30.1-pg17
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+      RABBITMQ_MAX_RETRIES: '1'
+      RABBITMQ_RETRY_DELAY: '0'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: |
+          stream/package-lock.json
+          web/package-lock.json
+
+    # Backend image runs 3.11 (pinned pyzmq has no 3.13 wheels); collector image runs 3.12.
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: |
+          3.11
+          3.12
+
+    - name: Install psql client
+      run: |
+        if ! command -v psql >/dev/null; then
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+        fi
+        psql --version
+
+    - name: Migrations (applied twice, idempotence)
+      run: bash db/test_migrations.sh
+
+    - name: Stream tests and typecheck
+      working-directory: stream
+      run: |
+        npm ci
+        npx vitest run
+        npx tsc --noEmit
+
+    # Only the data-access suites: other web tests are not part of the data plane.
+    - name: Web data-access tests
+      working-directory: web
+      run: |
+        npm ci
+        npx vitest run lib/db app/api
+
+    - name: Backend tests
+      working-directory: backend
+      run: |
+        python3.11 -m venv .venv
+        .venv/bin/pip install -r requirements.txt
+        .venv/bin/python -m unittest discover -s tests -v
+
+    - name: Scripts tests
+      run: |
+        python3.12 -m venv scripts/.venv
+        scripts/.venv/bin/pip install -r scripts/requirements-migrate.txt
+        scripts/.venv/bin/python -m unittest discover -s scripts/tests -v
+
+    - name: Collector tests
+      run: |
+        python3.12 -m venv collector/.venv
+        collector/.venv/bin/pip install -r collector/requirements.txt
+        collector/.venv/bin/python -m unittest discover -s collector/tests -v

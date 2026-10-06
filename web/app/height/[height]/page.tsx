@@ -54,8 +54,8 @@ export default function HeightPage() {
       setSelectedTemplate(null);
       // Reset blocks state before navigating
       resetBlocksState();
-      // Navigate to the root URL for the being-mined block using client-side navigation
-      router.push('/');
+      // Navigate to the table for the being-mined block using client-side navigation
+      router.push('/table');
       return;
     }
     

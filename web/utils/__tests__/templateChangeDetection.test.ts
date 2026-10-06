@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import {
   createTemplateChangeTracker,
+  getChangeColorTokens,
+  getChangeContentKey,
   getChangeTypeDisplay,
+  TemplateChangeResult,
   TemplateChangeType,
 } from '../templateChangeDetection';
 import { clearProcessedDataCache } from '../templateDataProcessor';
@@ -286,5 +289,54 @@ describe('getChangeTypeDisplay', () => {
       TemplateChangeType.MERKLE_BRANCHES,
     ]);
     expect(display).toBe('MP');
+  });
+});
+
+describe('change color keys', () => {
+  const changes: TemplateChangeResult = {
+    hasChanges: true,
+    changeTypes: [
+      TemplateChangeType.MERKLE_BRANCHES,
+      TemplateChangeType.NTIME,
+      TemplateChangeType.AUXPOW_HASH,
+    ],
+    changeDetails: {
+      auxPowHash: { old: 'aux-old', new: 'aux-new' },
+      merkleBranches: { old: ['old'], new: ['aaaa', 'bbbb'] },
+      ntime: { old: '60000000', new: '60000001' },
+    },
+  };
+
+  test('builds one independently colored token per visible change type', () => {
+    expect(getChangeColorTokens(changes)).toEqual([
+      { type: TemplateChangeType.AUXPOW_HASH, label: 'A', contentKey: 'A:aux-new' },
+      { type: TemplateChangeType.MERKLE_BRANCHES, label: 'M', contentKey: 'M:aaaa,bbbb' },
+    ]);
+  });
+
+  test('builds the outer bar key from all visible token keys', () => {
+    expect(getChangeContentKey(changes)).toBe('A:aux-new|M:aaaa,bbbb');
+  });
+
+  test('keeps a struck-through protocol marker in one token', () => {
+    const protocolChanges: TemplateChangeResult = {
+      hasChanges: true,
+      changeTypes: [TemplateChangeType.OP_RETURN_RSK],
+      changeDetails: {
+        opReturnProtocols: {
+          old: new Map([['RSK Block', { dataHex: 'dead' }]]),
+          new: new Map([['RSK Block', { dataHex: 'beef' }]]),
+          changed: ['RSK Block'],
+        },
+      },
+    };
+
+    expect(getChangeColorTokens(protocolChanges)).toEqual([
+      {
+        type: TemplateChangeType.OP_RETURN_RSK,
+        label: 'R̶',
+        contentKey: 'R̶:RSK Block:beef',
+      },
+    ]);
   });
 });

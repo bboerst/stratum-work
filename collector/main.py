@@ -1,11 +1,14 @@
 import argparse
+import dataclasses
 import json
 import logging
+import os
 import threading
 import socket
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlparse
 import select
@@ -55,6 +58,11 @@ try:
 except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
     from latency import LatencyTracker, sample_tcp_rtt_us  # type: ignore
 
+try:
+    from collector import work_proxy
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    import work_proxy  # type: ignore
+
 LOG = logging.getLogger()
 
 tip_state = TipState(
@@ -77,6 +85,32 @@ mongo_client_lock = threading.Lock()
 cached_mongo_client = None
 cached_mongo_collection = None
 cached_mongo_config = None
+
+
+@dataclass(frozen=True)
+class ConnectionMeta:
+    site: str
+    connection_id: str
+    mode: str = "observe"
+    account: str | None = None
+    endpoint_ip: str | None = None
+
+
+def connection_meta_from_args(args, endpoint_ip=None):
+    pool_name = args.pool_name or urlparse(args.url).hostname
+    return ConnectionMeta(
+        site=args.site,
+        connection_id=args.connection_id or f"{args.site}/{pool_name}/{args.mode}",
+        mode=args.mode,
+        account=args.account if args.mode == "work" else None,
+        endpoint_ip=endpoint_ip,
+    )
+
+
+def db_enabled_from_args(args):
+    if args.db_enabled is not None:
+        return args.db_enabled and args.db_username is not None and args.db_password is not None
+    return args.db_username is not None and args.db_password is not None
 
 
 def require_dependency(module, name):
@@ -229,8 +263,9 @@ def classify_notification_chain(height: int, prev_hash: str) -> str | None:
         return None
 
 class Watcher:
-    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0, stratum_user_agent=None):
+    def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0, stratum_user_agent=None, meta=None):
         self.buf = b""
+        self.meta = meta
         self.id = 1
         self.userpass = userpass
         self.pool_name = pool_name
@@ -459,6 +494,7 @@ class Watcher:
                 LOG.info(f"Attempting to connect to {self.purl.hostname}:{self.purl.port}")
                 self.sock.connect((self.purl.hostname, self.purl.port))
                 LOG.info(f"Successfully connected to server {self.purl.geturl()}")
+                self._record_endpoint_ip()
 
                 if not self.enable_stratum_client:
                     LOG.info("Sending mining.subscribe request")
@@ -488,6 +524,15 @@ class Watcher:
                 else:
                     raise
 
+    def _record_endpoint_ip(self):
+        # Through a SOCKS proxy the peer is the proxy, not the pool.
+        if self.meta is None or self.use_proxy:
+            return
+        try:
+            self.meta = dataclasses.replace(self.meta, endpoint_ip=self.sock.getpeername()[0])
+        except OSError as e:
+            LOG.debug(f"Could not read pool endpoint IP: {e}")
+
     def _drain_pending_notifications(self):
         for msg, ts in self.pending_notifications:
             self._process_notification(msg, None, ts)
@@ -501,7 +546,7 @@ class Watcher:
             LOG.debug(f"mining.notify full payload: {msg}")
             document = create_notification_document(
                 msg, self.pool_name, self.extranonce1, self.extranonce2_length,
-                event_time, latency=self.latency_tracker.estimate(),
+                event_time, latency=self.latency_tracker.estimate(), meta=self.meta,
             )
             if self.db_enabled:
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
@@ -610,7 +655,7 @@ class Watcher:
                         LOG.error(f"Error sending to pool: {e}")
                         break
 
-def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp, latency=None):
+def create_notification_document(data, pool_name, extranonce1, extranonce2_length, timestamp, latency=None, meta=None):
     notification_id = str(uuid.uuid4())
     coinbase1 = data["params"][2]
     coinbase2 = data["params"][3]
@@ -644,6 +689,14 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
         latency_ms, latency_method = latency
         document["lat_ms"] = latency_ms
         document["lat_m"] = latency_method
+    if meta is not None:
+        document["site"] = meta.site
+        document["connection_id"] = meta.connection_id
+        document["mode"] = meta.mode
+        if meta.mode == "work" and meta.account:
+            document["account"] = meta.account
+        if meta.endpoint_ip:
+            document["endpoint_ip"] = meta.endpoint_ip
     chain_family = classify_notification_chain(height, data["params"][1])
     if chain_family is not None:
         document["chain_family"] = chain_family
@@ -661,7 +714,8 @@ def build_parser():
     )
     parser.add_argument("-u", "--url", required=True, help="The URL of the stratum server, including port. Ex: stratum+tcp://beststratumpool.com:3333")
     parser.add_argument(
-        "-up", "--userpass", required=True, help="Username and password combination separated by a colon (:)"
+        "-up", "--userpass", default=os.environ.get("STRATUM_USERPASS"),
+        help="Username and password combination separated by a colon (:) (default: env STRATUM_USERPASS)",
     )
     parser.add_argument(
         "-p", "--pool-name", default=None, help="The name of the pool (defaults to hostname from --url)"
@@ -676,7 +730,8 @@ def build_parser():
         "-ru", "--rabbitmq-username", default=None, help="The username for RabbitMQ authentication"
     )
     parser.add_argument(
-        "-rp", "--rabbitmq-password", default=None, help="The password for RabbitMQ authentication"
+        "-rp", "--rabbitmq-password", default=os.environ.get("RABBITMQ_PASSWORD"),
+        help="The password for RabbitMQ authentication (default: env RABBITMQ_PASSWORD)"
     )
     parser.add_argument(
         "-re", "--rabbitmq-exchange", default="mining_notify_exchange", help="The name of the RabbitMQ exchange (default: mining_notify_exchange)"
@@ -735,8 +790,8 @@ def build_parser():
     )
     parser.add_argument(
         "--bitcoin-rpc-password",
-        default="password",
-        help="Bitcoin RPC password",
+        default=os.environ.get("BITCOIN_RPC_PASSWORD", "password"),
+        help="Bitcoin RPC password (default: env BITCOIN_RPC_PASSWORD)",
     )
     parser.add_argument(
         "--bitcoin-rpc-host",
@@ -783,11 +838,25 @@ def build_parser():
         default=60.0,
         help="Seconds between latency probe requests to the pool (0 disables; default: 60)",
     )
+    parser.add_argument("--site", default=os.environ.get("SITE", "us-ash-legacy"), help="Collector site identifier")
+    parser.add_argument("--connection-id", default=os.environ.get("CONNECTION_ID"), help="Stable connection identifier (default <site>/<pool>/<mode>)")
+    parser.add_argument("--mode", choices=["observe", "work"], default=os.environ.get("MODE", "observe"), help="observe (passive) or work (router-facing proxy)")
+    parser.add_argument("--account", default=os.environ.get("ACCOUNT"), help="Upstream worker name (work mode; default: username part of --userpass)")
+    parser.add_argument("--work-token", default=os.environ.get("WORK_TOKEN"), help="Token the router must present as its authorize password (work mode; default: env WORK_TOKEN)")
+    parser.add_argument("--db-enabled", dest="db_enabled", action=argparse.BooleanOptionalAction, default=None, help="Force database writes on/off")
     return parser
 
 
 def main():
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.userpass:
+        parser.error("--userpass or env STRATUM_USERPASS is required")
+    if args.mode == "work":
+        if not args.work_token:
+            parser.error("--work-token or env WORK_TOKEN is required in work mode")
+        if not args.account:
+            args.account = args.userpass.partition(":")[0]
 
     if args.pool_name is None:
         args.pool_name = urlparse(args.url).hostname
@@ -795,7 +864,8 @@ def main():
     configure_chain_detection(args)
 
     rabbitmq_enabled = args.rabbitmq_username is not None and args.rabbitmq_password is not None
-    db_enabled = args.db_username is not None and args.db_password is not None
+    db_enabled = db_enabled_from_args(args)
+    meta = connection_meta_from_args(args)
 
     log_level = getattr(logging, args.log_level.upper(), None)
     if not isinstance(log_level, int):
@@ -813,6 +883,12 @@ def main():
     except Exception as exc:
         LOG.warning("Initial BTC tip setup failed; classification disabled until tip data is available: %s", exc)
     start_tip_listener(args)
+
+    if args.mode == "work":
+        if db_enabled:
+            LOG.warning("Work mode publishes to RabbitMQ only; MongoDB writes are disabled")
+        work_proxy.run(args, meta, create_notification_document, rabbitmq_enabled=rabbitmq_enabled)
+        return
 
     backends = []
     if rabbitmq_enabled:
@@ -843,6 +919,7 @@ def main():
                     rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
                     latency_probe_interval=args.latency_probe_interval,
                     stratum_user_agent=args.stratum_user_agent,
+                    meta=meta,
                 )
                 if rabbitmq_enabled:
                     w.connect_to_rabbitmq()
@@ -877,6 +954,7 @@ def main():
                 rabbitmq_enabled=rabbitmq_enabled, db_enabled=db_enabled,
                 latency_probe_interval=args.latency_probe_interval,
                 stratum_user_agent=args.stratum_user_agent,
+                meta=meta,
             )
             try:
                 if rabbitmq_enabled:

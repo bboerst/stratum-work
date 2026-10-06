@@ -26,8 +26,11 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name:
 
+# Name of a Secret whose keys are exposed as environment variables
+# (e.g. DATABASE_URL=postgresql://web:...@host:5432/stratum).
+existingSecret: ""
+
 env:
-  DATABASE_URL: "mongodb://admin:c5sTZ3nlH1vukbcw@mongodb-stratum-work-1-0.mongodb-stratum-work-1-svc.stratum-work.svc.cluster.local:27017,mongodb-stratum-work-1-1.mongodb-stratum-work-1-svc.stratum-work.svc.cluster.local:27017/stratum-logger?replicaSet=mongodb-stratum-work-1&authSource=admin"
   CORS_ORIGINS: "http://127.0.0.1:8000,http://localhost:8000"
   STREAM_ENDPOINT: ""
 
@@ -154,3 +157,35 @@ extraManifests: []
   #         services:
   #         - name: {{ template "stratum-work-webapp.fullname" . }}
   #           port: {{ .Values.service.ports.flask }}
+
+# Secret references are explicit; duplicate keys in env fail rendering.
+envValueFrom: {}
+# Optional scheduling and lifecycle settings; existing releases retain defaults.
+topologySpreadConstraints: []
+terminationGracePeriodSeconds: 10
+# Probes are off by default because images before the Postgres migration have
+# no /api/healthz route. For current images use e.g.
+#   readinessProbe: {httpGet: {path: /api/healthz, port: nextjs}, periodSeconds: 10}
+#   livenessProbe: {httpGet: {path: /api/healthz, port: nextjs}, periodSeconds: 20, failureThreshold: 3}
+readinessProbe: {}
+startupProbe: {}
+livenessProbe: {}
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+priorityClassName: ""
+
+# When enabled, replicaCount is ignored.
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  cpuUtilization: 70
+  scaleDownStabilizationSeconds: 300
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  path: /metrics
+  interval: ""

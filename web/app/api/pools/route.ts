@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getAllPools } from '@/lib/db/pools';
+import { getPoolDefs } from '@/lib/db/pools';
 import { filterBlacklistedItems } from "@/lib/poolBlacklist";
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const pools = await getAllPools();
+    const pools = await getPoolDefs();
     const filtered = filterBlacklistedItems(pools, p => p.name);
     return NextResponse.json(filtered);
   } catch (error: Error | unknown) {

@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from 'next/navigation';
 import { GlobalMenu } from "./GlobalMenu";
-import { navItems } from "./navigationItems";
+import { donateLink, navItems } from "./navigationItems";
 
 interface NavigationProps {
   children: React.ReactNode;
@@ -44,8 +44,16 @@ export default function Navigation({ children }: NavigationProps) {
             })}
           </div>
 
-          {/* Right side - Page-specific controls via GlobalMenu */}
-          <GlobalMenu />
+          {/* Right side - donate link and page-specific controls via GlobalMenu */}
+          <div className="flex items-center gap-3">
+            <Link
+              href={donateLink.href}
+              className={`text-xs ${pathname === donateLink.href ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {donateLink.label}
+            </Link>
+            <GlobalMenu />
+          </div>
         </div>
       </nav>
       {children}

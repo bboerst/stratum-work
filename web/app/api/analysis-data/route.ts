@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBlockByHeight } from "@/lib/db/blocks";
-import { prisma } from "@/lib/db/prisma";
-
-interface InterestingBlockItem {
-  height: number;
-  block_hash: string;
-  analysis?: Record<string, unknown>;
-  mining_pool?: Record<string, unknown>;
-}
-
-interface MongoCursorResult<T> {
-  cursor: { firstBatch: T[] };
-}
+import { getBlockByHeight, getInterestingBlocks } from "@/lib/db/blocks";
+import { getObserveTemplatesAtHeight } from "@/lib/db/mining-notify";
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
@@ -57,30 +46,7 @@ export async function GET(request: NextRequest) {
   // If interesting=true, return a list of interesting blocks (excluding pool_identification-only)
   if (interesting === 'true') {
     try {
-      const raw = await prisma.$runCommandRaw({
-        find: 'blocks',
-        filter: {
-          analysis: { $exists: true, $type: 'object' },
-          $expr: {
-            $gt: [
-              {
-                $size: {
-                  $filter: {
-                    input: { $objectToArray: '$analysis' },
-                    as: 'kv',
-                    cond: { $ne: ['$$kv.k', 'pool_identification'] }
-                  }
-                }
-              },
-              0
-            ]
-          }
-        },
-        projection: { _id: 0, height: 1, block_hash: 1, analysis: 1, mining_pool: 1 },
-        sort: { height: -1 },
-        limit: 200
-      }) as unknown as MongoCursorResult<InterestingBlockItem>;
-      const items: InterestingBlockItem[] = raw?.cursor?.firstBatch || [];
+      const items = await getInterestingBlocks(200);
       return NextResponse.json({ items });
     } catch (e) {
       console.error('Error fetching interesting blocks:', e);
@@ -104,9 +70,7 @@ export async function GET(request: NextRequest) {
     const results = await Promise.all(heights.map(async (height) => {
       // Fetch mining notifications for the requested height
       const miningNotifications = enableHistoricalData
-        ? await prisma.miningNotify.findMany({
-            where: { height },
-          })
+        ? await getObserveTemplatesAtHeight(height)
         : [];
       
       // Fetch block details for the requested height and previous height
@@ -123,7 +87,7 @@ export async function GET(request: NextRequest) {
         try {
           coinbaseRaw = formatCoinbaseRaw(
             notification.coinbase1,
-            notification.extranonce1,
+            notification.extranonce1 ?? '',
             notification.extranonce2_length,
             notification.coinbase2
           );

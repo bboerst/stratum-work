@@ -1,0 +1,5 @@
+image:
+  tag: v1.1.0
+existingSecret: pg-migrator-uri
+migrationsVersion: "0003_grants"
+priorityClassName: stratum-critical

@@ -1,0 +1,130 @@
+# REGTEST ONLY hashrate-router integration harness. All credentials here are
+# throwaway regtest values; never reuse them anywhere else.
+# Usage: router/test/regtest/run.sh (see README.md).
+name: stratum-work-regtest
+
+x-router-image: &router-image
+  image: stratum-work-router:regtest
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+
+x-datum-image: &datum-image
+  image: stratum-work-datum:regtest
+  build:
+    context: ../../../images/datum
+
+services:
+  bitcoind:
+    image: bitcoin/bitcoin:28.1
+    command: ["bitcoind", "-conf=/etc/bitcoin/bitcoin.conf", "-datadir=/home/bitcoin/.bitcoin"]
+    volumes:
+      - ./bitcoin.conf:/etc/bitcoin/bitcoin.conf:ro
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-conf=/etc/bitcoin/bitcoin.conf", "getblockchaininfo"]
+      interval: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: regtest
+      RABBITMQ_DEFAULT_PASS: regtest-only-not-secret
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 30
+
+  # Remainder DATUM (solo to its regtest pool_address; no OCEAN connection).
+  datum:
+    <<: *datum-image
+    volumes:
+      - ./datum-remainder.json:/app/config/config.json:ro
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+
+  # Second DATUM acting as "pool A" behind the work-mode collector.
+  pool-a:
+    <<: *datum-image
+    volumes:
+      - ./datum-pool-a.json:/app/config/config.json:ro
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+
+  # zmqnotify, one per DATUM (the Helm chart runs it as a sidecar).
+  zmqnotify-datum:
+    <<: *router-image
+    entrypoint: ["/zmqnotify"]
+    environment:
+      ZMQ_ENDPOINT: tcp://bitcoind:28332
+      NOTIFY_URL: http://datum:7152/NOTIFY
+    depends_on: [datum]
+
+  zmqnotify-pool-a:
+    <<: *router-image
+    entrypoint: ["/zmqnotify"]
+    environment:
+      ZMQ_ENDPOINT: tcp://bitcoind:28332
+      NOTIFY_URL: http://pool-a:7152/NOTIFY
+    depends_on: [pool-a]
+
+  # Work-mode collector proxying the router's pool-a slices to pool-a DATUM.
+  collector-work:
+    image: stratum-work-collector:regtest
+    build:
+      context: ../../../collector
+    command:
+      - python
+      - main.py
+      - --url=stratum+tcp://pool-a:23334
+      - --pool-name=PoolA
+      - --mode=work
+      - --site=regtest
+      - --stratum-client-port=3334
+      - --rabbitmq-host=rabbitmq
+      - --rabbitmq-username=regtest
+      - --bitcoin-rpc-host=bitcoind
+      - --bitcoin-rpc-port=18443
+      - --bitcoin-rpc-user=regtest
+      - --bitcoin-zmq-block=tcp://bitcoind:28332
+      - --latency-probe-interval=0
+    environment:
+      STRATUM_USERPASS: regtest-collector:x
+      WORK_TOKEN: regtest-work-token-not-secret
+      RABBITMQ_PASSWORD: regtest-only-not-secret
+      BITCOIN_RPC_PASSWORD: regtest-only-not-secret
+    depends_on:
+      pool-a:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  router:
+    <<: *router-image
+    environment:
+      CONFIG_PATH: /etc/router/config.yaml
+      WORK_TOKEN: regtest-work-token-not-secret
+      AMQP_URL: amqp://regtest:regtest-only-not-secret@rabbitmq:5672/
+      LOG_LEVEL: info
+    volumes:
+      # run.sh points ROUTER_CONFIG at a generated copy with POOL_A_THS applied.
+      - ${ROUTER_CONFIG:-./router.yaml}:/etc/router/config.yaml:ro
+    ports:
+      # Admin (/healthz, /status, /metrics) for run.sh; loopback only.
+      - "127.0.0.1:${ROUTER_ADMIN_PORT:-19100}:9100"
+    depends_on:
+      datum:
+        condition: service_started
+      collector-work:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  # Single-threaded CPU miner; run.sh scales it with --scale testminer=N.
+  testminer:
+    <<: *router-image
+    entrypoint: ["/testminer"]
+    command: ["-url", "router:3333", "-user", "regtest-miner", "-pass", "x"]
+    depends_on: [router]

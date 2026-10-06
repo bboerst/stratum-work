@@ -1,0 +1,11 @@
+configSecret: datum-config
+priorityClassName: stratum-critical
+notifier:
+  zmqEndpoint: tcp://bitcoind-us-ash-1.collectors.svc:28332
+nodeSelector:
+  stratum.work/role: edge
+tolerations:
+  - key: stratum.work/role
+    operator: Equal
+    value: edge
+    effect: NoSchedule

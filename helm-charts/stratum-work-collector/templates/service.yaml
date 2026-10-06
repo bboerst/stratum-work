@@ -1,5 +1,5 @@
 
-{{- if .Values.service.enabled }}
+{{- if and (not .Values.pools) (or .Values.service.enabled .Values.workMode.enabled) }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -34,7 +34,7 @@ spec:
 {{- end }}
   ports:
     - name: "stratum"
-      port: {{ .Values.service.ports.stratum }}
+      port: {{ if .Values.workMode.enabled }}{{ .Values.workMode.port }}{{ else }}{{ .Values.service.ports.stratum }}{{ end }}
       protocol: TCP
       targetPort: "stratum"
   selector:

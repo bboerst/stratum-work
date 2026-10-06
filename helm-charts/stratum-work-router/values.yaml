@@ -1,0 +1,123 @@
+image:
+  repository: bboerst/stratum-work-router
+  # Defaults to the chart appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Router configuration (router/internal/config), rendered verbatim into a
+# ConfigMap as config.yaml and mounted at /etc/router/config.yaml. Pool
+# passwords here are DATUM usernames / "x", not secrets. The container ports
+# are derived from `listen` (default :3333) and `adminListen` (default :9100).
+config:
+  site: us-ash-1
+  listen: ":3333"
+  adminListen: ":9100"
+  targets: []
+  #  - id: example-pool
+  #    pool: Example Pool
+  #    upstream: stratum-work-collector-example-pool-work.collectors.svc:3333
+  #    targetThs: 1
+  remainder:
+    id: datum
+    upstream: stratum-work-datum.collectors.svc:23334
+    username: ".router"
+    password: "x"
+  # fallbackRemainder:
+  #   id: ocean-direct
+  #   upstream: mine.ocean.xyz:3334
+  #   username: "<payout address>.router-fallback"
+  #   password: "x"
+
+# Alternative to `config`: name of an existing Secret holding the full
+# config.yaml under key `config.yaml`. When set, no ConfigMap is rendered.
+configSecret: ""
+
+# Name of a Secret with keys WORK_TOKEN (required) and AMQP_URL (optional;
+# routing status publishing is disabled without it). Defaults to
+# "<fullname>-env" when empty.
+existingSecret: ""
+
+# Non-secret environment variables, e.g. AMQP_EXCHANGE, LOG_LEVEL
+env: {}
+
+# Single replica owns the stratum port; never run two side by side.
+strategy:
+  type: Recreate
+
+terminationGracePeriodSeconds: 10
+
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: "1"
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: admin
+  periodSeconds: 5
+  failureThreshold: 2
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: admin
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+# Public miner-facing service (klipper servicelb on edge nodes)
+service:
+  type: LoadBalancer
+  port: 3333
+  # Keep miner source IPs for per-IP connection limits
+  externalTrafficPolicy: Local
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  annotations: {}
+
+# Admin/metrics service; always ClusterIP so the admin port is never public
+adminService:
+  port: 9100
+  annotations: {}
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: ""
+  scrapeTimeout: ""
+
+nodeSelector:
+  stratum.work/role: edge
+tolerations:
+  - key: stratum.work/role
+    operator: Equal
+    value: edge
+    effect: NoSchedule
+affinity: {}

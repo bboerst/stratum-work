@@ -1,0 +1,40 @@
+existingSecret: webapp-env
+priorityClassName: stratum-web
+env:
+  ENABLE_HISTORICAL_DATA: "true"
+  POOL_BLACKLIST: "Foundry USA"
+  STREAM_ENDPOINT: "https://stream.stratum.work/"
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  cpuUtilization: 70
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+readinessProbe:
+  httpGet:
+    path: /api/healthz
+    port: nextjs
+  periodSeconds: 10
+livenessProbe:
+  httpGet:
+    path: /api/healthz
+    port: nextjs
+  periodSeconds: 20
+  failureThreshold: 3
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+ingress:
+  enabled: true
+  ingressClassName: traefik-external
+  hosts:
+    - stratum.work

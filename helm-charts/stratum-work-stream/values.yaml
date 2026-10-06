@@ -1,0 +1,116 @@
+# stream: public SSE service (node dist/stream.js)
+# ingest: RabbitMQ -> Postgres writer (node dist/ingest.js); never renders Ingress or HPA
+mode: stream
+
+replicaCount: 2
+
+image:
+  repository: bboerst/stratum-work-stream
+  # Defaults to the chart appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Name of a Secret whose keys are exposed as environment variables.
+# Expected keys: AMQP_URL, DATABASE_URL
+existingSecret: ""
+
+# Non-secret environment variables (see stream/src/config.ts), e.g.
+#   POOL_BLACKLIST: "Foundry USA"
+#   HISTORY_MINUTES: "60"
+#   DRAIN_MS: "20000"   # must stay below terminationGracePeriodSeconds
+env: {}
+
+port: 8080
+
+# The stream service drains SSE clients for DRAIN_MS (default 20 s) after SIGTERM.
+terminationGracePeriodSeconds: 30
+
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    memory: 192Mi
+    cpu: 50m
+  limits:
+    memory: 384Mi
+
+readinessProbe:
+  httpGet:
+    path: /healthz/ready
+    port: http
+  periodSeconds: 5
+  failureThreshold: 2
+
+livenessProbe:
+  httpGet:
+    path: /healthz/live
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+# Rendered only when mode == stream
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - stream.example.com
+  path: /
+  pathType: Prefix
+  tls: []
+  #  - secretName: stream-tls
+  #    hosts:
+  #      - stream.example.com
+
+# Rendered only when mode == stream. connectionsTarget needs a custom metrics
+# adapter exposing the pod metric stream_active_connections.
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  connectionsTarget: 500
+  memoryUtilization: 70
+
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: ""
+  scrapeTimeout: ""
+
+# Spread pods across nodes (kubernetes.io/hostname, ScheduleAnyway)
+topologySpread: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

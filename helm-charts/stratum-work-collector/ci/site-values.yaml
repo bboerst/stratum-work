@@ -1,0 +1,22 @@
+poolName: "Example Pool"
+site: us-ash-1
+mode: work
+connectionId: us-ash-1/example-pool/work
+account: example.worker
+existingSecret: collector-env
+priorityClassName: stratum-critical
+env:
+  ENABLE_HISTORICAL_DATA: "false"
+arguments:
+  - --pool-name
+  - "Example Pool"
+  - --url
+  - "stratum+tcp://pool.example.com:3333"
+  - --rabbitmq-host
+  - "rabbitmq"
+  - --rabbitmq-username
+  - "collector"
+  - --log-level
+  - "INFO"
+service:
+  enabled: true

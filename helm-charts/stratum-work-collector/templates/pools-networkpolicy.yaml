@@ -1,0 +1,38 @@
+{{- /*
+Multi-pool path: per work-mode pool, allow ingress to the work port only from
+router pods (same workMode.networkPolicy settings as the legacy path).
+Observe pools accept no inbound traffic and get no policy.
+*/ -}}
+{{- if and .Values.pools .Values.workMode.networkPolicy.enabled }}
+{{- range $pool := .Values.pools }}
+{{- if eq $pool.mode "work" }}
+{{- $name := include "collector.poolResourceName" $pool }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "collector.poolLabels" (dict "root" $ "pool" $pool) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- with $.Values.workMode.networkPolicy.routerNamespaceSelector }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }} {}
+            {{- end }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $.Values.workMode.networkPolicy.routerPodLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $pool.targetPort | default 3333 }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,15 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ template "stratum-work-webapp.fullname" . }}
+  namespace: {{ template "stratum-work-webapp.namespace" . }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: {{ template "stratum-work-webapp.fullname" . }}
+      {{- if .Values.useComponentLabel }}
+      {{ .Values.componentLabelKeyOverride | default "app.kubernetes.io/component" }}: stratum-work-webapp
+      {{- end }}
+{{- end }}

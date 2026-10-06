@@ -13,4 +13,10 @@ describe('navItems', () => {
     expect(navItems.some(item => item.href === '/servers' || item.label === 'Servers')).toBe(false);
     expect(navItems.some(item => item.href === '/latency' || item.label === 'Latency')).toBe(false);
   });
+
+  test('navigation order and routes', () => {
+    expect(navItems.map(n => [n.label, n.href])).toEqual([
+      ['Overview', '/'], ['Table', '/table'], ['Timing', '/timing'], ['Sankey', '/sankey'], ['Workspace', '/workspace'], ['Infra', '/infra'],
+    ]);
+  });
 });

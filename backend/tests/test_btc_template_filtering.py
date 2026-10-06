@@ -2,20 +2,21 @@ import importlib
 import sys
 import types
 import unittest
+from unittest import mock
 
 
-class FakeMiningNotifyCollection:
-    def __init__(self):
-        self.queries = []
+def make_fake_postgres():
+    module = types.ModuleType("integrations.postgres")
+    module.template_queries = []
 
-    def find(self, query):
-        self.queries.append(query)
+    def btc_templates_for_height(height):
+        module.template_queries.append(height)
         return []
 
-
-class FakeDB:
-    def __init__(self):
-        self.mining_notify = FakeMiningNotifyCollection()
+    module.btc_templates_for_height = btc_templates_for_height
+    module.connect = lambda: None
+    module.is_enabled = lambda: True
+    return module
 
 
 class FakeRPCConnection:
@@ -33,7 +34,7 @@ class FakeAuthServiceProxy:
 
 
 def import_main_module():
-    fake_db = FakeDB()
+    fake_postgres = make_fake_postgres()
 
     bitcoinrpc_module = types.ModuleType("bitcoinrpc")
     authproxy_module = types.ModuleType("bitcoinrpc.authproxy")
@@ -41,10 +42,7 @@ def import_main_module():
     bitcoinrpc_module.authproxy = authproxy_module
 
     integrations_module = types.ModuleType("integrations")
-    integrations_module.db = fake_db
-    integrations_module.blocks_coll = object()
-    integrations_module.pools_coll = object()
-    integrations_module.mongodb_enabled = True
+    integrations_module.postgres = fake_postgres
     integrations_module.publish_to_rabbitmq = lambda *args, **kwargs: None
     integrations_module.rabbitmq_manager = types.SimpleNamespace(connection=None)
     integrations_module.__path__ = []
@@ -81,6 +79,7 @@ def import_main_module():
     sys.modules["bitcoinrpc"] = bitcoinrpc_module
     sys.modules["bitcoinrpc.authproxy"] = authproxy_module
     sys.modules["integrations"] = integrations_module
+    sys.modules["integrations.postgres"] = fake_postgres
     sys.modules["integrations.rabbitmq"] = rabbitmq_module
     sys.modules["analytics"] = analytics_package
     sys.modules["analytics.prev_hash_divergence"] = prev_hash_divergence_module
@@ -90,19 +89,17 @@ def import_main_module():
     sys.modules["zmq"] = zmq_module
 
     sys.modules.pop("main", None)
-    return importlib.import_module("main"), fake_db
+    return importlib.import_module("main"), fake_postgres
 
 
 class BTCTemplateFilteringTests(unittest.TestCase):
     def test_run_block_analyses_queries_btc_only_templates(self):
-        main, fake_db = import_main_module()
+        with mock.patch.dict(sys.modules):
+            main, fake_postgres = import_main_module()
 
-        main.run_block_analyses(123)
+            main.run_block_analyses(123)
 
-        self.assertEqual(
-            fake_db.mining_notify.queries,
-            [{"height": 123, "chain_family": {"$exists": False}}],
-        )
+        self.assertEqual(fake_postgres.template_queries, [123])
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+{{- if not .Values.pools -}}
+{{- if and .Values.workMode.enabled (not .Values.existingSecret) -}}
+{{- fail "workMode.enabled requires existingSecret (keys STRATUM_USERPASS, WORK_TOKEN)" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -15,6 +19,9 @@ spec:
       labels:
         app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
     spec:
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       containers:
       - name: {{ .Chart.Name }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -26,11 +33,42 @@ spec:
         {{- range .Values.arguments }}
         - {{ . | quote }}
         {{- end }}
-        {{- if .Values.service.enabled }}
+        {{- if .Values.workMode.enabled }}
+        - "--stratum-client-port"
+        - {{ .Values.workMode.port | quote }}
+        {{- end }}
+        {{- $plain := dict }}
+        {{- with .Values.site }}{{ $_ := set $plain "SITE" . }}{{ end }}
+        {{- with .Values.mode }}{{ $_ := set $plain "MODE" . }}{{ end }}
+        {{- if .Values.workMode.enabled }}{{ $_ := set $plain "MODE" "work" }}{{ end }}
+        {{- with .Values.connectionId }}{{ $_ := set $plain "CONNECTION_ID" . }}{{ end }}
+        {{- with .Values.account }}{{ $_ := set $plain "ACCOUNT" . }}{{ end }}
+        {{- range $key, $val := .Values.env }}{{ $_ := set $plain $key $val }}{{ end }}
+        {{- if or $plain .Values.existingSecret }}
+        env:
+        {{- range $key, $val := $plain }}
+        - name: {{ $key }}
+          value: {{ $val | quote }}
+        {{- end }}
+        {{- if .Values.existingSecret }}
+        {{- range list "STRATUM_USERPASS" "RABBITMQ_PASSWORD" "BITCOIN_RPC_PASSWORD" "WORK_TOKEN" }}
+        - name: {{ . }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.existingSecret }}
+              key: {{ . }}
+              {{- if not (and $.Values.workMode.enabled (has . (list "STRATUM_USERPASS" "WORK_TOKEN"))) }}
+              optional: true
+              {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- if or .Values.service.enabled .Values.workMode.enabled }}
         ports:
           - name: "stratum"
-            containerPort: {{ .Values.service.ports.stratum }}
+            containerPort: {{ if .Values.workMode.enabled }}{{ .Values.workMode.port }}{{ else }}{{ .Values.service.ports.stratum }}{{ end }}
             protocol: TCP
         {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
+{{- end }}

@@ -50,3 +50,12 @@ export function getTimeColor(unixTime: string): string {
   timeColorCache.set(unixTime, color);
   return color;
 } 
+/** Stable color for a content key (same scheme as the timing chart's change bars). */
+export function contentColor(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash % 360)}, 70%, 50%)`;
+}
+
+/** Neutral gray for segments with no visible changes. */
+export const NO_CHANGE_COLOR = 'hsl(0, 0%, 35%)';

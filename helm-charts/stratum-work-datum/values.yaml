@@ -1,0 +1,101 @@
+image:
+  repository: bboerst/stratum-work-datum
+  # Defaults to the chart appVersion (upstream DATUM tag)
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Name of a Secret holding the full DATUM config.json under key `config.json`
+# (SOPS-managed; contains the bitcoind RPC and API admin passwords). Mounted
+# read-only at /app/config/config.json. stratum.listen_port and api.listen_port
+# must match ports.stratum / ports.api. Defaults to "<fullname>-config".
+configSecret: ""
+
+ports:
+  stratum: 23334
+  # DATUM dashboard/API, including the unauthenticated /NOTIFY endpoint.
+  # ClusterIP only; never expose publicly.
+  api: 7152
+
+# Sidecar: subscribes to bitcoind ZMQ hashblock and GETs DATUM /NOTIFY so new
+# blocks are picked up without waiting for work_update_seconds.
+notifier:
+  enabled: true
+  image:
+    repository: bboerst/stratum-work-router
+    # Defaults to the router chart's appVersion; pin explicitly per release
+    tag: "v1.1.0"
+    pullPolicy: IfNotPresent
+  command: ["/zmqnotify"]
+  zmqEndpoint: tcp://bitcoind-us-ash-1.collectors.svc:28332
+  resources:
+    requests:
+      memory: 16Mi
+      cpu: 5m
+    limits:
+      memory: 64Mi
+
+strategy:
+  type: Recreate
+
+terminationGracePeriodSeconds: 10
+
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+
+readinessProbe:
+  tcpSocket:
+    port: stratum
+  periodSeconds: 5
+  failureThreshold: 2
+
+livenessProbe:
+  tcpSocket:
+    port: api
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  failureThreshold: 3
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+# DATUM and zmqnotify expose no Prometheus /metrics endpoint as of v0.4.1beta.
+# Only enable when scraping through an exporter that serves /metrics on `api`.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  path: /metrics
+  interval: ""
+  scrapeTimeout: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

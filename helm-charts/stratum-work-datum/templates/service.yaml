@@ -1,0 +1,26 @@
+{{- if not (has .Values.service.type (list "ClusterIP")) -}}
+{{- fail "service.type must be ClusterIP: the DATUM API (/NOTIFY, dashboard) must never be exposed" -}}
+{{- end -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stratum-work-datum.fullname" . }}
+  labels:
+    {{- include "stratum-work-datum.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: stratum
+      port: {{ .Values.ports.stratum }}
+      targetPort: stratum
+      protocol: TCP
+    - name: api
+      port: {{ .Values.ports.api }}
+      targetPort: api
+      protocol: TCP
+  selector:
+    {{- include "stratum-work-datum.selectorLabels" . | nindent 4 }}

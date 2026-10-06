@@ -1,0 +1,20 @@
+poolName: "Example Pool Work"
+site: us-ash-1
+connectionId: us-ash-1/example-pool/work
+account: example.worker
+existingSecret: collector-work-env
+priorityClassName: stratum-critical
+workMode:
+  enabled: true
+  port: 3333
+arguments:
+  - --pool-name
+  - "Example Pool"
+  - --url
+  - "stratum+tcp://pool.example.com:3333"
+  - --rabbitmq-host
+  - "rabbitmq"
+  - --rabbitmq-username
+  - "collector"
+  - --log-level
+  - "INFO"

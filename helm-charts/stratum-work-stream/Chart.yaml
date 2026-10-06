@@ -1,0 +1,6 @@
+apiVersion: v2
+name: stratum-work-stream
+description: Stream (SSE fan-out) and ingest (RabbitMQ to Postgres) services for stratum.work
+type: application
+version: 0.1.0
+appVersion: "v1.1.0"

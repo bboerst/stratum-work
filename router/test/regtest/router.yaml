@@ -1,0 +1,35 @@
+# REGTEST ONLY router config for router/test/regtest/docker-compose.yml.
+site: regtest
+listen: ":3333"
+adminListen: ":9100"
+slice:
+  # Short slices so a single CPU miner alternates between targets many times
+  # during a 5-minute run.
+  minSliceMs: 2000
+targets:
+  - id: pool-a
+    pool: PoolA
+    upstream: collector-work:3334
+    # 10 MH/s. Must be BELOW the total test-miner hashrate (each testminer
+    # replica is single-threaded, ~3-10 MH/s) or pool-a gets 100% of slices
+    # and the remainder never sees work. run.sh rewrites this value into
+    # router.gen.yaml (POOL_A_THS, default ~half the expected miner total).
+    targetThs: 0.00001
+remainder:
+  id: datum
+  upstream: datum:23334
+  # DATUM appends a leading-dot username to mining.pool_address as a worker.
+  username: .router
+  password: x
+limits:
+  maxConnectionsPerIp: 4
+  maxConnections: 64
+  idleTimeoutS: 300
+vardiff:
+  # Regtest share targets are trivial; keep downstream diff low so the CPU
+  # test miner (~1-10 MH/s) finds shares every few seconds.
+  start: 0.001
+  min: 0.0001
+  max: 1000
+  sharesPerSec: 0.5
+thanksMinWorkMinutes: 1

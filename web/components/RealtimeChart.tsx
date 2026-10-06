@@ -9,11 +9,13 @@ import { useLatencyAdjusted } from "./TimingDisplayContext";
 import { effectiveTimestamp } from "@/utils/latency";
 import {
   TemplateChangeTracker,
+  getChangeColorTokens,
+  getChangeContentKey,
   getChangeTypeDisplay,
   TemplateChangeResult,
-  TemplateChangeType,
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
+import { contentColor as stringToColor, NO_CHANGE_COLOR } from "@/utils/colorUtils";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -85,110 +87,6 @@ const hslToRgb = (hslString: string): string => {
   const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
   
   return `rgb(${r}, ${g}, ${b})`;
-};
-
-// Generate a consistent color from a string (pool name)
-const stringToColor = (str: string): string => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  
-  // Convert to HSL with fixed saturation and lightness for better visibility
-  const h = Math.abs(hash % 360);
-  return `hsl(${h}, 70%, 50%)`;
-};
-
-// Neutral gray for segments with no visible changes
-const NO_CHANGE_COLOR = 'hsl(0, 0%, 35%)';
-
-// Change types that are filtered from display (mirrors hiddenChangeTypes in getChangeTypeDisplay)
-const HIDDEN_CHANGE_TYPES = new Set([
-  TemplateChangeType.NTIME,
-  TemplateChangeType.COINBASE_OUTPUT_VALUE,
-  TemplateChangeType.OP_RETURN_WITNESS,
-  TemplateChangeType.COINBASE_ASCII,
-]);
-
-// Extract a deterministic content string from the new values of visible changes.
-// Two pools with the same actual changes (e.g. same RSK hash + same merkle branches)
-// produce the same content string and thus the same color.
-const extractChangeContentKey = (changeInfo: TemplateChangeResult): string => {
-  if (!changeInfo.hasChanges || changeInfo.changeTypes.length === 0) return '';
-
-  const visibleTypes = changeInfo.changeTypes.filter(t => !HIDDEN_CHANGE_TYPES.has(t));
-  if (visibleTypes.length === 0) return '';
-
-  const parts: string[] = [];
-  const d = changeInfo.changeDetails;
-
-  // Add content for each visible change type, sorted for determinism
-  const sortedTypes = [...visibleTypes].sort();
-  for (const type of sortedTypes) {
-    switch (type) {
-      case TemplateChangeType.AUXPOW_HASH:
-        parts.push(`A:${d.auxPowHash?.new ?? ''}`);
-        break;
-      case TemplateChangeType.MERKLE_BRANCHES:
-        parts.push(`M:${(d.merkleBranches?.new ?? []).join(',')}`);
-        break;
-      case TemplateChangeType.CLEAN_JOBS:
-        parts.push(`C:${d.cleanJobs?.new ?? ''}`);
-        break;
-      case TemplateChangeType.PREV_HASH:
-        parts.push(`P:${d.prevHash?.new ?? ''}`);
-        break;
-      case TemplateChangeType.HEIGHT:
-        parts.push(`H:${d.height?.new ?? ''}`);
-        break;
-      case TemplateChangeType.VERSION:
-        parts.push(`V:${d.version?.new ?? ''}`);
-        break;
-      case TemplateChangeType.NBITS:
-        parts.push(`N:${d.nbits?.new ?? ''}`);
-        break;
-      case TemplateChangeType.EXTRANONCE2_LENGTH:
-        parts.push(`E:${d.extranonce2Length?.new ?? ''}`);
-        break;
-      case TemplateChangeType.TX_VERSION:
-        parts.push(`X:${d.txVersion?.new ?? ''}`);
-        break;
-      case TemplateChangeType.TX_LOCKTIME:
-        parts.push(`L:${d.txLocktime?.new ?? ''}`);
-        break;
-      case TemplateChangeType.INPUT_SEQUENCE:
-        parts.push(`I:${d.inputSequence?.new ?? ''}`);
-        break;
-      case TemplateChangeType.WITNESS_NONCE:
-        parts.push(`W:${d.witnessNonce?.new ?? ''}`);
-        break;
-      case TemplateChangeType.COINBASE_OUTPUTS:
-        parts.push(`U:${JSON.stringify(d.coinbaseOutputs?.new ?? [])}`);
-        break;
-      case TemplateChangeType.AUXPOW_MERKLE_SIZE:
-        parts.push(`K:${d.auxPowMerkleSize?.new ?? ''}`);
-        break;
-      case TemplateChangeType.AUXPOW_NONCE:
-        parts.push(`J:${d.auxPowNonce?.new ?? ''}`);
-        break;
-      default: {
-        // OP_RETURN protocol changes — include protocol name and new data
-        if (d.opReturnProtocols) {
-          // Find the protocol name(s) that map to this change type
-          for (const protocol of d.opReturnProtocols.changed) {
-            const newData = d.opReturnProtocols.new.get(protocol);
-            const contentStr = newData?.dataHex ?? JSON.stringify(newData?.details ?? '');
-            parts.push(`${type}:${protocol}:${contentStr}`);
-          }
-        } else {
-          parts.push(`${type}:`);
-        }
-        break;
-      }
-    }
-  }
-
-  return parts.join('|');
 };
 
 // Determine if a color is light or dark to choose appropriate text color
@@ -594,8 +492,7 @@ function RealtimeChartBase({
 
     // Cache computed segment colors keyed by change content to avoid redundant conversions
     const segmentColorCache = new Map<string, { hsl: string; rgb: string; text: string }>();
-    const getSegmentColor = (changeInfo: TemplateChangeResult | undefined) => {
-      const contentKey = changeInfo ? extractChangeContentKey(changeInfo) : '';
+    const getContentColor = (contentKey: string) => {
       let cached = segmentColorCache.get(contentKey);
       if (!cached) {
         const hsl = contentKey ? stringToColor(contentKey) : NO_CHANGE_COLOR;
@@ -606,6 +503,8 @@ function RealtimeChartBase({
       }
       return cached;
     };
+    const getSegmentColor = (changeInfo: TemplateChangeResult | undefined) =>
+      getContentColor(changeInfo ? getChangeContentKey(changeInfo) : '');
 
     groupedData.forEach((points, poolName) => {
       // Sort points oldest to newest (should already be sorted, but ensure)
@@ -649,18 +548,29 @@ function RealtimeChartBase({
         }
 
         // Draw change indicator text on the bar if it fits
-        const hasChangeInfo = point.changeInfo && point.changeInfo.hasChanges;
-        if (hasChangeInfo && point.changeDisplay) {
-          const text = point.changeDisplay;
+        const changeTokens = point.changeInfo ? getChangeColorTokens(point.changeInfo) : [];
+        if (changeTokens.length > 0) {
           const fontSize = Math.max(7, Math.min(12, Math.round(barHeight * 0.5 * uiFontScale)));
           ctx.font = `${fontSize}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
 
-          const textWidth = ctx.measureText(text).width;
-          if (textWidth + 4 <= barWidth) {
-            ctx.fillStyle = segColor.text;
-            ctx.fillText(text, xStart + barWidth / 2, y);
+          const tileSize = Math.max(1, Math.min(barHeight, fontSize + 4));
+          const tileGap = changeTokens.length > 1 ? 1 : 0;
+          const tokenGroupWidth = changeTokens.length * tileSize + (changeTokens.length - 1) * tileGap;
+
+          if (tokenGroupWidth + 4 <= barWidth) {
+            const tokenGroupStart = xStart + (barWidth - tokenGroupWidth) / 2;
+
+            changeTokens.forEach((token, tokenIndex) => {
+              const tokenX = tokenGroupStart + tokenIndex * (tileSize + tileGap);
+              const tokenColor = getContentColor(token.contentKey);
+
+              ctx.fillStyle = tokenColor.rgb;
+              ctx.fillRect(tokenX, y - tileSize / 2, tileSize, tileSize);
+              ctx.fillStyle = tokenColor.text;
+              ctx.fillText(token.label, tokenX + tileSize / 2, y);
+            });
           } else if (barWidth >= 3) {
             // Too narrow for text — draw thin white tick at segment start
             ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';

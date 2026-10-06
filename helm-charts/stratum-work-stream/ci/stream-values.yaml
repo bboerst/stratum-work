@@ -1,0 +1,44 @@
+mode: stream
+existingSecret: stream-env
+priorityClassName: stratum-web
+env:
+  POOL_BLACKLIST: "Foundry USA"
+  HISTORY_MINUTES: "60"
+resources:
+  requests:
+    memory: 192Mi
+    cpu: 100m
+  limits:
+    memory: 384Mi
+ingress:
+  enabled: true
+  className: traefik-external
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: stratum-work-stream-rate-limit@kubernetescrd
+  hosts:
+    - stream.stratum.work
+    - stream-next.stratum.work
+  tls:
+    - secretName: stream-tls
+      hosts:
+        - stream.stratum.work
+        - stream-next.stratum.work
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  connectionsTarget: 500
+  memoryUtilization: 70
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: stratum.work/pool
+              operator: In
+              values: ["web"]

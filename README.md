@@ -40,13 +40,14 @@ A key design principle of Stratum Work is **trustless data processing**. While t
 
 ### Raw Data
 
-The application provides a Server-Sent Events (SSE) endpoint:
+The stream service (default `https://stream.stratum.work`, configurable via `STREAM_ENDPOINT`) provides:
 
 ```
-GET /api/stream
+GET /templates?since=<ms>   # JSON backfill of recent templates
+GET /stream                  # Server-Sent Events (SSE) live feed
 ```
 
-This endpoint delivers the same real-time data that powers the web interface, allowing for custom integrations or alternative visualizations.
+These endpoints deliver the same real-time data that powers the web interface, allowing for custom integrations or alternative visualizations.
 
 ### Data Processing and Visualization
 
@@ -150,7 +151,7 @@ Guidelines:
 - Live and historical data views
 - MongoDB integration for data storage and retrieval
 - Most 'work' is done client-side for trustless data processing
-- Raw data access via `/api/stream` endpoint
+- Raw data access via the stream service's `/templates` and `/stream` endpoints
 
 ## Local Development with Docker-Compose
 

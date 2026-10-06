@@ -1,0 +1,6 @@
+apiVersion: v2
+name: stratum-work-router
+description: Stratum V1 hashrate router (edge) for stratum.work
+type: application
+version: 0.1.0
+appVersion: "v1.1.0"

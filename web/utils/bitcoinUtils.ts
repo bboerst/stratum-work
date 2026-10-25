@@ -173,7 +173,7 @@ export function getFormattedCoinbaseAsciiTag(
     if (!tx.ins || tx.ins.length === 0) {
       return ""; // No input script
     }
-    const scriptSigBuffer = tx.ins[0].script;
+    const scriptSigBuffer = Buffer.from(tx.ins[0].script);
     // 3. Decode script sig to get remaining hex (use cache)
     const scriptSigInfo = decodeCoinbaseScriptSigInfo(scriptSigBuffer);
     // 4. Format remaining hex to ASCII (use cache)
@@ -224,7 +224,7 @@ export function computeCoinbaseOutputValue(coinbaseRaw: string): number {
     const tx = getTransaction(coinbaseRaw);
     
     // Sum all output values
-    const totalValue = tx.outs.reduce((sum, out) => sum + out.value, 0);
+    const totalValue = tx.outs.reduce((sum, out) => sum + Number(out.value), 0);
     
     // Cache the result
     manageCache(coinbaseOutputValueCache, coinbaseRaw, totalValue);
@@ -400,8 +400,8 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
     try {
       const tx = getTransaction(coinbaseRaw);
       const outputs: CoinbaseOutputDetail[] = tx.outs.map(out => {
-        const outputDetail: Partial<CoinbaseOutputDetail> = { value: out.value };
-        const scriptBytes = out.script;
+        const outputDetail: Partial<CoinbaseOutputDetail> = { value: Number(out.value) };
+        const scriptBytes = Buffer.from(out.script);
         const scriptHex = scriptBytes.toString('hex');
         outputDetail.hex = scriptHex; // Always store full script hex for OP_RETURN/Unknown
 
@@ -707,7 +707,7 @@ export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScrip
         remainingScriptHex: ""
       };
     }
-    const scriptSigBuffer = tx.ins[0].script;
+    const scriptSigBuffer = Buffer.from(tx.ins[0].script);
     return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
   } catch (error) {
     if (!isCachedParseError(error)) {
@@ -728,9 +728,9 @@ export function getCoinbaseTxDetails(coinbaseRaw: string): CoinbaseTxDetails {
     let witnessCommitmentNonce: string | null = null;
 
     if (tx.ins && tx.ins.length > 0 && tx.ins[0].witness && tx.ins[0].witness.length === 1) {
-        const hasWitnessCommitmentOutput = tx.outs.some(out => out.script.toString('hex').startsWith('6a24aa21a9ed'));
+        const hasWitnessCommitmentOutput = tx.outs.some(out => Buffer.from(out.script).toString('hex').startsWith('6a24aa21a9ed'));
         if (hasWitnessCommitmentOutput) {
-             witnessCommitmentNonce = tx.ins[0].witness[0].toString('hex');
+             witnessCommitmentNonce = Buffer.from(tx.ins[0].witness[0]).toString('hex');
         }
     }
 

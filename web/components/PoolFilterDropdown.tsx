@@ -67,7 +67,7 @@ export function PoolFilterDropdown() {
       {open && (
         <div className="absolute right-0 top-full mt-1 w-64 rounded-lg shadow-md border bg-background text-foreground z-50 flex flex-col">
           {/* Select / Deselect All */}
-          <div className="flex items-center justify-between px-3 py-1.5 border-b flex-shrink-0">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b shrink-0">
             <button
               onClick={showAllPools}
               className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
@@ -85,7 +85,7 @@ export function PoolFilterDropdown() {
           {/* Pool list with scroll indicators */}
           <div className="relative min-h-0 flex-1">
             {canScrollUp && (
-              <div className="pointer-events-none absolute top-0 inset-x-0 h-5 bg-gradient-to-b from-background to-transparent z-10 rounded-t" />
+              <div className="pointer-events-none absolute top-0 inset-x-0 h-5 bg-linear-to-b from-background to-transparent z-10 rounded-t" />
             )}
 
             <div
@@ -107,7 +107,7 @@ export function PoolFilterDropdown() {
                     type="checkbox"
                     checked={isPoolVisible(pool)}
                     onChange={() => togglePool(pool)}
-                    className="h-3.5 w-3.5 rounded accent-orange-500 flex-shrink-0"
+                    className="h-3.5 w-3.5 rounded-sm accent-orange-500 shrink-0"
                   />
                   <span className="text-xs truncate">{pool}</span>
                 </label>
@@ -115,13 +115,13 @@ export function PoolFilterDropdown() {
             </div>
 
             {canScrollDown && (
-              <div className="pointer-events-none absolute bottom-0 inset-x-0 h-5 bg-gradient-to-t from-background to-transparent z-10 rounded-b" />
+              <div className="pointer-events-none absolute bottom-0 inset-x-0 h-5 bg-linear-to-t from-background to-transparent z-10 rounded-b" />
             )}
           </div>
 
           {/* Sticky footer with count */}
           {allPools.length > 0 && (
-            <div className="border-t px-3 py-1.5 text-[11px] text-muted-foreground text-center flex-shrink-0">
+            <div className="border-t px-3 py-1.5 text-[11px] text-muted-foreground text-center shrink-0">
               {visiblePoolCount} of {allPools.length} pools selected
             </div>
           )}

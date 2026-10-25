@@ -71,12 +71,12 @@ export default function ServiceGraphPage() {
             </div>
         )}
       </div>
-       <div className="flex-grow overflow-y-auto pt-1 pb-4 space-y-6">
+       <div className="grow overflow-y-auto pt-1 pb-4 space-y-6">
           {filteredMessage ? (
               <BlockTemplateCard key={filteredMessage.pool_name} latestMessage={filteredMessage} />
           ) : (
              <div className="flex items-center justify-center h-full">
-                 <p className="text-muted-foreground bg-card p-4 rounded shadow-md"> 
+                 <p className="text-muted-foreground bg-card p-4 rounded-sm shadow-md"> 
                      {selectedPoolName 
                          ? `Waiting for Stratum V1 messages for pool: ${selectedPoolName}...`
                          : 'No pool specified in URL.'}

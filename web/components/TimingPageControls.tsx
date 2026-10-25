@@ -84,14 +84,14 @@ export default function TimingPageControls({
               <div className="flex items-center space-x-2">
                 <button 
                   onClick={() => adjustTimeWindow(-15)} 
-                  className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                  className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                 >
                   −
                 </button>
                 <span className="text-xs w-8 text-center">{timeWindow}s</span>
                 <button 
                   onClick={() => adjustTimeWindow(15)} 
-                  className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                  className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                 >
                   +
                 </button>

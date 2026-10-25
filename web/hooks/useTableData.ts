@@ -22,12 +22,6 @@ import { sortRowsByKey } from '@/utils/sortUtils';
 // Constants for pagination
 const ITEMS_PER_PAGE = 50;
 
-// Helper function to check if BIP-110 (bit 4) is signaled in the version
-function isSignalingBip110(version: string): boolean {
-  const versionInt = parseInt(version, 16);
-  return (versionInt & (1 << 4)) !== 0;
-}
-
 // Hook for managing the table data
 export function useTableData(
   stratumV1Data: StratumV1Data[],
@@ -163,7 +157,6 @@ export function useTableData(
           coinbaseOutputValue,
           first_transaction: computedFirstTx,
           coinbase_outputs,
-          signaling_bip110: isSignalingBip110(row.version),
         };
       } catch (err) {
         console.error(
@@ -178,7 +171,6 @@ export function useTableData(
           coinbaseOutputValue: 0,
           first_transaction: 'error',
           coinbase_outputs: [],
-          signaling_bip110: false,
         };
       }
     });
@@ -320,7 +312,6 @@ export function useTableData(
             ? feeRateMapRef.current[firstTx] ?? "fetching..."
             : "N/A",
           coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
-          signaling_bip110: isSignalingBip110(item.version),
         };
       } catch (err) {
         console.error(
@@ -336,7 +327,6 @@ export function useTableData(
           coinbaseOutputValue: 0,
           feeRateComputed: 'N/A' as string | number,
           coinbase_outputs: [],
-          signaling_bip110: false,
         };
       }
     });

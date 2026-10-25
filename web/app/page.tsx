@@ -79,7 +79,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen h-screen bg-transparent flex flex-col">
-      <header className="p-4 flex-shrink-0">
+      <header className="p-4 shrink-0">
         <div>
           <Blocks 
             onBlockClick={handleBlockClick}
@@ -102,7 +102,7 @@ export default function HomePage() {
         
         {/* Selected Template Panel - only show for historical data */}
         {selectedTemplate && selectedBlock !== null && selectedBlock !== -1 && (
-          <div className="w-[600px] flex-shrink-0 border-l border-border bg-background overflow-auto">
+          <div className="w-[600px] shrink-0 border-l border-border bg-background overflow-auto">
             <div className="p-4">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold">Selected Template Details</h2>

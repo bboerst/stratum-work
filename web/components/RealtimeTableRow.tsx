@@ -118,19 +118,6 @@ export default function RealtimeTableRowComponent({
         </TableCell>
       )}
 
-      {columnsVisible.signaling_bip110 && (
-        <TableCell
-          style={{
-            width: columnWidths.signaling_bip110,
-            backgroundColor: row.signaling_bip110 ? '#22c55e' : 'transparent',
-          }}
-          className="p-1 truncate text-center font-semibold text-white"
-          title={row.signaling_bip110 ? 'Signaling BIP-110 (Reduced Data UASF)' : 'Not signaling BIP-110'}
-        >
-          {row.signaling_bip110 ? 'Y' : 'N'}
-        </TableCell>
-      )}
-
       {columnsVisible.nbits && (
         <TableCell
           style={{ width: columnWidths.nbits }}
@@ -223,7 +210,7 @@ export default function RealtimeTableRowComponent({
                     : "N/A"}
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="bg-background text-foreground border rounded shadow-lg p-2 max-w-xs break-words">
+              <TooltipContent className="bg-background text-foreground border rounded-sm shadow-lg p-2 max-w-xs wrap-break-word">
                 {row.coinbase_outputs && row.coinbase_outputs.length > 0 ? (
                   row.coinbase_outputs
                     .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)

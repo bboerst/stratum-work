@@ -1,5 +1,5 @@
 # Stage 1: Build the Next.js app
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ ARG ENVIRONMENT=production
 RUN if [ "$ENVIRONMENT" = "production" ]; then npm run build; fi
 
 # Stage 2: Run the application
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 

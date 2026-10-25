@@ -32,7 +32,6 @@ export default function RealtimeTableSettings({
     { key: "first_transaction", label: "First Tx" },
     { key: "fee_rate", label: "Fee Rate" },
     { key: "version", label: "Version" },
-    { key: "signaling_bip110", label: "BIP-110 Signaling" },
     { key: "nbits", label: "Nbits" },
     { key: "coinbaseRaw", label: "Coinbase RAW" },
     { key: "timestamp", label: "Time Received" },
@@ -64,7 +63,7 @@ export default function RealtimeTableSettings({
   return (
     <div
       ref={settingsRef}
-      className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded p-2 z-50"
+      className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded-sm p-2 z-50"
       style={{ 
         top: '60px', // Position below the header
         right: '20px' // Position from the right edge

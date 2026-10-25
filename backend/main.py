@@ -8,7 +8,6 @@ from queue import Queue, Empty
 from contextlib import contextmanager
 from threading import Lock
 import random
-from distutils.util import strtobool
 from typing import List, Dict, Any
 from bitcoin_utils import extract_coinbase_data
 from integrations import db, blocks_coll, pools_coll, mongodb_enabled, publish_to_rabbitmq, rabbitmq_manager

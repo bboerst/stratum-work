@@ -40,7 +40,7 @@ const parseCoinbaseData = (cbRaw: string): {
   try {
     const tx = getTransaction(cbRaw);
     if (tx.ins && tx.ins.length > 0) {
-      scriptSigBuffer = tx.ins[0].script;
+      scriptSigBuffer = Buffer.from(tx.ins[0].script);
       scriptSigInfo = decodeCoinbaseScriptSigInfo(scriptSigBuffer);
     } else {
       scriptSigInfo = { remainingScriptHex: '' }; // Handle case with no input script
@@ -91,7 +91,7 @@ const CoinbaseOutputItem: React.FC<CoinbaseOutputItemProps> = React.memo(({ outp
     const outputFlash = useFlashOnUpdate(JSON.stringify(output));
 
     return (
-        <div className={`p-1.5 border rounded font-mono text-[11px] ${outputFlash}`}>
+        <div className={`p-1.5 border rounded-sm font-mono text-[11px] ${outputFlash}`}>
             {output.type === 'address' ? (
                 <div>
                     <span className="font-medium">Type:</span> Address <br />
@@ -313,7 +313,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 mb-6">
                     <div className="border-r border-gray-300 dark:border-gray-600 pr-6">
                         <div className="text-sm font-semibold mb-2 text-center text-foreground">Raw Stratum Data (mining.notify)</div>
-                        <div className="bg-muted p-2 rounded mt-1 overflow-x-auto">
+                        <div className="bg-muted p-2 rounded-sm mt-1 overflow-x-auto">
                             <pre style={{ fontSize: '0.7rem' }}><code>
                               <JsonViewerWithMerkleColors data={displayMessage} />
                             </code></pre>
@@ -321,7 +321,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                     </div>
                     <div>
                         <div className="text-sm text-center font-bold text-foreground mb-3 pb-2">Merkle Tree Path Visualization</div>
-                        <div className="rounded p-2 bg-muted/20 flex items-center justify-center">
+                        <div className="rounded-sm p-2 bg-muted/20 flex items-center justify-center">
                             <MerkleTreeVisualization
                                 coinbaseTxHash={rowData?.coinbaseRaw ? "Coinbase Tx" : undefined}
                                 merkleBranches={displayMessage?.merkle_branches}
@@ -332,22 +332,22 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
             )}
             <div className="mb-6">
                 <div className="text-sm font-bold text-center text-foreground pb-1 mb-2">Block Header Structure (80 bytes total)</div>
-                <div className="flex border rounded divide-x text-center text-[10px] overflow-hidden bg-muted/20">
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
+                <div className="flex border rounded-sm divide-x text-center text-[10px] overflow-hidden bg-muted/20">
+                    <div className="py-2 px-1 flex flex-col justify-between items-center shrink-0" style={{ flexBasis: '6%' }}>
                         <div className="font-semibold">Version</div>
                         <div className="text-muted-foreground text-[9px]">(4 bytes)</div>
                         <div className={`mt-1 break-all ${versionFlash}`}>
                             {displayMessage ? `0x${displayMessage.version}` : '...'}
                         </div>
                     </div>
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-grow" style={{ flexBasis: '40%' }}>
+                    <div className="py-2 px-1 flex flex-col justify-between items-center grow" style={{ flexBasis: '40%' }}>
                         <div className="font-semibold">Prev Block Hash</div>
                         <div className="text-muted-foreground text-[9px]">(32 bytes)</div>
                         <div className={`mt-1 break-all ${prevHashFlash}`}>
                             {displayMessage?.prev_hash || '...'}
                         </div>
                     </div>
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-grow" style={{ flexBasis: '40%' }}>
+                    <div className="py-2 px-1 flex flex-col justify-between items-center grow" style={{ flexBasis: '40%' }}>
                         <Tooltip>
                             <TooltipTrigger asChild><div className="font-semibold underline decoration-dotted cursor-help">Merkle Root</div></TooltipTrigger>
                             <TooltipContent className="bg-background text-foreground"><p>Root hash of the block&apos;s transaction Merkle tree. Depends on miner&apos;s extranonce2 choice.</p></TooltipContent>
@@ -357,7 +357,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                             [computed]
                         </div>
                     </div>
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
+                    <div className="py-2 px-1 flex flex-col justify-between items-center shrink-0" style={{ flexBasis: '6%' }}>
                         <Tooltip>
                             <TooltipTrigger asChild><div className="font-semibold underline decoration-dotted cursor-help">Time</div></TooltipTrigger>
                             <TooltipContent className="bg-background text-foreground"><p>Block timestamp (ntime). Usually set by the pool.</p></TooltipContent>
@@ -367,7 +367,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                             {displayMessage?.ntime || '...'}
                         </div>
                     </div>
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
+                    <div className="py-2 px-1 flex flex-col justify-between items-center shrink-0" style={{ flexBasis: '6%' }}>
                         <Tooltip>
                             <TooltipTrigger asChild><div className="font-semibold underline decoration-dotted cursor-help">nBits</div></TooltipTrigger>
                             <TooltipContent className="bg-background text-foreground"><p>Block difficulty target in compact format.</p></TooltipContent>
@@ -377,7 +377,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                             {displayMessage ? formatNbits(displayMessage.nbits) : '...'}
                         </div>
                     </div>
-                    <div className="py-2 px-1 flex flex-col justify-between items-center flex-shrink-0" style={{ flexBasis: '6%' }}>
+                    <div className="py-2 px-1 flex flex-col justify-between items-center shrink-0" style={{ flexBasis: '6%' }}>
                         <Tooltip>
                             <TooltipTrigger asChild><div className="font-semibold underline decoration-dotted cursor-help">Nonce</div></TooltipTrigger>
                             <TooltipContent className="bg-background text-foreground"><p>Field iterated by the miner to find a valid block hash.</p></TooltipContent>
@@ -395,37 +395,37 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                     <div className="text-sm font-bold text-center text-foreground border-b pb-2 mb-3">Coinbase Transaction Details</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
                         <div> 
-                            <div className="border rounded p-3 mb-4 bg-muted/20 flex-grow">
+                            <div className="border rounded-sm p-3 mb-4 bg-muted/20 grow">
                                 <div className="text-sm font-semibold text-center text-foreground pb-1 mb-3 border-b">General Transaction Fields</div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-[10px]">
                                     <div>
                                         <div className="font-medium text-muted-foreground mb-0.5">Transaction Version:</div>
-                                        <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${txVersionFlash}`}>{rowData.txVersion ?? 'N/A'}</div>
+                                        <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${txVersionFlash}`}>{rowData.txVersion ?? 'N/A'}</div>
                                     </div>
                                     <div>
                                         <div className="font-medium text-muted-foreground mb-0.5">Input Sequence:</div>
-                                        <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${inputSequenceFlash}`}>{rowData.inputSequence !== undefined ? `0x${rowData.inputSequence.toString(16)}` : 'N/A'}</div>
+                                        <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${inputSequenceFlash}`}>{rowData.inputSequence !== undefined ? `0x${rowData.inputSequence.toString(16)}` : 'N/A'}</div>
                                     </div>
                                     <div>
                                         <div className="font-medium text-muted-foreground mb-0.5">Transaction Locktime:</div>
-                                        <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${txLocktimeFlash}`}>{rowData.txLocktime ?? 'N/A'}</div>
+                                        <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${txLocktimeFlash}`}>{rowData.txLocktime ?? 'N/A'}</div>
                                     </div>
                                     {rowData.witnessCommitmentNonce && (
                                         <div className="sm:col-span-2">
                                             <div className="font-medium text-muted-foreground mb-0.5">Witness Commitment Nonce:</div>
-                                            <div className={`p-2 border rounded font-mono text-[11px] break-all bg-card/80 ${witnessNonceFlash}`}>{rowData.witnessCommitmentNonce}</div>
+                                            <div className={`p-2 border rounded-sm font-mono text-[11px] break-all bg-card/80 ${witnessNonceFlash}`}>{rowData.witnessCommitmentNonce}</div>
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            <div className="border rounded p-3 mb-4 bg-muted/20 flex-grow">
+                            <div className="border rounded-sm p-3 mb-4 bg-muted/20 grow">
                                 <div className="text-sm font-semibold text-center text-foreground pb-1 mb-3 border-b">ScriptSig Data</div>
                                 <div className="space-y-4 text-[10px]">
                                     {rowData.coinbaseHeight !== null && rowData.coinbaseHeight !== undefined && (
                                         <div>
                                             <div className="font-medium text-muted-foreground mb-0.5">Parsed Height:</div>
-                                            <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${parsedHeightFlash}`}>{rowData.coinbaseHeight}</div>
+                                            <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${parsedHeightFlash}`}>{rowData.coinbaseHeight}</div>
                                         </div>
                                     )}
                                     <div>
@@ -435,7 +435,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                                 <TooltipContent className="bg-background text-foreground"><p>The ASCII-printable parts of the Coinbase input script, excluding parsed height and AuxPOW data.</p></TooltipContent>
                                             </Tooltip>
                                         </div>
-                                        <div className={`p-2 border rounded break-words font-mono text-[11px] bg-card/80 ${scriptAsciiFlash}`}>
+                                        <div className={`p-2 border rounded-sm wrap-break-word font-mono text-[11px] bg-card/80 ${scriptAsciiFlash}`}>
                                             {rowData.coinbaseScriptASCII || '(No printable ASCII)'}
                                         </div>
                                     </div>
@@ -447,7 +447,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                                     <TooltipContent className="bg-background text-foreground"><p>Pool-provided nonce part (usually static per job).</p></TooltipContent>
                                                 </Tooltip>
                                             </div>
-                                            <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 text-muted-foreground`}>[REDACTED]</div>
+                                            <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 text-muted-foreground`}>[REDACTED]</div>
                                         </div>
                                     )}
                                     {displayMessage?.extranonce2_length !== undefined && (
@@ -458,13 +458,13 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                                     <TooltipContent className="bg-background text-foreground"><p>Required length (bytes) of the nonce part the miner generates.</p></TooltipContent>
                                                 </Tooltip>
                                             </div>
-                                            <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${extranonce2LenFlash}`}>{displayMessage.extranonce2_length} bytes</div>
+                                            <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${extranonce2LenFlash}`}>{displayMessage.extranonce2_length} bytes</div>
                                         </div>
                                     )}
                                     {rowData.auxPowData && (
                                         <div className="mt-2 border-t pt-3">
                                             <div className="font-medium text-muted-foreground mb-1">Auxiliary Proof-of-Work (AuxPOW):</div>
-                                            <div className={`space-y-2 text-[10px] border rounded p-2 bg-card/50 ${auxPowFlash}`}>
+                                            <div className={`space-y-2 text-[10px] border rounded-sm p-2 bg-card/50 ${auxPowFlash}`}>
                                                 <div>
                                                     <span className="font-semibold">
                                                         <Tooltip>
@@ -489,7 +489,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                             </div>
                         </div> 
                         <div> 
-                            <div className="border rounded p-3 bg-muted/20 flex-grow">
+                            <div className="border rounded-sm p-3 bg-muted/20 grow">
                                 <div className="flex justify-between items-center pb-1 mb-3 border-b">
                                     <div className="text-sm font-semibold text-center text-foreground">Outputs (vout)</div>
                                     <div className="flex items-center space-x-2">
@@ -508,7 +508,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                             <CoinbaseOutputItem key={index} output={output} showRawData={showRawOutputData} />
                                         ))
                                     ) : (
-                                        <div className="p-1.5 border rounded italic text-[10px]">
+                                        <div className="p-1.5 border rounded-sm italic text-[10px]">
                                             No outputs found or unable to parse.
                                         </div>
                                     )}
@@ -516,7 +516,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                 {rowData.coinbaseOutputValue !== undefined && (
                                     <div className="mt-3 border-t pt-3 text-[10px]">
                                         <div className="font-medium text-muted-foreground mb-0.5">Total Output Value (BTC):</div>
-                                        <div className={`p-2 border rounded font-mono text-[11px] bg-card/80 ${outputValueFlash}`}>
+                                        <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${outputValueFlash}`}>
                                             {(rowData.coinbaseOutputValue / 100000000).toFixed(8)}
                                         </div>
                                     </div>

@@ -58,7 +58,7 @@ const BlockItemComponent: React.FC<BlockItemProps> = ({
       </div>
       {/* Analysis icons in upper-right corner */}
       {block.analysis?.flags && block.analysis.flags.length > 0 && (
-        <div className="absolute top-[1px] right-2 z-20 flex gap-1">
+        <div className="absolute top-px right-2 z-20 flex gap-1">
           <TooltipProvider>
             {block.analysis.flags.map((flag, idx) => (
               <Tooltip key={`${flag.key}-${idx}`}>

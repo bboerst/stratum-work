@@ -21,7 +21,7 @@ const CollectorNode: React.FC<NodeProps<CollectorNodeData>> = ({ data, isConnect
         type="source"
         position={Position.Right}
         isConnectable={isConnectable}
-        className="!bg-blue-500"
+        className="bg-blue-500!"
       />
     </div>
   );

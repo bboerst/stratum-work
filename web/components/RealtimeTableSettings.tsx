@@ -64,7 +64,7 @@ export default function RealtimeTableSettings({
   return (
     <div
       ref={settingsRef}
-      className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded p-2 z-50"
+      className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded-sm p-2 z-50"
       style={{ 
         top: '60px', // Position below the header
         right: '20px' // Position from the right edge

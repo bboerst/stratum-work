@@ -8,7 +8,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   // Handle CORS
   if (request.method === "OPTIONS") {
     return NextResponse.json({}, { headers: corsHeaders })
@@ -21,7 +21,7 @@ export function middleware(request: NextRequest) {
   return response
 }
 
-// Configure which paths the middleware runs on
+// Configure which paths the proxy runs on
 export const config = {
   matcher: [
     // Only apply to API routes

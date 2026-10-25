@@ -15,7 +15,7 @@ export default function PauseButton({ paused, setPaused, className = "" }: Pause
 
   return (
     <button
-      className={`pause-button flex items-center gap-2 px-3 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 transition-colors duration-200 text-sm font-medium ${className}`}
+      className={`pause-button flex items-center gap-2 px-3 py-2 rounded-sm bg-gray-200 text-gray-800 hover:bg-gray-300 transition-colors duration-200 text-sm font-medium ${className}`}
       onClick={handleToggle}
       title={paused ? "Resume" : "Pause"}
     >

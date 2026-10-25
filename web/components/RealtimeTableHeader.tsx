@@ -25,7 +25,7 @@ export default function RealtimeTableHeader({
     if (sortConfig.key !== key) return null;
     const arrow = sortConfig.direction === "asc" ? "↑" : "↓";
     return (
-      <span className="sort-arrow inline-block w-5 h-5 bg-black text-white text-lg font-bold text-center leading-4 ml-1 rounded">
+      <span className="sort-arrow inline-block w-5 h-5 bg-black text-white text-lg font-bold text-center leading-4 ml-1 rounded-sm">
         {arrow}
       </span>
     );

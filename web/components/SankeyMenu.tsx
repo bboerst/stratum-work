@@ -67,7 +67,7 @@ export default function SankeyMenu({
         ref={settingsButtonRef}
         onClick={() => setShowSettings((prev) => !prev)}
         title="Toggle Settings"
-        className="text-foreground focus:outline-none hover:text-blue-500 transition-colors duration-200"
+        className="text-foreground focus:outline-hidden hover:text-blue-500 transition-colors duration-200"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -90,7 +90,7 @@ export default function SankeyMenu({
       {showSettings && (
         <div
           ref={settingsRef}
-          className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded p-2 z-50"
+          className="settings-dropdown fixed bg-background text-foreground border shadow-md rounded-sm p-2 z-50"
           style={{ 
             top: '60px', 
             right: '20px'

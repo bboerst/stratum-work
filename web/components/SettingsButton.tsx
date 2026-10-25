@@ -14,7 +14,7 @@ export default function SettingsButton({ onClick, title = "Settings", buttonRef 
       ref={buttonRef}
       onClick={onClick}
       title={title}
-      className="text-foreground focus:outline-none hover:text-blue-500 transition-colors duration-200 px-2 py-1"
+      className="text-foreground focus:outline-hidden hover:text-blue-500 transition-colors duration-200 px-2 py-1"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"

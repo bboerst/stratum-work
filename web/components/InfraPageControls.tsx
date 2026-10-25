@@ -67,7 +67,7 @@ export default function InfraPageControls({
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => adjustTimeWindow(-30)}
-                    className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                    className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                     title="Decrease time window"
                   >
                     -
@@ -75,7 +75,7 @@ export default function InfraPageControls({
                   <span className="text-xs w-10 text-center">{timeWindow}s</span>
                   <button
                     onClick={() => adjustTimeWindow(30)}
-                    className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                    className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                     title="Increase time window"
                   >
                     +

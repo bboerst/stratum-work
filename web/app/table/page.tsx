@@ -18,7 +18,7 @@ export default function TablePage() {
             <PauseButton paused={paused} setPaused={setPaused} />
           </div>
           <button
-            className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            className="p-2 rounded-sm hover:bg-gray-200 dark:hover:bg-gray-700"
             onClick={() => setShowSettings(!showSettings)}
           >
             <Settings2 className="h-6 w-6" />

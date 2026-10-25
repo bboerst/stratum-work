@@ -318,7 +318,7 @@ const MerkleTreeVisualization: React.FC<MerkleTreeVisualizationProps> = ({
             <div
                style={inlineStyle}
                // Use dynamic border style class
-               className={`h-full px-1 py-0.5 ${bgColorClass} rounded flex items-center justify-center ${textColorClass} ${node.type === 'branch' ? 'text-sm' : 'text-xs'} whitespace-nowrap overflow-hidden text-ellipsis ${borderStyleClass}`}
+               className={`h-full px-1 py-0.5 ${bgColorClass} rounded-sm flex items-center justify-center ${textColorClass} ${node.type === 'branch' ? 'text-sm' : 'text-xs'} whitespace-nowrap overflow-hidden text-ellipsis ${borderStyleClass}`}
                title={showTitle ? node.hash : undefined}
              >
                {/* Custom content based on node type */}

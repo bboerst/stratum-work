@@ -10,8 +10,6 @@ export const RABBITMQ_EXCHANGES = (process.env.RABBITMQ_EXCHANGES || 'mining_not
  * Construct the RabbitMQ connection URL from individual environment variables.
  * Include connection options for better reliability.
  */
-const RABBITMQ_URL = `amqp://${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}`;
-
 // Connection options for better reliability
 const CONNECTION_OPTIONS = {
   heartbeat: 60, // Increased heartbeat interval (seconds)
@@ -19,6 +17,9 @@ const CONNECTION_OPTIONS = {
   connectionRetries: 5, // Number of connection retries
   connectionRetryDelay: 2000, // Delay between retries (milliseconds)
 };
+
+// The heartbeat is negotiated via the URL query string
+const RABBITMQ_URL = `amqp://${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}?heartbeat=${CONNECTION_OPTIONS.heartbeat}`;
 
 export interface RabbitMQConnection {
   connection: {
@@ -38,9 +39,8 @@ export async function createRabbitmqChannel(): Promise<RabbitMQConnection> {
   // Try to connect with retries
   for (let attempt = 1; attempt <= CONNECTION_OPTIONS.connectionRetries; attempt++) {
     try {
-      // Connect with heartbeat and timeout options
+      // Connect with timeout option (heartbeat is part of the URL)
       conn = await amqplib.connect(RABBITMQ_URL, {
-        heartbeat: CONNECTION_OPTIONS.heartbeat,
         timeout: CONNECTION_OPTIONS.timeout,
       });
       

@@ -223,7 +223,7 @@ export default function RealtimeTableRowComponent({
                     : "N/A"}
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="bg-background text-foreground border rounded shadow-lg p-2 max-w-xs break-words">
+              <TooltipContent className="bg-background text-foreground border rounded-sm shadow-lg p-2 max-w-xs wrap-break-word">
                 {row.coinbase_outputs && row.coinbase_outputs.length > 0 ? (
                   row.coinbase_outputs
                     .filter((o): o is CoinbaseOutputDetail & { address: string } => !!o.address)

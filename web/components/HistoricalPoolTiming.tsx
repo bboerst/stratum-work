@@ -202,12 +202,12 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
           const barWidth = barScalingReferenceTime > 0 ? (timeForBarLength / barScalingReferenceTime) * 100 : 0;
           
           return (
-            <li key={index} className="flex justify-between items-center px-2 rounded">
+            <li key={index} className="flex justify-between items-center px-2 rounded-sm">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-36 truncate mr-2" title={item.poolName}>{item.poolName}</span>
-              <div className="flex items-center flex-grow">
-                <div className="w-full h-3 bg-gray-200 dark:bg-gray-600 rounded mr-1">
+              <div className="flex items-center grow">
+                <div className="w-full h-3 bg-gray-200 dark:bg-gray-600 rounded-sm mr-1">
                   <div 
-                    className="h-3 bg-blue-500 rounded transition-all duration-500 ease-in-out"
+                    className="h-3 bg-blue-500 rounded-sm transition-all duration-500 ease-in-out"
                     style={{ width: `${barWidth}%` }}
                     title={`${relativeTimeNs.toLocaleString()} ns after first`}
                   ></div>

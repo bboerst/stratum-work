@@ -513,12 +513,12 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
           return (
             <div key={hash} className="flex items-center gap-2 min-w-0">
               <div
-                className="w-3 h-3 rounded-sm flex-shrink-0 relative"
+                className="w-3 h-3 rounded-xs shrink-0 relative"
                 style={{ backgroundColor: colorMap.get(hash) }}
               >
                 {status === "stale" && (
                   <div
-                    className="absolute inset-0 rounded-sm"
+                    className="absolute inset-0 rounded-xs"
                     style={{
                       background:
                         "repeating-linear-gradient(-45deg, transparent, transparent 1.5px, rgba(0,0,0,0.45) 1.5px, rgba(0,0,0,0.45) 3px)",
@@ -527,12 +527,12 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                 )}
               </div>
               {status === "canonical" && (
-                <span className="text-[9px] font-semibold text-emerald-400 flex-shrink-0">
+                <span className="text-[9px] font-semibold text-emerald-400 shrink-0">
                   Canonical
                 </span>
               )}
               {status === "stale" && (
-                <span className="text-[9px] font-semibold text-red-400 flex-shrink-0">
+                <span className="text-[9px] font-semibold text-red-400 shrink-0">
                   Stale
                 </span>
               )}
@@ -589,7 +589,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
           return (
             <div key={pool.poolName} className="flex items-center h-[22px] group">
                 <div
-                  className="flex-shrink-0 text-[11px] truncate text-right pr-2.5 text-muted-foreground"
+                  className="shrink-0 text-[11px] truncate text-right pr-2.5 text-muted-foreground"
                   style={{ width: `${LABEL_W}px` }}
                   title={pool.poolName}
                 >

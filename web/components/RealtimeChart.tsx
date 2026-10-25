@@ -1429,7 +1429,7 @@ function RealtimeChartBase({
             <div ref={optionsMenuRef}>
               <button 
                 onClick={toggleOptionsMenu}
-                className="h-6 px-2 inline-flex items-center justify-center bg-opacity-20 bg-black dark:bg-white dark:bg-opacity-20 text-[10px] rounded"
+                className="h-6 px-2 inline-flex items-center justify-center bg-opacity-20 bg-black dark:bg-white dark:bg-opacity-20 text-[10px] rounded-sm"
               >
                 Options
               </button>
@@ -1443,14 +1443,14 @@ function RealtimeChartBase({
                       <div className="flex items-center space-x-2">
                         <button 
                           onClick={() => adjustTimeWindow(-15)} 
-                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                         >
                           −
                         </button>
                         <span className="text-xs w-8 text-center">{localTimeWindow}s</span>
                         <button 
                           onClick={() => adjustTimeWindow(15)} 
-                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded"
+                          className="w-5 h-5 flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-sm"
                         >
                           +
                         </button>
@@ -1512,7 +1512,7 @@ function RealtimeChartBase({
       
       {/* Fixed tooltip at the bottom of the chart */}
       {hoveredPoint && (
-        <div className="absolute bottom-1 right-2 font-medium text-right bg-black/70 dark:bg-gray-800/90 p-1 rounded shadow-sm z-10" style={{ fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}>
+        <div className="absolute bottom-1 right-2 font-medium text-right bg-black/70 dark:bg-gray-800/90 p-1 rounded-sm shadow-xs z-10" style={{ fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}>
           <span className="font-bold">{hoveredPoint.poolName}</span>
           {" | "}
           <span>Height: {hoveredPoint.height || 'N/A'}</span>

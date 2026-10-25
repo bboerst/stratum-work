@@ -939,7 +939,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
 
             {/* Fade effect on the right side of the background shield - only shown when scrolled */}
             {scrollPosition > 0 && (
-              <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-white from-50% dark:from-black to-transparent" style={{ left: '45px', zIndex: 1 }}></div>
+              <div className="absolute inset-y-0 left-0 w-32 bg-linear-to-r from-white from-50% dark:from-black to-transparent" style={{ left: '45px', zIndex: 1 }}></div>
             )}
 
             <div
@@ -1000,7 +1000,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
 
       {/* Fixed fade effect overlay */}
       <div className="pointer-events-none fixed-fade h-[64px]">
-        <div className="absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-white dark:from-black to-transparent" />
+        <div className="absolute inset-y-0 right-0 w-32 bg-linear-to-l from-white dark:from-black to-transparent" />
       </div>
 
       <style jsx global>{`

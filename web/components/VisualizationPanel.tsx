@@ -104,7 +104,7 @@ export default function VisualizationPanel({
             <button
               type="button"
               onClick={() => router.push('/timing')}
-              className="h-6 w-6 inline-flex items-center justify-center rounded border border-border bg-background/90 hover:bg-muted transition-colors"
+              className="h-6 w-6 inline-flex items-center justify-center rounded-sm border border-border bg-background/90 hover:bg-muted transition-colors"
               title="Open full timing view"
               aria-label="Open full timing view"
             >
@@ -135,7 +135,7 @@ export default function VisualizationPanel({
     }
     return (
       <div className="border border-border rounded-md bg-card w-full h-full flex flex-col relative">
-        <div className="px-2 py-1.5 border-b border-border text-xs font-semibold flex-shrink-0">Findings</div>
+        <div className="px-2 py-1.5 border-b border-border text-xs font-semibold shrink-0">Findings</div>
         <div className="flex-1 overflow-y-auto relative pr-2">
           {loadingInteresting && (
             <div className="p-2 text-[11px] opacity-70">Loading…</div>
@@ -159,7 +159,7 @@ export default function VisualizationPanel({
                     tabIndex={0}
                   >
                     {/* Height column spanning full row height */}
-                    <div className="flex items-center justify-center px-1.5 font-semibold bg-gray-50 dark:bg-gray-800 rounded-sm">
+                    <div className="flex items-center justify-center px-1.5 font-semibold bg-gray-50 dark:bg-gray-800 rounded-xs">
                       {item.height}
                     </div>
                     {/* Findings column */}
@@ -178,7 +178,7 @@ export default function VisualizationPanel({
                               </svg>
                             )}
                             {line.icon === 'error' && (
-                              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-600 text-white leading-[10px] text-[8px] text-center">!</span>
+                              <span className="inline-block h-2.5 w-2.5 rounded-xs bg-red-600 text-white leading-[10px] text-[8px] text-center">!</span>
                             )}
                             <span className="truncate">{line.text}</span>
                           </div>
@@ -191,7 +191,7 @@ export default function VisualizationPanel({
             </ul>
           )}
           {/* Vertical scroll indicator */}
-          <div aria-hidden className="pointer-events-none absolute right-0 top-2 bottom-2 w-1 bg-gradient-to-b from-transparent via-muted/60 to-transparent rounded"></div>
+          <div aria-hidden className="pointer-events-none absolute right-0 top-2 bottom-2 w-1 bg-linear-to-b from-transparent via-muted/60 to-transparent rounded-sm"></div>
         </div>
       </div>
     );
@@ -239,7 +239,7 @@ export default function VisualizationPanel({
   return (
     <div 
       ref={panelRef}
-      className="h-full bg-background border-r border-border relative flex-shrink-0"
+      className="h-full bg-background border-r border-border relative shrink-0"
       style={{ width: `${width}px`, color: '#9d9d9d' }}
     >
 

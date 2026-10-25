@@ -164,7 +164,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
         <div className="text-sm font-semibold mb-2">Invalid Templates (no merkle)</div>
         <ul className="text-xs space-y-1">
           {items.map((it) => (
-            <li key={it.pool} className="flex items-center justify-between border border-border rounded px-2 py-1 bg-background/60">
+            <li key={it.pool} className="flex items-center justify-between border border-border rounded-sm px-2 py-1 bg-background/60">
               <span className="truncate mr-2">{it.pool}</span>
               <span className="opacity-80 whitespace-nowrap">
                 {it.count}× • max total {toBtc(it.maxTotalSats)} BTC

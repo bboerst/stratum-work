@@ -2,7 +2,7 @@ import os, time, threading, logging
 from bitcoinrpc.authproxy import AuthServiceProxy
 import zmq
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import concurrent.futures
 from queue import Queue, Empty
 from contextlib import contextmanager
@@ -265,11 +265,11 @@ def process_block(block_hash: str, is_new_block: bool = False):
         rabbitmq_doc = {
             "type": "block",
             "id": str(uuid.uuid4()),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": {
                 "hash": block_hash,
                 "height": height,
-                "timestamp": datetime.utcfromtimestamp(doc["timestamp"]).isoformat(),
+                "timestamp": datetime.fromtimestamp(doc["timestamp"], timezone.utc).isoformat(),
                 "mining_pool": doc.get("mining_pool"),
                 "analysis": doc.get("analysis")
             }
@@ -288,11 +288,11 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
             rabbitmq_doc = {
                 "type": "block",
                 "id": str(uuid.uuid4()),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data": {
                     "hash": block_hash,
                     "height": height,
-                    "timestamp": datetime.utcfromtimestamp(doc["timestamp"]).isoformat(),
+                    "timestamp": datetime.fromtimestamp(doc["timestamp"], timezone.utc).isoformat(),
                     "mining_pool": doc.get("mining_pool"),
                     "analysis": doc.get("analysis")
                 }

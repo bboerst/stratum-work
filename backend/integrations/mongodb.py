@@ -1,11 +1,25 @@
 import os
 import logging
-from distutils.util import strtobool
 from typing import Any
 
 from pymongo import MongoClient
 
 logger = logging.getLogger("backend.mongodb")
+
+
+def strtobool(val: str) -> int:
+    """Convert a string representation of truth to 1 or 0.
+
+    Replacement for distutils.util.strtobool (distutils was removed from the
+    standard library in Python 3.12). Same semantics: raises ValueError for
+    unrecognized values.
+    """
+    val = val.lower()
+    if val in ("y", "yes", "t", "true", "on", "1"):
+        return 1
+    if val in ("n", "no", "f", "false", "off", "0"):
+        return 0
+    raise ValueError(f"invalid truth value {val!r}")
 
 
 ENABLE_HISTORICAL_DATA_STR = os.getenv('ENABLE_HISTORICAL_DATA', 'true')

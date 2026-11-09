@@ -14,6 +14,7 @@ import {
   TemplateChangeType,
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
+import { Info } from "lucide-react";
 
 // Simple throttle implementation
 function createThrottle<T extends (...args: unknown[]) => unknown>(
@@ -338,6 +339,8 @@ function RealtimeChartBase({
   // Refs for DOM elements and data
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const optionsMenuRef = useRef<HTMLDivElement>(null);
+  const [showLegend, setShowLegend] = useState(false);
+  const legendRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Keep track of dimensions and time domain
@@ -1179,11 +1182,19 @@ function RealtimeChartBase({
       if (optionsMenuRef.current && !optionsMenuRef.current.contains(event.target as Node)) {
         setShowOptionsMenu(false);
       }
+      if (legendRef.current && !legendRef.current.contains(event.target as Node)) {
+        setShowLegend(false);
+      }
     };
-    
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowLegend(false);
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
   
@@ -1832,48 +1843,70 @@ function RealtimeChartBase({
       )}
       
       {/* Change indicators legend in footer */}
-      <div className="absolute bottom-6 left-2 group">
-        <div className="text-gray-500 dark:text-gray-400 cursor-help" style={{ fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}>
+      <div ref={legendRef} className="absolute bottom-6 left-2 group z-20">
+        <button
+          type="button"
+          onClick={() => setShowLegend(prev => !prev)}
+          aria-expanded={showLegend}
+          aria-controls="change-legend"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium shadow-sm bg-white/90 text-gray-800 ring-1 ring-gray-300 hover:bg-white dark:bg-gray-800/90 dark:text-gray-100 dark:ring-gray-600 dark:hover:bg-gray-700"
+          style={{ fontSize: `${Math.max(11, Math.round(12 * uiFontScale))}px` }}
+        >
+          <Info className="h-3.5 w-3.5" aria-hidden="true" />
           Legend
-        </div>
-        <div className="absolute bottom-6 left-0 hidden group-hover:block bg-black/95 text-white p-3 rounded-lg shadow-xl z-30 min-w-max">
-          <div className="flex flex-row gap-6" style={{ fontSize: `${Math.max(8, Math.round(10 * uiFontScale))}px` }}>
-            <div className="flex flex-col space-y-0.5">
-              <div className="font-bold mb-1 text-blue-300 text-center">Core Fields</div>
-              <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
-              <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
-              <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
-              <div><span className="font-mono font-bold">P</span> - Prev hash</div>
-              <div><span className="font-mono font-bold">H</span> - Height</div>
-              <div><span className="font-mono font-bold">V</span> - Version</div>
-              <div><span className="font-mono font-bold">N</span> - nBits</div>
-              <div><span className="font-mono font-bold">E</span> - Extranonce2 length</div>
+        </button>
+        {/* pb-1 (not mb-1) so the hover area has no gap between button and panel */}
+        <div
+          id="change-legend"
+          role="dialog"
+          aria-label="Change indicator legend"
+          className={`${showLegend ? 'block' : 'hidden group-hover:block'} absolute bottom-full left-0 pb-1 z-30`}
+        >
+          <div
+            className="bg-black/95 text-white p-3 rounded-lg shadow-xl min-w-max"
+            style={{ fontSize: `${Math.max(11, Math.round(12 * uiFontScale))}px` }}
+          >
+            <div className="mb-2 text-gray-300">
+              Letters on each bar show what changed since that pool&apos;s previous job.
             </div>
-            <div className="flex flex-col space-y-0.5">
-              <div className="font-bold mb-1 text-green-300 text-center">Transaction Fields</div>
-              <div><span className="font-mono font-bold">X</span> - TX version</div>
-              <div><span className="font-mono font-bold">L</span> - TX locktime</div>
-              <div><span className="font-mono font-bold">I</span> - Input sequence</div>
-              <div><span className="font-mono font-bold">W</span> - Witness nonce</div>
-              <div><span className="font-mono font-bold">U</span> - Output structure</div>
-              <div><span className="font-mono font-bold">K</span> - AuxPOW merkle size</div>
-              <div><span className="font-mono font-bold">J</span> - AuxPOW nonce</div>
-            </div>
-            <div className="flex flex-col space-y-0.5">
-              <div className="font-bold mb-1 text-yellow-300 text-center">OP_RETURN Protocols</div>
-              <div><span className="font-mono font-bold">R̶</span> - RSK Block</div>
-              <div><span className="font-mono font-bold">C̶</span> - CoreDAO</div>
-              <div><span className="font-mono font-bold">S̶</span> - Syscoin</div>
-              <div><span className="font-mono font-bold">H̶</span> - Hathor Network</div>
-              <div><span className="font-mono font-bold">E̶</span> - ExSat</div>
-              <div><span className="font-mono font-bold">O̶</span> - Omni</div>
-              <div><span className="font-mono font-bold">U̶</span> - Runestone</div>
-              <div><span className="font-mono font-bold">W̶</span> - WitnessCommitment</div>
-              <div><span className="font-mono font-bold">T̶</span> - Stacks Block</div>
-              <div><span className="font-mono font-bold">B̶</span> - BIP47 Payment</div>
-              <div><span className="font-mono font-bold">Ø̶</span> - Empty OP_RETURN</div>
-              <div><span className="font-mono font-bold">Ω̶</span> - Other OP_RETURN</div>
-              <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate</div>
+            <div className="flex flex-row gap-6">
+              <div className="flex flex-col space-y-0.5">
+                <div className="font-bold mb-1 text-blue-300 text-center">Core Fields</div>
+                <div><span className="font-mono font-bold">A</span> - AuxPOW hash</div>
+                <div><span className="font-mono font-bold">M</span> - Merkle branches</div>
+                <div><span className="font-mono font-bold">C</span> - Clean jobs</div>
+                <div><span className="font-mono font-bold">P</span> - Prev hash</div>
+                <div><span className="font-mono font-bold">H</span> - Height</div>
+                <div><span className="font-mono font-bold">V</span> - Version</div>
+                <div><span className="font-mono font-bold">N</span> - nBits</div>
+                <div><span className="font-mono font-bold">E</span> - Extranonce2 length</div>
+              </div>
+              <div className="flex flex-col space-y-0.5">
+                <div className="font-bold mb-1 text-green-300 text-center">Transaction Fields</div>
+                <div><span className="font-mono font-bold">X</span> - TX version</div>
+                <div><span className="font-mono font-bold">L</span> - TX locktime</div>
+                <div><span className="font-mono font-bold">I</span> - Input sequence</div>
+                <div><span className="font-mono font-bold">W</span> - Witness nonce</div>
+                <div><span className="font-mono font-bold">U</span> - Output structure</div>
+                <div><span className="font-mono font-bold">K</span> - AuxPOW merkle size</div>
+                <div><span className="font-mono font-bold">J</span> - AuxPOW nonce</div>
+              </div>
+              <div className="flex flex-col space-y-0.5">
+                <div className="font-bold mb-1 text-yellow-300 text-center">OP_RETURN Protocols</div>
+                <div><span className="font-mono font-bold">R̶</span> - RSK Block</div>
+                <div><span className="font-mono font-bold">C̶</span> - CoreDAO</div>
+                <div><span className="font-mono font-bold">S̶</span> - Syscoin</div>
+                <div><span className="font-mono font-bold">H̶</span> - Hathor Network</div>
+                <div><span className="font-mono font-bold">E̶</span> - ExSat</div>
+                <div><span className="font-mono font-bold">O̶</span> - Omni</div>
+                <div><span className="font-mono font-bold">U̶</span> - Runestone</div>
+                <div><span className="font-mono font-bold">W̶</span> - WitnessCommitment</div>
+                <div><span className="font-mono font-bold">T̶</span> - Stacks Block</div>
+                <div><span className="font-mono font-bold">B̶</span> - BIP47 Payment</div>
+                <div><span className="font-mono font-bold">Ø̶</span> - Empty OP_RETURN</div>
+                <div><span className="font-mono font-bold">Ω̶</span> - Other OP_RETURN</div>
+                <div><span className="inline-block w-3 h-3 bg-gray-400 rounded-full mr-1"></span> - First/duplicate</div>
+              </div>
             </div>
           </div>
         </div>

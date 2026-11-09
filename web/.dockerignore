@@ -1,0 +1,10 @@
+# Installed/built inside the image; host copies are the wrong platform
+node_modules
+.next
+*.tsbuildinfo
+coverage
+
+# VCS, logs, local env
+.git
+*.log
+.env*

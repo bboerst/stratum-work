@@ -152,68 +152,160 @@ Guidelines:
 - Most 'work' is done client-side for trustless data processing
 - Raw data access via `/api/stream` endpoint
 
-## Local Development with Docker-Compose
+## Local Development with Docker Compose
 
-To simplify local development and testing, you can use `docker compose` to run all the components on your machine. This allows you to quickly spin up RabbitMQ, MongoDB, a web application container, and one or more collector containers.
+`docker compose` runs the whole stack on one machine: RabbitMQ, MongoDB, five collectors connected to live pools, the backend, and the web app. By default the web app runs in **development mode with hot reload**, so edits under `web/` show up in the browser without a rebuild.
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+- [Docker Engine](https://docs.docker.com/engine/install/) with the [Compose plugin](https://docs.docker.com/compose/install/) (`docker compose`, not the old `docker-compose`)
+- **Optional:** a Bitcoin Core node with RPC and ZMQ enabled. Without one, collectors still stream live templates, but block detection, pool identification and analytics stay empty. See [Connecting a Bitcoin node](#connecting-a-bitcoin-node).
 
-### Steps
+### Quick start
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/bboerst/stratum-work.git
-   cd stratum-work
-   ```
-2. **Customize collectors**:
+```bash
+git clone https://github.com/bboerst/stratum-work.git
+cd stratum-work
+cp .env.example .env        # optional settings: Bitcoin node, remote access, ...
+docker compose up --build
+```
 
-    In the `./docker-compose.yml` file, you will see a collector-base service along with one or more collectors (e.g., collector-f2pool). Each collector points to a specific Stratum pool. To add more pools, just duplicate one of the collector services and update the --pool-name and --url fields:
-   ```bash
-   collector-newpool:
-     <<: *collector-base
-     command: >
-         /usr/local/bin/python main.py
-         --pool-name "NewPool"
-         --url "stratum+tcp://newpool.com:3333"
-         --userpass "someuser:somepass"
-         --rabbitmq-host "rabbitmq"
-         --rabbitmq-username "mquser"
-         --rabbitmq-password "mqpassword"
-         --db-url "mongodb"
-         --db-name "stratum-logger"
-         --db-username "mongouser"
-         --db-password "mongopassword"
-         --log-level "DEBUG"
-   ```
-   The <<: *collector-base line pulls in all the shared environment variables and dependencies. All you need to do is adjust pool-specific configuration.
+Open http://localhost:3000. Collectors connect to their pools straight away, and new templates appear as pools send `mining.notify` messages.
 
-3. **Build and start the services**:
-   ```bash
-   ENVIRONMENT=production docker compose up --build
-   ```
-   This command will:
-	- Build the images for the webapp and collector services.
-	- Start RabbitMQ, MongoDB, and your configured collectors.
-	- Start the web application.
+To run the optimized production build (no hot reload):
 
-    Once everything is running, the web application should be accessible at http://localhost:3000.
+```bash
+ENVIRONMENT=production docker compose up --build
+```
 
-5. **View Logs**:
+### What runs
 
-    As everything starts, you can see logs in the terminal where you ran docker-compose up.These logs will show connections to pools,RabbitMQ events, and requests to the webapp.
+| Service | Port | Notes |
+|---|---|---|
+| `web` | 3000 | Next.js app. Dev mode by default, with `./web` mounted into the container |
+| `backend` | 8001 | Block processing and analytics. Needs a Bitcoin node |
+| `collector-*` | none | One per pool: connects over Stratum and publishes `mining.notify` to RabbitMQ and MongoDB |
+| `rabbitmq` | 5672, 15672 | Management UI at http://localhost:15672 (`mquser` / `mqpassword`) |
+| `mongodb` | 27017 | `mongo:7.0.24`, the same version as production (`mongouser` / `mongopassword`) |
 
-6. **Stop the services**:
+The credentials above are local development defaults. Don't expose these ports to an untrusted network. To change bindings, see [Machine-specific overrides](#machine-specific-overrides).
 
-    To stop and remove the containers, press `Ctrl + C` in your terminal. To remove containers, networks, and images created by docker-compose, run:
+### Configuration (`.env`)
 
-    ```bash
-    ENVIRONMENT=production docker compose down
-    ```
+`docker compose` reads `./.env` automatically. It's gitignored, so credentials and machine-specific values stay out of the repo. Every setting is optional, and the defaults match the values in `docker-compose.yml`. `.env.example` documents each one.
 
-    To also remove the mongodb volume:
-    ```bash
-    ENVIRONMENT=production docker compose down -v
-    ```
+| Setting | Default | Purpose |
+|---|---|---|
+| `CORS_ORIGINS` | `http://localhost:3000` | Origin(s) your browser uses to open the web app (comma-separated) |
+| `ALLOWED_DEV_ORIGINS` | *(empty)* | Hostnames allowed to use dev-only resources, such as hot reload, when you browse from another machine |
+| `BITCOIN_RPC_HOST` / `BITCOIN_RPC_PORT` | `host.docker.internal` / `8332` | Bitcoin node RPC endpoint |
+| `BITCOIN_RPC_USER` / `BITCOIN_RPC_PASSWORD` | `rpc_user` / `rpc_password` | RPC credentials |
+| `BITCOIN_RPC_SCHEME` | `http` | Set to `https` for nodes behind a TLS proxy |
+| `BITCOIN_RPC_CA_FILE` | *(empty)* | Host path to a CA certificate (PEM) used to verify an `https` node |
+| `BITCOIN_ZMQ_BLOCK` | `tcp://host.docker.internal:28332` | ZMQ block notifications |
+| `MIN_BLOCK_HEIGHT` | `863998` | Lowest height the backend backfills on first start |
+
+### Connecting a Bitcoin node
+
+The backend and the collectors share the node settings above. The node needs:
+
+- **RPC** reachable from the containers. If the node runs on the Docker host, `host.docker.internal` already points at it. Make sure `rpcallowip` allows the Docker network (e.g. `172.16.0.0/12`).
+- **ZMQ block notifications** on `BITCOIN_ZMQ_BLOCK`. The backend subscribes to `hashblock` and the collectors to `rawblock` + `hashblock`, so publish both on that address:
+  ```
+  zmqpubhashblock=tcp://0.0.0.0:28332
+  zmqpubrawblock=tcp://0.0.0.0:28332
+  ```
+
+**Nodes behind a TLS proxy** (e.g. StartOS, or a reverse proxy in front of RPC) serve RPC over `https`, often with a private CA. Point the stack at that CA rather than turning off verification:
+
+```bash
+BITCOIN_RPC_SCHEME=https
+BITCOIN_RPC_CA_FILE=/path/to/root-ca.pem   # on the Docker host; mounted read-only into the containers
+```
+
+**First start:** the backend backfills every block from the tip down to `MIN_BLOCK_HEIGHT`. That's over 100k blocks with the default. For a quick local start, set it a few dozen blocks below the current tip. There are no templates for blocks mined before your collectors were running anyway.
+
+### Developing
+
+- **Web:** edit files under `web/` and the browser updates automatically.
+- **Backend and collectors:** their code is built into the image, so rebuild the service you changed:
+  ```bash
+  docker compose up -d --build backend
+  docker compose up -d --build collector-f2pool
+  ```
+- **Logs:**
+  ```bash
+  docker compose logs -f web backend
+  docker compose logs -f collector-antpool
+  ```
+- **Tests:** with each component's `requirements.txt` (plus `pytest`) or `npm ci` installed locally:
+  ```bash
+  python -m pytest collector/tests       # collector: run from the repo root
+  (cd backend && python -m pytest tests) # backend: run from backend/
+  (cd web && npm test)                   # web: vitest
+  ```
+  Or run them inside the containers, with nothing installed locally:
+  ```bash
+  docker compose exec web npm test
+  docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo --entrypoint sh collector-antpool \
+    -c "pip install -q pytest && python -m pytest collector/tests"
+  docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo/backend --entrypoint sh backend \
+    -c "pip install -q pytest && python -m pytest tests"
+  ```
+
+### Customizing collectors
+
+Each `collector-*` service in `docker-compose.yml` connects to one pool. They all extend the shared `x-collector-base` template, which holds the common environment variables, dependencies and restart policy. To add a pool, copy an existing collector and change only the pool-specific flags:
+
+```yaml
+collector-newpool:
+  <<: *collector-base
+  command: >
+    /usr/local/bin/python main.py
+    --pool-name "NewPool"
+    --url "stratum+tcp://newpool.example.com:3333"
+    --userpass "someuser:somepass"
+    --rabbitmq-host "rabbitmq"
+    --rabbitmq-username "mquser"
+    --rabbitmq-password "mqpassword"
+    --db-url "mongodb"
+    --db-name "stratum-logger"
+    --db-username "mongouser"
+    --db-password "mongopassword"
+    --log-level "DEBUG"
+```
+
+To run fewer collectors, start only the services you want, e.g. `docker compose up --build web backend collector-f2pool`.
+
+### Running on a remote machine
+
+If the stack runs on another machine (a VM, a home server, a box on your Tailscale network), use its hostname instead of `localhost`:
+
+```bash
+# .env
+CORS_ORIGINS=http://my-devbox:3000
+ALLOWED_DEV_ORIGINS=my-devbox            # without this, Next.js blocks hot reload from non-localhost hosts
+```
+
+Then open `http://my-devbox:3000`.
+
+### Machine-specific overrides
+
+For compose changes that only apply to your machine, such as binding ports to loopback or to a specific interface, create a `docker-compose.override.yml`. It's gitignored, and `docker compose` loads it automatically. `!override` replaces a list instead of appending to it:
+
+```yaml
+services:
+  web:
+    ports: !override
+      - "100.64.0.10:3000:3000"   # e.g. only on a Tailscale address
+  mongodb:
+    ports: !override
+      - "127.0.0.1:27017:27017"   # keep infrastructure on loopback
+```
+
+### Stopping
+
+```bash
+docker compose down        # stop and remove containers
+docker compose down -v     # also delete the MongoDB volume (all collected data)
+```

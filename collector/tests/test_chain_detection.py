@@ -370,6 +370,49 @@ class TipListenerTests(unittest.TestCase):
         proxy.getblockcount.assert_called_once_with()
         http_conn.close.assert_called_once_with()
 
+    def test_fetch_local_btc_tip_height_https_uses_ca_verified_connection(self):
+        args = Namespace(
+            bitcoin_rpc_scheme="https",
+            bitcoin_rpc_ca_file="/certs/ca.pem",
+            bitcoin_rpc_user="rpcuser",
+            bitcoin_rpc_password="rpcpass",
+            bitcoin_rpc_host="10.0.0.5",
+            bitcoin_rpc_port="64642",
+            bitcoin_rpc_timeout=7.5,
+        )
+        proxy = types.SimpleNamespace(
+            getblockcount=Mock(return_value=202),
+            _AuthServiceProxy__conn=Mock(),
+        )
+        auth_proxy_cls = Mock(return_value=proxy)
+        ssl_context = object()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "bitcoinrpc": types.SimpleNamespace(),
+                "bitcoinrpc.authproxy": types.SimpleNamespace(
+                    AuthServiceProxy=auth_proxy_cls
+                ),
+            },
+        ), patch.object(
+            collector_main.ssl, "create_default_context", return_value=ssl_context
+        ) as create_ctx, patch.object(
+            collector_main.http.client, "HTTPSConnection"
+        ) as https_conn_cls:
+            height = collector_main.fetch_local_btc_tip_height(args)
+
+        self.assertEqual(height, 202)
+        create_ctx.assert_called_once_with(cafile="/certs/ca.pem")
+        https_conn_cls.assert_called_once_with(
+            "10.0.0.5", 64642, timeout=7.5, context=ssl_context
+        )
+        auth_proxy_cls.assert_called_once_with(
+            "https://rpcuser:rpcpass@10.0.0.5:64642",
+            timeout=7.5,
+            connection=https_conn_cls.return_value,
+        )
+
     def test_close_rpc_connection_uses_underlying_http_connection_not_rpc_method(self):
         http_conn = Mock()
 

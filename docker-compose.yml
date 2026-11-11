@@ -33,6 +33,18 @@ x-collector-base: &collector-base
     MONGODB_PASSWORD: mongopassword
     MONGODB_HOSTS: mongodb
     SOCKET_URL: http://localhost:8000
+    # Bitcoin node for BTC/BCH chain detection (same node as the backend; see .env)
+    BITCOIN_RPC_SCHEME: ${BITCOIN_RPC_SCHEME:-http}
+    BITCOIN_RPC_CA_FILE: ${BITCOIN_RPC_CA_FILE:+/certs/bitcoin-rpc-ca.pem}
+    BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-host.docker.internal}
+    BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-8332}
+    BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-rpc_user}
+    BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-rpc_password}
+    BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ${BITCOIN_RPC_CA_FILE:-/dev/null}:/certs/bitcoin-rpc-ca.pem:ro
 
 services:
   rabbitmq:
@@ -200,6 +212,8 @@ services:
       ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
       BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-rpc_user}
       BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-rpc_password}
+      BITCOIN_RPC_SCHEME: ${BITCOIN_RPC_SCHEME:-http}
+      BITCOIN_RPC_CA_FILE: ${BITCOIN_RPC_CA_FILE:+/certs/bitcoin-rpc-ca.pem}
       BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-host.docker.internal}
       BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-8332}
       BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
@@ -216,6 +230,9 @@ services:
       PORT: ${BACKEND_PORT:-8001}
     extra_hosts:
       - "host.docker.internal:host-gateway" # node on the Docker host (Linux needs this mapping)
+    volumes:
+      # CA bundle for an https RPC endpoint (BITCOIN_RPC_CA_FILE in .env). /dev/null when unused.
+      - ${BITCOIN_RPC_CA_FILE:-/dev/null}:/certs/bitcoin-rpc-ca.pem:ro
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
     expose:

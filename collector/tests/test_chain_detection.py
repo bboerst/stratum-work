@@ -377,7 +377,7 @@ class TipListenerTests(unittest.TestCase):
             bitcoin_rpc_user="rpcuser",
             bitcoin_rpc_password="rpcpass",
             bitcoin_rpc_host="10.0.0.5",
-            bitcoin_rpc_port="64642",
+            bitcoin_rpc_port="8443",
             bitcoin_rpc_timeout=7.5,
         )
         proxy = types.SimpleNamespace(
@@ -405,10 +405,10 @@ class TipListenerTests(unittest.TestCase):
         self.assertEqual(height, 202)
         create_ctx.assert_called_once_with(cafile="/certs/ca.pem")
         https_conn_cls.assert_called_once_with(
-            "10.0.0.5", 64642, timeout=7.5, context=ssl_context
+            "10.0.0.5", 8443, timeout=7.5, context=ssl_context
         )
         auth_proxy_cls.assert_called_once_with(
-            "https://rpcuser:rpcpass@10.0.0.5:64642",
+            "https://rpcuser:rpcpass@10.0.0.5:8443",
             timeout=7.5,
             connection=https_conn_cls.return_value,
         )

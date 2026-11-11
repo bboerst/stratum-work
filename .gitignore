@@ -5,3 +5,5 @@ helm-charts/values*_collector.yaml
 
 # Local compose settings (may contain credentials)
 .env
+# Machine-specific compose overrides
+docker-compose.override.yml

@@ -1,6 +1,7 @@
 # Local development stack.
-# Settings that vary per machine (bind address, public URL, Bitcoin node) come from ./.env.
-# See .env.example. .env is gitignored and holds the Bitcoin RPC credentials.
+# Machine-specific settings (Bitcoin node, browser origin, ...) come from ./.env (see .env.example).
+# For machine-specific compose changes (e.g. port bindings), use a docker-compose.override.yml.
+# Both files are gitignored.
 
 # Template for collector services
 x-collector-base: &collector-base
@@ -49,9 +50,9 @@ x-collector-base: &collector-base
 services:
   rabbitmq:
     image: rabbitmq:3-management
-    ports: # infra ports stay on loopback
-      - "127.0.0.1:5672:5672"
-      - "127.0.0.1:15672:15672"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: mquser
       RABBITMQ_DEFAULT_PASS: mqpassword
@@ -65,7 +66,7 @@ services:
   mongodb:
     image: mongo:7.0.24 # matches production
     ports:
-      - "127.0.0.1:27017:27017"
+      - "27017:27017"
     volumes:
       - mongo-data:/data/db
     environment:
@@ -175,7 +176,7 @@ services:
       args:
         ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
-      - "${WEB_BIND:-127.0.0.1}:3000:3000"
+      - "3000:3000"
     environment:
       ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
@@ -235,7 +236,7 @@ services:
       # CA bundle for an https RPC endpoint (BITCOIN_RPC_CA_FILE in .env). /dev/null when unused.
       - ${BITCOIN_RPC_CA_FILE:-/dev/null}:/certs/bitcoin-rpc-ca.pem:ro
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
+      - "${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
     expose:
       - "${BACKEND_PORT:-8001}"
     depends_on:

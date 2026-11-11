@@ -1,3 +1,7 @@
+# Local development stack.
+# Settings that vary per machine (bind address, public URL, Bitcoin node) come from ./.env.
+# See .env.example. .env is gitignored and holds the Bitcoin RPC credentials.
+
 # Template for collector services
 x-collector-base: &collector-base
   build: ./collector
@@ -33,9 +37,9 @@ x-collector-base: &collector-base
 services:
   rabbitmq:
     image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    ports: # infra ports stay on loopback
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: mquser
       RABBITMQ_DEFAULT_PASS: mqpassword
@@ -47,9 +51,9 @@ services:
       start_period: 30s
 
   mongodb:
-    image: mongo:latest
+    image: mongo:7.0.24 # matches production
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
     environment:
@@ -151,6 +155,7 @@ services:
       --db-username "mongouser"
       --db-password "mongopassword"
       --log-level "DEBUG"
+
   web:
     build:
       context: ./web
@@ -158,10 +163,10 @@ services:
       args:
         ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
-      - "3000:3000"
+      - "${WEB_BIND:-127.0.0.1}:3000:3000"
     environment:
       ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
-      CORS_ORIGINS: "http://localhost:3000"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -193,24 +198,26 @@ services:
     # network_mode: host
     environment:
       ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
-      BITCOIN_RPC_USER: "rpc_user"
-      BITCOIN_RPC_PASSWORD: "rpc_password"
-      BITCOIN_RPC_HOST: "host.docker.internal"
-      BITCOIN_RPC_PORT: "8332"
-      BITCOIN_ZMQ_BLOCK: "tcp://host.docker.internal:28332"
+      BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-rpc_user}
+      BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-rpc_password}
+      BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-host.docker.internal}
+      BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-8332}
+      BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
       MONGODB_URL: "mongodb://mongodb:27017"
       MONGODB_DB: "stratum-logger"
       MONGODB_USERNAME: "mongouser"
       MONGODB_PASSWORD: "mongopassword"
-      MIN_BLOCK_HEIGHT: "863998"
+      MIN_BLOCK_HEIGHT: ${MIN_BLOCK_HEIGHT:-863998} # set near the tip in .env to keep the initial sync short
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: "mquser"
       RABBITMQ_PASSWORD: "mqpassword"
       RABBITMQ_EXCHANGE: blocks
       PORT: ${BACKEND_PORT:-8001}
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # node on the Docker host (Linux needs this mapping)
     ports:
-      - "${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
+      - "127.0.0.1:${BACKEND_PORT:-8001}:${BACKEND_PORT:-8001}"
     expose:
       - "${BACKEND_PORT:-8001}"
     depends_on:

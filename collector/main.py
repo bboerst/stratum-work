@@ -1,4 +1,7 @@
 import argparse
+import http.client
+import os
+import ssl
 import json
 import logging
 import threading
@@ -156,11 +159,23 @@ def fetch_local_btc_tip_height(args):
     except ImportError as exc:  # pragma: no cover - depends on local env
         raise RuntimeError("Missing optional dependency 'python-bitcoinrpc'") from exc
 
+    scheme = getattr(args, "bitcoin_rpc_scheme", "http")
+    ca_file = getattr(args, "bitcoin_rpc_ca_file", None)
     rpc_url = (
-        f"http://{args.bitcoin_rpc_user}:{args.bitcoin_rpc_password}"
+        f"{scheme}://{args.bitcoin_rpc_user}:{args.bitcoin_rpc_password}"
         f"@{args.bitcoin_rpc_host}:{args.bitcoin_rpc_port}"
     )
-    conn = AuthServiceProxy(rpc_url, timeout=args.bitcoin_rpc_timeout)
+    if scheme == "https" and ca_file:
+        # Verify against a specific CA (e.g. a StartOS node's local root CA).
+        connection = http.client.HTTPSConnection(
+            args.bitcoin_rpc_host,
+            int(args.bitcoin_rpc_port),
+            timeout=args.bitcoin_rpc_timeout,
+            context=ssl.create_default_context(cafile=ca_file),
+        )
+        conn = AuthServiceProxy(rpc_url, timeout=args.bitcoin_rpc_timeout, connection=connection)
+    else:
+        conn = AuthServiceProxy(rpc_url, timeout=args.bitcoin_rpc_timeout)
     try:
         return int(conn.getblockcount())
     finally:
@@ -725,28 +740,39 @@ def build_parser():
     )
     parser.add_argument(
         "--bitcoin-zmq-block",
-        default="tcp://bitcoin-node:28332",
+        default=os.getenv("BITCOIN_ZMQ_BLOCK", "tcp://bitcoin-node:28332"),
         help="Bitcoin node ZMQ block endpoint (default: tcp://bitcoin-node:28332)",
     )
     parser.add_argument(
         "--bitcoin-rpc-user",
-        default="user",
+        default=os.getenv("BITCOIN_RPC_USER", "user"),
         help="Bitcoin RPC username (default: user)",
     )
     parser.add_argument(
         "--bitcoin-rpc-password",
-        default="password",
+        default=os.getenv("BITCOIN_RPC_PASSWORD", "password"),
         help="Bitcoin RPC password",
     )
     parser.add_argument(
         "--bitcoin-rpc-host",
-        default="localhost",
+        default=os.getenv("BITCOIN_RPC_HOST", "localhost"),
         help="Bitcoin RPC host (default: localhost)",
     )
     parser.add_argument(
         "--bitcoin-rpc-port",
-        default="8332",
+        default=os.getenv("BITCOIN_RPC_PORT", "8332"),
         help="Bitcoin RPC port (default: 8332)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-scheme",
+        choices=["http", "https"],
+        default=os.getenv("BITCOIN_RPC_SCHEME", "http"),
+        help="Bitcoin RPC scheme; https for nodes behind a TLS proxy (default: http, env BITCOIN_RPC_SCHEME)",
+    )
+    parser.add_argument(
+        "--bitcoin-rpc-ca-file",
+        default=os.getenv("BITCOIN_RPC_CA_FILE") or None,
+        help="PEM CA bundle to verify an https RPC endpoint (default: system trust store, env BITCOIN_RPC_CA_FILE)",
     )
     parser.add_argument(
         "--bitcoin-rpc-timeout",

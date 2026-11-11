@@ -15,7 +15,8 @@ RUN npx prisma generate
 
 # Build the application if production
 ARG ENVIRONMENT=production
-RUN if [ "$ENVIRONMENT" = "production" ]; then npm run build; fi
+# (development: no build; create an empty .next so the runner stage's COPY succeeds and `next dev` takes over)
+RUN if [ "$ENVIRONMENT" = "production" ]; then npm run build; else mkdir -p .next; fi
 
 # Stage 2: Run the application
 FROM node:24-alpine AS runner

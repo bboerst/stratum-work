@@ -1,4 +1,5 @@
 import os, time, threading, logging
+import http.client, ssl, urllib.parse
 from bitcoinrpc.authproxy import AuthServiceProxy
 import zmq
 import uuid
@@ -30,10 +31,14 @@ RPC_USER = os.getenv("BITCOIN_RPC_USER", "user")
 RPC_PASSWORD = os.getenv("BITCOIN_RPC_PASSWORD", "password")
 RPC_HOST = os.getenv("BITCOIN_RPC_HOST", "localhost")
 RPC_PORT = os.getenv("BITCOIN_RPC_PORT", "8332")
-RPC_URL = f"http://{RPC_USER}:{RPC_PASSWORD}@{RPC_HOST}:{RPC_PORT}"
+# "https" for nodes behind a TLS proxy (e.g. StartOS). BITCOIN_RPC_CA_FILE: PEM bundle to trust for that
+# endpoint (e.g. the StartOS root CA); when unset, the system trust store is used.
+RPC_SCHEME = os.getenv("BITCOIN_RPC_SCHEME", "http")
+RPC_CA_FILE = os.getenv("BITCOIN_RPC_CA_FILE") or None
+RPC_URL = f"{RPC_SCHEME}://{RPC_USER}:{RPC_PASSWORD}@{RPC_HOST}:{RPC_PORT}"
 # Timeout in seconds for individual RPC HTTP operations
 RPC_TIMEOUT = float(os.getenv("BITCOIN_RPC_TIMEOUT", "10"))
-logger.info("Connecting to bitcoin RPC at %s:%s", RPC_HOST, RPC_PORT)
+logger.info("Connecting to bitcoin RPC at %s://%s:%s", RPC_SCHEME, RPC_HOST, RPC_PORT)
 
 ZMQ_BLOCK = os.getenv("BITCOIN_ZMQ_BLOCK", "tcp://bitcoin-node:28332")
 MIN_BLOCK_HEIGHT = int(os.getenv("MIN_BLOCK_HEIGHT", "882000"))
@@ -48,10 +53,21 @@ LOCAL_POOL_FILE = os.getenv("LOCAL_POOL_FILE", "pool_definitions.json")  # Local
 START_FULL_REINDEX_ON_BOOT = False
 
 # --- Connections ---
+def new_rpc_proxy(url=None, timeout=None):
+    """AuthServiceProxy that verifies https endpoints against RPC_CA_FILE when one is configured."""
+    url = url or RPC_URL
+    timeout = RPC_TIMEOUT if timeout is None else timeout
+    if url.startswith("https://") and RPC_CA_FILE:
+        parsed = urllib.parse.urlparse(url)
+        context = ssl.create_default_context(cafile=RPC_CA_FILE)
+        connection = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=timeout, context=context)
+        return AuthServiceProxy(url, timeout=timeout, connection=connection)
+    return AuthServiceProxy(url, timeout=timeout)
+
 def create_rpc_connection():
     for attempt in range(1, 6):
         try:
-            conn = AuthServiceProxy(RPC_URL, timeout=RPC_TIMEOUT)
+            conn = new_rpc_proxy()
             conn.getblockcount()
             logger.info("Successfully connected to bitcoin RPC (attempt %d)", attempt)
             return conn
@@ -59,7 +75,7 @@ def create_rpc_connection():
             logger.error("RPC connection attempt %d failed: %s", attempt, e)
             # Reinitialize connection (do not log credentials)
             try:
-                conn = AuthServiceProxy(RPC_URL, timeout=RPC_TIMEOUT)
+                conn = new_rpc_proxy()
                 logger.info("Reinitialized bitcoin RPC connection on attempt %d", attempt)
                 return conn
             except Exception as reinit_err:
@@ -115,7 +131,7 @@ class RPCConnectionPool:
         conn = None
         try:
             # Create a fresh connection per use to avoid stale keep-alive sockets
-            conn = AuthServiceProxy(self.url, timeout=self.rpc_timeout)
+            conn = new_rpc_proxy(self.url, self.rpc_timeout)
             yield conn
         finally:
             # No persistent connection to return; allow garbage collection

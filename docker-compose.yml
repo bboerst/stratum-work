@@ -179,6 +179,7 @@ services:
     environment:
       ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      ALLOWED_DEV_ORIGINS: ${ALLOWED_DEV_ORIGINS:-}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672

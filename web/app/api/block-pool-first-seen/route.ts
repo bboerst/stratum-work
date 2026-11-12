@@ -2,12 +2,18 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/db/prisma';
 import { enableHistoricalData } from '@/lib/db/blocks';
 import { filterBlacklistedItems } from '@/lib/poolBlacklist';
+import { markFirstSeenReliability } from '@/utils/poolTiming';
 
 // Define the shape of the data returned by the aggregation
 interface PoolFirstSeenData {
   poolName: string;
   firstSeenTimestamp: string;
   firstSeenLatencyMs?: number | null;
+}
+
+interface DistinctResult {
+  values: Array<string | null>;
+  ok: number;
 }
 
 // Minimal interface for the expected aggregation result structure
@@ -78,7 +84,20 @@ export async function GET(request: Request) {
     const result = rawResult as unknown as AggregationResult;
 
     if (result && result.cursor && result.cursor.firstBatch) {
-      const data = filterBlacklistedItems(result.cursor.firstBatch, d => d.poolName);
+      // A pool's first-seen at this height is only trustworthy if we also collected a template from it at the
+      // previous height (its collector was connected before this height began). See #104.
+      // Same chain filter as the aggregation above; uses the height index.
+      const previous = (await prisma.$runCommandRaw({
+        distinct: 'mining_notify',
+        key: 'pool_name',
+        query: { height: height - 1, chain_family: { $exists: false } },
+      })) as unknown as DistinctResult;
+      const poolsAtPreviousHeight = (previous?.values ?? []).filter((v): v is string => typeof v === 'string');
+
+      const data = markFirstSeenReliability(
+        filterBlacklistedItems(result.cursor.firstBatch, d => d.poolName),
+        poolsAtPreviousHeight,
+      );
       return NextResponse.json(data);
     } else {
       console.error("Unexpected MongoDB aggregation response structure:", result);

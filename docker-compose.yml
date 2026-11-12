@@ -245,5 +245,53 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  # ── Postgres + TimescaleDB (opt-in: docker compose --profile postgres up) ─────────────────────
+  # Migration target for #90 (design: docs/design/postgres-timescale.md). MongoDB stays the default until cutover.
+  postgres:
+    image: timescale/timescaledb:2.30.2-pg18
+    profiles: ["postgres"]
+    command: ["postgres", "-c", "timescaledb.enable_chunk_skipping=on"]
+    environment:
+      POSTGRES_USER: stratum
+      POSTGRES_PASSWORD: stratum
+      POSTGRES_DB: stratum
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql   # Postgres 18 images: mount the parent dir (data lives in a versioned subdir)
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "stratum", "-d", "stratum"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Applies db/migrations, then exits.
+  postgres-migrate:
+    image: ghcr.io/amacneil/dbmate:2.37.0
+    profiles: ["postgres"]
+    command: ["--wait", "up"]
+    environment:
+      DATABASE_URL: postgres://stratum:stratum@postgres:5432/stratum?sslmode=disable
+      DBMATE_NO_DUMP_SCHEMA: "true"
+    volumes:
+      - ./db:/db:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Creates the local per-service login users (collector/backend/web), then exits.
+  postgres-dev-users:
+    image: timescale/timescaledb:2.30.2-pg18
+    profiles: ["postgres"]
+    entrypoint: ["psql", "postgres://stratum:stratum@postgres:5432/stratum", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/db/dev-users.sql"]
+    volumes:
+      - ./db:/db:ro
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
 volumes:
   mongo-data:
+  pg-data:

@@ -9,6 +9,8 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see README "Adding a New Analyzer"), publishes block events. | Python |
 | `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views. API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
+| `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
+| `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |
 
 ## Run it
 ```bash
@@ -23,6 +25,7 @@ docker compose up --build     # dev mode: web hot-reloads from ./web
 python -m pytest collector/tests        # from the repo root
 (cd backend && python -m pytest tests)  # from backend/
 (cd web && npm test && npm run lint)    # vitest + eslint
+db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
 ```
 The README shows how to run these inside the containers.
 
@@ -30,6 +33,7 @@ The README shows how to run these inside the containers.
 - **Defaults preserve existing behavior.** New settings are optional, documented in `.env.example`, and default to the previous value. Never commit machine-specific values (hostnames, IPs, credentials, node URLs).
 - **Collector and backend config:** CLI flags win; env vars (`BITCOIN_*`, etc.) provide defaults. Keep secrets out of command lines.
 - **Bitcoin RPC** may be `http` or `https` (`BITCOIN_RPC_SCHEME`). For private CAs, verify with `BITCOIN_RPC_CA_FILE`; never disable verification.
+- **Database changes go through migrations** in `db/migrations/` (never hand-applied), with a working `-- migrate:down`. Applications connect as least-privilege roles (`stratum_collector`, `stratum_backend`, `stratum_web`), never as the owner or superuser.
 - **PRs:** say what was broken or missing, what changed, and how it was tested (commands and results). Keep them focused. Squash merges are titled `Title (#N)`. Preserve contributor credit with `Co-authored-by:` trailers.
 
 ## Data gotchas
@@ -40,7 +44,7 @@ The README shows how to run these inside the containers.
 ## Images and deployment
 `.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend` and `collector`:
 - **PRs:** build the changed components, push nothing.
-- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component.
+- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `postgres`).
 - **Releases:** push all components as `:<tag>` and `:latest`.
 
 Deployments pin `sha-<7>` tags, and the same image is promoted from dev to prod, never rebuilt. Production deployment is managed in a separate repository. Never build or push images by hand.

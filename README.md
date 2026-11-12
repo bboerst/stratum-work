@@ -303,6 +303,28 @@ services:
       - "127.0.0.1:27017:27017"   # keep infrastructure on loopback
 ```
 
+### Postgres + TimescaleDB (migration in progress)
+
+The project is moving from MongoDB to Postgres + TimescaleDB (#90; design: [`docs/design/postgres-timescale.md`](docs/design/postgres-timescale.md)). MongoDB stays the default until the cutover. Postgres is opt-in through a Compose profile:
+
+```bash
+docker compose --profile postgres up --build
+```
+
+This adds:
+- `postgres`: TimescaleDB 2.30 on Postgres 18, on `${POSTGRES_PORT:-5432}`; user, password and database are all `stratum`
+- `postgres-migrate`: applies `db/migrations` with [dbmate](https://github.com/amacneil/dbmate), then exits
+- `postgres-dev-users`: creates local per-service login users (`collector`, `backend`, `web`; password = user name), each granted its least-privilege role
+
+```bash
+psql postgres://web:web@localhost:5432/stratum -c '\dt'   # read-only user
+db/test-migrations.sh                                       # migrations up/down/up + role privileges (needs Docker)
+```
+
+Add a migration: `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then edit the `-- migrate:up` / `-- migrate:down` sections. Use `-- migrate:up transaction:false` for TimescaleDB procedures such as `add_columnstore_policy`.
+
+To reset only the Postgres data (MongoDB is untouched): `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data`.
+
 ### Stopping
 
 ```bash

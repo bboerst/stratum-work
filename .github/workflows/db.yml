@@ -1,0 +1,29 @@
+# Test the database migrations (db/migrations) up -> down -> up, plus role privileges, against:
+#   - the official TimescaleDB image used for local development
+#   - the CloudNativePG + TimescaleDB image built from postgres/Dockerfile (what production runs)
+name: db
+
+on:
+  pull_request:
+    paths: ["db/**", "postgres/**", ".github/workflows/db.yml"]
+  push:
+    branches: [main]
+    paths: ["db/**", "postgres/**", ".github/workflows/db.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  migrations:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Migrations on timescale/timescaledb (local dev image)
+        run: db/test-migrations.sh
+
+      - name: Build the CNPG + TimescaleDB image
+        run: docker build -t stratum-work-postgres:ci postgres/
+
+      - name: Migrations on the CNPG image
+        run: db/test-migrations.sh --image stratum-work-postgres:ci

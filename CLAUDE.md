@@ -11,6 +11,7 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
 | `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
 | `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |
+| `tools/mongo-to-postgres/` | One-off backfill of MongoDB history into Postgres, with verification ([README](tools/mongo-to-postgres/README.md)) | Python |
 
 ## Run it
 ```bash
@@ -26,6 +27,7 @@ python -m pytest collector/tests        # from the repo root
 (cd backend && python -m pytest tests)  # from backend/
 (cd web && npm test && npm run lint)    # vitest + eslint
 db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
+tools/mongo-to-postgres/test-e2e.sh     # backfill tool: unit tests + synthetic fixture end to end (Docker)
 ```
 The README shows how to run these inside the containers.
 

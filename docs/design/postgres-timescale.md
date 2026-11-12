@@ -335,13 +335,13 @@ Per document → row (all lossless):
 - **Routing**, with the same rules as live ingest. A template goes to `templates_other` with a `reason` if any of these holds:
   - it has a `chain_family`
   - the height doesn't parse
-  - the height is implausible against the Bitcoin tip *at that time*, i.e. `blocks` with `block_time <= received_at`: outside `[tip − 6, tip + 2]`
+  - the height is implausible against the Bitcoin tip *at that time*, i.e. `blocks` with `block_time <= received_at`: outside `[tip − 6, tip + 2]`. Header times can be minutes *after* a block really arrived (seen on dev data: two consecutive blocks 2–3 min late made the next height's first templates look like tip + 3). So the tool also counts a block as known once any template has built on it (its `prev_hash`): `tip(t) = max(header-time tip, highest known block built on by t)`.
 
   Everything else goes to `templates`.
 - `pool_name` → `sources` (one row per historical name; see "Collector site" below).
 - **Dedup** on `(source_id, received_at, job_id)`. That covers the one-height overlap between backup increments, and any duplicates from collector reconnects.
 - **Load:** `COPY` in day-sized batches, oldest first, into uncompressed chunks; the columnstore policy compresses them afterwards. The tool is resumable by day, so it can be stopped and restarted.
-- **Expected time:** 136M rows at ~50–100k rows/s via `COPY` → about 30–60 min load, plus compression. To be measured on the section 3 sample.
+- **Expected time:** measured with `tools/mongo-to-postgres` on 325k real-shaped templates (4-vCPU VM, MongoDB and Postgres on the same machine): ~20k docs/s per worker, end to end, and ~53k docs/s with 4 workers → **about 45 min for 136M templates**, plus building a `timestamp` index on the restore, plus compression.
 
 ### Known gaps in the history
 - **Collection outage:** blocks **876,882–876,902**, i.e. template heights 876,883–876,903. No templates are expected there. Verification reports these heights as a known gap, not as missing data.

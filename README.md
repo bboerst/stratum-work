@@ -333,6 +333,17 @@ Templates are routed to `templates` (Bitcoin) or `templates_other` (other chains
 
 **The backend can use Postgres instead of MongoDB** for blocks, pools and the templates its analytics read (`backend/integrations/store.py`). Set `BACKEND_DB_BACKEND=postgres` in `.env`; it connects as the local `backend` user.
 
+**The web app can read from Postgres instead of MongoDB** (`web/lib/db/postgres.ts`), with the same API responses. Set `WEB_DB_BACKEND=postgres` in `.env` and recreate the web service; it connects as the local read-only `web` user. Outside Compose the settings are `DB_BACKEND=postgres` plus `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_PASSWORD`, `PG_SSLMODE` (`disable` (default), `require`, `verify-ca`, `verify-full`) and optionally `PG_SSLROOTCERT` (a CA file). They're separate fields rather than a URL, so errors can't print the password. Responses differ from MongoDB's only where Postgres has no equivalent: template, block and pool `id`s (documented in `web/lib/db/pg-mapping.ts`), and template timestamps, which Postgres stores in µs (the last three digits of the nanoseconds are zero).
+
+To check that both backends return the same data (needs data in both, e.g. collectors writing to both):
+```bash
+docker run --rm --network stratum-work_default -v "$PWD/web:/app" -w /app \
+  -e DATABASE_URL='mongodb://mongouser:mongopassword@mongodb:27017/stratum-logger?authSource=admin' \
+  -e PG_HOST=postgres -e PG_USER=web -e PG_PASSWORD=web node:24-alpine \
+  sh -c 'npm ci && npx prisma generate && npm run parity'   # optional: -- --heights 975500-975520
+```
+`web/scripts/read-parity.ts` calls the API handlers for reads R1–R7 against each backend, compares the JSON, and exits non-zero on unexplained differences.
+
 To reset only the Postgres data (MongoDB is untouched): `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data`.
 
 ### Stopping

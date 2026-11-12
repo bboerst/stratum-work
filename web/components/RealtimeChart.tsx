@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo } from "react";
 import { useTemplateBuffer } from "@/lib/DataStreamContext";
 import { chartWindow } from "@/lib/templateBuffer";
-import { staleBefore, windowedHistory } from "@/lib/chartHistory";
+import { changeTrackerPrimers, staleBefore, windowedHistory } from "@/lib/chartHistory";
 import { StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
@@ -1474,6 +1474,11 @@ function RealtimeChartBase({
       poolDataHistoryRef.current.clear();
       changeTrackerRef.current.reset();
       batch = chartWindow(bufferedTemplates, Date.now() - windowS * 1000);
+      // Give each pool's first plotted template its predecessor, so its bar gets change colors instead of gray
+      // (the primers are compared against, not plotted).
+      for (const entry of changeTrackerPrimers(bufferedTemplates, batch)) {
+        changeTrackerRef.current.process(entry.data);
+      }
     } else {
       const lastSeq = lastSeqRef.current;
       batch = bufferedTemplates.filter(entry => entry.seq > lastSeq);

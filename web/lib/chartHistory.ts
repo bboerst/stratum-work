@@ -32,3 +32,39 @@ export const STALE_AFTER_WINDOWS = 10;
 export function staleBefore(nowMs: number, windowMs: number): number {
   return nowMs - STALE_AFTER_WINDOWS * windowMs;
 }
+
+/**
+ * Change-tracking primers for a chart rebuild (#143 follow-up).
+ *
+ * Bar colors come from comparing each template with the previous template from the same pool. When the chart
+ * rebuilds from the shared buffer (mount, view switch, window change) it plots only the window, so each pool's
+ * first plotted template would have nothing to compare with and render gray, while a page refresh happened to
+ * process the whole buffer and colored it. These are the templates to feed the change tracker first (not to plot):
+ * for each pool, the buffered entry immediately before that pool's earliest plotted entry. Oldest first.
+ */
+export function changeTrackerPrimers<T extends { seq: number; timeMs: number; data: { pool_name?: string | null } }>(
+  all: T[],
+  plotted: T[],
+): T[] {
+  const firstPlotted = new Map<string, T>();
+  for (const entry of plotted) {
+    const pool = entry.data.pool_name ?? '';
+    const current = firstPlotted.get(pool);
+    if (!current || entry.timeMs < current.timeMs || (entry.timeMs === current.timeMs && entry.seq < current.seq)) {
+      firstPlotted.set(pool, entry);
+    }
+  }
+  const primer = new Map<string, T>();
+  for (const entry of all) {
+    const pool = entry.data.pool_name ?? '';
+    const first = firstPlotted.get(pool);
+    if (!first || entry === first) continue;
+    const before = entry.timeMs < first.timeMs || (entry.timeMs === first.timeMs && entry.seq < first.seq);
+    if (!before) continue;
+    const best = primer.get(pool);
+    if (!best || entry.timeMs > best.timeMs || (entry.timeMs === best.timeMs && entry.seq > best.seq)) {
+      primer.set(pool, entry);
+    }
+  }
+  return [...primer.values()].sort((a, b) => a.timeMs - b.timeMs || a.seq - b.seq);
+}

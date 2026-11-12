@@ -1,20 +1,11 @@
 import { prisma } from './prisma';
+import { formatMiningPool } from './mining-pool';
+import { isPostgres } from './backend';
+import * as pg from './postgres';
 
 // Read environment variable and convert to boolean
 // Default to true if the variable is not set
 export const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? 'true').toLowerCase() === 'true';
-
-// Define a type for the mining pool that matches the frontend expectation
-interface MiningPool {
-  id: number;
-  name: string;
-  tag?: string;
-  datum_template_creator?: string;
-  link?: string;
-  slug?: string;
-  match_type?: string;
-  identification_method?: 'address' | 'tag';
-}
 
 // Define a type for raw MongoDB document
 interface RawDocument {
@@ -22,19 +13,6 @@ interface RawDocument {
     mining_pool?: Record<string, unknown>;
   };
   mining_pool?: Record<string, unknown>;
-}
-
-// Define a type for pool data with possible nested structure
-interface PoolData extends Record<string, unknown> {
-  mining_pool?: Record<string, unknown>;
-  id?: string | number;
-  name?: string;
-  tag?: string;
-  datum_template_creator?: string;
-  link?: string;
-  slug?: string;
-  match_type?: string;
-  identification_method?: 'address' | 'tag';
 }
 
 // Define MongoDB response types
@@ -72,46 +50,6 @@ interface MongoDBBlock {
   [key: string]: unknown;
 }
 
-// Safe helper to read a string property from an unknown object without using any
-function readString(obj: unknown, key: string): string | undefined {
-  if (obj && typeof obj === 'object' && key in (obj as Record<string, unknown>)) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === 'string' ? value : undefined;
-  }
-  return undefined;
-}
-
-/**
- * Convert pool data from database to MiningPool format
- */
-function formatMiningPool(poolData: Record<string, unknown> | null | undefined): MiningPool | undefined {
-  if (!poolData) return undefined;
-  
-  // In MongoDB, the pool field might be stored as 'pool' or 'mining_pool'
-  // Check if we're dealing with a nested structure
-  const typedPoolData = poolData as PoolData;
-  const pool = typedPoolData.mining_pool || typedPoolData;
-  
-  // Ensure we have at least an id and name
-  if (!pool.id && !pool.name) {
-    console.warn('Pool data missing required fields:', pool);
-    return undefined;
-  }
-  
-  const result = {
-    id: typeof pool.id === 'string' ? parseInt(pool.id as string) : (pool.id as number) || 0,
-    name: (pool.name as string) || 'Unknown',
-    tag: readString(pool, 'tag'),
-    datum_template_creator: readString(pool, 'datum_template_creator'),
-    link: pool.link as string | undefined,
-    slug: pool.slug as string | undefined,
-    match_type: pool.match_type as string | undefined,
-    identification_method: pool.identification_method as ('address' | 'tag' | undefined)
-  };
-  
-  return result;
-}
-
 /**
  * Get blocks with pagination using direct MongoDB query
  * @param n Number of blocks to fetch
@@ -125,6 +63,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
     console.log('Historical data is disabled. Skipping fetch for blocks.');
     return { blocks: [], has_more: false, next_height: null };
   }
+
+  if (isPostgres()) return pg.getBlocks(n, before, height, after);
 
   try {
     // If after is provided, fetch blocks after that height
@@ -383,6 +323,8 @@ export async function getBlockByHeight(height: number) {
     return null;
   }
 
+  if (isPostgres()) return pg.getBlockByHeight(height);
+
   try {
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     const result = await prisma.$runCommandRaw({
@@ -513,6 +455,8 @@ export async function getBlockByHash(blockHash: string) {
     return null;
   }
 
+  if (isPostgres()) return pg.getBlockByHash(blockHash);
+
   try {
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     const result = await prisma.$runCommandRaw({
@@ -638,6 +582,8 @@ export async function getHighestBlock() {
     return null;
   }
 
+  if (isPostgres()) return pg.getHighestBlock();
+
   try {
     return prisma.block.findFirst({
       orderBy: { height: 'desc' },
@@ -658,6 +604,8 @@ export async function getLowestBlock() {
     return null;
   }
 
+  if (isPostgres()) return pg.getLowestBlock();
+
   try {
     return prisma.block.findFirst({
       orderBy: { height: 'asc' },
@@ -667,3 +615,46 @@ export async function getLowestBlock() {
     return null;
   }
 } 
+export interface InterestingBlockItem {
+  height: number;
+  block_hash: string;
+  analysis?: Record<string, unknown>;
+  mining_pool?: Record<string, unknown>;
+}
+
+interface MongoCursorResult<T> {
+  cursor: { firstBatch: T[] };
+}
+
+/**
+ * R3: the newest 200 blocks with any analysis result besides pool identification (moved from
+ * app/api/analysis-data/route.ts). Throws on database errors; the route decides what to return.
+ */
+export async function getInterestingBlocks(): Promise<InterestingBlockItem[]> {
+  if (isPostgres()) return pg.getInterestingBlocks();
+
+  const raw = await prisma.$runCommandRaw({
+    find: 'blocks',
+    filter: {
+      analysis: { $exists: true, $type: 'object' },
+      $expr: {
+        $gt: [
+          {
+            $size: {
+              $filter: {
+                input: { $objectToArray: '$analysis' },
+                as: 'kv',
+                cond: { $ne: ['$$kv.k', 'pool_identification'] }
+              }
+            }
+          },
+          0
+        ]
+      }
+    },
+    projection: { _id: 0, height: 1, block_hash: 1, analysis: 1, mining_pool: 1 },
+    sort: { height: -1 },
+    limit: 200
+  }) as unknown as MongoCursorResult<InterestingBlockItem>;
+  return raw?.cursor?.firstBatch || [];
+}

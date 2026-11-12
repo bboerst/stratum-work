@@ -7,9 +7,12 @@ import { PrismaClient } from '@prisma/client';
 // Get the database URL from environment variable with a fallback
 const databaseUrl = process.env.DATABASE_URL || 'mongodb://mongouser:mongopassword@localhost:27017/stratum-logger?authSource=admin';
 
+// With DB_BACKEND=postgres (#113) nothing reads MongoDB, so don't connect eagerly (Prisma would still connect lazily).
+const postgresSelected = (process.env.DB_BACKEND ?? '').trim().toLowerCase() === 'postgres';
+
 // Log the connection URL (without credentials) for debugging
 const sanitizedUrl = databaseUrl.replace(/\/\/[^@]*@/, '//***:***@');
-console.log(`Connecting to MongoDB with URL: ${sanitizedUrl}`);
+if (!postgresSelected) console.log(`Connecting to MongoDB with URL: ${sanitizedUrl}`);
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
 
@@ -27,7 +30,7 @@ export const prisma =
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 // Add error handling for connection issues
-prisma.$connect()
+if (!postgresSelected) prisma.$connect()
   .then(() => {
     console.log('Successfully connected to MongoDB');
   })

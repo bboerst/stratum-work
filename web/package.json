@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib",
-    "test": "vitest run"
+    "test": "vitest run",
+    "parity": "tsx scripts/read-parity.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -33,6 +34,7 @@
     "mongodb": "^7.7.0",
     "next": "^16.4.3",
     "next-themes": "^0.4.4",
+    "pg": "8.23.1",
     "prisma": "^6.19.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -44,6 +46,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.19.2",
+    "@types/pg": "8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "bitcoinjs-lib": "^7.0.4",
@@ -51,6 +54,7 @@
     "eslint-config-next": "16.4.5",
     "postcss": "^8.5.31",
     "tailwindcss": "^4.3.3",
+    "tsx": "4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
   },

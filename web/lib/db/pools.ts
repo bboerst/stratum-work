@@ -1,4 +1,6 @@
 import { prisma } from './prisma';
+import { isPostgres } from './backend';
+import * as pg from './postgres';
 
 // Define the pool data interface with an index signature to make it compatible with Prisma's InputJsonValue
 export interface PoolData {
@@ -17,6 +19,7 @@ export interface PoolData {
  * @returns Array of all pools
  */
 export async function getAllPools() {
+  if (isPostgres()) return pg.getAllPools();
   try {
     return await prisma.pool.findMany();
   } catch (error) {
@@ -31,6 +34,7 @@ export async function getAllPools() {
  * @returns Pool or null if not found
  */
 export async function getPoolByName(name: string) {
+  if (isPostgres()) return pg.getPoolByName(name);
   return prisma.pool.findFirst({
     where: { name },
   });
@@ -42,6 +46,7 @@ export async function getPoolByName(name: string) {
  * @returns Array of pools that use this address
  */
 export async function findPoolsByAddress(address: string) {
+  if (isPostgres()) return pg.findPoolsByAddress(address);
   return prisma.pool.findMany({
     where: {
       addresses: {

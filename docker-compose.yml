@@ -200,6 +200,14 @@ services:
       MONGODB_PASSWORD: mongopassword
       MONGODB_HOSTS: mongodb
       DATABASE_URL: "mongodb://mongouser:mongopassword@mongodb:27017/stratum-logger?authSource=admin"
+      # Reads (#113): mongodb (default) or postgres. With postgres, use `--profile postgres` and the local read-only `web` user.
+      DB_BACKEND: ${WEB_DB_BACKEND:-mongodb}
+      PG_HOST: ${WEB_PG_HOST:-postgres}
+      PG_PORT: ${WEB_PG_PORT:-5432}
+      PG_DATABASE: ${WEB_PG_DATABASE:-stratum}
+      PG_USER: ${WEB_PG_USER:-web}
+      PG_PASSWORD: ${WEB_PG_PASSWORD:-web}
+      PG_SSLMODE: ${WEB_PG_SSLMODE:-disable}
     volumes:
       - ./web:/app
       - /app/node_modules

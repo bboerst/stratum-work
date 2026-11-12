@@ -41,15 +41,7 @@ export async function getMiningNotifyByHeight(height: number): Promise<MiningNot
     }
 
     // If not in cache, fetch from database
-    const records = postgres ? await pg.templatesAtHeight(height) : await prisma.miningNotify.findMany({
-      where: {
-        height,
-        OR: [
-          { chain_family: null },
-          { chain_family: { isSet: false } },
-        ],
-      },
-    });
+    const records = await fetchMiningNotifyByHeight(height);
 
     // Store in cache
     blockCache.set(cacheKey, records);
@@ -61,6 +53,25 @@ export async function getMiningNotifyByHeight(height: number): Promise<MiningNot
     // return []; 
     throw error;
   }
+}
+
+/**
+ * Bitcoin templates at a height, straight from the database (no cache). Used by getMiningNotifyByHeight and by the
+ * realtime pre-fill (#130), which reads the height still being mined: caching that forever would freeze it.
+ * Returns [] when historical data is disabled.
+ */
+export async function fetchMiningNotifyByHeight(height: number): Promise<MiningNotify[]> {
+  if (!enableHistoricalData) return [];
+  if (isPostgres()) return pg.templatesAtHeight(height);
+  return prisma.miningNotify.findMany({
+    where: {
+      height,
+      OR: [
+        { chain_family: null },
+        { chain_family: { isSet: false } },
+      ],
+    },
+  });
 }
 
 /**

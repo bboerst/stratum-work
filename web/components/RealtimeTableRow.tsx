@@ -5,6 +5,7 @@ import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
 import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
+import { History } from 'lucide-react';
 
 interface RealtimeTableRowProps {
   row: SortedRow;
@@ -31,7 +32,17 @@ export default function RealtimeTableRowComponent({
           title={row.pool_name}
         >
           <div className="flex items-center justify-between">
-            <span>{row.pool_name}</span>
+            <span className="truncate">{row.pool_name}</span>
+            {row.origin === 'prefill' && (
+              <span
+                className="ml-1 shrink-0 text-muted-foreground opacity-60"
+                title="Loaded from history when the page opened; replaced as live messages arrive"
+                aria-label="Loaded from history"
+                data-origin="prefill"
+              >
+                <History className="h-3 w-3" aria-hidden="true" />
+              </span>
+            )}
           </div>
         </TableCell>
       )}

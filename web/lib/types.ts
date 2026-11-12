@@ -27,7 +27,11 @@ export interface StratumV1Data {
   ntime?: string;
   lat_ms?: number;          // stored short key: estimated one-way latency at receipt
   lat_m?: string;           // stored short key: "tcp" (kernel RTT) or "app" (stratum round trip)
+  origin?: TemplateOrigin;  // client-side only: pre-filled from history or received live (#130)
 } 
+
+/** Where a realtime template came from: loaded from history when the page opened, or received over the stream. */
+export type TemplateOrigin = 'prefill' | 'live';
 
 /**
  * Represents Bitcoin block data

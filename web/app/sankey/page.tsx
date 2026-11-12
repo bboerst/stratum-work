@@ -1,7 +1,8 @@
 "use client";
 
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType } from '@/lib/types';
+import { useGlobalDataStream, useTemplateBuffer } from "@/lib/DataStreamContext";
+import { StreamData, StreamDataType } from '@/lib/types';
+import { latestPerPool, withOrigin } from "@/lib/templateBuffer";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
@@ -27,15 +28,33 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { filterByType, paused, setPaused } = useGlobalDataStream();
+  const { paused, setPaused } = useGlobalDataStream();
+  const { entries: bufferedTemplates, currentHeight, prefill } = useTemplateBuffer();
   const { setMenuContent } = useGlobalMenu();
   const { isPoolVisible } = usePoolFilter();
   
-  // Get only Stratum V1 data, respecting pool visibility filter
-  const stratumV1Data = useMemo(() => {
-    return filterByType(StreamDataType.STRATUM_V1)
-      .filter(item => item.type === StreamDataType.STRATUM_V1 && isPoolVisible(item.data.pool_name));
-  }, [filterByType, isPoolVisible]);
+  // Each visible pool's latest template from the shared buffer (#130): at the height being mined, or, for a pool
+  // that hasn't moved to it yet, at the previous height (so the diagram doesn't collapse right after a block).
+  const latestTemplates = useMemo(
+    () => latestPerPool(bufferedTemplates, {
+      minHeight: currentHeight === null ? null : currentHeight - 1,
+      isPoolVisible,
+    }),
+    [bufferedTemplates, currentHeight, isPoolVisible]
+  );
+  const stratumV1Data = useMemo<StreamData[]>(
+    () => latestTemplates.map(entry => ({
+      type: StreamDataType.STRATUM_V1,
+      id: entry.key,
+      timestamp: entry.data.timestamp,
+      data: withOrigin(entry),
+    })),
+    [latestTemplates]
+  );
+  const prefilledPoolCount = useMemo(
+    () => latestTemplates.filter(entry => entry.origin === 'prefill').length,
+    [latestTemplates]
+  );
   
   // Calculate dynamic height based on pool count using square root scaling
   const dynamicHeight = useMemo(() => {
@@ -93,6 +112,11 @@ export default function SankeyPage() {
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
         <h1 className="text-2xl font-bold mb-6">Sankey Merkle Branches</h1>
+        {prefill.status === 'loaded' && prefilledPoolCount > 0 && (
+          <p className="-mt-4 mb-2 text-xs text-muted-foreground" data-origin-summary>
+            {prefilledPoolCount} of {latestTemplates.length} pools loaded from history when the page opened; each switches to live with its next message.
+          </p>
+        )}
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 

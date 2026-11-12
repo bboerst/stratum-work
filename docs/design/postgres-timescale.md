@@ -319,8 +319,11 @@ Per document → row (all lossless):
   - **ISO-8601 without a timezone,** for heights up to 880,228. **Parse as UTC.**
   - **16-hex-digit nanoseconds** from `time.time_ns()`, from height 880,227 onward (both formats appear at 880,227–880,228).
 - **Timezone correction: detected from the data, not from fixed height thresholds.** The maintainer recalls a period when timestamps were recorded with a timezone that was later removed. Findings so far:
-  - **Sampled boundary heights (2026-11-12):** 860,000, both sides of 868,638/868,639, up to 880,226, and the hex range after. All are within ~0.01 h of the preceding block's header time when parsed as UTC, so no offset at those heights.
-  - **Pending:** a sparse scan of the whole ISO range (every 50th height), to find any affected ranges and any strings that still carry a timezone suffix.
+  - **Verified on production (2026-11-12), no systematic shift:**
+    - *Against block header times:* sampled boundary heights, plus every 50th height across the ISO range. 669 heights, 519,691 templates, all naive ISO, none with a timezone suffix, **0 outliers**.
+    - *Against each template's own `ntime`* (the pool's header time, ≈ wall-clock UTC): **667 of 669 heights at 0 h.** No −6 h / −7 h range exists.
+    - *The two exceptions are single heights with positive offsets:* **867,946 (+12 h)** and **872,096 (+94 h)**. Those are templates received long after their `ntime`, i.e. stale or replayed jobs, or other-chain heights colliding with Bitcoin's, **not** a timezone shift. Routing sends them to `templates_other` (`height_implausible`, since the height is far behind the tip at receive time).
+  - **The history starts around height 846.8k** (June 2024). A single stray template at 824,246 sits far below the rest.
   - Part of the earlier suspected 6 h / 7 h (MDT/MST) offset was a **parsing artifact**: Python's `datetime.fromisoformat(s).timestamp()` treats a timezone-less string as the *machine's local time*. Scripts should parse with `.replace(tzinfo=timezone.utc)`.
   - **Converter rules:**
     - parse strings **with** a timezone suffix by their suffix

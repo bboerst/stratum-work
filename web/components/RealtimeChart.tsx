@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo } from "react";
 import { useTemplateBuffer } from "@/lib/DataStreamContext";
 import { chartWindow } from "@/lib/templateBuffer";
+import { changeTrackerPrimers, staleBefore, windowedHistory } from "@/lib/chartHistory";
 import { StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
@@ -1043,15 +1044,11 @@ function RealtimeChartBase({
   // Prune old data beyond the time window to prevent memory leaks.
   // Keeps one extra point before the cutoff so the bar segment straddling
   // the left edge retains its starting point and scrolls off naturally.
-  const pruneOldData = useCallback((cutoffTimeMs: number) => {
+  const pruneOldData = useCallback((cutoffTimeMs: number, staleBeforeMs: number) => {
     poolDataHistoryRef.current.forEach((history, poolName) => {
-      const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
-      if (firstInWindowIdx === -1) {
-        poolDataHistoryRef.current.set(poolName, []);
-        return;
-      }
-      const startIdx = Math.max(0, firstInWindowIdx - 1);
-      poolDataHistoryRef.current.set(poolName, history.slice(startIdx));
+      // Keeps the point before the cutoff even when nothing newer is in the window (#143): that point is the
+      // pool's current bar, which must keep scrolling off the left edge instead of vanishing.
+      poolDataHistoryRef.current.set(poolName, windowedHistory(history, cutoffTimeMs, staleBeforeMs));
     });
   }, []);
   
@@ -1198,8 +1195,9 @@ function RealtimeChartBase({
     const cutoffTimeMs = isHistoricalBlock ? 0 : currentTimeMs - timeWindowMs;
     
     // Prune old data to avoid memory growth, but only for real-time data
+    const staleBeforeMs = isHistoricalBlock ? -Infinity : staleBefore(currentTimeMs, timeWindowMs);
     if (!isHistoricalBlock) {
-      pruneOldData(cutoffTimeMs);
+      pruneOldData(cutoffTimeMs, staleBeforeMs);
     }
 
     // Special case for data with no results after filtering
@@ -1397,12 +1395,9 @@ function RealtimeChartBase({
       const resultPoints: ChartDataPoint[] = [];
       
       poolDataHistoryRef.current.forEach((history) => {
-        // Include one point before the cutoff so the bar segment straddling
-        // the left edge still has its starting point and can scroll off naturally
-        const firstInWindowIdx = history.findIndex(point => point.timestamp >= cutoffTimeMs);
-        if (firstInWindowIdx === -1) return; // No points in window
-        const startIdx = Math.max(0, firstInWindowIdx - 1);
-        resultPoints.push(...history.slice(startIdx));
+        // Include the point before the cutoff (also when nothing newer is in the window, #143) so the bar
+        // straddling the left edge still has its starting point and scrolls off naturally
+        resultPoints.push(...windowedHistory(history, cutoffTimeMs, staleBeforeMs));
       });
 
       // Global ordering: render oldest first, newest last for consistent overlap behavior.
@@ -1479,6 +1474,11 @@ function RealtimeChartBase({
       poolDataHistoryRef.current.clear();
       changeTrackerRef.current.reset();
       batch = chartWindow(bufferedTemplates, Date.now() - windowS * 1000);
+      // Give each pool's first plotted template its predecessor, so its bar gets change colors instead of gray
+      // (the primers are compared against, not plotted).
+      for (const entry of changeTrackerPrimers(bufferedTemplates, batch)) {
+        changeTrackerRef.current.process(entry.data);
+      }
     } else {
       const lastSeq = lastSeqRef.current;
       batch = bufferedTemplates.filter(entry => entry.seq > lastSeq);

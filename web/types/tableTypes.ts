@@ -1,5 +1,6 @@
 import { CoinbaseOutputDetail, AuxPowData } from "@/utils/bitcoinUtils";
 import type { TimingVisualKey } from "@/components/TimingDisplayContext";
+import type { TemplateOrigin } from "@/lib/types";
 
 // Enhanced row with derived fields
 export interface SortedRow {
@@ -24,6 +25,7 @@ export interface SortedRow {
   merkle_branch_colors?: string[];
   nbits?: string;
   ntime?: string;
+  origin?: TemplateOrigin;  // realtime rows: pre-filled from history or received live (#130)
 
   // Derived/added fields
   coinbaseRaw: string;

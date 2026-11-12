@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Table, TableBody } from "@/components/ui/table";
 import { StratumV1Data, StreamDataType } from "@/lib/types";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useGlobalDataStream, useTemplateBuffer } from "@/lib/DataStreamContext";
+import { latestPerPool, withOrigin } from "@/lib/templateBuffer";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
@@ -28,6 +29,9 @@ export default function RealtimeTable({
   
   // Get data from the global data stream
   const { filterByType } = useGlobalDataStream();
+
+  // Shared template buffer: pre-filled from history, then fed by the stream; survives switching views (#130)
+  const { entries: bufferedTemplates } = useTemplateBuffer();
   
   // Get historical data context
   const { 
@@ -44,13 +48,11 @@ export default function RealtimeTable({
   // Pool visibility filter
   const { isPoolVisible, allPools, hiddenPools } = usePoolFilter();
   
-  // Filter for only Stratum V1 data, respecting pool visibility
-  const stratumV1Data = useMemo(() => {
-    const filtered = filterByType(StreamDataType.STRATUM_V1);
-    return filtered
-      .map(item => item.data as StratumV1Data)
-      .filter(item => isPoolVisible(item.pool_name));
-  }, [filterByType, isPoolVisible]);
+  // The latest template per pool, respecting pool visibility. useTableData keeps the rows at the current height.
+  const stratumV1Data = useMemo(
+    () => latestPerPool(bufferedTemplates, { isPoolVisible }).map(withOrigin),
+    [bufferedTemplates, isPoolVisible]
+  );
   
   // Use hooks for table state management
   const { columnsVisible, toggleColumn } = useColumnVisibility();

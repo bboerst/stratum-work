@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback, useTransition, useMemo } from "react";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
-import { StreamDataType, StratumV1Data } from "@/lib/types";
+import { useTemplateBuffer } from "@/lib/DataStreamContext";
+import { chartWindow } from "@/lib/templateBuffer";
+import { StratumV1Data } from "@/lib/types";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
 import { useLatencyAdjusted } from "./TimingDisplayContext";
@@ -15,50 +16,6 @@ import {
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 import { Info } from "lucide-react";
-
-// Simple throttle implementation
-function createThrottle<T extends (...args: unknown[]) => unknown>(
-  func: T, 
-  wait: number
-): T & { cancel: () => void } {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  let lastExecuted = 0;
-  let cancelled = false;
-  
-  // The throttled function
-  const throttled = function(...args: Parameters<T>) {
-    if (cancelled) return;
-    
-    const now = Date.now();
-    const remaining = wait - (now - lastExecuted);
-    
-    if (remaining <= 0 || remaining > wait) {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      lastExecuted = now;
-      func(...args);
-    } else if (!timeout) {
-      timeout = setTimeout(function() {
-        lastExecuted = Date.now();
-        timeout = null;
-        func(...args);
-      }, remaining);
-    }
-  } as T & { cancel: () => void };
-  
-  // Add cancel method
-  throttled.cancel = function() {
-    if (timeout) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-    cancelled = true;
-  };
-  
-  return throttled;
-}
 
 // Convert HSL color to RGB format for better canvas compatibility
 const hslToRgb = (hslString: string): string => {
@@ -296,8 +253,13 @@ function RealtimeChartBase({
   sortByTimeReceived: propSortByTimeReceived,
   headerRightControl
 }: RealtimeChartProps) {
-  // Get data from the global data stream
-  const { filterByType } = useGlobalDataStream();
+  // Shared template buffer: pre-filled from history, then fed by the stream; survives switching views (#130)
+  const {
+    entries: bufferedTemplates,
+    epoch: bufferEpoch,
+    liveSinceMs,
+    prefill,
+  } = useTemplateBuffer();
   
   // Get historical data from context
   const { historicalData, isHistoricalDataLoaded } = useHistoricalData();
@@ -376,6 +338,12 @@ function RealtimeChartBase({
   // baselines survive re-renders and batched updates. Reset when the viewed
   // block height changes or when latency adjustment re-keys the timeline.
   const changeTrackerRef = useRef<TemplateChangeTracker>(new TemplateChangeTracker());
+  // Incremental feed from the shared buffer: the last entry processed, and when to rebuild from scratch instead
+  // (first run, out-of-order arrivals such as the pre-fill, a time-window change, or a reset below).
+  const lastSeqRef = useRef(0);
+  const lastEpochRef = useRef<number | null>(null);
+  const lastWindowRef = useRef<number | null>(null);
+  const needsRebuildRef = useRef(true);
   
   // Track if we've already loaded historical data for a given block height
   const [, setHistoricalDataLoaded] = useState(false);
@@ -421,6 +389,7 @@ function RealtimeChartBase({
       
       // Clear existing data when switching between blocks
       poolDataHistoryRef.current.clear();
+      needsRebuildRef.current = true;
       setChartData([]);
 
       // Reset change-detection baselines to prevent stale cross-height comparisons
@@ -1470,6 +1439,7 @@ function RealtimeChartBase({
   // Reset pool data history when block height changes
   useEffect(() => {
     poolDataHistoryRef.current.clear();
+    needsRebuildRef.current = true;
     setChartData([]);
     // Reset change-detection baselines to prevent stale comparisons
     changeTrackerRef.current.reset();
@@ -1477,72 +1447,87 @@ function RealtimeChartBase({
 
   // When the latency-adjustment toggle flips, previously plotted points keyed
   // by their old timestamps would coexist with recomputed ones; drop them and
-  // let the buffered stream repopulate with the new timings. Historical blocks
+  // rebuild from the shared buffer with the new timings. Historical blocks
   // fully rebuild via their own effect, so they don't need this reset.
   useEffect(() => {
     if (!isHistoricalBlock) {
       poolDataHistoryRef.current.clear();
+      needsRebuildRef.current = true;
       setChartData([]);
       // Reset change-detection baselines to prevent stale comparisons
       changeTrackerRef.current.reset();
     }
   }, [latencyAdjusted, isHistoricalBlock]);
   
-  // Fetch and update data from the global stream or historical data
+  // Feed realtime data from the shared template buffer (historical blocks use the direct approach above).
+  // Normally only entries added since the last run are processed; a rebuild replays the buffer's window.
   useEffect(() => {
-    // Don't fetch if paused
-    if (paused) {
+    if (paused || isHistoricalBlock) {
       return;
     }
-    
-    // We'll handle historical data with the direct approach above
-    // Only fetch real-time data in this effect
-    if (!isHistoricalBlock) {
-      // Create a throttled update function to limit the frequency of updates
-      const throttledUpdate = createThrottle(() => {
-        // Get stratum updates from the stream
-        const stratumUpdates = filterByType(StreamDataType.STRATUM_V1);
-        if (stratumUpdates.length === 0) {
-          return;
-        }
-        
-        const stratumData = stratumUpdates.map(item => item.data as StratumV1Data);
-        
-        // Process the data to get the points within time window
-        const result = processData(stratumData);
-        
-        // Update time domain if we have valid data
-        if (result.domainInfo.hasValidDomain) {
-          // For real-time data, use the standard moving window approach
-          const newDomain: [number, number] = [
-            result.domainInfo.newestTimestamp - (localTimeWindowRef.current * 1000),
-            result.domainInfo.newestTimestamp
-          ];
-          
-          // Store in ref first
-          timeDomainRef.current = newDomain;
-          // Update state (for UI rendering)
-          setTimeDomain(newDomain);
-        }
-        
-        // Update the chart data if we have points
-        if (result.points.length > 0) {
-          // Use startTransition to make this a lower priority update
-          startTransition(() => {
-            setChartData(result.points);
-          });
-        }
-      }, 1000); // Throttle to max 1 update per second for better performance
-      
-      // Execute the throttled function
-      throttledUpdate();
-      
-      // Return cleanup function to cancel any pending throttled calls
-      return () => {
-        throttledUpdate.cancel();
-      };
+
+    const windowS = localTimeWindowRef.current;
+    if (
+      lastEpochRef.current !== bufferEpoch ||
+      lastWindowRef.current !== windowS
+    ) {
+      needsRebuildRef.current = true;
     }
-  }, [filterByType, paused, isHistoricalBlock, processData]);
+
+    let batch;
+    if (needsRebuildRef.current) {
+      poolDataHistoryRef.current.clear();
+      changeTrackerRef.current.reset();
+      batch = chartWindow(bufferedTemplates, Date.now() - windowS * 1000);
+    } else {
+      const lastSeq = lastSeqRef.current;
+      batch = bufferedTemplates.filter(entry => entry.seq > lastSeq);
+    }
+
+    needsRebuildRef.current = false;
+    lastEpochRef.current = bufferEpoch;
+    lastWindowRef.current = windowS;
+    for (const entry of bufferedTemplates) {
+      if (entry.seq > lastSeqRef.current) lastSeqRef.current = entry.seq;
+    }
+
+    if (batch.length === 0) {
+      return;
+    }
+
+    // Process the data to get the points within time window
+    const result = processData(batch.map(entry => entry.data));
+
+    // Update time domain if we have valid data
+    if (result.domainInfo.hasValidDomain) {
+      // For real-time data, use the standard moving window approach
+      const newDomain: [number, number] = [
+        result.domainInfo.newestTimestamp - (localTimeWindowRef.current * 1000),
+        result.domainInfo.newestTimestamp
+      ];
+
+      // Store in ref first; state (for UI rendering) below
+      timeDomainRef.current = newDomain;
+    }
+
+    // Lower-priority UI update: the time domain, and the chart data if we have points
+    startTransition(() => {
+      if (result.domainInfo.hasValidDomain) setTimeDomain(timeDomainRef.current);
+      if (result.points.length > 0) setChartData(result.points);
+    });
+  }, [bufferedTemplates, bufferEpoch, paused, isHistoricalBlock, processData, timeWindow, localTimeWindow]);
+
+  // History/live boundary: where on the time axis the stream took over from the pre-fill (#130).
+  const liveBoundary = useMemo(() => {
+    if (isHistoricalBlock || prefill.status !== 'loaded' || prefill.count === 0) return null;
+    const [start, end] = timeDomain;
+    if (end <= start || dimensions.width === 0) return null;
+    const availableWidth = dimensions.width - chartMargin.left - chartMargin.right;
+    if (liveSinceMs === null) return { allHistory: true as const, left: chartMargin.left };
+    if (liveSinceMs <= start || liveSinceMs > end) return null;
+    const left = chartMargin.left + ((liveSinceMs - start) / (end - start)) * availableWidth;
+    return { allHistory: false as const, left };
+  }, [isHistoricalBlock, prefill, timeDomain, dimensions.width, chartMargin, liveSinceMs]);
   
   return (
     <div 
@@ -1629,7 +1614,7 @@ function RealtimeChartBase({
       
       <div 
         ref={containerRef}
-        className={`w-full ${isHistoricalBlock || hideHeader ? 'h-full' : 'h-[calc(100%-24px)]'}`}
+        className={`relative w-full ${isHistoricalBlock || hideHeader ? 'h-full' : 'h-[calc(100%-24px)]'}`}
         style={{ cursor: 'crosshair' }}
       >
         <canvas
@@ -1638,6 +1623,29 @@ function RealtimeChartBase({
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         />
+        {liveBoundary && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 text-muted-foreground"
+            style={{ left: `${liveBoundary.left}px`, fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}
+            data-live-boundary
+          >
+            {liveBoundary.allHistory ? (
+              <span className="absolute top-0 left-1 whitespace-nowrap opacity-70" title="Loaded from history when the page opened; live messages will follow">
+                history
+              </span>
+            ) : (
+              <>
+                <div className="absolute top-0 bottom-0 border-l border-dashed border-current opacity-40" />
+                <span className="absolute top-0 right-1 whitespace-nowrap opacity-70" title="Left of this line: loaded from history when the page opened">
+                  history
+                </span>
+                <span className="absolute top-0 left-1 whitespace-nowrap opacity-70" title="Right of this line: received live">
+                  live
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
       
       {/* Fixed tooltip at the bottom of the chart */}

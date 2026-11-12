@@ -637,20 +637,28 @@ export function decodeCoinbaseScriptSigInfo(scriptSig: Buffer): CoinbaseScriptSi
   let remainingParts: Buffer[] = [];
   let currentIndex = 0;
 
-  // Try parsing height (bytes 1-3 LE, assuming byte 0 is push opcode)
+  // BIP34 height: the first scriptSig item is a minimal push of the height (little-endian CScriptNum), or OP_1..OP_16
+  // for heights 1-16. Decode the push at its actual length rather than a fixed 3 bytes (matches collector/coinbase.py).
+  // 3 bytes covers Bitcoin up to 8,388,607; other chains' templates can use other sizes.
   try {
-    if (scriptSig.length >= 4 && scriptSig[0] >= 1 && scriptSig[0] <= 75) { // Check for push opcode
-        const heightBytesLength = scriptSig[0];
-        if (heightBytesLength >= 3 && scriptSig.length >= 1 + heightBytesLength) {
-           // Standard BIP34 height is pushed with minimal push
-           // We check bytes 1, 2, 3 specifically if the push length allows
-           height = scriptSig.readUIntLE(1, 3); 
-           currentIndex = 1 + heightBytesLength; // Move past the height push data
+    const op = scriptSig.length > 0 ? scriptSig[0] : -1;
+    if (op >= 1 && op <= 8 && scriptSig.length >= 1 + op) {
+        const push = scriptSig.subarray(1, 1 + op);
+        // readUIntLE supports up to 6 bytes; a set sign bit means a negative number, which is never a height
+        if (op <= 6 && (push[op - 1] & 0x80) === 0) {
+           height = push.readUIntLE(0, op);
         } else {
-            // Height not encoded as expected, treat the initial push as remaining data
-            remainingParts.push(scriptSig.slice(0, 1 + heightBytesLength));
-            currentIndex = 1 + heightBytesLength;
+           remainingParts.push(scriptSig.subarray(0, 1 + op));
         }
+        currentIndex = 1 + op; // Move past the height push data
+    } else if (op >= 0x51 && op <= 0x60) {
+        height = op - 0x50; // OP_1 .. OP_16
+        currentIndex = 1;
+    } else if (op >= 1 && op <= 75) {
+        // A push that isn't a height (too long, or truncated): keep it as remaining data
+        const pushLength = Math.min(op, scriptSig.length - 1);
+        remainingParts.push(scriptSig.subarray(0, 1 + pushLength));
+        currentIndex = 1 + pushLength;
     } else {
         // No initial push opcode or empty script, treat everything from start as potentially remaining
         // This case is unlikely for valid coinbase scripts

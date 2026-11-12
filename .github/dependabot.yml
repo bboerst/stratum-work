@@ -28,7 +28,7 @@ updates:
         update-types: [version-update:semver-major]
 
   - package-ecosystem: pip
-    directories: [/collector, /backend]
+    directories: [/collector, /backend, /tools/mongo-to-postgres]
     schedule: { interval: weekly, day: monday }
     cooldown: { default-days: 7 }
     groups:

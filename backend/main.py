@@ -11,7 +11,7 @@ from threading import Lock
 import random
 from typing import List, Dict, Any
 from bitcoin_utils import extract_coinbase_data
-from integrations import db, blocks_coll, pools_coll, mongodb_enabled, publish_to_rabbitmq, rabbitmq_manager
+from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: MongoDB or Postgres (DB_BACKEND)
 from integrations.rabbitmq import start_heartbeat_thread
 
 # Global mining pool definitions cache
@@ -224,7 +224,7 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
 
     analysis = {}
     try:
-        if mongodb_enabled and db is not None:
+        if store.enabled:
             analysis = run_block_analyses(height, coinbase_script_sig, coinbase_addresses)
     except Exception as analysis_err:
         logger.error(f"Error running analyses for height {height}: {analysis_err}")
@@ -266,12 +266,7 @@ def process_block(block_hash: str, is_new_block: bool = False):
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
-        # For new blocks, use update_one with upsert to avoid duplicates
-        # For old blocks during sync, use insert_one since we already checked for existence
-        if is_new_block:
-            blocks_coll.update_one({"block_hash": block_hash}, {"$set": doc}, upsert=True)
-        else:
-            blocks_coll.insert_one(doc)
+        store.save_block(doc, is_new_block)
 
         logger.info("%s block %d (%s) mined by %s",
                    "Processed new" if is_new_block else "Synced old",
@@ -298,7 +293,7 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
-        blocks_coll.replace_one({"block_hash": block_hash}, doc, upsert=True)
+        store.replace_block(doc)
         logger.info("Reindexed block %d (%s) with full overwrite", height, block_hash)
         if publish_update:
             rabbitmq_doc = {
@@ -319,12 +314,12 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
 
 def start_full_reindex_background():
     try:
-        if not mongodb_enabled or db is None:
+        if not store.enabled:
             logger.warning("Historical data disabled or DB unavailable; skipping full reindex")
             return
         logger.info("Starting full background reindex of all blocks in descending height order")
         count = 0
-        cursor = db.blocks.find({}, {"block_hash": 1, "height": 1, "_id": 0}).sort("height", -1)
+        cursor = store.block_hashes_by_height_desc()
         for doc in cursor:
             bhash = doc.get("block_hash")
             if not bhash:
@@ -346,9 +341,7 @@ def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coin
     analysis: Dict[str, Any] = {}
     logger.info("Running analyses for height %d", height)
     try:
-        templates = list(
-            db.mining_notify.find({"height": height, "chain_family": {"$exists": False}})
-        ) if db is not None else []
+        templates = store.templates_at_height(height) if store.enabled else []
     except Exception as e:
         logger.error(f"Error fetching mining.notify templates for height {height}: {e}")
         templates = []
@@ -396,12 +389,10 @@ def sync_blocks():
         best_height = best_block["height"]
         
         # Get the highest block we've already processed
-        highest_processed = db.blocks.find_one(sort=[("height", -1)])
-        highest_processed_height = highest_processed["height"] if highest_processed else None
+        highest_processed_height = store.highest_block_height()
         
         # Get the lowest block we've already processed
-        lowest_processed = db.blocks.find_one(sort=[("height", 1)])
-        lowest_processed_height = lowest_processed["height"] if lowest_processed else None
+        lowest_processed_height = store.lowest_block_height()
         
         # Check if we need to sync from the tip down to the highest processed block
         if highest_processed_height is not None and highest_processed_height < best_height:
@@ -418,12 +409,7 @@ def sync_blocks():
             logger.info(f"Checking for missing blocks between MIN_BLOCK_HEIGHT ({MIN_BLOCK_HEIGHT}) and lowest processed block ({lowest_processed_height})")
             
             # First, get all heights in the range that are already processed
-            processed_heights_in_range = set(
-                doc["height"] for doc in db.blocks.find(
-                    {"height": {"$gte": MIN_BLOCK_HEIGHT, "$lt": lowest_processed_height}},
-                    {"height": 1, "_id": 0}
-                )
-            )
+            processed_heights_in_range = store.block_heights_between(MIN_BLOCK_HEIGHT, lowest_processed_height)
             
             # Then find the missing heights
             expected_heights = set(range(MIN_BLOCK_HEIGHT, lowest_processed_height))
@@ -529,8 +515,7 @@ def sync_range(start_height, end_height):
                 )
                 
                 # Check if we already have this block
-                existing_block = db.blocks.find_one({"height": height})
-                if existing_block:
+                if store.has_block_at_height(height):
                     logger.info(f"Block at height {height} already processed, skipping")
                     continue
                 
@@ -557,7 +542,7 @@ def sync_range(start_height, end_height):
 def load_pools_once():
     global pools_cache, pools_hash
     try:
-        pools, new_hash, _ = load_pools(db, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
+        pools, new_hash, _ = load_pools(store, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
         pools_cache = pools or {}
         pools_hash = new_hash
         logger.info(f"Initialized pools cache with {len(pools_cache)} entries")
@@ -571,7 +556,7 @@ def pool_updater_task():
         try:
             logger.info("Checking for updates to mining pool definitions")
             global pools_cache, pools_hash
-            pools, new_hash, changed = load_pools(db, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
+            pools, new_hash, changed = load_pools(store, POOL_LIST_URL, LOCAL_POOL_FILE, pools_hash)
             if pools:
                 pools_cache = pools
                 if new_hash is not None and new_hash != pools_hash:

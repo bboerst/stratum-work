@@ -2,14 +2,15 @@
 #   migrations     db/migrations up -> down -> up + role privileges, on the official TimescaleDB image (local dev) and
 #                  on the CloudNativePG + TimescaleDB image built from postgres/Dockerfile (production)
 #   collector-sink collector/pgsink.py against a real migrated database, connected as the least-privilege collector role
+#   backend-store  backend/integrations/store.py (PostgresStore) against a real migrated database, as the backend role
 name: db
 
 on:
   pull_request:
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", ".github/workflows/db.yml"]
   push:
     branches: [main]
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", ".github/workflows/db.yml"]
 
 permissions:
   contents: read
@@ -53,3 +54,28 @@ jobs:
         run: |
           python3 -m pip install -q -r collector/requirements.txt pytest
           python3 -m pytest -v collector/tests/test_pgsink.py
+
+  backend-store:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start TimescaleDB, migrate, create local users
+        run: |
+          docker network create t
+          docker run -d --name pg --network t -p 5432:5432 -e POSTGRES_USER=stratum -e POSTGRES_PASSWORD=stratum -e POSTGRES_DB=stratum \
+            timescale/timescaledb:2.30.2-pg18 -c timescaledb.enable_chunk_skipping=on
+          for _ in $(seq 60); do docker exec pg pg_isready -U stratum -d stratum && break; sleep 1; done
+          docker run --rm --network t -v "$PWD/db:/db:ro" -e DATABASE_URL="postgres://stratum:stratum@pg:5432/stratum?sslmode=disable" \
+            -e DBMATE_NO_DUMP_SCHEMA=true ghcr.io/amacneil/dbmate:2.37.0 --wait up
+          docker exec -i pg psql -U stratum -d stratum -v ON_ERROR_STOP=1 -q < db/dev-users.sql
+
+      - name: Backend store tests + Postgres integration (as the backend role)
+        env:
+          PG_TEST_HOST: localhost
+          PG_TEST_USER: backend
+          PG_TEST_PASSWORD: backend
+          PG_TEST_ADMIN_DSN: postgresql://stratum:stratum@localhost/stratum
+        run: |
+          python3 -m pip install -q -r backend/requirements.txt pytest
+          cd backend && python3 -m pytest -v tests

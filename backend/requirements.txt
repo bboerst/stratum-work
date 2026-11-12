@@ -4,3 +4,4 @@ python-bitcoinrpc==1.0
 python-bitcoinlib==0.12.2
 pika==1.4.4
 requests==2.34.2
+psycopg[binary]==3.3.6

@@ -48,7 +48,8 @@ check "re-run loads nothing twice"               '[ "$(psql_ "SELECT count(*) FR
 echo "== report"
 m2p report --verify-json /tmp/verify.json | sed -n '1,12p'
 echo "== verify catches problems"
-psql_ "DELETE FROM templates WHERE ctid IN (SELECT ctid FROM templates WHERE height = 870033 LIMIT 1)" >/dev/null
+# By key, not ctid: the compression policy may already have compressed the chunk, and ctid doesn't work there.
+psql_ "DELETE FROM templates WHERE (source_id, received_at, job_id) IN (SELECT source_id, received_at, job_id FROM templates WHERE height = 870033 LIMIT 1)" >/dev/null
 check "a missing row fails counts"               '! m2p verify --known-gap 870040-870042 --sample 50 > $TMP/v2.txt; grep -q "^FAIL  counts" $TMP/v2.txt'
 docker exec "$MONGO" mongosh --quiet stratum-logger --eval 'db.mining_notify.insertOne({_id: "odd", timestamp: 12345})' >/dev/null
 check "an unrecognized timestamp fails coverage" '! m2p verify --known-gap 870040-870042 --sample 50 > $TMP/v3.txt; grep -q "^FAIL  coverage" $TMP/v3.txt'

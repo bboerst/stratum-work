@@ -176,19 +176,17 @@ class ChainDetectionTests(unittest.TestCase):
 
 class NotificationDocumentTests(unittest.TestCase):
     @patch("collector.main.classify_notification_chain")
-    @patch("collector.main.network.Tx.from_hex")
     def test_create_notification_document_calls_classifier_with_parsed_height_and_prev_hash(
-        self, from_hex_mock, classify_mock
+        self, classify_mock
     ):
         classify_mock.return_value = None
-        tx = Mock()
-        tx.txs_in = [Mock(script=b"\x03\x34\x12\x00")]
-        from_hex_mock.return_value = tx
+        # coinbase1 with a 3-byte BIP34 push of 0x001234
+        coinbase1 = "01000000" + "01" + "00" * 32 + "ffffffff" + "0a" + "03341200"
         data = {
             "params": [
                 "job1",
                 "22" * 32,
-                "coinbase1",
+                coinbase1,
                 "coinbase2",
                 [],
                 "20000000",
@@ -227,9 +225,8 @@ class NotificationDocumentTests(unittest.TestCase):
         self.assertNotIn("chain_family", doc)
 
     @patch("collector.main.classify_notification_chain")
-    @patch("collector.main.network.Tx.from_hex", side_effect=ValueError("bad coinbase"))
     def test_create_notification_document_omits_chain_family_when_height_parse_fails(
-        self, from_hex_mock, classify_mock
+        self, classify_mock
     ):
         classify_mock.return_value = None
         data = {
@@ -251,7 +248,6 @@ class NotificationDocumentTests(unittest.TestCase):
         self.assertEqual(doc["height"], 0)
         self.assertNotIn("chain_family", doc)
         classify_mock.assert_called_once_with(0, "33" * 32)
-        from_hex_mock.assert_called_once()
 
     @patch("collector.main.classify_notification_chain")
     def test_create_notification_document_sets_chain_family_for_confirmed_bch(

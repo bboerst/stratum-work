@@ -54,15 +54,22 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
 }
 
 /**
- * De-duplication key: pool + receive time in µs. It's the same for a template whether it came from the stream,
- * the MongoDB API or the Postgres API. Neither backend's id works across both (MongoDB's is a UUID, Postgres's is
- * `<source>-<µs>-<job_id>`), and MongoDB API rows don't carry job_id. A pool connection never delivers two
- * notifications in the same microsecond, so pool + µs is unique.
+ * De-duplication key: pool + receive time in µs + the template's content (ntime, coinbase1, coinbase2).
+ *
+ * It's the same for a template whether it came from the stream, the MongoDB API or the Postgres API. Neither
+ * backend's id works across both (MongoDB's is a UUID, Postgres's is `<source>-<µs>-<job_id>`), and MongoDB API rows
+ * don't carry job_id. Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
+ * with the same receive time, so one pool can send two templates in the same µs (3 of 16,310 on dev data,
+ * 2026-11-12, always with different ntime/coinbase). Hex is lower-cased because Postgres returns lower-case and
+ * MongoDB keeps the pool's casing.
  */
-export function templateKey(t: Pick<StratumV1Data, 'pool_name' | 'timestamp'>): string | null {
+export function templateKey(
+  t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'ntime' | 'coinbase1' | 'coinbase2'>>,
+): string | null {
   const us = timestampMicros(t.timestamp);
   if (us === null || !t.pool_name) return null;
-  return `${t.pool_name}|${us.toString()}`;
+  const content = [t.ntime, t.coinbase1, t.coinbase2].map(v => (v ?? '').toLowerCase()).join('|');
+  return `${t.pool_name}|${us.toString()}|${content}`;
 }
 
 /** Bitcoin templates only: the collector tags other chains' templates with chain_family (CLAUDE.md, #98). */

@@ -45,6 +45,21 @@ describe('templateKey', () => {
     expect(templateKey(live)).toBe(templateKey(fromPostgres));
   });
 
+  it('keeps two templates from one pool in the same microsecond (one socket read) apart', () => {
+    const a = tpl('A', 100, 5, { ntime: '69d72a43', coinbase1: '01aa', coinbase2: 'ff01' });
+    const b = tpl('A', 100, 5, { ntime: '69d72a44', coinbase1: '01aa', coinbase2: 'ff02' });
+    expect(templateKey(a)).not.toBe(templateKey(b));
+    const buffer = new TemplateBuffer();
+    buffer.setTip(99);
+    expect(buffer.add([a, b], 'live')).toBe(2);
+  });
+
+  it('ignores hex case (Postgres returns lower-case, MongoDB keeps the pool\'s casing)', () => {
+    const live = tpl('A', 100, 5, { ntime: '69D72A43', coinbase1: '01AA', coinbase2: 'FF01' });
+    const fromPostgres = { ...live, timestamp: hexNsFromPostgres(5), ntime: '69d72a43', coinbase1: '01aa', coinbase2: 'ff01' };
+    expect(templateKey(live)).toBe(templateKey(fromPostgres));
+  });
+
   it('differs by pool and by microsecond', () => {
     expect(templateKey(tpl('A', 100, 5))).not.toBe(templateKey(tpl('B', 100, 5)));
     expect(templateKey(tpl('A', 100, 5))).not.toBe(templateKey(tpl('A', 100, 6)));

@@ -323,6 +323,14 @@ db/test-migrations.sh                                       # migrations up/down
 
 Add a migration: `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then edit the `-- migrate:up` / `-- migrate:down` sections. Use `-- migrate:up transaction:false` for TimescaleDB procedures such as `add_columnstore_policy`.
 
+**Collectors can also write to Postgres** (alongside MongoDB) via the sink in `collector/pgsink.py`. Set this in `.env` and restart the collectors:
+```bash
+COLLECTOR_PG_HOST=postgres
+COLLECTOR_PG_USER=collector
+COLLECTOR_PG_PASSWORD=collector
+```
+Templates are routed to `templates` (Bitcoin) or `templates_other` (other chains, unparseable or implausible heights).
+
 To reset only the Postgres data (MongoDB is untouched): `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data`.
 
 ### Stopping

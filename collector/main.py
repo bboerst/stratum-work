@@ -39,6 +39,11 @@ except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
     from coinbase import parse_bip34_height  # type: ignore
 
 try:
+    from collector.pgsink import PostgresConfig, PostgresSink
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    from pgsink import PostgresConfig, PostgresSink  # type: ignore
+
+try:
     from collector.chain_detection import (
         BCHConfirmationCache,
         BCHConfirmer,
@@ -80,6 +85,7 @@ mongo_client_lock = threading.Lock()
 cached_mongo_client = None
 cached_mongo_collection = None
 cached_mongo_config = None
+postgres_sink = None  # PostgresSink when --pg-host/--pg-user are set (#111)
 
 
 def require_dependency(module, name):
@@ -93,6 +99,15 @@ def configure_chain_detection(args):
     chain_classifier.divergence_threshold = args.btc_chain_divergence_threshold
     bch_confirmer.api_base_url = args.bch_confirmation_url.rstrip("/")
     bch_confirmer.timeout_seconds = args.bch_confirmation_timeout
+
+
+def current_btc_tip():
+    """The collector's Bitcoin tip if known and fresh, else None (used for Postgres routing plausibility)."""
+    with tip_state_lock:
+        height, updated, stale_after = tip_state.current_height, tip_state.last_update_monotonic, tip_state.stale_after_seconds
+    if height is None or updated is None or time.monotonic() - updated > stale_after:
+        return None
+    return height
 
 
 def update_tip_state(height):
@@ -520,6 +535,8 @@ class Watcher:
             )
             if self.db_enabled:
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
+            if postgres_sink is not None:
+                postgres_sink.submit(document)   # non-blocking; written by the sink's own thread
             if self.rabbitmq_enabled:
                 self.publish_to_rabbitmq(document)
         elif method == "mining.set_difficulty":
@@ -706,6 +723,22 @@ def build_parser():
         "-dp", "--db-password", default=None, help="MongoDB password"
     )
     parser.add_argument(
+        "--pg-host", default=os.getenv("PG_HOST") or None,
+        help="Postgres host for the Postgres sink (env PG_HOST). The sink is enabled when --pg-host and --pg-user are set.",
+    )
+    parser.add_argument("--pg-port", type=int, default=int(os.getenv("PG_PORT", "5432")), help="Postgres port (env PG_PORT)")
+    parser.add_argument("--pg-database", default=os.getenv("PG_DATABASE", "stratum"), help="Postgres database (env PG_DATABASE)")
+    parser.add_argument("--pg-user", default=os.getenv("PG_USER") or None, help="Postgres user (env PG_USER)")
+    parser.add_argument(
+        "--pg-password", default=os.getenv("PG_PASSWORD") or None,
+        help="Postgres password (env PG_PASSWORD; prefer the env var so it stays off the command line)",
+    )
+    parser.add_argument("--pg-sslmode", default=os.getenv("PG_SSLMODE", "prefer"), help="libpq sslmode (env PG_SSLMODE)")
+    parser.add_argument(
+        "--collector-site", default=os.getenv("COLLECTOR_SITE", "local"),
+        help="Where this collector runs; stored with the source, since timing is only comparable within a site (env COLLECTOR_SITE)",
+    )
+    parser.add_argument(
         "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
     )
     parser.add_argument(
@@ -837,11 +870,21 @@ def main():
         LOG.warning("Initial BTC tip setup failed; classification disabled until tip data is available: %s", exc)
     start_tip_listener(args)
 
+    global postgres_sink
+    if args.pg_host and args.pg_user:
+        postgres_sink = PostgresSink(
+            PostgresConfig(host=args.pg_host, port=args.pg_port, database=args.pg_database, user=args.pg_user,
+                           password=args.pg_password, sslmode=args.pg_sslmode, site=args.collector_site),
+            source_name=args.pool_name, stratum_url=args.url, tip_provider=current_btc_tip,
+        ).start()
+
     backends = []
     if rabbitmq_enabled:
         backends.append("RabbitMQ")
     if db_enabled:
         backends.append("MongoDB")
+    if postgres_sink is not None:
+        backends.append(f"Postgres ({args.pg_host}:{args.pg_port}/{args.pg_database}, site {args.collector_site})")
     if backends:
         LOG.info(f"Enabled backends: {', '.join(backends)}")
     else:

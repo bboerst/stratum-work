@@ -42,6 +42,15 @@ x-collector-base: &collector-base
     BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-rpc_user}
     BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-rpc_password}
     BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
+    # Optional Postgres sink (#111), in addition to MongoDB. Enabled when COLLECTOR_PG_HOST is set; with
+    # `--profile postgres`, use COLLECTOR_PG_HOST=postgres and the local `collector` user (see .env.example).
+    PG_HOST: ${COLLECTOR_PG_HOST:-}
+    PG_PORT: ${COLLECTOR_PG_PORT:-5432}
+    PG_DATABASE: ${COLLECTOR_PG_DATABASE:-stratum}
+    PG_USER: ${COLLECTOR_PG_USER:-}
+    PG_PASSWORD: ${COLLECTOR_PG_PASSWORD:-}
+    PG_SSLMODE: ${COLLECTOR_PG_SSLMODE:-prefer}
+    COLLECTOR_SITE: ${COLLECTOR_SITE:-local}
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:

@@ -111,6 +111,9 @@ spec:
           volumeMounts:
           - name: worker-tmp
             mountPath: /tmp
+          {{- with .Values.extraVolumeMounts }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -126,3 +129,6 @@ spec:
       volumes:
         - name: worker-tmp
           emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

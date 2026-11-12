@@ -23,6 +23,9 @@ updates:
       # Remove once typescript-eslint/typescript-eslint#10940 ships.
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # @types/node tracks the Node runtime major (node:24 in web/Dockerfile); move both together.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: pip
     directories: [/collector, /backend]

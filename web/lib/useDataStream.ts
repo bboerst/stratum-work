@@ -10,6 +10,8 @@ interface UseDataStreamOptions {
   paused?: boolean;
   maxItems?: number;
   dataTypes?: StreamDataType[];
+  /** Called with every message that isn't dropped by pause, e.g. to feed the shared template buffer (#130). */
+  onMessage?: (item: StreamData) => void;
 }
 
 interface UseDataStreamResult {
@@ -33,7 +35,8 @@ export function useDataStream({
   maxReconnectFrequency = 60,
   paused = false,
   maxItems = 50,
-  dataTypes = Object.values(StreamDataType)
+  dataTypes = Object.values(StreamDataType),
+  onMessage,
 }: UseDataStreamOptions = {}): UseDataStreamResult {
   const [data, setData] = useState<StreamData[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -49,6 +52,7 @@ export function useDataStream({
   const pausedRef = useRef(paused);
   const dataTypesRef = useRef(dataTypes);
   const maxItemsRef = useRef(maxItems);
+  const onMessageRef = useRef(onMessage);
   
   // Update refs when props change
   useEffect(() => {
@@ -62,6 +66,10 @@ export function useDataStream({
   useEffect(() => {
     maxItemsRef.current = maxItems;
   }, [maxItems]);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
 
   // Function to clear all data
   const clearData = useCallback(() => setData([]), []);
@@ -106,6 +114,8 @@ export function useDataStream({
         // Unknown format
         return;
       }
+
+      onMessageRef.current?.(newData);
 
       // If it was StratumV1 data, update the latest message for that pool
       if (stratumData && stratumData.pool_name) {

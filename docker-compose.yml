@@ -239,6 +239,13 @@ services:
       RABBITMQ_PASSWORD: "mqpassword"
       RABBITMQ_EXCHANGE: blocks
       PORT: ${BACKEND_PORT:-8001}
+      # Storage (#112): mongodb (default) or postgres. With postgres, use `--profile postgres` and the local `backend` user.
+      DB_BACKEND: ${BACKEND_DB_BACKEND:-mongodb}
+      PG_HOST: ${BACKEND_PG_HOST:-postgres}
+      PG_PORT: ${BACKEND_PG_PORT:-5432}
+      PG_DATABASE: ${BACKEND_PG_DATABASE:-stratum}
+      PG_USER: ${BACKEND_PG_USER:-backend}
+      PG_PASSWORD: ${BACKEND_PG_PASSWORD:-backend}
     extra_hosts:
       - "host.docker.internal:host-gateway" # node on the Docker host (Linux needs this mapping)
     volumes:

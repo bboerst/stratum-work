@@ -331,6 +331,8 @@ COLLECTOR_PG_PASSWORD=collector
 ```
 Templates are routed to `templates` (Bitcoin) or `templates_other` (other chains, unparseable or implausible heights).
 
+**The backend can use Postgres instead of MongoDB** for blocks, pools and the templates its analytics read (`backend/integrations/store.py`). Set `BACKEND_DB_BACKEND=postgres` in `.env`; it connects as the local `backend` user.
+
 To reset only the Postgres data (MongoDB is untouched): `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data`.
 
 ### Stopping

@@ -1,4 +1,6 @@
 import importlib
+import importlib.util
+import pathlib
 import sys
 import types
 import unittest
@@ -32,8 +34,18 @@ class FakeAuthServiceProxy:
         return 0
 
 
+def load_store_module():
+    """The real backend/integrations/store.py, loaded by path (the tests replace the `integrations` package)."""
+    path = pathlib.Path(__file__).resolve().parents[1] / "integrations" / "store.py"
+    spec = importlib.util.spec_from_file_location("store_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def import_main_module():
     fake_db = FakeDB()
+    store_module = load_store_module()
 
     bitcoinrpc_module = types.ModuleType("bitcoinrpc")
     authproxy_module = types.ModuleType("bitcoinrpc.authproxy")
@@ -41,10 +53,7 @@ def import_main_module():
     bitcoinrpc_module.authproxy = authproxy_module
 
     integrations_module = types.ModuleType("integrations")
-    integrations_module.db = fake_db
-    integrations_module.blocks_coll = object()
-    integrations_module.pools_coll = object()
-    integrations_module.mongodb_enabled = True
+    integrations_module.store = store_module.MongoStore(fake_db)   # real MongoStore over a fake db
     integrations_module.publish_to_rabbitmq = lambda *args, **kwargs: None
     integrations_module.rabbitmq_manager = types.SimpleNamespace(connection=None)
     integrations_module.__path__ = []

@@ -24,11 +24,6 @@ except ImportError:  # pragma: no cover - exercised in lightweight test envs
     MongoClient = None
 
 try:
-    from pycoin.symbols.btc import network
-except ImportError:  # pragma: no cover - exercised in lightweight test envs
-    network = None
-
-try:
     import socks
 except ImportError:  # pragma: no cover - exercised in lightweight test envs
     socks = None
@@ -37,6 +32,11 @@ try:
     import zmq
 except ImportError:  # pragma: no cover - exercised in lightweight test envs
     zmq = None
+
+try:
+    from collector.coinbase import parse_bip34_height
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    from coinbase import parse_bip34_height  # type: ignore
 
 try:
     from collector.chain_detection import (
@@ -629,15 +629,12 @@ def create_notification_document(data, pool_name, extranonce1, extranonce2_lengt
     notification_id = str(uuid.uuid4())
     coinbase1 = data["params"][2]
     coinbase2 = data["params"][3]
-    coinbase = None
-    height = 0
-    try:
-        if network is None:
-            raise RuntimeError("Missing optional dependency 'pycoin'")
-        coinbase = network.Tx.from_hex(coinbase1 + extranonce1 + "00"*extranonce2_length + coinbase2)
-        height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
-    except Exception as e:
-        LOG.debug("Failed to derive template height from coinbase: %s", e)
+    # BIP34 height from coinbase1 (push length honored, see collector/coinbase.py and #98). On failure keep the
+    # historical sentinel 0: consumers query by real heights, and 0 never matches a Bitcoin template.
+    parsed_height = parse_bip34_height(coinbase1)
+    if parsed_height is None:
+        LOG.warning("%s: could not parse BIP34 height from coinbase1 (stored as 0): %.80s", pool_name, coinbase1)
+    height = parsed_height or 0
     document = {
         "_id": notification_id,
         "timestamp": timestamp,

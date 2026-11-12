@@ -1,0 +1,180 @@
+# Build the web, backend and collector container images (multi-arch: amd64 + arm64).
+#
+#   pull_request        build changed components for both platforms, push nothing (catches broken Dockerfiles)
+#   push to main        build + push changed components as  bboerst/stratum-work-<component>:sha-<7> and :main
+#   release published   build + push all components as  :<release tag>, :latest and :sha-<7>
+#   workflow_dispatch   build + push the chosen components at the selected ref as :sha-<7>
+#
+# Deployments pin sha-<7> tags. Promotion (dev -> prod) bumps the same tag in the deploy repo; images are never
+# rebuilt for prod. arm64 builds run on native arm runners (no QEMU); a final job joins the per-arch digests into
+# one multi-arch tag.
+name: images
+
+on:
+  pull_request:
+    paths: ["web/**", "backend/**", "collector/**", ".github/workflows/images.yml"]
+  push:
+    branches: [main]
+    paths: ["web/**", "backend/**", "collector/**", ".github/workflows/images.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      components:
+        description: "Space-separated components to build (web backend collector)"
+        default: "web backend collector"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_PREFIX: bboerst/stratum-work-
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      components: ${{ steps.pick.outputs.components }}
+      push: ${{ steps.pick.outputs.push }}
+      tags: ${{ steps.pick.outputs.tags }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DISPATCH_COMPONENTS: ${{ github.event.inputs.components }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          all="web backend collector"
+          short=$(git rev-parse --short=7 HEAD)
+
+          changed_components() {  # $1 = base commit
+            local files
+            files=$(git diff --name-only "$1" HEAD)
+            if grep -qx '.github/workflows/images.yml' <<< "$files"; then echo "$all"; return; fi
+            for c in $all; do grep -q "^$c/" <<< "$files" && printf '%s ' "$c"; done
+            return 0
+          }
+
+          case "$EVENT" in
+            pull_request)
+              components=$(changed_components "$BASE_SHA"); push=false; tags="" ;;
+            push)
+              if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then components=$all
+              else components=$(changed_components "$BEFORE"); fi
+              push=true; tags="sha-$short main" ;;
+            release)
+              components=$all; push=true; tags="$RELEASE_TAG latest sha-$short" ;;
+            workflow_dispatch)
+              components=""
+              for c in $DISPATCH_COMPONENTS; do
+                case " $all " in *" $c "*) components="$components $c" ;; *) echo "unknown component: $c" >&2; exit 1 ;; esac
+              done
+              push=true; tags="sha-$short"; [ "$REF" = "refs/heads/main" ] && tags="$tags main" ;;
+          esac
+
+          read -ra list <<< "$components"
+          json=$(printf '%s\n' "${list[@]}" | jq -Rnc '[inputs | select(length > 0)]')
+          {
+            echo "components=$json"
+            echo "push=$push"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+          echo "components: $json  push: $push  tags: $tags"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.components != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.plan.outputs.components) }}
+        platform: [amd64, arm64]
+    runs-on: ${{ matrix.platform == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: needs.plan.outputs.push == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./${{ matrix.component }}
+          platforms: linux/${{ matrix.platform }}
+          # Push this platform's image by digest only; the merge job tags the multi-arch manifest.
+          outputs: >-
+            type=image,name=${{ env.IMAGE_PREFIX }}${{ matrix.component }},push-by-digest=true,name-canonical=true,push=${{ needs.plan.outputs.push }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.platform }}
+          provenance: false
+
+      - if: needs.plan.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: mkdir -p /tmp/digests && touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - if: needs.plan.outputs.push == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.component }}-${{ matrix.platform }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [plan, build]
+    if: needs.plan.outputs.push == 'true' && needs.plan.outputs.components != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.plan.outputs.components) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.component }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create multi-arch tags
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}${{ matrix.component }}
+          TAGS: ${{ needs.plan.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          for t in $TAGS; do tag_args+=(-t "$IMAGE:$t"); done
+          refs=()
+          for digest in *; do refs+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+          for t in $TAGS; do docker buildx imagetools inspect "$IMAGE:$t" --format '{{json .Manifest.Manifests}}' | jq -r --arg t "$t" '"\($t): " + ([.[].platform | "\(.os)/\(.architecture)"] | join(", "))'; done
+          {
+            echo "### \`$IMAGE\`"
+            for t in $TAGS; do echo "- \`$IMAGE:$t\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"

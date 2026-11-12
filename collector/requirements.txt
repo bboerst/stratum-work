@@ -1,5 +1,4 @@
 pika==1.4.4
-pycoin==0.92718.20260405
 pymongo==4.19.0
 pyzmq==27.2.0
 PySocks==1.7.1

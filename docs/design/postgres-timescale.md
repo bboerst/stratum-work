@@ -318,7 +318,15 @@ Per document → row (all lossless):
 - `timestamp` → `received_at timestamptz` (µs precision; the ns remainder is dropped, below the collectors' real clock precision). **History has two formats, and the converter handles both** (and BSON datetimes, defensively):
   - **ISO-8601 without a timezone,** for heights up to 880,228. **Parse as UTC.**
   - **16-hex-digit nanoseconds** from `time.time_ns()`, from height 880,227 onward (both formats appear at 880,227–880,228).
-- **No timezone correction is needed (verified 2026-11-12).** The ISO strings are already UTC. Parsed as UTC, every sampled height's first template lands within ~0.01 h of the preceding block's header time (860,000; both sides of 868,638/868,639; up to 880,226; and the hex range after). A suspected 6 h / 7 h (MDT/MST) offset turned out to be a **parsing artifact**: Python's `datetime.fromisoformat(s).timestamp()` treats a timezone-less string as the *machine's local time*, so analysis scripts run in US Mountain time needed to subtract 6 h / 7 h to undo that. **The migrator must not apply that offset.** It runs in UTC, so doing so would shift pre-880,227 timestamps 6–7 h early. Scripts should parse with `.replace(tzinfo=timezone.utc)` instead.
+- **Timezone correction: detected from the data, not from fixed height thresholds.** The maintainer recalls a period when timestamps were recorded with a timezone that was later removed. Findings so far:
+  - **Sampled boundary heights (2026-11-12):** 860,000, both sides of 868,638/868,639, up to 880,226, and the hex range after. All are within ~0.01 h of the preceding block's header time when parsed as UTC, so no offset at those heights.
+  - **Pending:** a sparse scan of the whole ISO range (every 50th height), to find any affected ranges and any strings that still carry a timezone suffix.
+  - Part of the earlier suspected 6 h / 7 h (MDT/MST) offset was a **parsing artifact**: Python's `datetime.fromisoformat(s).timestamp()` treats a timezone-less string as the *machine's local time*. Scripts should parse with `.replace(tzinfo=timezone.utc)`.
+  - **Converter rules:**
+    - parse strings **with** a timezone suffix by their suffix
+    - parse naive strings as UTC
+    - per height, if the first template sits a consistent −6 h / −7 h (±30 min) from the preceding block's time, apply that correction to the height's naive-ISO templates, and **log it** (height, offset, count) in a migration report, with the offset recorded per row in `received_at_offset_s`
+    - never apply a blanket height-threshold offset
 - `coinbase1`, `coinbase2`, `prev_hash`, `extranonce1`, `merkle_branches[]` hex → `bytea` (branches concatenated in order). `version`, `nbits`, `ntime` hex → `bigint`. `lat_ms`/`lat_m` as-is.
 - **Height is re-derived from `coinbase1`** with the fixed parser (#108), not copied. The stored value is wrong for templates whose push isn't 3 bytes.
 - **Routing**, with the same rules as live ingest. A template goes to `templates_other` with a `reason` if any of these holds:
@@ -331,6 +339,9 @@ Per document → row (all lossless):
 - **Dedup** on `(source_id, received_at, job_id)`. That covers the one-height overlap between backup increments, and any duplicates from collector reconnects.
 - **Load:** `COPY` in day-sized batches, oldest first, into uncompressed chunks; the columnstore policy compresses them afterwards. The tool is resumable by day, so it can be stopped and restarted.
 - **Expected time:** 136M rows at ~50–100k rows/s via `COPY` → about 30–60 min load, plus compression. To be measured on the section 3 sample.
+
+### Known gaps in the history
+- **Collection outage:** blocks **876,882–876,902**, i.e. template heights 876,883–876,903. No templates are expected there. Verification reports these heights as a known gap, not as missing data.
 
 ### Verification
 - **Exact, for the backfilled range:** per `(day, source)`, MongoDB document count = `templates` + `templates_other` rows + duplicates removed. Any mismatch is listed, not averaged away.

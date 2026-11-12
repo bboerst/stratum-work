@@ -30,6 +30,8 @@ CREATE TABLE sources (
 -- the pool sent (section 3 verifies that no prod values are upper-case or odd-length hex).
 CREATE TABLE templates (
     received_at        timestamptz NOT NULL,  -- collector receive time, UTC (µs)
+    received_at_offset_s integer   NOT NULL DEFAULT 0,  -- seconds the migration subtracted for a detected timezone
+                                                        -- shift (section 5); 0 for nearly all rows and all new rows
     source_id          smallint    NOT NULL REFERENCES sources (id),
     height             integer     NOT NULL,  -- BIP34 height from the coinbase, validated against our tip
     job_id             text        NOT NULL,

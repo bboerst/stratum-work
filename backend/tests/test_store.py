@@ -51,6 +51,25 @@ class MongoStoreTests(unittest.TestCase):
         self.store.replace_block(doc)
         self.assertEqual(self.db.blocks.calls[0], ("replace_one", ({"block_hash": "ab"}, doc), {"upsert": True}))
 
+    def test_blocks_for_reidentify_reads_stored_pool_inputs(self):
+        self.db.blocks.results["find"] = lambda: FakeCursor([
+            {"block_hash": "aa", "height": 2, "coinbase_script_sig": "03", "mining_pool": {"name": "A"},
+             "analysis": {"pool_identification": {"addresses_considered": ["bc1q"]}, "flags": []}},
+            {"block_hash": "bb", "height": 1, "coinbase_script_sig": "04", "mining_pool": {}, "analysis": None}])
+        got = list(self.store.blocks_for_reidentify())
+        self.assertEqual(got[0]["pool_identification"], {"addresses_considered": ["bc1q"]})
+        self.assertTrue(got[0]["analysis_is_object"])
+        self.assertIsNone(got[1]["pool_identification"])
+        self.assertFalse(got[1]["analysis_is_object"])
+
+    def test_update_block_pool_sets_only_pool_fields(self):
+        self.store.update_block_pool("aa", {"name": "B"}, {"method": "tag"})
+        self.store.update_block_pool("bb", {"name": "C"}, {"method": "none"}, analysis_is_object=False)
+        self.assertEqual(self.db.blocks.calls[0], ("update_one", ({"block_hash": "aa"},
+                         {"$set": {"mining_pool": {"name": "B"}, "analysis.pool_identification": {"method": "tag"}}}), {}))
+        self.assertEqual(self.db.blocks.calls[1], ("update_one", ({"block_hash": "bb"},
+                         {"$set": {"mining_pool": {"name": "C"}, "analysis": {"pool_identification": {"method": "none"}}}}), {}))
+
     def test_templates_at_height_is_btc_only(self):
         self.store.templates_at_height(123)
         self.assertEqual(self.db.mining_notify.calls[0][1], ({"height": 123, "chain_family": {"$exists": False}},))
@@ -103,6 +122,26 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             self.assertIn("Foundry USA", mp)
         hashes = [b["block_hash"] for b in self.store.block_hashes_by_height_desc() if b["height"] in (h, h + 1)]
         self.assertEqual(hashes, ["a2" * 32, "a1" * 32])
+
+    def test_reidentify_reads_and_updates_only_pool_fields(self):
+        h = self.h + 20
+        hx = "c3" * 32
+        block = self._block(h, "c3")
+        block["analysis"] = {"pool_identification": {"method": "address", "addresses_considered": ["bc1qx"]},
+                             "flags": [{"type": "kept"}]}
+        self.store.save_block(block, is_new_block=True)
+        mine = [b for b in self.store.blocks_for_reidentify() if b["block_hash"] == hx]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]["coinbase_script_sig"], "0393e20e")
+        self.assertEqual(mine[0]["pool_identification"]["addresses_considered"], ["bc1qx"])
+        self.store.update_block_pool(hx, {"id": 222, "name": "Other"}, {"method": "tag", "addresses_considered": ["bc1qx"]})
+        with self.psycopg.connect(self.admin) as c:
+            pool_id, mp, analysis = c.execute("SELECT pool_id, mining_pool, analysis FROM blocks WHERE block_hash = %s",
+                                              (bytes.fromhex(hx),)).fetchone()
+        self.assertEqual(pool_id, 222)
+        self.assertEqual(mp, {"id": 222, "name": "Other"})
+        self.assertEqual(analysis["pool_identification"]["method"], "tag")
+        self.assertEqual(analysis["flags"], [{"type": "kept"}])        # other analysis results untouched
 
     def test_pools_replace_keeps_full_definitions_and_deletes_missing(self):
         defs = [{"id": 900001, "name": "Test A", "addresses": ["bc1qa"], "tags": ["/A/"], "link": "https://a", "extra": {"x": 1}},

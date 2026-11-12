@@ -47,6 +47,26 @@ class MongoStore:
     def block_hashes_by_height_desc(self) -> Iterator[Dict[str, Any]]:
         return iter(self.db.blocks.find({}, {"block_hash": 1, "height": 1, "_id": 0}).sort("height", -1))
 
+    def blocks_for_reidentify(self) -> Iterator[Dict[str, Any]]:
+        """What pool identification needs, newest first: hash, height, coinbase scriptSig, current result (#135)."""
+        cursor = self.db.blocks.find({}, {"_id": 0, "block_hash": 1, "height": 1, "coinbase_script_sig": 1,
+                                          "mining_pool": 1, "analysis": 1}).sort("height", -1)
+        for d in cursor:
+            analysis = d.get("analysis")
+            yield {"block_hash": d.get("block_hash"), "height": d.get("height"),
+                   "coinbase_script_sig": d.get("coinbase_script_sig"), "mining_pool": d.get("mining_pool"),
+                   "pool_identification": analysis.get("pool_identification") if isinstance(analysis, dict) else None,
+                   "analysis_is_object": isinstance(analysis, dict)}
+
+    def update_block_pool(self, block_hash: str, mining_pool: Dict[str, Any], pool_identification: Dict[str, Any],
+                          analysis_is_object: bool = True) -> None:
+        """Update only the pool fields of one block; every other analysis result is kept (#135)."""
+        if analysis_is_object:
+            update = {"mining_pool": mining_pool, "analysis.pool_identification": pool_identification}
+        else:   # analysis missing or not an object: a dotted $set would fail on null
+            update = {"mining_pool": mining_pool, "analysis": {"pool_identification": pool_identification}}
+        self.db.blocks.update_one({"block_hash": block_hash}, {"$set": update})
+
     def highest_block_height(self) -> Optional[int]:
         b = self.db.blocks.find_one(sort=[("height", -1)])
         return b["height"] if b else None
@@ -181,6 +201,26 @@ class PostgresStore:
     def block_hashes_by_height_desc(self) -> Iterator[Dict[str, Any]]:
         rows = self._run(lambda c: c.execute("SELECT encode(block_hash, 'hex'), height FROM blocks ORDER BY height DESC").fetchall())
         return iter({"block_hash": h, "height": height} for h, height in rows)
+
+    def blocks_for_reidentify(self) -> Iterator[Dict[str, Any]]:
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex'), height, encode(coinbase_script_sig, 'hex'), mining_pool,"
+            " analysis -> 'pool_identification' FROM blocks ORDER BY height DESC").fetchall())
+        return iter({"block_hash": h, "height": height, "coinbase_script_sig": script, "mining_pool": mp,
+                     "pool_identification": pi, "analysis_is_object": True} for h, height, script, mp, pi in rows)
+
+    _BLOCK_POOL_UPDATE = """
+        UPDATE blocks SET mining_pool = %(mining_pool)s::jsonb, pool_id = %(pool_id)s,
+            analysis = jsonb_set(CASE WHEN jsonb_typeof(analysis) = 'object' THEN analysis ELSE '{}'::jsonb END,
+                                 '{pool_identification}', %(pool_identification)s::jsonb)
+        WHERE block_hash = %(block_hash)s"""
+
+    def update_block_pool(self, block_hash: str, mining_pool: Dict[str, Any], pool_identification: Dict[str, Any],
+                          analysis_is_object: bool = True) -> None:
+        params = dict(block_hash=_to_bytes(block_hash), pool_id=_pool_id(mining_pool),
+                      mining_pool=json.dumps(mining_pool or {}, default=str),
+                      pool_identification=json.dumps(pool_identification or {}, default=str))
+        self._run(lambda c: c.execute(self._BLOCK_POOL_UPDATE, params))
 
     def highest_block_height(self) -> Optional[int]:
         return self._run(lambda c: c.execute("SELECT max(height) FROM blocks").fetchone()[0])

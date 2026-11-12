@@ -2,13 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useLatencyAdjusted } from './TimingDisplayContext';
-
-interface PoolTimingData {
-  poolName: string;
-  firstSeenTimestamp: string; // Assuming timestamp is a string (e.g., ISO 8601 or Unix ms)
-  firstSeenLatencyMs?: number | null;
-  relativeTimeNs?: number; // Add optional field for processed data
-}
+import { computePoolTiming, type FirstSeenRow, type PoolTiming } from '@/utils/poolTiming';
 
 interface HistoricalPoolTimingProps {
   blockHeight: number | null;
@@ -32,54 +26,15 @@ function getPercentile(sortedData: number[], percentile: number): number {
   }
 }
 
-// Parse a timestamp that might be hex-encoded nanoseconds or ISO-8601 into epoch nanoseconds
-function parseFirstSeenTimestampToNs(timestamp: string): number {
-  if (!timestamp) return 0;
-
-  const trimmed = timestamp.trim();
-  // If it's all hex characters, treat as hex-encoded integer (nanoseconds)
-  if (/^[0-9a-fA-F]+$/.test(trimmed)) {
-    // parseInt on very large hex values fits within JS number precision for our range
-    // (nanoseconds since epoch today still fits within 2^53 safely for a while),
-    // but even if precision loss occurs, we only use relative differences within the same set.
-    const ns = parseInt(trimmed, 16);
-    return Number.isFinite(ns) ? ns : 0;
-  }
-
-  // Try ISO 8601 like 2024-12-20T12:45:08.871633 (no timezone provided)
-  // We'll interpret it as UTC for consistency, and capture fractional seconds to nanoseconds.
-  const isoMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?/);
-  if (isoMatch) {
-    const datePart = isoMatch[1]; // YYYY-MM-DD
-    const timePart = isoMatch[2]; // HH:mm:ss
-    const fraction = isoMatch[3] || ""; // fractional seconds digits
-    const baseMs = Date.parse(`${datePart}T${timePart}Z`); // treat as UTC
-    if (!Number.isNaN(baseMs)) {
-      // Convert fractional seconds to nanoseconds (pad/truncate to 9 digits)
-      const nanoStr = (fraction || "").padEnd(9, "0").slice(0, 9);
-      const fractionNs = nanoStr ? parseInt(nanoStr, 10) : 0;
-      return Math.max(0, baseMs) * 1_000_000 + (Number.isFinite(fractionNs) ? fractionNs : 0);
-    }
-  }
-
-  // Fallback: let Date try to parse whatever it is; treat result as ms
-  const parsedMs = Date.parse(trimmed);
-  if (!Number.isNaN(parsedMs)) {
-    return Math.max(0, parsedMs) * 1_000_000;
-  }
-
-  return 0;
-}
-
 const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight }) => {
-  const [timingData, setTimingData] = useState<PoolTimingData[]>([]);
+  const [timing, setTiming] = useState<PoolTiming>({ reliable: [], unreliable: [] });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [latencyAdjusted] = useLatencyAdjusted('timing-chart');
 
   useEffect(() => {
     if (blockHeight === null || blockHeight <= 0) {
-      setTimingData([]); // Clear data if blockHeight is not valid
+      setTiming({ reliable: [], unreliable: [] }); // Clear data if blockHeight is not valid
       return;
     }
 
@@ -92,40 +47,9 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
           const errorData = await response.json().catch(() => ({ message: 'Failed to fetch data' }));
           throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
-        const data: PoolTimingData[] = await response.json();
-        
-        if (data.length > 0) {
-            // Convert mixed-format timestamps (hex ns or ISO) to epoch nanoseconds
-            const timestampsAsNumbers = data.map(d => {
-              const rawNs = parseFirstSeenTimestampToNs(d.firstSeenTimestamp);
-              const latencyMs = d.firstSeenLatencyMs;
-              if (
-                latencyAdjusted &&
-                rawNs > 0 &&
-                latencyMs != null &&
-                Number.isFinite(latencyMs) &&
-                latencyMs > 0
-              ) {
-                return rawNs - latencyMs * 1_000_000;
-              }
-              return rawNs;
-            });
-            const earliestTimestampValue = Math.min(...timestampsAsNumbers);
-
-            const processedData = data.map((d, index) => {
-                const currentTimestampValue = timestampsAsNumbers[index];
-                return {
-                    ...d,
-                    // Calculate relative time in nanoseconds
-                    relativeTimeNs: currentTimestampValue - earliestTimestampValue
-                };
-            }).sort((a, b) => (a.relativeTimeNs ?? 0) - (b.relativeTimeNs ?? 0));
-
-            setTimingData(processedData); // No need to cast anymore if types align
-        } else {
-            setTimingData([]);
-        }
-
+        const data: FirstSeenRow[] = await response.json();
+        // Only pools whose collector was already connected at the previous height can anchor "First" (#104).
+        setTiming(computePoolTiming(data, latencyAdjusted));
       } catch (e) {
         if (e instanceof Error) {
           setError(e.message);
@@ -133,7 +57,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
           setError('An unknown error occurred');
         }
         console.error("Error fetching pool timing data:", e);
-        setTimingData([]);
+        setTiming({ reliable: [], unreliable: [] });
       }
       setIsLoading(false);
     };
@@ -153,10 +77,11 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
     return <div className="p-4 text-center text-red-500">Error: {error}</div>;
   }
 
-  if (timingData.length === 0) {
+  if (timing.reliable.length === 0 && timing.unreliable.length === 0) {
     return <div className="p-4 text-center text-gray-500 dark:text-gray-400">No pool timing data available for this block.</div>;
   }
 
+  const timingData = timing.reliable;
   const allRelativeTimesNs = timingData.map(d => d.relativeTimeNs ?? 0);
   const actualMaxObservedTime = Math.max(0, ...allRelativeTimesNs);
   let barScalingReferenceTime = actualMaxObservedTime;
@@ -193,8 +118,17 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
     barScalingReferenceTime = actualMaxObservedTime;
   }
 
+  const midHeightTitle =
+    'Our collector for this pool connected after this height started (no template from it at the previous height), ' +
+    "so this is when we first saw its work, not when the pool first sent it.";
+
   return (
     <div className="p-4">
+      {timingData.length === 0 && (
+        <p className="px-2 pb-2 text-xs text-gray-500 dark:text-gray-400">
+          Timing for this height is incomplete: every collector connected after it started.
+        </p>
+      )}
       <ul className="space-y-0">
         {timingData.map((item, index) => {
           const relativeTimeNs = item.relativeTimeNs ?? 0;
@@ -220,6 +154,20 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
           );
         })}
       </ul>
+      {timing.unreliable.length > 0 && (
+        <div className="mt-2 opacity-60" title={midHeightTitle}>
+          <p className="px-2 text-xs text-gray-500 dark:text-gray-400">Connected mid-height (timing not comparable)</p>
+          <ul className="space-y-0">
+            {timing.unreliable.map((item, index) => (
+              <li key={index} className="flex justify-between items-center px-2 rounded-sm">
+                <span className="text-sm text-gray-600 dark:text-gray-400 w-36 truncate mr-2" title={item.poolName}>{item.poolName}</span>
+                <div className="grow h-3 mr-1 border border-dashed border-gray-300 dark:border-gray-600 rounded-sm" />
+                <span className="text-xs text-gray-500 dark:text-gray-400 w-20 text-right">n/a</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };

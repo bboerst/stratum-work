@@ -1,4 +1,4 @@
-import os, time, threading, logging
+import os, time, threading, logging, json
 import http.client, ssl, urllib.parse
 from bitcoinrpc.authproxy import AuthServiceProxy
 import zmq
@@ -153,6 +153,14 @@ def get_block_hash(conn, height):
     """Get the hash of the block at the specified height"""
     return conn.getblockhash(height)
 
+class PrunedBlockError(Exception):
+    """The node no longer has this block's data (pruned). Not retried."""
+
+
+def is_pruned_error(exc: Exception) -> bool:
+    return "pruned data" in str(exc).lower()
+
+
 # --- Retry helper ---
 def retry_rpc(func, description, *args, attempts=5, initial_delay=2, **kwargs):
     """
@@ -176,6 +184,9 @@ def retry_rpc(func, description, *args, attempts=5, initial_delay=2, **kwargs):
                 logger.info(f"RPC call {description} succeeded on attempt {attempt}")
                 return result
         except Exception as e:
+            if is_pruned_error(e):
+                # Permanent: a pruned node will never serve this block, so retrying only wastes time (#135).
+                raise PrunedBlockError(f"{description}: {e}") from e
             last_exception = e
             error_message = str(e)
             logger.error(f"RPC error during {description} (attempt {attempt}): {error_message}")
@@ -289,7 +300,8 @@ def process_block(block_hash: str, is_new_block: bool = False):
     except Exception as e:
         logger.error("Error processing block %s: %s", block_hash, e)
 
-def reprocess_block_full(block_hash: str, publish_update: bool = False):
+def reprocess_block_full(block_hash: str, publish_update: bool = False) -> str:
+    """Rebuild one block from RPC. Returns "ok", "pruned" or "error"."""
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
@@ -309,28 +321,117 @@ def reprocess_block_full(block_hash: str, publish_update: bool = False):
                 }
             }
             publish_to_rabbitmq(rabbitmq_doc)
+        return "ok"
+    except PrunedBlockError:
+        return "pruned"
     except Exception as e:
         logger.error("Error fully reprocessing block %s: %s", block_hash, e)
+        return "error"
+
+# --- Reindexing (#135) ---
+# At most one reindex runs at a time. A pool-definition change only re-runs pool identification from the data already
+# stored with each block (coinbase scriptSig + coinbase addresses): no RPC, so a pruned node doesn't matter. The full
+# RPC rebuild (--reindex-blocks) is explicit and skips blocks the node no longer has.
+_reindex_lock = threading.Lock()
+_reidentify_requested = threading.Event()
+UNKNOWN_POOL = {"name": "Unknown", "id": "unknown"}
+
+
+def _spawn(target):
+    threading.Thread(target=target, daemon=True).start()
+
 
 def start_full_reindex_background():
+    if not _reindex_lock.acquire(blocking=False):
+        logger.warning("A reindex is already running; not starting a full reindex")
+        return
     try:
         if not store.enabled:
             logger.warning("Historical data disabled or DB unavailable; skipping full reindex")
             return
         logger.info("Starting full background reindex of all blocks in descending height order")
-        count = 0
-        cursor = store.block_hashes_by_height_desc()
-        for doc in cursor:
+        counts = {"ok": 0, "pruned": 0, "error": 0}
+        for doc in store.block_hashes_by_height_desc():
             bhash = doc.get("block_hash")
             if not bhash:
                 continue
-            reprocess_block_full(bhash)
-            count += 1
-            if count % 100 == 0:
-                logger.info(f"Reindexed {count} blocks so far (descending order)")
-        logger.info(f"Completed full background reindex of {count} blocks")
+            counts[reprocess_block_full(bhash)] += 1
+            done = sum(counts.values())
+            if done % 1000 == 0:
+                logger.info("Full reindex: %d blocks so far (%s)", done, counts)
+        logger.info("Completed full reindex: %s (pruned = no longer on the node, left unchanged)", counts)
     except Exception as e:
-        logger.error(f"Error starting full background reindex: {e}")
+        logger.error(f"Error during full background reindex: {e}")
+    finally:
+        _reindex_lock.release()
+
+
+def _same(a: Any, b: Any) -> bool:
+    return json.dumps(a, sort_keys=True, default=str) == json.dumps(b, sort_keys=True, default=str)
+
+
+def reidentify_pools() -> Dict[str, int]:
+    """Re-run pool identification for every stored block with the current definitions; write only what changed."""
+    stats = {"checked": 0, "changed": 0, "skipped_no_addresses": 0, "errors": 0}
+    if not store.enabled:
+        logger.warning("Historical data disabled or DB unavailable; skipping pool re-identification")
+        return stats
+    pools = pools_cache
+    if not pools:
+        logger.warning("No pool definitions loaded; skipping pool re-identification")
+        return stats
+    logger.info("Re-identifying pools for stored blocks with %d pool definitions", len(pools))
+    for block in store.blocks_for_reidentify():
+        stats["checked"] += 1
+        try:
+            previous = block.get("pool_identification")
+            addresses = previous.get("addresses_considered") if isinstance(previous, dict) else None
+            if not isinstance(addresses, list):
+                # No stored coinbase addresses (block indexed before the analysis existed): re-identifying from the
+                # tag alone could downgrade a correct address match, so leave the block as it is.
+                stats["skipped_no_addresses"] += 1
+                continue
+            found = identify_pool_from_data(pools, block.get("coinbase_script_sig") or "", addresses)
+            mining_pool = found or dict(UNKNOWN_POOL)
+            pool_identification = {"mining_pool": mining_pool,
+                                   "method": found.get("identification_method", "unknown") if found else "none",
+                                   "addresses_considered": addresses}
+            if _same(mining_pool, block.get("mining_pool")) and _same(pool_identification, previous):
+                continue
+            store.update_block_pool(block["block_hash"], mining_pool, pool_identification,
+                                    analysis_is_object=block.get("analysis_is_object", True))
+            stats["changed"] += 1
+            logger.info("Pool re-identified at height %s: %s -> %s", block.get("height"),
+                        (block.get("mining_pool") or {}).get("name"), mining_pool.get("name"))
+        except Exception as e:
+            stats["errors"] += 1
+            logger.error("Error re-identifying pool for block %s: %s", block.get("block_hash"), e)
+        if stats["checked"] % 10000 == 0:
+            logger.info("Pool re-identification: %s", stats)
+    logger.info("Completed pool re-identification: %s", stats)
+    return stats
+
+
+def _reidentify_worker():
+    try:
+        while _reidentify_requested.is_set():
+            _reidentify_requested.clear()
+            reidentify_pools()
+    except Exception as e:
+        logger.error(f"Error during pool re-identification: {e}")
+    finally:
+        _reindex_lock.release()
+    if _reidentify_requested.is_set():   # requested between the last check and the release
+        request_pool_reidentify()
+
+
+def request_pool_reidentify():
+    """Ask for a re-identification pass. Never stacks: a request during a pass makes it run once more afterwards."""
+    _reidentify_requested.set()
+    if _reindex_lock.acquire(blocking=False):
+        _spawn(_reidentify_worker)
+    else:
+        logger.info("A reindex is already running; pool re-identification will run (again) when it finishes")
 
 from analytics.prev_hash_divergence import analyze_prev_hash_divergence
 from analytics.invalid_coinbase_no_merkle import analyze_invalid_coinbase_without_merkle
@@ -561,8 +662,8 @@ def pool_updater_task():
                 pools_cache = pools
                 if new_hash is not None and new_hash != pools_hash:
                     pools_hash = new_hash
-                    logger.info("Pool definitions changed; triggering background full reindex")
-                    threading.Thread(target=start_full_reindex_background, daemon=True).start()
+                    logger.info("Pool definitions changed; re-identifying pools from stored block data")
+                    request_pool_reidentify()
             time.sleep(POOL_UPDATE_INTERVAL)
         except Exception as e:
             logger.error(f"Error in pool updater task: {e}")

@@ -101,5 +101,6 @@ extraVolumeMounts:
 
 The backend service can be started with the following command line arguments:
 
-- `--update-pools`: Update pool definitions and reindex blocks if needed
-- `--reindex-blocks`: Force reindexing of all blocks 
+- `--reindex-blocks`: Rebuild every stored block from the Bitcoin node over RPC (in the background after startup). Blocks a pruned node no longer has are skipped and counted, not retried.
+
+Pool definitions are refreshed every `POOL_UPDATE_INTERVAL` seconds. When they change, the backend re-runs pool identification for stored blocks from their saved coinbase data (no RPC) and updates only `mining_pool`; at most one such pass runs at a time. 

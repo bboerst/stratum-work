@@ -1,11 +1,11 @@
 # Design: MongoDB → Postgres + TimescaleDB
 
-Tracking: #90 (epic). Status: **in progress**. Sections 1–2 drafted; 3–5 follow.
+Tracking: #90 (epic). Status: **in progress**. Sections 1, 2 and 4 drafted; 3 and 5 follow.
 
 1. [Current data access](#1-current-data-access) ✅
 2. [Schema](#2-schema) ✅ (draft; final choice after section 3)
 3. Measurements on real data (size per day, query latency)
-4. Backups and recovery (WAL archiving, PITR, restore drills)
+4. [Backups and recovery](#4-backups-and-recovery) ✅ (draft; sizes filled in after section 3)
 5. Migration plan
 
 ---
@@ -126,3 +126,78 @@ Coinbase parts stay inline in both: coinbase outputs change with fees, so they'r
 - **Retention:** keep everything (current behavior). The columnstore makes that cheap; section 3 gives the per-year cost.
 - **Licensing:** columnstore compression is in TimescaleDB's TSL-licensed features, which are free to self-host and run in your own product, but can't be offered as a hosted database service. The `timescale/timescaledb` image includes it, so contributors' local setups work unchanged.
 - **Continuous aggregates** for #94 windows (per-source features per time bucket): designed with that epic, on top of `templates`.
+
+---
+
+## 4. Backups and recovery
+
+Goals, from #90:
+- the database survives node and volume loss without manual heroics
+- any point in time within the retention window can be restored
+- backups are off-site, automatic, protected against deletion, and **proven by regular restore drills**
+
+### Building blocks
+| Piece | Choice | Why |
+|---|---|---|
+| Operator | [CloudNativePG](https://cloudnative-pg.io/) (CNPG) | Kubernetes-native HA Postgres: automated failover, declarative backups, recovery as a `Cluster` bootstrap mode. |
+| Image | Postgres 18 + TimescaleDB 2.30, built by our CI image pipeline | CNPG needs its own image layout. There's no upstream CNPG + Timescale image, so we build `FROM` the CNPG Postgres image and add the TimescaleDB packages. To verify at implementation: extension packages and `shared_preload_libraries`. |
+| Backup engine | CNPG **Barman Cloud plugin** | Continuous WAL archiving plus base backups to S3-compatible storage. It's the supported path (the in-tree `barmanObjectStore` is deprecated). |
+| Storage | **Backblaze B2** (S3 API), a **dedicated bucket** for Postgres | Different provider from the cluster, so it's off-site by construction. Already used for the interim MongoDB backups, and Terraform-managed. |
+| Volumes | Hetzner Cloud Volumes (CSI), not node-local disks | They survive node replacement, can be resized, and aren't tied to one server's root disk (unlike today's local-path volumes). |
+
+### Topology
+- **2 instances:** a primary and one streaming replica, on separate nodes (anti-affinity) in a dedicated database node pool, with a PodDisruptionBudget. Writes are only ~1.4/s, so a small replica keeps up easily. CNPG promotes it automatically if the primary fails.
+- **Replication:** asynchronous to start with. Synchronous would cut the failover RPO from seconds to zero, at the cost of write latency on every template insert. Revisit if it's needed.
+- **Server settings** (via `spec.postgresql.parameters`): `timescaledb.enable_chunk_skipping = on` (section 2), and `archive_timeout = 5min`. The latter bounds the RPO of a full restore: WAL is shipped at least every 5 minutes even during quiet periods.
+
+### Backups
+- **WAL archiving:** continuous. Every completed WAL segment is compressed and uploaded. This is what makes point-in-time recovery possible.
+- **Base backups:** weekly (`ScheduledBackup`), compressed. Taken from the replica when one is available, so the primary isn't loaded.
+- **Retention:** 30 days, enforced by Barman (`retentionPolicy: 30d`), which deletes base backups and WAL that are no longer needed. That gives PITR to any second in the last 30 days.
+- **Long-term monthly copies:** not needed from the physical backups; see "Logical exports".
+
+### Protection against deletion
+Barman must be able to delete expired backups, so its key needs delete permission. A stolen or misused key could then purge the backups, older versions included. Instead of withholding delete:
+- **B2 Object Lock on the bucket**, governance mode, with a default retention **slightly shorter than Barman's** (e.g. 29 days vs 30). Every object is undeletable until its lock expires, so Barman's own deletions (always of objects past the retention window) succeed. A compromised key can't remove anything younger than the lock.
+- **Keys** (all Terraform-generated and prefix-scoped):
+  - **writer:** read, write, delete. Used by the cluster. **No `bypassGovernance`**, so it can't override the lock.
+  - **drill reader:** read-only. Used by restore drills, in a separate namespace from production.
+  - Only the account's master key, held by Brian, can bypass governance in an emergency.
+- **Encryption:** server-side (SSE-B2), like the interim backups.
+
+### Recovery scenarios
+| Scenario | What happens | RTO | RPO |
+|---|---|---|---|
+| Primary pod or node lost | CNPG promotes the replica, and a new replica rebuilds from it | ~1 min (automatic) | seconds (async replication) |
+| A volume lost or corrupted | The affected instance is rebuilt from the other one, or from backup | minutes (automatic) | 0 |
+| Both instances / the whole cluster lost | New `Cluster` with `bootstrap.recovery` from the latest base backup + WAL | download + WAL replay: roughly tens of minutes for a ~50 GB database (to measure in drills) | ≤ 5 min (`archive_timeout`) |
+| Bad migration, bug or accidental delete | **PITR** to a timestamp just before it, into a *new* cluster; then cut over, or copy the affected rows back | same as above | to the second |
+| Hosting provider or region lost | Terraform builds a new cluster elsewhere and restores from B2 (a different provider) | hours (rebuild-dominated) | ≤ 5 min |
+| Backup credentials compromised | Object Lock: nothing younger than the lock can be deleted. Rotate keys with Terraform. | — | — |
+
+### Restore drills (automated)
+A backup that has never been restored isn't a backup. So, **monthly**, plus after any backup-config change:
+1. In a dedicated `pg-restore-drill` namespace, with the read-only drill key, create a CNPG `Cluster` bootstrapped from the **latest backup**. Recovery target: the latest consistent point.
+2. Run checks:
+   - `templates` row counts per day for the last 7 days match the source within the WAL lag
+   - `max(received_at)` is within `archive_timeout` of the drill's recovery target
+   - `blocks` max height matches
+   - the schema migration version matches
+3. Record duration and size, which become the measured RTO. Then delete the drill cluster.
+4. **Alert on failure.** Also alert separately on the last archived WAL age (> 15 min), the last successful base backup age (> 8 days), and archiving errors. These are CNPG metrics, wired into the new cluster's monitoring.
+
+Implementation: a CronJob (or Flux-managed manifests on a schedule) whose ServiceAccount may only manage CNPG `Cluster` objects in the drill namespace.
+
+### Logical exports (optional, later)
+Physical backups restore only to a compatible Postgres + TimescaleDB version. A **monthly logical export** would be an independent, long-term, version-agnostic copy: completed days of `templates` as **Parquet** files, plus `blocks`/`pools`/`sources` as CSV, written to B2 with a longer retention (e.g. 1 year). It overlaps with the bulk exports planned for the LLM data API (#92), so build it once for both.
+
+### Cost (rough; replaced with measured numbers after section 3)
+B2 stores ~5 base backups (weekly × 30 days) plus 30 days of WAL.
+- With a compressed database of **~40 GB** (to measure): ~200 GB of base backups + WAL.
+- WAL estimate: ingest is ~0.23 GB/day of raw data. Columnstore compression jobs also rewrite each chunk once (WAL bursts). Call it ~1–2 GB/day → ~30–60 GB.
+- **≈ 0.25 TB ≈ $1.75/month**, comparable to the interim MongoDB backups.
+
+### Transition from the interim MongoDB backups
+1. Keep the MongoDB weekly-full + daily-incremental backups running until Postgres is primary **and** its backups have passed one full restore drill.
+2. Take a base backup right after the migration (section 5), then run a drill.
+3. Then stop the MongoDB backup jobs, and let the bucket's lifecycle rules age out the old dumps. Keep the last full as a final cold copy, on a longer lifecycle rule, until the migration is beyond doubt.

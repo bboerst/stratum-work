@@ -6,6 +6,6 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py chain_detection.py latency.py coinbase.py ./
+COPY main.py chain_detection.py latency.py coinbase.py pgsink.py ./
 
 CMD ["/usr/local/bin/python", "main.py"]

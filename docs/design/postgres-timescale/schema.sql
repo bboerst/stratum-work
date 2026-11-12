@@ -1,7 +1,6 @@
 -- Candidate schema for stratum.work on Postgres 18 + TimescaleDB 2.30 (design: docs/design/postgres-timescale.md).
--- Candidate A = everything below with merkle branches inline (templates.merkle_branches).
--- Candidate B = the same, plus the merkle_branch_sets table; templates.merkle_set_id replaces merkle_branches.
--- Section 3 measures both on a real day of production templates before one is chosen.
+-- Merkle branches are stored inline (candidate A). Measured in design doc section 3: a deduplicated branch-set table
+-- (candidate B) was larger overall, because consecutive templates rarely share a branch set (1.47 templates/set).
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
@@ -37,7 +36,7 @@ CREATE TABLE templates (
     prev_hash          bytea       NOT NULL,  -- 32 bytes, in stratum's word order exactly as received
     coinbase1          bytea       NOT NULL,
     coinbase2          bytea       NOT NULL,
-    merkle_branches    bytea       NOT NULL,  -- candidate A: n x 32 bytes, concatenated in stratum order
+    merkle_branches    bytea       NOT NULL,  -- n x 32 bytes, concatenated in stratum order
     version            bigint      NOT NULL,  -- hex u32 -> bigint (no sign or 2038 surprises)
     nbits              bigint      NOT NULL,
     ntime              bigint      NOT NULL,
@@ -74,17 +73,15 @@ ALTER TABLE templates_other
     ADD COLUMN reason text NOT NULL;  -- e.g. 'bch', 'height_parse_failed', 'height_implausible'
 SELECT create_hypertable('templates_other', by_range('received_at', INTERVAL '30 days'));
 CREATE INDEX templates_other_height ON templates_other (height, source_id, received_at);
-
--- Candidate B: deduplicated merkle branch sets. Identical sets across pools are also a direct
--- shared-template-source signal for similarity scoring (#94) and an anchor for reconstruction work (#95).
-CREATE TABLE merkle_branch_sets (
-    id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    digest          bytea       NOT NULL UNIQUE,   -- sha256(branches)
-    branches        bytea       NOT NULL,          -- n x 32 bytes
-    depth           smallint    GENERATED ALWAYS AS ((length(branches) / 32)::smallint) STORED,
-    first_seen_at   timestamptz NOT NULL,
-    first_source_id smallint    NOT NULL REFERENCES sources (id)
+ALTER TABLE templates_other SET (
+    timescaledb.enable_columnstore,
+    timescaledb.segmentby = 'source_id',
+    timescaledb.orderby   = 'height, received_at'
 );
+CALL add_columnstore_policy('templates_other', after => INTERVAL '2 days');
+
+-- (Candidate B's merkle_branch_sets table was dropped after measurement; cross-pool branch-set equality is computed
+-- on demand, e.g. GROUP BY merkle_branches at a height, ~9 ms. An analytics table can be added later if #94 needs one.)
 
 -- Mining pool identities (mempool/mining-pools pools-v2.json, refreshed daily: upsert, then delete missing).
 CREATE TABLE pools (

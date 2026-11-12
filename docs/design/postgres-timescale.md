@@ -1,10 +1,10 @@
 # Design: MongoDB → Postgres + TimescaleDB
 
-Tracking: #90 (epic). Status: **in progress**. Sections 1, 2, 4 and 5 drafted; section 3 (measurements) follows.
+Tracking: #90 (epic). Status: **ready for review**. All five sections are drafted, and section 3 is measured on real production data.
 
 1. [Current data access](#1-current-data-access) ✅
-2. [Schema](#2-schema) ✅ (draft; final choice after section 3)
-3. Measurements on real data (size per day, query latency)
+2. [Schema](#2-schema) ✅ (candidate A chosen in section 3)
+3. [Measurements on real data](#3-measurements-on-real-data) ✅
 4. [Backups and recovery](#4-backups-and-recovery) ✅ (draft; sizes filled in after section 3)
 5. [Migration plan](#5-migration-plan) ✅ (draft)
 
@@ -67,7 +67,7 @@ These don't exist yet, but the schema has to serve them:
 
 ## 2. Schema
 
-Full DDL: [`postgres-timescale/schema.sql`](postgres-timescale/schema.sql), for **Postgres 18 + TimescaleDB 2.30**. It loads cleanly into `timescale/timescaledb:2.30.2-pg18`, and was tested functionally (below).
+Full DDL: [`postgres-timescale/schema.sql`](postgres-timescale/schema.sql) (candidate A, chosen in section 3), for **Postgres 18 + TimescaleDB 2.30**. It loads cleanly into `timescale/timescaledb:2.30.2-pg18`, and was tested functionally (below).
 
 ### Principles
 1. **Lossless.** Store exactly what the pool sent, in compact types: hex → `bytea` (half the size), hex `u32` → `bigint`. Anything derived (decoded coinbase, outputs, tags) is computed, or kept in separate analytics tables.
@@ -81,7 +81,6 @@ Full DDL: [`postgres-timescale/schema.sql`](postgres-timescale/schema.sql), for 
 | `templates` | hypertable, partitioned by `received_at`, 7-day chunks | ~136M, +123k/day | Bitcoin templates only. Columnstore after 2 days, segmented by `source_id`, ordered by `(height, received_at)`. Chunk skipping on `height`. |
 | `templates_other` | hypertable, 30-day chunks | small (measured in section 3) | Other chains, BIP34 parse failures, implausible heights. Same columns plus `chain` and `reason`. |
 | `sources` | table | ~40 per site | One per collector endpoint (today's `pool_name`) per collection `site` (section 5). `smallint` id. |
-| `merkle_branch_sets` | table | candidate B only | Deduplicated branch sets with `sha256` digest. |
 | `blocks` | table | ~129k, +144/day | Keyed by `block_hash`, so fork blocks at the same height can coexist. New `seen_at` column. `analysis` stays `jsonb` (analytics plug-ins write free-form results). |
 | `pools` | table | 172 | mining-pools list. GIN index on `addresses`. |
 
@@ -107,7 +106,7 @@ Every read is by height, but partitioning by height would let other chains' and 
 | **A** | Inline `bytea` column (n × 32 bytes) | Simplest writes and reads. Relies on columnstore compression catching repeats within a source's batch. |
 | **B** | `merkle_set_id bigint` → `merkle_branch_sets` (dedup by sha256) | One upsert per new set on write and a join on read. Saves space if sets repeat, and **gives cross-pool equality for free**: two sources pointing at the same set id is a strong shared-template-source signal for #94, and an index for #95. |
 
-Coinbase parts stay inline in both: coinbase outputs change with fees, so they're mostly unique per template. Section 3 decides between A and B with real numbers. It's also possible we keep A for storage and build B-style tables later, purely as analytics indexes.
+Coinbase parts stay inline in both: coinbase outputs change with fees, so they're mostly unique per template. **Decision (section 3): A.** B's set table was larger than what it saved: 1.47 templates per set. Cross-pool equality is cheap to compute on demand.
 
 ### Current reads in the new schema
 | # | SQL |
@@ -137,6 +136,69 @@ The current MongoDB setup has every component sharing one admin account, with th
 - **Retention:** keep everything (current behavior). The columnstore makes that cheap; section 3 gives the per-year cost.
 - **Licensing:** columnstore compression is in TimescaleDB's TSL-licensed features, which are free to self-host and run in your own product, but can't be offered as a hosted database service. The `timescale/timescaledb` image includes it, so contributors' local setups work unchanged.
 - **Continuous aggregates** for #94 windows (per-source features per time bucket): designed with that epic, on top of `templates`.
+
+---
+
+## 3. Measurements on real data
+
+**Sample:** one daily incremental from the production backups (2026-11-12, heights 975,359–975,517), restored into a throwaway MongoDB. That's **130,620 templates from 29 sources over 1.17 days**, plus all 128,702 blocks. It was loaded into both candidates on **TimescaleDB 2.30.2 / Postgres 18** by a prototype of the migration tool ([`measure/`](postgres-timescale/measure/)), which does height re-derivation (#108), routing, lossless conversion, dedup and `COPY`. Everything ran on a 4-vCPU VM.
+
+### Lossless and correct
+- **Hex fields:** 0 of 130,620 templates have upper-case or odd-length hex. Every `prev_hash` is 32 bytes and every `version`/`nbits`/`ntime` 4 bytes. **`bytea`/`bigint` storage is lossless.**
+- **Byte-exact round trip:** 10,000 random templates re-encoded from Postgres; **10,000 match** the original documents field for field.
+- **Duplicates:** 0 duplicate templates on `(source, received_at, job_id)`. **1 duplicate block** (the same hash stored twice at height 949,837; MongoDB has no unique index), so the migration de-duplicates blocks on `block_hash`. No real forks: no height has two different hashes.
+
+### Routing (`templates` vs `templates_other`)
+| | Templates | Share |
+|---|---|---|
+| `templates` (Bitcoin) | 129,822 | 99.39% |
+| `templates_other`: `unknown_chain` (the collector already flags these) | 319 | 0.24% |
+| `templates_other`: `height_implausible` (outside tip−6…tip+2 at receive time; **not** flagged today) | 479 | 0.37% |
+
+So the explicit routing catches **2.5× more** non-Bitcoin templates than today's `chain_family` flag (#98).
+
+### Size
+Same 1.17 days, compressed with the production settings (segment by source, order by height + time):
+
+| | Templates | Separate table | **Total** |
+|---|---|---|---|
+| MongoDB (WiredTiger, snappy) | 232.7 MiB BSON → 100.3 MiB, plus 6.5 MiB indexes | — | **106.8 MiB** |
+| **A: branches inline** | 117 MB → **45 MB** (2.6×) | — | **45 MB** (**2.4× smaller** than MongoDB) |
+| B: deduplicated branch sets | 68 MB → 13 MB (5.2×) | 51 MB (`merkle_branch_sets`, row-store) | 64 MB |
+
+**Candidate A is chosen.** Branch sets barely repeat: 88,211 distinct sets in 129,822 templates (1.47 per set), because pools refresh transaction selection constantly. B's lookup table costs more than it saves. B's one advantage, a key for "the same branch set across pools", is cheap on demand in A (below).
+
+**Projection** (A, ~361 bytes per compressed template):
+| | Size |
+|---|---|
+| Today's history (136M templates) | **≈ 41–49 GB** (vs. 103 GB in MongoDB) |
+| Growth at today's rate (~123k templates/day) | **≈ 40 MB/day ≈ 15 GB/year** |
+| Uncompressed hot data (last 2 days, before the columnstore policy) | ≈ 0.2 GB |
+| `blocks` (incl. `analysis` JSON) | ≈ 0.1 GB |
+
+**Sizing for the new cluster (#1):** a **100 GB volume per Postgres instance** (×2: primary + replica) covers today's data, ~3 years of growth, WAL and compression headroom. Volumes can be grown online later.
+
+### Query latency
+Median of 7 runs, warm cache, candidate A compressed, vs. the same data in MongoDB with production's indexes (`mining_notify`: `_id`, `height`; `blocks`: `_id` only).
+
+| Query | Postgres + Timescale | MongoDB |
+|---|---|---|
+| R1: all templates at a height, all columns (549 rows) | 18.1 ms | 13 ms |
+| R2: templates at a height, 3 columns, both tables | 0.65 ms | — |
+| R4: first-seen per source (28 sources) | **0.85 ms** | 2 ms |
+| R4b: sources present at h−1 (#104 reliability) | 0.30 ms | — |
+| R3: interesting blocks (latest 200) | **0.04 ms** | 109 ms |
+| R5: latest 20 blocks (block-strip polling) | **0.02 ms** | 47 ms |
+| R6: block by height | **0.01 ms** | 40 ms |
+| One source, last 6 h (time window) | 1.7 ms | — |
+| Sources sharing an identical branch set at a height (72 found) | 9.2 ms | — |
+
+- **R1 is the one query that's slower:** it decompresses every large `bytea` column for one batch per source. 18 ms is acceptable (the web layer caches per height), and reading only the needed columns makes it sub-millisecond (R2).
+- **Block queries go from tens of milliseconds to microseconds,** because `blocks` finally has indexes.
+- **Not exercised here:** chunk skipping across many weekly chunks. The sample spans 2 chunks; section 2's synthetic test covers that.
+
+### Load throughput (for the migration, section 5)
+`COPY` from a single Python process, conversion included: **~41–49k rows/s** → **≈ 50 minutes for 136M templates**, before parallelizing by day.
 
 ---
 
@@ -202,11 +264,10 @@ Implementation: a CronJob (or Flux-managed manifests on a schedule) whose Servic
 ### Logical exports (optional, later)
 Physical backups restore only to a compatible Postgres + TimescaleDB version. A **monthly logical export** would be an independent, long-term, version-agnostic copy: completed days of `templates` as **Parquet** files, plus `blocks`/`pools`/`sources` as CSV, written to B2 with a longer retention (e.g. 1 year). It overlaps with the bulk exports planned for the LLM data API (#92), so build it once for both.
 
-### Cost (rough; replaced with measured numbers after section 3)
-B2 stores ~5 base backups (weekly × 30 days) plus 30 days of WAL.
-- With a compressed database of **~40 GB** (to measure): ~200 GB of base backups + WAL.
-- WAL estimate: ingest is ~0.23 GB/day of raw data. Columnstore compression jobs also rewrite each chunk once (WAL bursts). Call it ~1–2 GB/day → ~30–60 GB.
-- **≈ 0.25 TB ≈ $1.75/month**, comparable to the interim MongoDB backups.
+### Cost (measured in section 3)
+- A base backup is roughly the database size: **~45–50 GB**, already compressed by the columnstore.
+- B2 stores ~5 weekly base backups (~240 GB) plus 30 days of WAL (~30–60 GB, rough).
+- **≈ 0.3 TB ≈ $2/month.** Upload is ~50 GB per base backup plus WAL.
 
 ### Transition from the interim MongoDB backups
 1. Keep the MongoDB weekly-full + daily-incremental backups running until Postgres is primary **and** its backups have passed one full restore drill.

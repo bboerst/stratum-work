@@ -80,7 +80,7 @@ Full DDL: [`postgres-timescale/schema.sql`](postgres-timescale/schema.sql), for 
 |---|---|---|---|
 | `templates` | hypertable, partitioned by `received_at`, 7-day chunks | ~136M, +123k/day | Bitcoin templates only. Columnstore after 2 days, segmented by `source_id`, ordered by `(height, received_at)`. Chunk skipping on `height`. |
 | `templates_other` | hypertable, 30-day chunks | small (measured in section 3) | Other chains, BIP34 parse failures, implausible heights. Same columns plus `chain` and `reason`. |
-| `sources` | table | ~40 | One per collector endpoint (today's `pool_name`). `smallint` id. |
+| `sources` | table | ~40 per site | One per collector endpoint (today's `pool_name`) per collection `site` (section 5). `smallint` id. |
 | `merkle_branch_sets` | table | candidate B only | Deduplicated branch sets with `sha256` digest. |
 | `blocks` | table | ~129k, +144/day | Keyed by `block_hash`, so fork blocks at the same height can coexist. New `seen_at` column. `analysis` stays `jsonb` (analytics plug-ins write free-form results). |
 | `pools` | table | 172 | mining-pools list. GIN index on `addresses`. |

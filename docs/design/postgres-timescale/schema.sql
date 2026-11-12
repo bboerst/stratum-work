@@ -15,12 +15,15 @@ SET timescaledb.enable_chunk_skipping = on;
 CREATE TYPE chain AS ENUM ('btc', 'bch', 'unknown');
 CREATE TYPE latency_method AS ENUM ('tcp', 'app');
 
--- One row per collector endpoint (today's mining_notify.pool_name). Collectors upsert themselves at startup.
+-- One row per collector endpoint (today's mining_notify.pool_name) per collection site. Collectors upsert themselves at
+-- startup. `site` = where the collector runs; timing/latency are only comparable within a site (design doc section 5).
 CREATE TABLE sources (
     id            smallint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          text NOT NULL UNIQUE,
+    name          text NOT NULL,
+    site          text NOT NULL,
     stratum_url   text,
-    first_seen_at timestamptz NOT NULL DEFAULT now()
+    first_seen_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (name, site)
 );
 
 -- Bitcoin block templates (mining.notify), one row per notification.

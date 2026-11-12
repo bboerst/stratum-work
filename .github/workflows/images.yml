@@ -29,8 +29,12 @@ on:
 permissions:
   contents: read
 
+# Pull requests: one run per PR, superseded runs cancelled. Pushes to main: one group per commit, so no run is ever
+# cancelled. GitHub keeps only one *pending* run per group and cancels the rest even with cancel-in-progress: false,
+# and each push run builds only what its own commit changed, so a shared group silently dropped images when several
+# PRs merged close together. Parallel runs can leave :main briefly on an older commit; deployments pin sha-<7>.
 concurrency:
-  group: images-${{ github.event_name }}-${{ github.ref }}
+  group: images-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

@@ -1,0 +1,46 @@
+# Dependency update PRs (#118). Grouped, so each ecosystem and directory opens one PR per week instead of one per
+# package. A 7-day cooldown skips versions published less than a week ago (supply-chain safety); security updates
+# ignore the cooldown. Base images are pinned as `<version>@sha256:<digest>`, and Dependabot updates both parts.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    # Majors (e.g. Prisma 7, which changes MongoDB support) get their own PRs and a separate review.
+
+  - package-ecosystem: pip
+    directories: [/collector, /backend]
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/web, /collector, /backend, /postgres]
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      # Stay on the current major lines; moving Node 24 → 26 or Python 3.13 → 3.14 is a deliberate change.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+      - dependency-name: python
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: ghcr.io/cloudnative-pg/postgresql
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    groups:
+      actions:
+        patterns: ["*"]

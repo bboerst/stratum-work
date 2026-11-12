@@ -13,7 +13,7 @@ PY_IMAGE=python:3.13-slim
 NET=m2p-e2e-$$; PG=m2p-e2e-pg-$$; MONGO=m2p-e2e-mongo-$$; PY=m2p-e2e-py-$$
 TMP=$(mktemp -d); ok=0; bad=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "  PASS  $1"; ok=$((ok+1)); else echo "  FAIL  $1"; bad=$((bad+1)); fi; }
-cleanup() { docker rm -f "$PG" "$MONGO" "$PY" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; rm -rf "$TMP"; }
+cleanup() { docker rm -fv "$PG" "$MONGO" "$PY" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT
 
 docker network create "$NET" >/dev/null

@@ -11,7 +11,7 @@ IMAGE=timescale/timescaledb:2.30.2-pg18; CNPG=0
 if [ "${1:-}" = "--image" ]; then IMAGE=$2; CNPG=1; fi
 NET=mig-test-$$; PG=mig-pg-$$
 ok=0; bad=0; check() { if eval "$2" >/dev/null 2>&1; then echo "  PASS  $1"; ok=$((ok+1)); else echo "  FAIL  $1"; bad=$((bad+1)); fi; }
-cleanup() { docker rm -f "$PG" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
+cleanup() { docker rm -fv "$PG" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
 trap cleanup EXIT
 
 docker network create "$NET" >/dev/null

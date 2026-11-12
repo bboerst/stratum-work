@@ -29,9 +29,7 @@ CREATE TABLE sources (
 -- Stored losslessly: hex fields as bytea (half the size), hex integers as bigint. Re-encoding gives back what
 -- the pool sent (section 3 verifies that no prod values are upper-case or odd-length hex).
 CREATE TABLE templates (
-    received_at        timestamptz NOT NULL,  -- collector receive time, true UTC (µs)
-    received_at_offset_s integer   NOT NULL DEFAULT 0,  -- seconds subtracted during migration to fix historical
-                                                        -- local-time recording (design doc section 5); 0 for new rows
+    received_at        timestamptz NOT NULL,  -- collector receive time, UTC (µs)
     source_id          smallint    NOT NULL REFERENCES sources (id),
     height             integer     NOT NULL,  -- BIP34 height from the coinbase, validated against our tip
     job_id             text        NOT NULL,

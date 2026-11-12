@@ -315,16 +315,10 @@ web:          stratum.work → old ───────────────
 
 ### Backfill conversion
 Per document → row (all lossless):
-- `timestamp` → `received_at timestamptz` (µs precision; the ns remainder is dropped, below the collectors' real clock precision). **History has three formats, and the converter must handle all of them:**
-  - 16-hex-digit nanoseconds from `time.time_ns()` (current collectors)
-  - ISO-8601 strings **without a timezone** (older collectors; cf. #46)
-  - BSON datetimes
-- **Historical local-time correction.** For a while, timestamps were recorded in US Mountain local time instead of UTC. The maintainer's correction is by height:
-  - heights ≤ 868,638 (MDT, UTC−6) → subtract 6 h
-  - heights 868,639 to ~880,226 (MST, UTC−7) → subtract 7 h
-  - later heights → no correction
-
-  Before the backfill, **verify against the data**: the exact switch heights (the source has an off-by-two ambiguity at 880,226/880,227), and **which timestamp formats** carry the offset (`time.time_ns()` hex values are UTC regardless of server timezone, so they may not need it). The check is the gap between each height's first template and its preceding block's time: about 0 for correct data, about −6 h / −7 h for affected data. The subtracted seconds are stored per row in `received_at_offset_s` (0 for nearly all rows; compresses to almost nothing), so the correction is auditable and reversible.
+- `timestamp` → `received_at timestamptz` (µs precision; the ns remainder is dropped, below the collectors' real clock precision). **History has two formats, and the converter handles both** (and BSON datetimes, defensively):
+  - **ISO-8601 without a timezone,** for heights up to 880,228. **Parse as UTC.**
+  - **16-hex-digit nanoseconds** from `time.time_ns()`, from height 880,227 onward (both formats appear at 880,227–880,228).
+- **No timezone correction is needed (verified 2026-11-12).** The ISO strings are already UTC. Parsed as UTC, every sampled height's first template lands within ~0.01 h of the preceding block's header time (860,000; both sides of 868,638/868,639; up to 880,226; and the hex range after). A suspected 6 h / 7 h (MDT/MST) offset turned out to be a **parsing artifact**: Python's `datetime.fromisoformat(s).timestamp()` treats a timezone-less string as the *machine's local time*, so analysis scripts run in US Mountain time needed to subtract 6 h / 7 h to undo that. **The migrator must not apply that offset.** It runs in UTC, so doing so would shift pre-880,227 timestamps 6–7 h early. Scripts should parse with `.replace(tzinfo=timezone.utc)` instead.
 - `coinbase1`, `coinbase2`, `prev_hash`, `extranonce1`, `merkle_branches[]` hex → `bytea` (branches concatenated in order). `version`, `nbits`, `ntime` hex → `bigint`. `lat_ms`/`lat_m` as-is.
 - **Height is re-derived from `coinbase1`** with the fixed parser (#108), not copied. The stored value is wrong for templates whose push isn't 3 bytes.
 - **Routing**, with the same rules as live ingest. A template goes to `templates_other` with a `reason` if any of these holds:
@@ -344,7 +338,7 @@ Per document → row (all lossless):
 - **Routing report:** counts per `reason` in `templates_other`, with samples, reviewed by hand once (it also settles #98's "how many, which pools, which chains").
 - **Parallel window (approximate):** per `(height, source)` template counts, old vs new collectors. These should be close but not identical (different network path, reconnect timing).
 - **Read parity:** the R1–R11 queries return the same results on both backends for a sample of heights (scripted).
-- **Timestamp sanity, every height:** first template minus block(h−1) time is within a few minutes after correction, with no ±6–7 h outliers left. Run per timestamp format.
+- **Timestamp sanity, every height:** first template minus block(h−1) header time stays within minutes, per timestamp format. This catches any mis-parsed timezone (a ±6–7 h outlier) or a clock problem. The sampled check already passed on production for both formats.
 
 ### Collector site
 New collectors run from a different place on the network, so **absolute latency and first-seen times change at T0**. Comparisons between pools at the same height stay valid, because every pool is measured from the same site.

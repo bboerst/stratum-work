@@ -1,4 +1,5 @@
-# Build the web, backend and collector container images (multi-arch: amd64 + arm64).
+# Build the web, backend, collector and postgres container images (multi-arch: amd64 + arm64).
+# postgres = CloudNativePG Postgres + TimescaleDB (postgres/Dockerfile).
 #
 #   pull_request        build changed components for both platforms, push nothing (catches broken Dockerfiles)
 #   push to main        build + push changed components as  bboerst/stratum-work-<component>:sha-<7> and :main
@@ -12,17 +13,17 @@ name: images
 
 on:
   pull_request:
-    paths: ["web/**", "backend/**", "collector/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "postgres/**", ".github/workflows/images.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "backend/**", "collector/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "postgres/**", ".github/workflows/images.yml"]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       components:
-        description: "Space-separated components to build (web backend collector)"
-        default: "web backend collector"
+        description: "Space-separated components to build (web backend collector postgres)"
+        default: "web backend collector postgres"
         required: true
 
 permissions:
@@ -57,7 +58,7 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          all="web backend collector"
+          all="web backend collector postgres"
           short=$(git rev-parse --short=7 HEAD)
 
           changed_components() {  # $1 = base commit

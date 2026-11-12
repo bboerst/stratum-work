@@ -1,8 +1,8 @@
 pika==1.4.4
 pymongo==4.19.0
-pyzmq==27.2.0
+pyzmq==27.3.0
 PySocks==1.7.1
 python-bitcoinrpc==1.0
 requests==2.34.2
 setuptools==84.2.1
-psycopg[binary]==3.3.6
+psycopg[binary]==3.3.8

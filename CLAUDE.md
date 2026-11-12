@@ -37,5 +37,10 @@ The README shows how to run these inside the containers.
 - **`mining_notify` is large and append-only:** about 136M documents in production. It's indexed on `_id` (UUID string, not time-ordered) and `height`. Range queries should go through `height`. `timestamp` is a hex-nanosecond string and isn't indexed.
 - Templates for height `h` are the work for the block *after* tip `h-1`.
 
-## Deployment
-Images are built by GitHub Actions on a **GitHub release** (`.github/workflows/*-docker-release.yml`). Production deployment is managed in a separate repository.
+## Images and deployment
+`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend` and `collector`:
+- **PRs:** build the changed components, push nothing.
+- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component.
+- **Releases:** push all components as `:<tag>` and `:latest`.
+
+Deployments pin `sha-<7>` tags, and the same image is promoted from dev to prod, never rebuilt. Production deployment is managed in a separate repository. Never build or push images by hand.

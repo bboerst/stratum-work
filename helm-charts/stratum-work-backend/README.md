@@ -30,6 +30,8 @@ The following table lists the configurable parameters of the chart and their def
 | `replicaCount` | Number of replicas | `1` |
 | `args` | Command line arguments | `[]` |
 | `env` | Environment variables | See values.yaml |
+| `envValueFrom` | Environment variables from Secrets/ConfigMaps (`valueFrom`), e.g. `PG_PASSWORD` | `{}` |
+| `extraVolumes` / `extraVolumeMounts` | Extra volumes, e.g. a CA certificate for `PG_SSLROOTCERT` | `[]` |
 | `service.enabled` | Enable service | `true` |
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `8001` |
@@ -66,6 +68,34 @@ The backend service can be configured with the following environment variables:
 - `POOL_LIST_URL`: URL to fetch mining pool definitions
 - `POOL_UPDATE_INTERVAL`: Interval in seconds to check for pool definition updates
 - `LOCAL_POOL_FILE`: Path to a local JSON file containing pool definitions
+
+### Bitcoin RPC options
+- `BITCOIN_RPC_SCHEME`: `http` (default) or `https`
+- `BITCOIN_RPC_CA_FILE`: CA bundle for an https node with a private CA; never disable verification
+- `BITCOIN_RPC_TIMEOUT`: RPC timeout in seconds (default 30)
+
+### Storage backend (Postgres)
+- `DB_BACKEND`: `mongodb` (default) or `postgres`
+- `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_SSLMODE`, `PG_SSLROOTCERT`: Postgres connection, as separate fields (never a URL)
+- `PG_PASSWORD`: from a Secret via `envValueFrom`
+
+Example (CloudNativePG, verified TLS):
+```yaml
+env:
+  DB_BACKEND: postgres
+  PG_HOST: stratum-pg-rw
+  PG_USER: backend
+  PG_SSLMODE: verify-full
+  PG_SSLROOTCERT: /etc/postgres-ca/ca.crt
+envValueFrom:
+  PG_PASSWORD:
+    secretKeyRef: { name: stratum-pg-backend, key: password }
+extraVolumes:
+  - name: postgres-ca
+    secret: { secretName: stratum-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
+extraVolumeMounts:
+  - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+```
 
 ## Command Line Arguments
 

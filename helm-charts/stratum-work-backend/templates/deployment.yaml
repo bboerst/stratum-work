@@ -37,8 +37,16 @@ spec:
         {{- end }}
         env:
         {{- range $key, $value := .Values.env }}
+        {{- if hasKey $.Values.envValueFrom $key }}
+        {{- fail (printf "env and envValueFrom both define %s" $key) }}
+        {{- end }}
         - name: {{ $key }}
           value: {{ $value | quote }}
+        {{- end }}
+        {{- range $key, $ref := .Values.envValueFrom }}
+        - name: {{ $key }}
+          valueFrom:
+            {{- toYaml $ref | nindent 12 }}
         {{- end }}
         {{- if .Values.service.enabled }}
         ports:
@@ -48,6 +56,14 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
+        {{- with .Values.extraVolumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

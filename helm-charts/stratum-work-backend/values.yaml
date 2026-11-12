@@ -40,6 +40,38 @@ env:
   POOL_UPDATE_INTERVAL: "86400"
   LOCAL_POOL_FILE: "pool_definitions.json"
 
+  # Optional settings (defaults shown, so leaving them out keeps today's behavior):
+  # BITCOIN_RPC_SCHEME: "http"         # or https
+  # BITCOIN_RPC_CA_FILE: ""            # CA bundle for https RPC with a private CA (mount it with extraVolumes)
+  # BITCOIN_RPC_TIMEOUT: "30"          # seconds
+  # ENABLE_HISTORICAL_DATA: "true"
+  #
+  # Storage backend (#112): mongodb (default) or postgres. With postgres, the MONGODB_* settings are unused.
+  # DB_BACKEND: "mongodb"
+  # PG_HOST: "postgres"
+  # PG_PORT: "5432"
+  # PG_DATABASE: "stratum"
+  # PG_USER: "backend"                 # a member of the stratum_backend role
+  # PG_SSLMODE: "verify-full"          # libpq sslmode; production uses verify-full with the cluster CA
+  # PG_SSLROOTCERT: "/etc/postgres-ca/ca.crt"
+  # PG_PASSWORD: take it from a Secret with envValueFrom instead of putting it here
+
+# Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
+#   envValueFrom:
+#     PG_PASSWORD:
+#       secretKeyRef: { name: stratum-pg-backend, key: password }
+# A name may not appear in both env and envValueFrom.
+envValueFrom: {}
+
+# Extra volumes and mounts, e.g. a CA certificate for PG_SSLROOTCERT / BITCOIN_RPC_CA_FILE:
+#   extraVolumes:
+#     - name: postgres-ca
+#       secret: { secretName: stratum-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
+#   extraVolumeMounts:
+#     - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+extraVolumes: []
+extraVolumeMounts: []
+
 service:
   enabled: true
   type: ClusterIP

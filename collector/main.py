@@ -44,6 +44,11 @@ except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
     from pgsink import PostgresConfig, PostgresSink  # type: ignore
 
 try:
+    from collector.rmqsink import RabbitMQConfig, RabbitMQPublisher
+except ImportError:  # pragma: no cover - allows `python3 collector/main.py`
+    from rmqsink import RabbitMQConfig, RabbitMQPublisher  # type: ignore
+
+try:
     from collector.chain_detection import (
         BCHConfirmationCache,
         BCHConfirmer,
@@ -86,6 +91,7 @@ cached_mongo_client = None
 cached_mongo_collection = None
 cached_mongo_config = None
 postgres_sink = None  # PostgresSink when --pg-host/--pg-user are set (#111)
+rabbitmq_publisher = None  # RabbitMQPublisher when RabbitMQ credentials are set (#141)
 
 
 def require_dependency(module, name):
@@ -285,8 +291,6 @@ class Watcher:
         self.proxy_host = proxy_host
         self.proxy_port = proxy_port
         self.sock = None
-        self.connection = None
-        self.channel = None
         self.max_retries = 5
         self.retry_delay = 5
         self.enable_stratum_client = enable_stratum_client
@@ -450,37 +454,6 @@ class Watcher:
         self._probe_stop.set()
         self._probe_thread = None
 
-    def connect_to_rabbitmq(self):
-        require_dependency(pika, "pika")
-        for attempt in range(self.max_retries):
-            try:
-                credentials = pika.PlainCredentials(self.rabbitmq_username, self.rabbitmq_password)
-                self.connection = pika.BlockingConnection(pika.ConnectionParameters(self.rabbitmq_host, self.rabbitmq_port, '/', credentials))
-                self.channel = self.connection.channel()
-                self.channel.exchange_declare(exchange=self.rabbitmq_exchange, exchange_type='fanout', durable=True)
-                LOG.info("Successfully connected to RabbitMQ")
-                return
-            except Exception as e:
-                LOG.error(f"Failed to connect to RabbitMQ (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
-                else:
-                    raise
-
-    def publish_to_rabbitmq(self, message):
-        for attempt in range(self.max_retries):
-            try:
-                LOG.info(f"Publishing message to RabbitMQ: {json.dumps(message)}")
-                self.channel.basic_publish(exchange=self.rabbitmq_exchange, routing_key='', body=json.dumps(message))
-                return
-            except Exception as e:
-                LOG.error(f"Failed to publish to RabbitMQ (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
-                    self.connect_to_rabbitmq()  # Try to reconnect
-                else:
-                    raise
-
     def connect_to_stratum(self):
         for attempt in range(self.max_retries):
             try:
@@ -537,8 +510,8 @@ class Watcher:
                 insert_notification(document, self.db_url, self.db_name, self.db_username, self.db_password)
             if postgres_sink is not None:
                 postgres_sink.submit(document)   # non-blocking; written by the sink's own thread
-            if self.rabbitmq_enabled:
-                self.publish_to_rabbitmq(document)
+            if rabbitmq_publisher is not None:
+                rabbitmq_publisher.submit(document)   # non-blocking; published by its own thread (#141)
         elif method == "mining.set_difficulty":
             self.current_difficulty = msg.get("params", [None])[0]
             LOG.info(f"mining.set_difficulty: {self.current_difficulty}")
@@ -870,6 +843,13 @@ def main():
         LOG.warning("Initial BTC tip setup failed; classification disabled until tip data is available: %s", exc)
     start_tip_listener(args)
 
+    global rabbitmq_publisher
+    if rabbitmq_enabled:
+        rabbitmq_publisher = RabbitMQPublisher(RabbitMQConfig(
+            host=args.rabbitmq_host, port=args.rabbitmq_port, username=args.rabbitmq_username,
+            password=args.rabbitmq_password, exchange=args.rabbitmq_exchange,
+        )).start()
+
     global postgres_sink
     if args.pg_host and args.pg_user:
         postgres_sink = PostgresSink(
@@ -910,8 +890,6 @@ def main():
                     latency_probe_interval=args.latency_probe_interval,
                     stratum_user_agent=args.stratum_user_agent,
                 )
-                if rabbitmq_enabled:
-                    w.connect_to_rabbitmq()
                 w.connect_to_stratum()
                 w.run_proxy(client_conn)
             except KeyboardInterrupt:
@@ -921,8 +899,6 @@ def main():
             finally:
                 try:
                     w.close()
-                    if rabbitmq_enabled and w.connection:
-                        w.connection.close()
                     if db_enabled:
                         close_cached_mongo_client()
                 except Exception:
@@ -945,16 +921,12 @@ def main():
                 stratum_user_agent=args.stratum_user_agent,
             )
             try:
-                if rabbitmq_enabled:
-                    w.connect_to_rabbitmq()
                 w.get_stratum_work(keep_alive=args.keep_alive)
             except KeyboardInterrupt:
                 break
             finally:
                 w.stop_latency_probes()
                 w.close()
-                if rabbitmq_enabled and w.connection:
-                    w.connection.close()
                 if db_enabled:
                     close_cached_mongo_client()
 

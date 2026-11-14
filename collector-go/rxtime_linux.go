@@ -3,7 +3,7 @@
 package main
 
 import (
-	"errors"
+	"io"
 	"net"
 	"time"
 	"unsafe"
@@ -17,15 +17,10 @@ import (
 // recently received segment included in the read, i.e. the arrival of the bytes that completed the data returned.
 
 type rxConn struct {
-	raw  syscallConn
-	oob  []byte
-	ok   bool // SO_TIMESTAMPNS enabled
-	last int64
-}
-
-type syscallConn interface {
-	Read(func(fd uintptr) bool) error
-	Control(func(fd uintptr)) error
+	raw interface {
+		Read(func(fd uintptr) bool) error
+	}
+	oob []byte
 }
 
 func newRxConn(c net.Conn) *rxConn {
@@ -37,25 +32,24 @@ func newRxConn(c net.Conn) *rxConn {
 	if err != nil {
 		return nil
 	}
-	r := &rxConn{raw: raw, oob: make([]byte, unix.CmsgSpace(int(unsafe.Sizeof(unix.Timespec{}))))}
+	enabled := false
 	_ = raw.Control(func(fd uintptr) {
-		r.ok = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_TIMESTAMPNS, 1) == nil
+		enabled = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_TIMESTAMPNS, 1) == nil
 	})
-	if !r.ok {
+	if !enabled {
 		return nil
 	}
-	return r
+	return &rxConn{raw: raw, oob: make([]byte, unix.CmsgSpace(int(unsafe.Sizeof(unix.Timespec{}))))}
 }
 
-var errEOF = errors.New("EOF")
-
-// read reads into p and returns (n, kernel receive time in ns or 0 if none was attached).
+// read reads into p and returns (n, kernel receive time in ns or 0 if none was attached). It honors the conn's
+// read deadline (the runtime poller returns os.ErrDeadlineExceeded).
 func (r *rxConn) read(p []byte) (int, int64, error) {
 	var n, oobn int
 	var rerr error
 	err := r.raw.Read(func(fd uintptr) bool {
 		n, oobn, _, _, rerr = unix.Recvmsg(int(fd), p, r.oob, 0)
-		return !(rerr == unix.EAGAIN || rerr == unix.EWOULDBLOCK)
+		return rerr != unix.EAGAIN && rerr != unix.EWOULDBLOCK
 	})
 	if err == nil {
 		err = rerr
@@ -64,7 +58,7 @@ func (r *rxConn) read(p []byte) (int, int64, error) {
 		return 0, 0, err
 	}
 	if n == 0 {
-		return 0, 0, errEOF
+		return 0, 0, io.EOF
 	}
 	var ts int64
 	if msgs, perr := unix.ParseSocketControlMessage(r.oob[:oobn]); perr == nil {
@@ -77,4 +71,29 @@ func (r *rxConn) read(p []byte) (int, int64, error) {
 		}
 	}
 	return n, ts, nil
+}
+
+// sampleTCPRTTUs reads the kernel's smoothed RTT (tcpi_rtt, µs) of a connected TCP socket.
+func sampleTCPRTTUs(c net.Conn) (int64, bool) {
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		return 0, false
+	}
+	raw, err := tc.SyscallConn()
+	if err != nil {
+		return 0, false
+	}
+	var rtt int64
+	var got bool
+	_ = raw.Control(func(fd uintptr) {
+		buf := make([]byte, tcpInfoLen)
+		l := uint32(len(buf))
+		_, _, e := unix.Syscall6(unix.SYS_GETSOCKOPT, fd, unix.IPPROTO_TCP, unix.TCP_INFO,
+			uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&l)), 0)
+		if e != 0 {
+			return
+		}
+		rtt, got = parseTCPInfoRTTUs(buf[:l])
+	})
+	return rtt, got
 }

@@ -2,255 +2,193 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// Port of collector/pgsink.py: route a template to `templates` or `templates_other`, convert it losslessly
-// (to_row), and write it from a background goroutine with a bounded drop-oldest queue, so collection never waits on
-// the database and a database outage never stalls or crashes the collector.
-
-const (
-	tipBehind = 6
-	tipAhead  = 2
-)
-
-var columns = []string{"received_at", "source_id", "height", "job_id", "prev_hash", "coinbase1", "coinbase2",
-	"merkle_branches", "version", "nbits", "ntime", "clean_jobs", "extranonce1", "extranonce2_length", "latency_ms",
-	"latency_method"}
-
-// Template is the collector's document (Python create_notification_document), with params kept as received.
-type Template struct {
-	TsNs          int64
-	Height        int64 // 0 = unparseable (Python sentinel)
-	JobID         string
-	PrevHash      string
-	Coinbase1     string
-	Coinbase2     string
-	Merkle        []string
-	Version       string
-	Nbits         string
-	Ntime         string
-	CleanJobs     bool
-	Extranonce1   string
-	HasExtranonce bool // false if subscribe gave no extranonce1 (Python: None -> to_row fails -> dropped_invalid)
-	Extranonce2   int
-	ChainFamily   string // "", "bch", "unknown"
-	LatencyMs     *float32
-	LatencyMethod *string
-}
-
-type route struct{ table, chain, reason string }
-
-func routeOf(height int64, chainFamily string, tip int64, tipOK bool) route {
-	switch {
-	case height <= 0:
-		return route{"templates_other", "unknown", "height_parse_failed"}
-	case chainFamily == "bch":
-		return route{"templates_other", "bch", "bch"}
-	case chainFamily != "":
-		return route{"templates_other", "unknown", "unknown_chain"}
-	case tipOK && !(tip-tipBehind <= height && height <= tip+tipAhead):
-		return route{"templates_other", "unknown", "height_implausible"}
-	}
-	return route{table: "templates"}
-}
-
-// u32 mirrors Python _u32 = int(value, 16) bounded to 32 bits (int() also accepts a 0x prefix and surrounding space).
-func u32(s string) (int64, error) {
-	t := strings.TrimSpace(s)
-	t = strings.TrimPrefix(strings.TrimPrefix(t, "0x"), "0X")
-	v, err := strconv.ParseUint(t, 16, 32)
-	if err != nil {
-		return 0, fmt.Errorf("not a 32-bit value: %q", s)
-	}
-	return int64(v), nil
-}
-
-func toRow(t Template, sourceID int16) ([]any, error) {
-	if !t.HasExtranonce {
-		return nil, errors.New("no extranonce1 from subscribe")
-	}
-	prev, e1 := hex.DecodeString(t.PrevHash)
-	cb1, e2 := hex.DecodeString(t.Coinbase1)
-	cb2, e3 := hex.DecodeString(t.Coinbase2)
-	en1, e4 := hex.DecodeString(t.Extranonce1)
-	if err := errors.Join(e1, e2, e3, e4); err != nil {
-		return nil, err
-	}
-	var branches []byte
-	for _, b := range t.Merkle {
-		d, err := hex.DecodeString(b)
-		if err != nil {
-			return nil, err
-		}
-		branches = append(branches, d...)
-	}
-	if branches == nil {
-		branches = []byte{}
-	}
-	ver, err := u32(t.Version)
-	if err != nil {
-		return nil, err
-	}
-	nbits, err := u32(t.Nbits)
-	if err != nil {
-		return nil, err
-	}
-	ntime, err := u32(t.Ntime)
-	if err != nil {
-		return nil, err
-	}
-	receivedAt := time.UnixMicro(t.TsNs / 1000).UTC() // µs precision, like Python (ns // 1000)
-	var lm any
-	if t.LatencyMethod != nil && (*t.LatencyMethod == "tcp" || *t.LatencyMethod == "app") {
-		lm = *t.LatencyMethod
-	}
-	var lms any
-	if t.LatencyMs != nil {
-		lms = *t.LatencyMs
-	}
-	return []any{receivedAt, sourceID, int32(t.Height), t.JobID, prev, cb1, cb2, branches, ver, nbits, ntime,
-		t.CleanJobs, en1, int16(t.Extranonce2), lms, lm}, nil
-}
+// Port of collector/pgsink.py: route each document to `templates` or `templates_other` (route), convert it
+// losslessly (toRow), and write from a background goroutine with a bounded drop-oldest queue, so collection never
+// waits on the database and a database outage never stalls or crashes the collector.
 
 type PGConfig struct {
-	Host, Port, Database, User, Password, SSLMode, Site string
+	Host, Port, Database, User, Password, SSLMode, Site, Replica string
+	ConnectTimeout                                               time.Duration
+}
+
+// pgConn is what the sink needs from a database connection (a fake in tests).
+type pgConn interface {
+	UpsertSource(ctx context.Context, name, site, replica, stratumURL string) (int16, error)
+	WriteBatch(ctx context.Context, btc, other [][]any) error
+	Close()
 }
 
 type PostgresSink struct {
-	cfg        PGConfig
-	sourceName string
-	stratumURL string
-	tip        *TipState
-	maxQueue   int
-	batchSize  int
-	log        *slog.Logger
+	cfg           PGConfig
+	sourceName    string
+	stratumURL    string
+	tip           func() (int64, bool)
+	maxQueue      int
+	batchSize     int
+	statsInterval time.Duration
+	connect       func(ctx context.Context, cfg PGConfig) (pgConn, error)
+	log           *slog.Logger
 
 	mu    sync.Mutex
 	cond  *sync.Cond
-	queue []Template
-	stats map[string]int
+	queue []*Document
+	stop  bool
+	stats map[string]int64
+	done  chan struct{}
+
+	conn     pgConn
+	sourceID int16
 }
 
-func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip *TipState, log *slog.Logger) *PostgresSink {
+var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors"}
+
+func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (int64, bool), log *slog.Logger) *PostgresSink {
 	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 50_000,
-		batchSize: 500, log: log, stats: map[string]int{}}
+		batchSize: 500, statsInterval: 10 * time.Minute, connect: pgxConnect, log: log, stats: map[string]int64{},
+		done: make(chan struct{})}
+	for _, k := range pgStatKeys {
+		s.stats[k] = 0
+	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
 }
 
-// Submit queues a template. Never blocks; drops the oldest when full.
-func (s *PostgresSink) Submit(t Template) {
+func (s *PostgresSink) Start() *PostgresSink {
+	go s.run()
+	return s
+}
+
+// Submit queues a document. Never blocks on I/O; drops (and counts) the oldest when the queue is full.
+func (s *PostgresSink) Submit(d *Document) {
 	s.mu.Lock()
 	if len(s.queue) >= s.maxQueue {
+		s.queue[0] = nil
 		s.queue = s.queue[1:]
 		s.stats["dropped_queue_full"]++
 	}
-	s.queue = append(s.queue, t)
+	s.queue = append(s.queue, d)
 	s.stats["submitted"]++
 	s.mu.Unlock()
 	s.cond.Signal()
 }
 
-func (s *PostgresSink) take() []Template {
+func (s *PostgresSink) Queued() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.queue) == 0 {
+	return len(s.queue)
+}
+
+func (s *PostgresSink) Stats() map[string]int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int64, len(s.stats))
+	for k, v := range s.stats {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *PostgresSink) count(k string, n int) {
+	s.mu.Lock()
+	s.stats[k] += int64(n)
+	s.mu.Unlock()
+}
+
+// Close stops the worker after a best-effort flush of what's queued (waits at most timeout).
+func (s *PostgresSink) Close(timeout time.Duration) {
+	s.mu.Lock()
+	s.stop = true
+	s.mu.Unlock()
+	s.cond.Broadcast()
+	select {
+	case <-s.done:
+	case <-time.After(timeout):
+	}
+}
+
+func (s *PostgresSink) takeBatch() []*Document {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.queue) == 0 && !s.stop {
 		s.cond.Wait()
 	}
 	n := min(s.batchSize, len(s.queue))
-	b := append([]Template(nil), s.queue[:n]...)
+	b := append([]*Document(nil), s.queue[:n]...)
+	clear(s.queue[:n])
 	s.queue = s.queue[n:]
 	return b
 }
 
-func (s *PostgresSink) requeue(b []Template) {
+// requeueFront puts a failed batch back at the front, keeping the newest entries if the queue can't hold all.
+func (s *PostgresSink) requeueFront(b []*Document) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	room := s.maxQueue - len(s.queue)
 	if room < len(b) {
-		s.stats["dropped_queue_full"] += len(b) - room
-		b = b[len(b)-room:]
+		s.stats["dropped_queue_full"] += int64(len(b) - max(room, 0))
+		b = b[len(b)-max(room, 0):]
 	}
-	s.queue = append(append([]Template(nil), b...), s.queue...)
-	s.mu.Unlock()
+	s.queue = append(append(make([]*Document, 0, len(b)+len(s.queue)), b...), s.queue...)
 }
 
-func (s *PostgresSink) connect(ctx context.Context) (*pgx.Conn, int16, error) {
-	// Keyword DSN without the password (set separately), so a connection error can never echo it. sslmode follows
-	// PG_SSLMODE like the Python sink (libpq semantics: prefer / require / verify-full / disable).
-	if _, err := strconv.Atoi(s.cfg.Port); err != nil {
-		return nil, 0, fmt.Errorf("invalid PG_PORT %q", s.cfg.Port)
+func (s *PostgresSink) disconnect() {
+	if s.conn != nil {
+		s.conn.Close()
+		s.conn = nil
 	}
-	dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s", s.cfg.Host, s.cfg.Port, s.cfg.Database,
-		s.cfg.User, s.cfg.SSLMode)
-	cc, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		return nil, 0, err
-	}
-	cc.Password = s.cfg.Password
-	cc.RuntimeParams["application_name"] = "stratum-work-collector-go"
-	cc.ConnectTimeout = 10 * time.Second
-	conn, err := pgx.ConnectConfig(ctx, cc)
-	if err != nil {
-		return nil, 0, err
-	}
-	var id int16
-	err = conn.QueryRow(ctx, `INSERT INTO sources (name, site, stratum_url) VALUES ($1, $2, $3)
-		ON CONFLICT (name, site) DO UPDATE SET stratum_url = EXCLUDED.stratum_url RETURNING id`,
-		s.sourceName, s.cfg.Site, s.stratumURL).Scan(&id)
-	if err != nil {
-		conn.Close(ctx)
-		return nil, 0, err
-	}
-	s.log.Info("postgres sink connected", "host", s.cfg.Host, "db", s.cfg.Database, "source", s.sourceName,
-		"site", s.cfg.Site, "source_id", id)
-	return conn, id, nil
 }
 
-func (s *PostgresSink) write(ctx context.Context, conn *pgx.Conn, sourceID int16, batch []Template) error {
-	tip, tipOK := s.tip.Current()
-	var btc, other [][]any
-	for _, t := range batch {
-		row, err := toRow(t, sourceID)
-		if err != nil {
-			s.count("dropped_invalid", 1)
-			s.log.Warn("dropping malformed template", "job_id", t.JobID, "err", err)
-			continue
-		}
-		r := routeOf(t.Height, t.ChainFamily, tip, tipOK)
-		if r.table == "templates" {
-			btc = append(btc, row)
-		} else {
-			other = append(other, append(row, r.chain, r.reason))
-		}
+func (s *PostgresSink) ensureConnected(ctx context.Context) error {
+	if s.conn != nil {
+		return nil
 	}
-	tx, err := conn.Begin(ctx)
+	conn, err := s.connect(ctx, s.cfg)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-	if len(btc) > 0 {
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates"}, columns, pgx.CopyFromRows(btc)); err != nil {
-			return err
+	id, err := conn.UpsertSource(ctx, s.sourceName, s.cfg.Site, s.cfg.Replica, s.stratumURL)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	s.conn, s.sourceID = conn, id
+	s.log.Info("postgres sink connected", "host", s.cfg.Host, "port", s.cfg.Port, "db", s.cfg.Database,
+		"user", s.cfg.User, "source", s.sourceName, "site", s.cfg.Site, "replica", s.cfg.Replica, "source_id", id)
+	return nil
+}
+
+func (s *PostgresSink) write(ctx context.Context, batch []*Document) error {
+	if err := s.ensureConnected(ctx); err != nil {
+		return err
+	}
+	tip, tipOK := s.tip()
+	var btc, other [][]any
+	for _, d := range batch {
+		row, err := toRow(d, s.sourceID)
+		if err != nil {
+			s.count("dropped_invalid", 1)
+			s.log.Warn("postgres sink: dropping malformed template", "job_id", truncate(pyStrOf(d.Params[pJobID]), 64),
+				"err", err)
+			continue
+		}
+		r := route(int64(row.Height), d.ChainFamily, tip, tipOK)
+		if r == routeBTC {
+			btc = append(btc, row.values())
+		} else {
+			other = append(other, append(row.values(), r.Chain, r.Reason))
 		}
 	}
-	if len(other) > 0 {
-		cols := append(append([]string(nil), columns...), "chain", "reason")
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates_other"}, cols, pgx.CopyFromRows(other)); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := s.conn.WriteBatch(ctx, btc, other); err != nil {
 		return err
 	}
 	s.count("written", len(btc))
@@ -258,46 +196,133 @@ func (s *PostgresSink) write(ctx context.Context, conn *pgx.Conn, sourceID int16
 	return nil
 }
 
-func (s *PostgresSink) count(k string, n int) {
-	s.mu.Lock()
-	s.stats[k] += n
-	s.mu.Unlock()
+func (s *PostgresSink) logStats() {
+	s.log.Info("postgres sink stats", "stats", fmtStats(s.Stats(), pgStatKeys), "queued", s.Queued())
 }
 
-func (s *PostgresSink) Run() {
+func fmtStats(m map[string]int64, keys []string) string {
+	out := "{"
+	for i, k := range keys {
+		if i > 0 {
+			out += ", "
+		}
+		out += "'" + k + "': " + strconv.FormatInt(m[k], 10)
+	}
+	return out + "}"
+}
+
+func (s *PostgresSink) run() {
+	defer close(s.done)
+	defer s.disconnect()
 	ctx := context.Background()
-	var conn *pgx.Conn
-	var sourceID int16
 	backoff := time.Second
 	lastStats := time.Now()
 	for {
-		batch := s.take()
-		if time.Since(lastStats) > 10*time.Minute {
-			s.mu.Lock()
-			b, _ := json.Marshal(s.stats)
-			s.mu.Unlock()
-			s.log.Info("postgres sink stats", "stats", string(b))
+		if time.Since(lastStats) >= s.statsInterval {
 			lastStats = time.Now()
+			s.logStats()
 		}
-		var err error
-		if conn == nil {
-			conn, sourceID, err = s.connect(ctx)
+		batch := s.takeBatch()
+		if len(batch) == 0 {
+			return // stopped and drained
 		}
-		if err == nil {
-			err = s.write(ctx, conn, sourceID, batch)
-		}
+		wctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		err := s.write(wctx, batch)
+		cancel()
 		if err == nil {
 			backoff = time.Second
 			continue
 		}
 		s.count("db_errors", 1)
-		s.log.Error("postgres sink write failed, retrying", "queued", len(batch), "in", backoff, "err", err)
-		if conn != nil {
-			conn.Close(ctx)
-			conn = nil
+		s.log.Error("postgres sink write failed, retrying", "queued", len(batch)+s.Queued(), "in", backoff, "err", err)
+		s.disconnect()
+		s.requeueFront(batch)
+		s.mu.Lock()
+		stopping := s.stop
+		s.mu.Unlock()
+		if stopping {
+			return
 		}
-		s.requeue(batch)
 		time.Sleep(backoff)
 		backoff = min(backoff*2, 60*time.Second)
 	}
+}
+
+// ── pgx implementation ───────────────────────────────────────────────────────────────────────────────────────────
+
+type pgxConn struct{ c *pgx.Conn }
+
+func pgxConnect(ctx context.Context, cfg PGConfig) (pgConn, error) {
+	// Keyword DSN without the password (set on the config), so a connection error can never echo it. sslmode has
+	// libpq semantics (prefer / require / verify-full / disable), like the Python sink.
+	if _, err := strconv.Atoi(cfg.Port); err != nil {
+		return nil, fmt.Errorf("invalid PG_PORT %q", cfg.Port)
+	}
+	cc, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s",
+		dsnQuote(cfg.Host), cfg.Port, dsnQuote(cfg.Database), dsnQuote(cfg.User), dsnQuote(cfg.SSLMode)))
+	if err != nil {
+		return nil, errors.New("invalid Postgres settings") // never echo the DSN
+	}
+	cc.Password = cfg.Password
+	cc.RuntimeParams["application_name"] = "stratum-work-collector-go"
+	cc.ConnectTimeout = cfg.ConnectTimeout
+	conn, err := pgx.ConnectConfig(ctx, cc)
+	if err != nil {
+		return nil, err
+	}
+	// The enum columns (chain, latency_method) need their types registered for binary COPY.
+	for _, t := range []string{"chain", "latency_method"} {
+		typ, err := conn.LoadType(ctx, t)
+		if err != nil {
+			_ = conn.Close(ctx)
+			return nil, fmt.Errorf("loading type %s: %w", t, err)
+		}
+		conn.TypeMap().RegisterType(typ)
+	}
+	return &pgxConn{conn}, nil
+}
+
+func dsnQuote(s string) string {
+	q := "'"
+	for _, r := range s {
+		if r == '\'' || r == '\\' {
+			q += `\`
+		}
+		q += string(r)
+	}
+	return q + "'"
+}
+
+func (p *pgxConn) UpsertSource(ctx context.Context, name, site, replica, stratumURL string) (int16, error) {
+	var id int16
+	err := p.c.QueryRow(ctx, `INSERT INTO sources (name, site, replica, stratum_url) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (name, site, replica) DO UPDATE SET stratum_url = EXCLUDED.stratum_url RETURNING id`,
+		name, site, replica, stratumURL).Scan(&id)
+	return id, err
+}
+
+func (p *pgxConn) WriteBatch(ctx context.Context, btc, other [][]any) error {
+	tx, err := p.c.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if len(btc) > 0 {
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates"}, pgColumns, pgx.CopyFromRows(btc)); err != nil {
+			return err
+		}
+	}
+	if len(other) > 0 {
+		cols := append(append([]string(nil), pgColumns...), "chain", "reason")
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates_other"}, cols, pgx.CopyFromRows(other)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (p *pgxConn) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.c.Close(ctx)
 }

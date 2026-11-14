@@ -264,6 +264,24 @@ def classify_notification_chain(height: int, prev_hash: str) -> str | None:
         )
         return None
 
+# Longest line accepted from a pool (or the relayed mining device), the same cap as collector-go (#105). A mining.notify
+# is a few KB. Without a cap, a peer that sends data without a newline grows the buffer until the collector is
+# OOM-killed, and searching the whole buffer on every 4 KiB read is quadratic.
+MAX_LINE_BYTES = 4 << 20
+
+
+class LineTooLong(EOFError):
+    """No newline within MAX_LINE_BYTES; handled like a dropped connection (close, then reconnect)."""
+
+
+def append_capped(buf, data, peer):
+    """buf + data, or LineTooLong if that holds MAX_LINE_BYTES without a newline (only data needs searching:
+    buf never holds a complete line when this is called)."""
+    if b"\n" not in data and len(buf) + len(data) > MAX_LINE_BYTES:
+        raise LineTooLong(f"{peer} sent {len(buf) + len(data)} bytes without a newline (cap {MAX_LINE_BYTES})")
+    return buf + data
+
+
 class Watcher:
     def __init__(self, url, userpass, pool_name, rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, rabbitmq_exchange, db_url, db_name, db_username, db_password, use_proxy=False, proxy_host=None, proxy_port=None, enable_stratum_client=False, stratum_client_port=None, rabbitmq_enabled=True, db_enabled=True, latency_probe_interval=60.0, stratum_user_agent=None):
         self.buf = b""
@@ -336,6 +354,8 @@ class Watcher:
         LOG.info("Socket initialized with 600 seconds timeout")
 
     def close(self):
+        # A partial line from this connection must not be glued to the next connection's first line.
+        self.buf = b""
         if self.sock:
             LOG.info(f"Closing connection to {self.purl.geturl()}")
             try:
@@ -351,18 +371,26 @@ class Watcher:
         """Return (parsed_msg, receipt_ts_ns). Timestamp is captured at the
         exact moment the socket read returns."""
         while True:
-            while b"\n" not in self.buf:
+            # The buffer is searched once; after that each read only searches its own bytes (no quadratic rescans).
+            have_line = b"\n" in self.buf
+            while not have_line:
                 try:
                     new_buf = self.sock.recv(4096)
                     if len(new_buf) == 0:
                         raise EOFError
-                    self.buf += new_buf
-                    # Capture the timestamp of the actual network receive event
-                    self.last_recv_ts_ns = time.time_ns()
-                    self.last_recv_monotonic_ns = time.monotonic_ns()
                 except Exception as e:
                     LOG.debug(f"Error receiving data: {e}")
                     raise EOFError
+                try:
+                    self.buf = append_capped(self.buf, new_buf, "pool")
+                except LineTooLong as e:
+                    LOG.warning(f"{e}; dropping the connection")
+                    self.buf = b""
+                    raise
+                # Capture the timestamp of the actual network receive event
+                self.last_recv_ts_ns = time.time_ns()
+                self.last_recv_monotonic_ns = time.monotonic_ns()
+                have_line = b"\n" in new_buf
 
             line, self.buf = self.buf.split(b"\n", 1)
             
@@ -575,7 +603,11 @@ class Watcher:
                 if not data:
                     LOG.error("Pool closed connection")
                     break
-                pool_buf += data
+                try:
+                    pool_buf = append_capped(pool_buf, data, "pool")
+                except LineTooLong as e:
+                    LOG.error(f"{e}; dropping the connection")
+                    break
                 while b"\n" in pool_buf:
                     line, pool_buf = pool_buf.split(b"\n", 1)
                     if not line:
@@ -603,7 +635,11 @@ class Watcher:
                 if not data:
                     LOG.info("Client closed connection")
                     break
-                client_buf += data
+                try:
+                    client_buf = append_capped(client_buf, data, "client")
+                except LineTooLong as e:
+                    LOG.error(f"{e}; dropping the connection")
+                    break
                 while b"\n" in client_buf:
                     line, client_buf = client_buf.split(b"\n", 1)
                     if not line:

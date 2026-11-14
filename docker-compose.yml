@@ -51,6 +51,7 @@ x-collector-base: &collector-base
     PG_PASSWORD: ${COLLECTOR_PG_PASSWORD:-}
     PG_SSLMODE: ${COLLECTOR_PG_SSLMODE:-prefer}
     COLLECTOR_SITE: ${COLLECTOR_SITE:-local}
+    COLLECTOR_REPLICA: ${COLLECTOR_REPLICA:-a}
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:

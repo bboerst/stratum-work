@@ -169,7 +169,7 @@ class Verifier:
                                                   (self.site,)).fetchall()}
         dropped = {r[0] for r in self.pg.execute(f"SELECT dropped_id FROM {SCHEMA}.duplicates WHERE site = %s AND NOT identical",
                                                  (self.site,)).fetchall()}
-        ids = dict(self.pg.execute("SELECT name, id FROM sources WHERE site = %s", (self.site,)).fetchall())
+        ids = dict(self.pg.execute("SELECT name, id FROM sources WHERE site = %s AND replica = 'a'", (self.site,)).fetchall())
         mismatch, samples, stats = Counter(), [], Counter()
         sql = """SELECT encode(prev_hash,'hex'), encode(coinbase1,'hex'), encode(coinbase2,'hex'),
                         encode(merkle_branches,'hex'), lpad(to_hex(version),8,'0'), lpad(to_hex(nbits),8,'0'),

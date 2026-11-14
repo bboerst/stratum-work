@@ -158,7 +158,7 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                "coinbase2": "ffffffff", "merkle_branches": ["aa" * 32, "bb" * 32], "version": "20000000", "nbits": "1702e5b4",
                "ntime": "69d72a43", "clean_jobs": True, "extranonce1": "abcd", "extranonce2_length": 8, "lat_ms": 12.5, "lat_m": "tcp"}
         with self.psycopg.connect(self.admin) as c:   # the backend role can't write templates; insert as admin
-            sid = c.execute("INSERT INTO sources (name, site) VALUES (%s, 'ci') ON CONFLICT (name, site) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+            sid = c.execute("INSERT INTO sources (name, site) VALUES (%s, 'ci') ON CONFLICT (name, site, replica) DO UPDATE SET name = EXCLUDED.name RETURNING id",
                             (doc["pool_name"],)).fetchone()[0]
             c.execute("""INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
                          version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length, latency_ms, latency_method)

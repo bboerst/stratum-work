@@ -105,6 +105,7 @@ class PostgresConfig:
     password: Optional[str]
     sslmode: str = "prefer"
     site: str = "local"
+    replica: str = "a"   # several collectors per pool and site (redundant collection) register separate sources
     connect_timeout: int = 10
 
     def connect_kwargs(self) -> dict:
@@ -183,16 +184,16 @@ class PostgresSink:
         self._conn = self._connect(**self.config.connect_kwargs())
         with self._conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO sources (name, site, stratum_url) VALUES (%s, %s, %s)
-                   ON CONFLICT (name, site) DO UPDATE SET stratum_url = EXCLUDED.stratum_url
+                """INSERT INTO sources (name, site, replica, stratum_url) VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (name, site, replica) DO UPDATE SET stratum_url = EXCLUDED.stratum_url
                    RETURNING id""",
-                (self.source_name, self.config.site, self.stratum_url),
+                (self.source_name, self.config.site, self.config.replica, self.stratum_url),
             )
             self._source_id = cur.fetchone()[0]
         self._conn.commit()
-        LOG.info("Postgres sink connected to %s:%s/%s as %s (source %r site %r -> id %s)", self.config.host,
-                 self.config.port, self.config.database, self.config.user, self.source_name, self.config.site,
-                 self._source_id)
+        LOG.info("Postgres sink connected to %s:%s/%s as %s (source %r site %r replica %r -> id %s)",
+                 self.config.host, self.config.port, self.config.database, self.config.user, self.source_name,
+                 self.config.site, self.config.replica, self._source_id)
 
     def _disconnect(self) -> None:
         try:

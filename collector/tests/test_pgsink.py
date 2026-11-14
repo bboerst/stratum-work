@@ -95,7 +95,7 @@ def wait_for(cond, timeout=5.0):
     return False
 
 
-CFG = PostgresConfig(host="h", port=5432, database="d", user="u", password="secret-pw", site="test")
+CFG = PostgresConfig(host="h", port=5432, database="d", user="u", password="secret-pw", site="test", replica="b")
 
 
 class SinkTests(unittest.TestCase):
@@ -110,7 +110,8 @@ class SinkTests(unittest.TestCase):
         sink.close()
         self.assertEqual(len(conn.rows["templates"]), 1)
         self.assertEqual([r[-1] for r in conn.rows["templates_other"]], ["height_implausible", "height_parse_failed"])
-        self.assertIn(("P", "test", "stratum+tcp://x:3333"), [p for _, p in conn.executed])
+        self.assertIn(("P", "test", "b", "stratum+tcp://x:3333"), [p for _, p in conn.executed])
+        self.assertIn("ON CONFLICT (name, site, replica)", conn.executed[0][0])
 
     def test_database_down_never_blocks_or_raises_and_recovers(self):
         attempts = {"n": 0}
@@ -175,7 +176,8 @@ class PostgresIntegrationTests(unittest.TestCase):
         if not admin:
             return  # the collector role can't SELECT templates; verification needs an admin connection
         with psycopg.connect(admin) as c:
-            sid = c.execute("SELECT id FROM sources WHERE name = %s AND site = 'ci'", (name,)).fetchone()[0]
+            sid, replica = c.execute("SELECT id, replica FROM sources WHERE name = %s AND site = 'ci'", (name,)).fetchone()
+            self.assertEqual(replica, "a")   # PostgresConfig default
             row = c.execute("""SELECT encode(prev_hash,'hex'), encode(coinbase1,'hex'), encode(merkle_branches,'hex'),
                                       lpad(to_hex(version),8,'0'), height FROM templates WHERE source_id = %s""", (sid,)).fetchone()
             d = doc()

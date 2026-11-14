@@ -146,11 +146,12 @@ func TestRowsPostgresWouldRefuseAreInvalid(t *testing.T) {
 // ── sink with a fake database ────────────────────────────────────────────────────────────────────────────────────
 
 type fakeDB struct {
-	mu         sync.Mutex
-	failWrites bool
-	upserts    [][4]string
-	rows       map[string][][]any
-	closed     int
+	mu          sync.Mutex
+	failWrites  bool
+	failRejects bool
+	upserts     [][4]string
+	rows        map[string][][]any
+	closed      int
 }
 
 func (f *fakeDB) UpsertSource(_ context.Context, name, site, replica, url string) (int16, error) {
@@ -172,6 +173,25 @@ func (f *fakeDB) WriteBatch(_ context.Context, btc, other [][]any) error {
 	f.rows["templates"] = append(f.rows["templates"], btc...)
 	f.rows["templates_other"] = append(f.rows["templates_other"], other...)
 	return nil
+}
+
+func (f *fakeDB) WriteRejects(_ context.Context, rows [][]any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failWrites || f.failRejects {
+		return errors.New("templates_rejected unavailable")
+	}
+	if f.rows == nil {
+		f.rows = map[string][][]any{}
+	}
+	f.rows["templates_rejected"] = append(f.rows["templates_rejected"], rows...)
+	return nil
+}
+
+func (f *fakeDB) count(table string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.rows[table])
 }
 
 func (f *fakeDB) Close() { f.mu.Lock(); f.closed++; f.mu.Unlock() }
@@ -337,14 +357,26 @@ func TestPostgresIntegration(t *testing.T) {
 		User: os.Getenv("PG_TEST_USER"), Password: os.Getenv("PG_TEST_PASSWORD"), SSLMode: "disable", Site: "ci",
 		Replica: "b", ConnectTimeout: 5 * time.Second}
 	name := fmt.Sprintf("itest-go-%d", time.Now().UnixMilli())
-	s := NewPostgresSink(cfg, name, "stratum+tcp://example:3333", func() (int64, bool) { return 975_499, true }, quietLog).Start()
+	s := NewPostgresSink(cfg, name, "stratum+tcp://example:3333", func() (int64, bool) { return 975_499, true }, quietLog)
+	s.quar.b = QuarantineBudget{Window: time.Hour, FullRows: 3, MaxRaw: 1 << 10, MetaRows: 0, MetaPrefix: 0}
+	s.Start()
 	s.Submit(testDoc(nil))
+	s.Submit(testDoc(map[string]string{"job_id": `"bad"`, "ntime": `"not-hex"`})) // quarantined (stage row)
+	s.SubmitReject(Rejection{TsNs: testNS, Stage: "json", Reason: "invalid JSON", Raw: []byte("{\x00\xff")})
+	s.SubmitReject(Rejection{TsNs: testNS, Stage: "json", Reason: "invalid JSON", Raw: []byte("{")})
+	if !waitFor(func() bool { return s.Stats()["rejects_written"] == 3 }, 15*time.Second) { // budget now spent
+		t.Fatal(s.Stats())
+	}
+	s.SubmitReject(Rejection{TsNs: testNS, Stage: "json", Reason: "invalid JSON", Raw: []byte("[")}) // marker row
 	other := testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"})
 	other.ChainFamily = "unknown"
 	s.Submit(other)
 	noLat := testDoc(map[string]string{"job_id": `"nolat"`, "no_latency": ""})
 	s.Submit(noLat)
-	if !waitFor(func() bool { st := s.Stats(); return st["written"]+st["written_other"] == 3 }, 15*time.Second) {
+	if !waitFor(func() bool {
+		st := s.Stats()
+		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4
+	}, 15*time.Second) {
 		t.Fatal(s.Stats())
 	}
 	s.Close(time.Second)
@@ -386,5 +418,44 @@ func TestPostgresIntegration(t *testing.T) {
 	var nulls int
 	if err := c.QueryRow(context.Background(), `SELECT count(*) FROM templates WHERE source_id = $1 AND job_id = 'nolat' AND latency_ms IS NULL AND latency_method IS NULL`, sid).Scan(&nulls); err != nil || nulls != 1 {
 		t.Error(err, nulls)
+	}
+	// Quarantine: the unstorable template and both undecodable lines with raw and hash; then, budget spent, the
+	// marker row and (written by Close) the window's count, both without raw or hash.
+	type rr struct {
+		stage, reason string
+		n, suppressed int32
+		raw           []byte
+		noSum, trunc  bool
+	}
+	var got []rr
+	rows, err := c.Query(context.Background(), `SELECT stage, reason, raw_length, suppressed, raw, raw_sha256 IS NULL,
+		raw_truncated FROM templates_rejected WHERE source_id = $1`, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var r rr
+		if err := rows.Scan(&r.stage, &r.reason, &r.n, &r.suppressed, &r.raw, &r.noSum, &r.trunc); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	var row, nulBytes, brace, marker, summary int
+	for _, r := range got {
+		switch {
+		case r.stage == "row" && strings.HasPrefix(r.reason, "ntime") && strings.Contains(string(r.raw), `"not-hex"`) && !r.noSum:
+			row++
+		case r.stage == "json" && string(r.raw) == "{\x00\xff" && r.n == 3 && !r.noSum && !r.trunc:
+			nulBytes++
+		case r.stage == "json" && string(r.raw) == "{" && r.n == 1:
+			brace++
+		case r.stage == "suppressed" && r.raw == nil && r.noSum && r.suppressed == 0:
+			marker++
+		case r.stage == "suppressed" && r.raw == nil && r.noSum && r.suppressed == 1:
+			summary++
+		}
+	}
+	if len(got) != 5 || row != 1 || nulBytes != 1 || brace != 1 || marker != 1 || summary != 1 {
+		t.Errorf("quarantine rows %+v", got)
 	}
 }

@@ -299,6 +299,9 @@ func run(cfg *Config) int {
 		log.Error("invalid configuration", "err", err)
 		return 2
 	}
+	if pg != nil {
+		collector.Reject = pg.SubmitReject // quarantine: templates_rejected (#105)
+	}
 
 	if cfg.HTTPPort > 0 {
 		hs := &HealthServer{Metrics: metrics, MaxAge: secs(cfg.ReadyMaxNotifyAgeMin * 60), PG: pg, RMQ: rmq,

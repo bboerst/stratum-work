@@ -80,6 +80,7 @@ Full DDL: [`postgres-timescale/schema.sql`](postgres-timescale/schema.sql) (cand
 |---|---|---|---|
 | `templates` | hypertable, partitioned by `received_at`, 7-day chunks | ~136M, +123k/day | Bitcoin templates only. Columnstore after 2 days, segmented by `source_id`, ordered by `(height, received_at)`. Chunk skipping on `height`. |
 | `templates_other` | hypertable, 30-day chunks | small (measured in section 3) | Other chains, BIP34 parse failures, implausible heights. Same columns plus `chain` and `reason`. |
+| `templates_rejected` | table | small, bounded per source | Quarantine (#105): messages a pool sent that couldn't be stored as a template (undecodable, over a decoding limit, malformed `mining.notify`, not storable losslessly), with `stage`, `reason`, the raw message (≤ 256 KiB), its length and SHA-256. A per-source hourly budget caps it; after that, rejections are counted. Odd but storable templates are not here. |
 | `sources` | table | ~40 per site | One per collector endpoint (today's `pool_name`) per collection `site` (section 5). `smallint` id. |
 | `blocks` | table | ~129k, +144/day | Keyed by `block_hash`, so fork blocks at the same height can coexist. New `seen_at` column. `analysis` stays `jsonb` (analytics plug-ins write free-form results). |
 | `pools` | table | 172 | mining-pools list. GIN index on `addresses`. |
@@ -123,8 +124,8 @@ Coinbase parts stay inline in both: coinbase outputs change with fees, so they'r
 ### Database users and credentials (from day one)
 The current MongoDB setup has every component sharing one admin account, with the password in plaintext in deployment manifests. Not again:
 - **Least-privilege roles:**
-  - `collector` (INSERT on `templates`/`templates_other`, upsert on `sources`)
-  - `backend` (read `templates`, write `blocks`/`pools`)
+  - `collector` (INSERT on `templates`/`templates_other`/`templates_rejected`, upsert on `sources`)
+  - `backend` (read `templates` and `templates_rejected`, write `blocks`/`pools`)
   - `web` (read-only)
   - `migrator` (DDL, used only by the migration Job)
   - backups use CNPG's own replication/streaming credentials

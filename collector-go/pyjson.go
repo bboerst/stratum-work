@@ -94,15 +94,50 @@ func (v pyValue) truthy() bool {
 
 var errPyJSON = errors.New("invalid JSON")
 
+// Decoding limits (#105). Everything a pool sends is third-party input, and without these a single line within the
+// 4 MiB line cap could crash or freeze its collector:
+//   - nesting: the decoder recurses per level, and a Go stack overflow is a fatal error, not a recoverable panic
+//     ("[[[[..." of a few MiB);
+//   - value count: each decoded value costs ~100-200 bytes, so a few MiB of "[0,0,0,..." allocate ~800 MB (the
+//     collectors run with a 64 MiB limit), and duplicate-key handling in objects is quadratic;
+//   - integer digits: decimal conversion is quadratic (~30 s for 4 MiB of digits). Python's json.loads raises above
+//     4300 digits (sys.int_info.default_max_str_digits); the same limit keeps parity with the Python collector.
+//
+// None of them limits the size of a value: a 4 MiB coinbase string decodes in milliseconds at 2x memory, and a
+// real mining.notify is 3 levels deep with well under 100 values.
+type pyLimits struct {
+	MaxDepth, MaxValues, MaxIntDigits int
+}
+
+// poolLimits applies to every line received from a pool.
+var poolLimits = pyLimits{MaxDepth: 64, MaxValues: 10_000, MaxIntDigits: 4300}
+
+// defaultLimits applies to other JSON (the BCH lookup API, whose responses can be larger). Still bounded.
+var defaultLimits = pyLimits{MaxDepth: 512, MaxValues: 200_000, MaxIntDigits: 4300}
+
+// pyLimitError is a decoding limit that was hit: the input may be valid JSON, but it isn't decoded.
+type pyLimitError struct{ Limit string }
+
+func (e *pyLimitError) Error() string { return "JSON limit exceeded: " + e.Limit }
+
+var (
+	errJSONDepth     = &pyLimitError{"nesting_depth"}
+	errJSONValues    = &pyLimitError{"value_count"}
+	errJSONIntDigits = &pyLimitError{"integer_digits"}
+)
+
 // pyLoads decodes one JSON document the way json.loads(bytes) does for UTF-8 input (a UTF-8 BOM is skipped;
 // encoded surrogates are accepted, like Python's 'surrogatepass'). UTF-16/32 input, which json.loads would detect
 // from NUL bytes, is rejected.
-func pyLoads(b []byte) (pyValue, error) {
+func pyLoads(b []byte) (pyValue, error) { return pyLoadsWith(b, defaultLimits) }
+
+// pyLoadsWith is pyLoads with explicit decoding limits (poolLimits for pool lines).
+func pyLoadsWith(b []byte, lim pyLimits) (pyValue, error) {
 	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
 	if !validWTF8(b) {
 		return pyValue{}, errPyJSON
 	}
-	d := pyDecoder{b: b}
+	d := pyDecoder{b: b, lim: lim}
 	d.ws()
 	v, err := d.value()
 	if err != nil {
@@ -116,8 +151,11 @@ func pyLoads(b []byte) (pyValue, error) {
 }
 
 type pyDecoder struct {
-	b []byte
-	i int
+	b      []byte
+	i      int
+	lim    pyLimits
+	depth  int
+	values int
 }
 
 func (d *pyDecoder) ws() {
@@ -142,6 +180,9 @@ func (d *pyDecoder) lit(s string) bool {
 func (d *pyDecoder) value() (pyValue, error) {
 	if d.i >= len(d.b) {
 		return pyValue{}, errPyJSON
+	}
+	if d.values++; d.lim.MaxValues > 0 && d.values > d.lim.MaxValues {
+		return pyValue{}, errJSONValues
 	}
 	switch c := d.b[d.i]; {
 	case c == '"':
@@ -183,9 +224,10 @@ func (d *pyDecoder) number() (pyValue, error) {
 		}
 		return n
 	}
+	intDigits := 1
 	if d.i < len(d.b) && d.b[d.i] == '0' {
 		d.i++
-	} else if digits() == 0 {
+	} else if intDigits = digits(); intDigits == 0 {
 		return pyValue{}, errPyJSON
 	}
 	isFloat := false
@@ -213,6 +255,9 @@ func (d *pyDecoder) number() (pyValue, error) {
 			return pyValue{}, errPyJSON
 		}
 		return pyFloatOf(f), nil
+	}
+	if d.lim.MaxIntDigits > 0 && intDigits > d.lim.MaxIntDigits {
+		return pyValue{}, errJSONIntDigits
 	}
 	n, ok := new(big.Int).SetString(lit, 10)
 	if !ok {
@@ -321,7 +366,21 @@ func (d *pyDecoder) str() (string, error) {
 	}
 }
 
+// enter/leave bound the nesting depth (arrays and objects).
+func (d *pyDecoder) enter() error {
+	if d.depth++; d.lim.MaxDepth > 0 && d.depth > d.lim.MaxDepth {
+		return errJSONDepth
+	}
+	return nil
+}
+
+func (d *pyDecoder) leave() { d.depth-- }
+
 func (d *pyDecoder) array() (pyValue, error) {
+	if err := d.enter(); err != nil {
+		return pyValue{}, err
+	}
+	defer d.leave()
 	d.i++
 	v := pyValue{kind: pyList, items: []pyValue{}}
 	d.ws()
@@ -356,6 +415,10 @@ func (d *pyDecoder) array() (pyValue, error) {
 }
 
 func (d *pyDecoder) object() (pyValue, error) {
+	if err := d.enter(); err != nil {
+		return pyValue{}, err
+	}
+	defer d.leave()
 	d.i++
 	v := pyValue{kind: pyDict, items: []pyValue{}}
 	d.ws()

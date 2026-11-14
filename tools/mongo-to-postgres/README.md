@@ -111,9 +111,17 @@ Measured on a 4-vCPU VM, with MongoDB, Postgres and the tool all on it. The data
 
 At 4 workers, today's ~136M templates take about 45 minutes, plus building the `timestamp` index on the restore. `verify` reads every migrated document's `timestamp` and `pool_name` once.
 
+## Image
+CI builds `bboerst/stratum-work-mongo-to-postgres:sha-<7>` (amd64 + arm64) from [`Dockerfile`](Dockerfile), for running next to a restored MongoDB in a cluster. The build context is the repository root, and only the tool and the three modules it loads (`collector/coinbase.py`, `collector/pgsink.py`, `backend/integrations/store.py`) are in it. A change to any of them rebuilds the image. It runs as an unprivileged user with `python -m m2p` as the entrypoint, so the arguments are the subcommand:
+```bash
+docker run --rm -e MONGO_URI=... -e PGHOST=... -e PGUSER=... -e PGPASSWORD=... \
+  -v "$PWD/out:/out" bboerst/stratum-work-mongo-to-postgres:sha-<7> verify --out /out/verify.json
+```
+
 ## Tests
 ```bash
 tools/mongo-to-postgres/test-e2e.sh                      # everything, in throwaway containers (Docker)
+M2P_IMAGE=<image> tools/mongo-to-postgres/test-e2e.sh    # the same checks against the image
 (cd tools/mongo-to-postgres && python -m pytest tests)   # unit tests only (needs requirements-dev.txt)
 ```
 `test-e2e.sh` loads [`tests/fixture.py`](tests/fixture.py) into a throwaway MongoDB. The fixture covers:

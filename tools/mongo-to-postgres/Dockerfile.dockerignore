@@ -1,0 +1,8 @@
+# Build context is the repository root (see Dockerfile); allow only what the image copies.
+*
+!tools/mongo-to-postgres/requirements.txt
+!tools/mongo-to-postgres/m2p/
+!collector/coinbase.py
+!collector/pgsink.py
+!backend/integrations/store.py
+tools/mongo-to-postgres/m2p/**/__pycache__

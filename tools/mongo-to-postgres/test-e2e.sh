@@ -3,6 +3,7 @@
 # TimescaleDB containers (the repo's dbmate migrations applied). Needs Docker; touches nothing else.
 #
 #   tools/mongo-to-postgres/test-e2e.sh
+#   M2P_IMAGE=<image> tools/mongo-to-postgres/test-e2e.sh   # the same checks against the tool's image (Dockerfile)
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO=$PWD
@@ -19,10 +20,20 @@ trap cleanup EXIT
 docker network create "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=test "$PG_IMAGE" -c timescaledb.enable_chunk_skipping=on >/dev/null
 docker run -d --name "$MONGO" --network "$NET" "$MONGO_IMAGE" >/dev/null
-docker run -d --name "$PY" --network "$NET" -v "$REPO:/repo:ro" -w /repo/tools/mongo-to-postgres \
-  -e MONGO_URI="mongodb://$MONGO:27017" -e PGHOST="$PG" -e PGUSER=postgres -e PGDATABASE=postgres -e PGPASSWORD=test \
-  -e PYTHONDONTWRITEBYTECODE=1 "$PY_IMAGE" sleep infinity >/dev/null
-docker exec "$PY" pip install -q --root-user-action=ignore --disable-pip-version-check -r requirements-dev.txt
+PY_ENV=(-e MONGO_URI="mongodb://$MONGO:27017" -e PGHOST="$PG" -e PGUSER=postgres -e PGDATABASE=postgres -e PGPASSWORD=test
+        -e PYTHONDONTWRITEBYTECODE=1)
+if [ -n "${M2P_IMAGE:-}" ]; then
+  # The image holds the tool and the modules it loads; only the tests and their dependencies are added.
+  docker run -d --name "$PY" --network "$NET" --entrypoint sleep "${PY_ENV[@]}" \
+    -v "$REPO/tools/mongo-to-postgres/tests:/app/tools/mongo-to-postgres/tests:ro" \
+    -v "$REPO/tools/mongo-to-postgres/requirements-dev.txt:/app/tools/mongo-to-postgres/requirements-dev.txt:ro" \
+    "$M2P_IMAGE" infinity >/dev/null
+  docker exec -u 0 "$PY" pip install -q --root-user-action=ignore --disable-pip-version-check -r requirements-dev.txt
+else
+  docker run -d --name "$PY" --network "$NET" -v "$REPO:/repo:ro" -w /repo/tools/mongo-to-postgres "${PY_ENV[@]}" \
+    "$PY_IMAGE" sleep infinity >/dev/null
+  docker exec "$PY" pip install -q --root-user-action=ignore --disable-pip-version-check -r requirements-dev.txt
+fi
 for i in $(seq 60); do docker exec "$PG" pg_isready -h localhost -U postgres >/dev/null 2>&1 && break; sleep 1; done; sleep 2
 docker run --rm --network "$NET" -v "$REPO/db:/db" -e DATABASE_URL="postgres://postgres:test@$PG:5432/postgres?sslmode=disable" \
   -e DBMATE_NO_DUMP_SCHEMA=true "$DBMATE" --wait up >/dev/null

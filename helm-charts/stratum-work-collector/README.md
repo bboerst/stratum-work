@@ -1,8 +1,8 @@
 # stratum-work-collector
 
-![Version: 0.1.7](https://img.shields.io/badge/Version-0.1.7-informational?style=flat-square) ![AppVersion: v1.0.7](https://img.shields.io/badge/AppVersion-v1.0.7-informational?style=flat-square)
+![Version: 0.1.7](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![AppVersion: v1.0.7](https://img.shields.io/badge/AppVersion-v1.0.7-informational?style=flat-square)
 
-A Helm chart for deploying the Pool Work Collector Python script
+A Helm chart for deploying the Pool Work Collector (Python, or the Go port)
 
 ## Values
 
@@ -22,9 +22,20 @@ A Helm chart for deploying the Pool Work Collector Python script
 | arguments[7] | string | `"stratum_db"` |  |
 | arguments[8] | string | `"--db-username"` |  |
 | arguments[9] | string | `"admin"` |  |
+| env | list | `[]` | Extra container env, e.g. passwords from a Secret (the Go collector reads `RABBITMQ_PASSWORD`, `PG_PASSWORD`, `BITCOIN_RPC_PASSWORD` from the environment only) |
+| envFrom | list | `[]` |  |
+| goImage.repository | string | `"bboerst/stratum-work-collector-go"` | Image for `implementation: go` |
+| goImage.tag | string | (required for go) | Pin a `sha-<7>` tag |
+| health.port | int | `8080` | Go only: `/livez`, `/readyz`, `/metrics` |
+| health.readyMaxNotifyAgeMinutes | int | `10` | Go only: `/readyz` fails when the last `mining.notify` is older |
+| health.livenessProbe | object | `/livez` every 30 s | Go only |
+| health.readinessProbe | object | `/readyz` every 15 s | Go only |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"bboerst/stratum-work-collector"` |  |
+| implementation | string | `"python"` | `python` (collector/) or `go` (collector-go/) |
+| podAnnotations | object | `{}` |  |
 | poolName | string | `"Best Stratum Pool"` |  |
+| replica | string | `""` | Go only: `COLLECTOR_REPLICA` (default `a`) when a pool is collected more than once per site |
 | resources.requests.memory | string | `"40Mi"` |  |
 | service.enabled | bool | `false` |  |
 | service.externalIPs | list | `[]` |  |

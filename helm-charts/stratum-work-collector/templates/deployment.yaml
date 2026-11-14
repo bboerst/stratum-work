@@ -12,11 +12,65 @@ spec:
       app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         app: {{ .Chart.Name }}-{{ .Values.poolName | lower | replace " " "-" | replace "." "-" | replace "+" "-" }}
     spec:
       containers:
       - name: {{ .Chart.Name }}
+        {{- if eq .Values.implementation "go" }}
+        image: "{{ .Values.goImage.repository }}:{{ required "goImage.tag is required for implementation: go" .Values.goImage.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        {{- range .Values.arguments }}
+        - {{ . | quote }}
+        {{- end }}
+        - "--http-port"
+        - {{ .Values.health.port | quote }}
+        env:
+        - name: COLLECTOR_READY_MAX_NOTIFY_AGE
+          value: {{ .Values.health.readyMaxNotifyAgeMinutes | quote }}
+        {{- with .Values.replica }}
+        - name: COLLECTOR_REPLICA
+          value: {{ . | quote }}
+        {{- end }}
+        # Soft memory limit for the Go GC: the container's memory limit (node memory when no limit is set).
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        ports:
+          - name: health
+            containerPort: {{ .Values.health.port }}
+            protocol: TCP
+          {{- if .Values.service.enabled }}
+          - name: "stratum"
+            containerPort: {{ .Values.service.ports.stratum }}
+            protocol: TCP
+          {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.health.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.health.readinessProbe | nindent 10 }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        {{- else }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         command:
@@ -26,11 +80,20 @@ spec:
         {{- range .Values.arguments }}
         - {{ . | quote }}
         {{- end }}
+        {{- with .Values.env }}
+        env:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.service.enabled }}
         ports:
           - name: "stratum"
             containerPort: {{ .Values.service.ports.stratum }}
             protocol: TCP
+        {{- end }}
         {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}

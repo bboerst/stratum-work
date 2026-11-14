@@ -13,17 +13,17 @@ name: images
 
 on:
   pull_request:
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       components:
-        description: "Space-separated components to build (web backend collector collector-go postgres)"
-        default: "web backend collector collector-go postgres"
+        description: "Space-separated components to build (web backend collector collector-go postgres mongo-to-postgres)"
+        default: "web backend collector collector-go postgres mongo-to-postgres"
         required: true
 
 permissions:
@@ -62,14 +62,20 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          all="web backend collector collector-go postgres"
+          all="web backend collector collector-go postgres mongo-to-postgres"
           short=$(git rev-parse --short=7 HEAD)
 
           changed_components() {  # $1 = base commit
             local files
             files=$(git diff --name-only "$1" HEAD)
             if grep -qx '.github/workflows/images.yml' <<< "$files"; then echo "$all"; return; fi
-            for c in $all; do grep -q "^$c/" <<< "$files" && printf '%s ' "$c"; done
+            for c in $all; do
+              case "$c" in
+                # The backfill tool's image also holds the collector/backend modules it loads (its Dockerfile).
+                mongo-to-postgres) grep -qE '^(tools/mongo-to-postgres/|collector/(coinbase|pgsink)\.py$|backend/integrations/store\.py$)' <<< "$files" && printf '%s ' "$c" ;;
+                *) grep -q "^$c/" <<< "$files" && printf '%s ' "$c" ;;
+              esac
+            done
             return 0
           }
 
@@ -122,7 +128,9 @@ jobs:
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ./${{ matrix.component }}
+          # mongo-to-postgres builds from the repository root (it loads collector/ and backend/ modules).
+          context: ${{ matrix.component == 'mongo-to-postgres' && '.' || format('./{0}', matrix.component) }}
+          file: ${{ matrix.component == 'mongo-to-postgres' && 'tools/mongo-to-postgres/Dockerfile' || format('./{0}/Dockerfile', matrix.component) }}
           platforms: linux/${{ matrix.platform }}
           # Push this platform's image by digest only; the merge job tags the multi-arch manifest.
           outputs: >-

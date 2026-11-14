@@ -46,9 +46,9 @@ The README shows how to run these inside the containers.
 - Templates for height `h` are the work for the block *after* tip `h-1`.
 
 ## Images and deployment
-`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend`, `collector`, `collector-go` and `postgres`:
+`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend`, `collector`, `collector-go`, `postgres` and `mongo-to-postgres` (the backfill tool; built from the repository root, since it loads `collector/` and `backend/` modules):
 - **PRs:** build the changed components, push nothing.
-- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `collector-go`, `postgres`).
+- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `collector-go`, `postgres`, `mongo-to-postgres`).
 - **Releases:** push all components as `:<tag>` and `:latest`.
 
 Deployments pin `sha-<7>` tags, and the same image is promoted from dev to prod, never rebuilt. Production deployment is managed in a separate repository. Never build or push images by hand.

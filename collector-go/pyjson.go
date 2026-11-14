@@ -32,15 +32,24 @@ const (
 	pyFloat // f
 	pyStr   // s = WTF-8
 	pyList  // items
-	pyDict  // keys + items
+	pyDict  // items = key, value, key, value, ... (keys are pyStr)
 )
 
+// pyValue is kept small (56 bytes): documents can wait by the tens of thousands in a sink queue during an outage.
 type pyValue struct {
 	kind  pyKind
 	s     string
 	f     float64
-	keys  []string
 	items []pyValue
+}
+
+// pyDictOf builds a dict from alternating keys and values.
+func pyDictOf(kv ...any) pyValue {
+	v := pyValue{kind: pyDict}
+	for i := 0; i < len(kv); i += 2 {
+		v.items = append(v.items, pyString(kv[i].(string)), kv[i+1].(pyValue))
+	}
+	return v
 }
 
 func pyString(s string) pyValue { return pyValue{kind: pyStr, s: s} }
@@ -54,9 +63,9 @@ func (v pyValue) get(key string) (pyValue, bool) {
 	if v.kind != pyDict {
 		return pyValue{}, false
 	}
-	for i, k := range v.keys {
-		if k == key {
-			return v.items[i], true
+	for i := 0; i+1 < len(v.items); i += 2 {
+		if v.items[i].s == key {
+			return v.items[i+1], true
 		}
 	}
 	return pyValue{}, false
@@ -243,6 +252,18 @@ func (d *pyDecoder) hex4() (rune, bool) {
 // str decodes a JSON string (strict=True: raw control characters are errors). Returns WTF-8.
 func (d *pyDecoder) str() (string, error) {
 	d.i++ // opening quote
+	// Fast path: no escapes, one exactly-sized allocation (documents can wait in sink queues).
+	for j := d.i; j < len(d.b); j++ {
+		c := d.b[j]
+		if c == '"' {
+			s := string(d.b[d.i:j])
+			d.i = j + 1
+			return s, nil
+		}
+		if c == '\\' || c < 0x20 {
+			break
+		}
+	}
 	var sb strings.Builder
 	for {
 		if d.i >= len(d.b) {
@@ -324,6 +345,9 @@ func (d *pyDecoder) array() (pyValue, error) {
 			d.i++
 		case ']':
 			d.i++
+			if cap(v.items) > len(v.items) { // exact size: documents can wait in sink queues
+				v.items = append(make([]pyValue, 0, len(v.items)), v.items...)
+			}
 			return v, nil
 		default:
 			return pyValue{}, errPyJSON
@@ -333,7 +357,7 @@ func (d *pyDecoder) array() (pyValue, error) {
 
 func (d *pyDecoder) object() (pyValue, error) {
 	d.i++
-	v := pyValue{kind: pyDict, keys: []string{}, items: []pyValue{}}
+	v := pyValue{kind: pyDict, items: []pyValue{}}
 	d.ws()
 	if d.i < len(d.b) && d.b[d.i] == '}' {
 		d.i++
@@ -359,16 +383,15 @@ func (d *pyDecoder) object() (pyValue, error) {
 			return pyValue{}, err
 		}
 		replaced := false
-		for j, existing := range v.keys {
-			if existing == k {
-				v.items[j] = item // dict semantics: first position, last value
+		for j := 0; j+1 < len(v.items); j += 2 {
+			if v.items[j].s == k {
+				v.items[j+1] = item // dict semantics: first position, last value
 				replaced = true
 				break
 			}
 		}
 		if !replaced {
-			v.keys = append(v.keys, k)
-			v.items = append(v.items, item)
+			v.items = append(v.items, pyString(k), item)
 		}
 		d.ws()
 		if d.i >= len(d.b) {
@@ -379,6 +402,9 @@ func (d *pyDecoder) object() (pyValue, error) {
 			d.i++
 		case '}':
 			d.i++
+			if cap(v.items) > len(v.items) {
+				v.items = append(make([]pyValue, 0, len(v.items)), v.items...)
+			}
 			return v, nil
 		default:
 			return pyValue{}, errPyJSON
@@ -474,13 +500,13 @@ func pyEncode(b *bytes.Buffer, v pyValue) {
 		b.WriteByte(']')
 	case pyDict:
 		b.WriteByte('{')
-		for i, k := range v.keys {
+		for i := 0; i+1 < len(v.items); i += 2 {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			pyEncodeString(b, k)
+			pyEncodeString(b, v.items[i].s)
 			b.WriteString(": ")
-			pyEncode(b, v.items[i])
+			pyEncode(b, v.items[i+1])
 		}
 		b.WriteByte('}')
 	}
@@ -642,9 +668,9 @@ func pyRepr(v pyValue) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case pyDict:
-		parts := make([]string, len(v.keys))
-		for i, k := range v.keys {
-			parts[i] = pyReprString(k) + ": " + pyRepr(v.items[i])
+		parts := make([]string, 0, len(v.items)/2)
+		for i := 0; i+1 < len(v.items); i += 2 {
+			parts = append(parts, pyReprString(v.items[i].s)+": "+pyRepr(v.items[i+1]))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	}

@@ -184,8 +184,8 @@ func merkleBytes(v pyValue) ([]byte, error) {
 		}
 		return out, nil
 	case pyDict: // iterating a dict yields its keys
-		for _, k := range v.keys {
-			b, err := pyFromHex(pyString(k))
+		for i := 0; i < len(v.items); i += 2 {
+			b, err := pyFromHex(v.items[i])
 			if err != nil {
 				return nil, err
 			}

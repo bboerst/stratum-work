@@ -206,8 +206,7 @@ func (c *Collector) send(method string, params pyValue) (int64, error) {
 	}
 	id := c.nextID
 	c.nextID++
-	req := pyValue{kind: pyDict, keys: []string{"id", "method", "params"},
-		items: []pyValue{pyIntOf(id), pyString(method), params}}
+	req := pyDictOf("id", pyIntOf(id), "method", pyString(method), "params", params)
 	payload := append(pyDumps(req), '\n')
 	c.tracker.RecordSend(id, monoNs())
 	_ = conn.SetWriteDeadline(time.Now().Add(c.cfg.HandshakeTimeout))
@@ -289,8 +288,7 @@ func (c *Collector) handshake(r *lineReader) ([]pendingMsg, error) {
 		}
 		c.extranonce1, c.extranonce2 = res.items[len(res.items)-2], res.items[len(res.items)-1]
 		subscribed = true
-		c.log.Info("subscribed", "extranonce1", string(pyDumps(c.extranonce1)),
-			"extranonce2_length", string(pyDumps(c.extranonce2)))
+		c.log.Info("subscribed", "extranonce1", pyStrOf(c.extranonce1), "extranonce2_length", pyStrOf(c.extranonce2))
 	} else {
 		c.log.Warn("subscribe response missing result", "resp", string(pyDumps(sub)))
 	}

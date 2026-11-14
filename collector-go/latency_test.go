@@ -11,7 +11,7 @@ import (
 func ms(n int64) int64 { return n * 1_000_000 }
 
 func idMsg(id int64) pyValue {
-	return pyValue{kind: pyDict, keys: []string{"id"}, items: []pyValue{pyIntOf(id)}}
+	return pyDictOf("id", pyIntOf(id))
 }
 
 func approx(t *testing.T, got, want float64) {

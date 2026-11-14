@@ -1,6 +1,6 @@
 """Data-driven timezone safety net (design doc section 5).
 
-The maintainer recalls a period when receive times were recorded in local time (MDT/MST, UTC-6/-7) and then stored
+There may have been a period when receive times were recorded in local time (MDT/MST, UTC-6/-7) and then stored
 without an offset. A production scan found no such period, but the converter checks every height anyway:
 
 For each height, take its naive-ISO templates. The height is corrected only if **both** independent clocks agree:

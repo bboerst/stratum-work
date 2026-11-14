@@ -27,6 +27,7 @@ type Config struct {
 	RabbitPort                                                int
 	RabbitPassword                                            string // env RABBITMQ_PASSWORD only
 	PGHost, PGPort, PGDatabase, PGUser, PGSSLMode, PGPassword string // PGPassword: env PG_PASSWORD only
+	PGMaxQueue                                                int
 	Site, Replica                                             string
 	KeepAlive                                                 bool
 	LogLevel                                                  string
@@ -118,6 +119,10 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	str(&c.PGUser, []string{"pg-user"}, os.Getenv("PG_USER"), "Postgres user (env PG_USER)")
 	str(&pgPassFlag, []string{"pg-password"}, "", "not accepted: set env PG_PASSWORD")
 	str(&c.PGSSLMode, []string{"pg-sslmode"}, envOr("PG_SSLMODE", "prefer"), "libpq sslmode (env PG_SSLMODE)")
+	// 10,000 templates (~27 MiB full) instead of Python's 50,000 (~133 MiB): at ~4,400 templates/day per pool that
+	// still buffers more than 2 days of Postgres outage, and keeps a pod inside a 64 Mi limit on small nodes.
+	integer(&c.PGMaxQueue, []string{"pg-max-queue"}, envInt("PG_MAX_QUEUE", 10_000),
+		"templates buffered while Postgres is unreachable; the oldest are dropped beyond this (env PG_MAX_QUEUE)")
 	str(&c.Site, []string{"collector-site"}, envOr("COLLECTOR_SITE", "local"), "where this collector runs, stored with the source (env COLLECTOR_SITE)")
 	str(&c.Replica, []string{"collector-replica"}, envOr("COLLECTOR_REPLICA", "a"), "replica identity when a pool is collected more than once per site, stored with the source (env COLLECTOR_REPLICA)")
 	boolean(&c.KeepAlive, []string{"k", "keep-alive"}, "send mining.subscribe every 480 s to keep the connection alive")
@@ -245,7 +250,11 @@ func run(cfg *Config) int {
 	if cfg.PGHost != "" && cfg.PGUser != "" {
 		pg = NewPostgresSink(PGConfig{Host: cfg.PGHost, Port: cfg.PGPort, Database: cfg.PGDatabase, User: cfg.PGUser,
 			Password: cfg.PGPassword, SSLMode: cfg.PGSSLMode, Site: cfg.Site, Replica: cfg.Replica,
-			ConnectTimeout: 10 * time.Second}, cfg.PoolName, cfg.URL, tip.Current, log).Start()
+			ConnectTimeout: 10 * time.Second}, cfg.PoolName, cfg.URL, tip.Current, log)
+		if cfg.PGMaxQueue > 0 {
+			pg.maxQueue = cfg.PGMaxQueue
+		}
+		pg.Start()
 	}
 	var rmq *RabbitMQPublisher
 	if cfg.RabbitUser != "" && cfg.RabbitPassword != "" {

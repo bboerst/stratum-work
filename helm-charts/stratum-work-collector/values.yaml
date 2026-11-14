@@ -1,6 +1,8 @@
 # Which collector to run: "python" (collector/, the default) or "go" (collector-go/, stratum-work#148). Both take
 # the same arguments. The Go collector does not write MongoDB (its --db-* flags are ignored) and reads passwords only
 # from the environment (RABBITMQ_PASSWORD, PG_PASSWORD, BITCOIN_RPC_PASSWORD; see `env` / `envFrom`).
+# Go: set resources.limits.memory (64Mi is enough: ~5 MiB idle, ~27 MiB more with a full 10,000-template Postgres
+# queue); GOMEMLIMIT follows the limit, and without one it is the node's memory.
 implementation: python
 
 image:

@@ -53,7 +53,7 @@ type PostgresSink struct {
 var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors"}
 
 func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (int64, bool), log *slog.Logger) *PostgresSink {
-	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 50_000,
+	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 10_000,
 		batchSize: 500, statsInterval: 10 * time.Minute, connect: pgxConnect, log: log, stats: map[string]int64{},
 		done: make(chan struct{})}
 	for _, k := range pgStatKeys {

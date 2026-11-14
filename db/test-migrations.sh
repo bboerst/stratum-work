@@ -37,13 +37,19 @@ check "timescaledb loaded"               '[ -n "$(psql_ "SELECT extversion FROM 
 check "templates + templates_other are hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 2 ]'
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
 check "2 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 2 ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 5 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 6 ]'
 
 # role privileges: create login users the way an environment would
 psql_ "CREATE USER t_collector LOGIN PASSWORD 'x' IN ROLE stratum_collector; CREATE USER t_backend LOGIN PASSWORD 'x' IN ROLE stratum_backend; CREATE USER t_web LOGIN PASSWORD 'x' IN ROLE stratum_web;" >/dev/null
 INS="INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches, version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length) SELECT now(), id, 975500, 'j', '\\x00', '\\x01', '\\x02', '', 1, 2, 3, true, '\\x03', 8 FROM sources LIMIT 1"
 check "collector: register a source"     'as_user t_collector "INSERT INTO sources (name, site) VALUES ('"'"'p1'"'"', '"'"'local'"'"')"'
 check "collector: insert a template"     'as_user t_collector "$INS"'
+UPSERT="INSERT INTO sources (name, site, replica, stratum_url) VALUES ('p1', 'local', 'b', 'stratum+tcp://x:1') ON CONFLICT (name, site, replica) DO UPDATE SET stratum_url = EXCLUDED.stratum_url RETURNING id"
+check "sources: existing source is replica a" '[ "$(psql_ "SELECT replica FROM sources WHERE name = '"'"'p1'"'"'")" = a ]'
+check "collector: upsert a second replica" 'as_user t_collector "$UPSERT"'
+check "collector: upsert is idempotent"  '[ "$(as_user t_collector "$UPSERT")" = "$(as_user t_collector "$UPSERT")" ] && [ "$(psql_ "SELECT count(*) FROM sources WHERE name = '"'"'p1'"'"'")" = 2 ]'
+check "sources: (name, site, replica) is unique" '! as_user t_collector "INSERT INTO sources (name, site) VALUES ('"'"'p1'"'"', '"'"'local'"'"')"'
+check "sources: empty replica rejected"  '! psql_ "INSERT INTO sources (name, site, replica) VALUES ('"'"'p2'"'"', '"'"'local'"'"', '"'"''"'"')"'
 check "collector: cannot read blocks"    '! as_user t_collector "SELECT 1 FROM blocks"'
 check "collector: cannot delete templates" '! as_user t_collector "DELETE FROM templates"'
 check "backend: read templates"          '[ "$(as_user t_backend "SELECT count(*) FROM templates")" = 1 ]'
@@ -55,10 +61,12 @@ check "web: no DDL"                      '! as_user t_web "CREATE TABLE x (i int
 psql_ "DROP OWNED BY t_collector, t_backend, t_web; DROP USER t_collector, t_backend, t_web;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
-check "migrate down to zero"             'for _ in 1 2 3 4 5; do dbmate down || exit 1; done'
+check "down refuses to merge two replicas" '! dbmate down && [ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 6 ]'
+psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
+check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 5 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 6 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

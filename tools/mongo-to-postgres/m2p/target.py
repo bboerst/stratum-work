@@ -132,10 +132,10 @@ class Target:
         with self._meta.cursor() as cur:
             for name in missing:   # sorted: concurrent workers take row locks in the same order
                 cur.execute("""INSERT INTO sources (name, site, first_seen_at) VALUES (%s, %s, %s)
-                               ON CONFLICT (name, site) DO NOTHING""", (name, self.site, names_first_seen[name]))
+                               ON CONFLICT (name, site, replica) DO NOTHING""", (name, self.site, names_first_seen[name]))
             for name, first in sorted(names_first_seen.items()):
                 cur.execute("""UPDATE sources SET first_seen_at = LEAST(first_seen_at, %s)
-                               WHERE name = %s AND site = %s RETURNING id""", (first, name, self.site))
+                               WHERE name = %s AND site = %s AND replica = 'a' RETURNING id""", (first, name, self.site))
                 self._source_ids[name] = cur.fetchone()[0]
         return {n: self._source_ids[n] for n in names_first_seen}
 

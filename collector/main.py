@@ -712,6 +712,10 @@ def build_parser():
         help="Where this collector runs; stored with the source, since timing is only comparable within a site (env COLLECTOR_SITE)",
     )
     parser.add_argument(
+        "--collector-replica", default=os.getenv("COLLECTOR_REPLICA", "a"),
+        help="Replica identity when a pool is collected more than once per site; stored with the source (env COLLECTOR_REPLICA, default: a)",
+    )
+    parser.add_argument(
         "-k", "--keep-alive", action="store_true", help="Enable sending periodic subscribe requests to keep the connection alive"
     )
     parser.add_argument(
@@ -854,7 +858,8 @@ def main():
     if args.pg_host and args.pg_user:
         postgres_sink = PostgresSink(
             PostgresConfig(host=args.pg_host, port=args.pg_port, database=args.pg_database, user=args.pg_user,
-                           password=args.pg_password, sslmode=args.pg_sslmode, site=args.collector_site),
+                           password=args.pg_password, sslmode=args.pg_sslmode, site=args.collector_site,
+                           replica=args.collector_replica),
             source_name=args.pool_name, stratum_url=args.url, tip_provider=current_btc_tip,
         ).start()
 
@@ -864,7 +869,7 @@ def main():
     if db_enabled:
         backends.append("MongoDB")
     if postgres_sink is not None:
-        backends.append(f"Postgres ({args.pg_host}:{args.pg_port}/{args.pg_database}, site {args.collector_site})")
+        backends.append(f"Postgres ({args.pg_host}:{args.pg_port}/{args.pg_database}, site {args.collector_site}, replica {args.collector_replica})")
     if backends:
         LOG.info(f"Enabled backends: {', '.join(backends)}")
     else:

@@ -1,7 +1,43 @@
+# Which collector to run: "python" (collector/, the default) or "go" (collector-go/, stratum-work#148). Both take
+# the same arguments. The Go collector does not write MongoDB (its --db-* flags are ignored) and reads passwords only
+# from the environment (RABBITMQ_PASSWORD, PG_PASSWORD, BITCOIN_RPC_PASSWORD; see `env` / `envFrom`).
+implementation: python
+
 image:
   repository: bboerst/stratum-work-collector
   # tag:
   pullPolicy: IfNotPresent
+
+# Image for implementation: go (pin a sha-<7> tag).
+goImage:
+  repository: bboerst/stratum-work-collector-go
+  # tag:
+
+# Extra container environment, e.g. passwords from a Secret:
+#   env:
+#     - name: RABBITMQ_PASSWORD
+#       valueFrom: {secretKeyRef: {name: collector-secrets, key: rabbitmq-password}}
+env: []
+envFrom: []
+
+# Go only: replica identity when a pool is collected more than once per site (stored in sources.replica).
+replica: ""
+
+# Go only: /livez, /readyz and /metrics on this port, with liveness/readiness probes.
+health:
+  port: 8080
+  # /readyz fails when the last mining.notify is older than this (minutes); raise it for quiet pools.
+  readyMaxNotifyAgeMinutes: 10
+  livenessProbe:
+    httpGet: {path: /livez, port: health}
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    httpGet: {path: /readyz, port: health}
+    periodSeconds: 15
+    failureThreshold: 2
+
+podAnnotations: {}
 
 poolName: "Best Stratum Pool"
 

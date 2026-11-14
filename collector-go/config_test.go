@@ -55,7 +55,7 @@ func TestPasswordsOnTheCommandLineAreRefused(t *testing.T) {
 
 func TestEnvDefaultsAndNewSettings(t *testing.T) {
 	t.Setenv("COLLECTOR_REPLICA", "b")
-	t.Setenv("COLLECTOR_SITE", "ash")
+	t.Setenv("COLLECTOR_SITE", "site-2")
 	t.Setenv("COLLECTOR_HTTP_PORT", "8080")
 	t.Setenv("PG_PASSWORD", "pg-secret")
 	t.Setenv("BITCOIN_RPC_PASSWORD", "")
@@ -63,7 +63,7 @@ func TestEnvDefaultsAndNewSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Replica != "b" || c.Site != "ash" || c.HTTPPort != 8080 || c.PGPassword != "pg-secret" ||
+	if c.Replica != "b" || c.Site != "site-2" || c.HTTPPort != 8080 || c.PGPassword != "pg-secret" ||
 		c.RPCPassword != "password" || c.ReadyMaxNotifyAgeMin != 3 {
 		t.Errorf("%+v", c)
 	}

@@ -163,11 +163,17 @@ jobs:
         component: ${{ fromJSON(needs.plan.outputs.components) }}
     runs-on: ubuntu-24.04
     steps:
+      # By exact name, one per platform: a pattern like digests-*-<component> also matches every component whose
+      # name ends in -<component> (collector-go for collector, #152; mongo-to-postgres for postgres).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: digests-amd64-${{ matrix.component }}
           path: /tmp/digests
-          pattern: digests-*-${{ matrix.component }}
-          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digests-arm64-${{ matrix.component }}
+          path: /tmp/digests
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 

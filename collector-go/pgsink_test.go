@@ -149,6 +149,7 @@ type fakeDB struct {
 	mu          sync.Mutex
 	failWrites  bool
 	failRejects bool
+	failEvents  bool
 	upserts     [][4]string
 	rows        map[string][][]any
 	closed      int
@@ -185,6 +186,19 @@ func (f *fakeDB) WriteRejects(_ context.Context, rows [][]any) error {
 		f.rows = map[string][][]any{}
 	}
 	f.rows["templates_rejected"] = append(f.rows["templates_rejected"], rows...)
+	return nil
+}
+
+func (f *fakeDB) WriteEvents(_ context.Context, rows [][]any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failWrites || f.failEvents {
+		return errors.New("ingest_events unavailable")
+	}
+	if f.rows == nil {
+		f.rows = map[string][][]any{}
+	}
+	f.rows["ingest_events"] = append(f.rows["ingest_events"], rows...)
 	return nil
 }
 
@@ -368,6 +382,9 @@ func TestPostgresIntegration(t *testing.T) {
 		t.Fatal(s.Stats())
 	}
 	s.SubmitReject(Rejection{TsNs: testNS, Stage: "json", Reason: "invalid JSON", Raw: []byte("[")}) // marker row
+	evStart := time.Unix(0, testNS).UTC().Truncate(time.Second)
+	s.SubmitEvent(IngestEvent{Kind: "burst", Start: evStart, End: evStart.Add(2 * time.Second), Templates: 3100, Peak: 2900,
+		Detail: map[string]any{"per_second": []int{200, 2900}, "first_job_id": "j\"1"}})
 	other := testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"})
 	other.ChainFamily = "unknown"
 	s.Submit(other)
@@ -375,7 +392,7 @@ func TestPostgresIntegration(t *testing.T) {
 	s.Submit(noLat)
 	if !waitFor(func() bool {
 		st := s.Stats()
-		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4
+		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4 && st["events_written"] == 1
 	}, 15*time.Second) {
 		t.Fatal(s.Stats())
 	}
@@ -457,5 +474,15 @@ func TestPostgresIntegration(t *testing.T) {
 	}
 	if len(got) != 5 || row != 1 || nulBytes != 1 || brace != 1 || marker != 1 || summary != 1 {
 		t.Errorf("quarantine rows %+v", got)
+	}
+	// Ingest event: jsonb detail round-trips.
+	var kind, firstJob string
+	var tmpl, peak, sec2 int32
+	var dur time.Duration
+	if err := c.QueryRow(context.Background(), `SELECT kind, templates, peak_per_second, (detail->'per_second'->>1)::int,
+		detail->>'first_job_id', extract(epoch from ended_at - started_at)::int * interval '1 second'
+		FROM ingest_events WHERE source_id = $1`, sid).Scan(&kind, &tmpl, &peak, &sec2, &firstJob, &dur); err != nil ||
+		kind != "burst" || tmpl != 3100 || peak != 2900 || sec2 != 2900 || firstJob != `j"1` || dur != 2*time.Second {
+		t.Error(err, kind, tmpl, peak, sec2, firstJob, dur)
 	}
 }

@@ -27,6 +27,7 @@ type Metrics struct {
 	Reconnects       atomic.Int64
 	NotifyMalformed  atomic.Int64
 	Rejected         atomic.Int64 // quarantined: undecodable, over a limit, or not storable (quarantine.go)
+	Bursts           atomic.Int64 // burst episodes (and segments) recorded (burst.go)
 	Subscribed       atomic.Bool
 	KernelTimestamps atomic.Bool
 	TipUpdates       atomic.Int64
@@ -170,6 +171,8 @@ func (h *HealthServer) render() string {
 	p.sample(ns+"notify_malformed_total", nil, float64(m.NotifyMalformed.Load()))
 	p.metric(ns+"rejected_total", "counter", "Messages from the pool quarantined instead of stored as templates.")
 	p.sample(ns+"rejected_total", nil, float64(m.Rejected.Load()))
+	p.metric(ns+"bursts_total", "counter", "Burst episodes (segments of long ones) recorded in ingest_events; their templates are stored as usual.")
+	p.sample(ns+"bursts_total", nil, float64(m.Bursts.Load()))
 	p.metric(ns+"reconnects_total", "counter", "Lost or failed pool connections.")
 	p.sample(ns+"reconnects_total", nil, float64(m.Reconnects.Load()))
 	p.metric(ns+"subscribed", "gauge", "1 while subscribed to the pool.")

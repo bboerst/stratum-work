@@ -46,6 +46,8 @@ type Config struct {
 	BCHTimeout                                                float64
 	ProbeInterval                                             float64
 	HandshakeTimeout, ReadTimeout                             float64
+	BurstThreshold                                            int     // templates per second that make a burst second; 0 = off
+	BurstGap                                                  float64 // seconds without a burst second that end an episode
 	HTTPPort                                                  int
 	ReadyMaxNotifyAgeMin                                      float64
 
@@ -147,6 +149,10 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	fs.StringVar(&c.BCHURL, "bch-confirmation-url", "https://api.blockchair.com/bitcoin-cash/raw/block", "BCH block confirmation API base URL")
 	fs.Float64Var(&c.BCHTimeout, "bch-confirmation-timeout", 3.0, "BCH confirmation timeout in seconds")
 	fs.Float64Var(&c.ProbeInterval, "latency-probe-interval", 60.0, "seconds between latency probes (0 disables)")
+	integer(&c.BurstThreshold, []string{"burst-threshold"}, envInt("COLLECTOR_BURST_THRESHOLD", defaultBurstConfig.Threshold),
+		"templates in one second that make it a burst second, recorded in ingest_events; templates are stored regardless; 0 = off (env COLLECTOR_BURST_THRESHOLD)")
+	fs.Float64Var(&c.BurstGap, "burst-gap", envFloat("COLLECTOR_BURST_GAP", defaultBurstConfig.Gap.Seconds()),
+		"seconds without a burst second that end a burst episode (env COLLECTOR_BURST_GAP)")
 	fs.Float64Var(&c.HandshakeTimeout, "handshake-timeout", envFloat("COLLECTOR_HANDSHAKE_TIMEOUT", 30), "seconds for the TCP/proxy connect and each subscribe/authorize round trip (env COLLECTOR_HANDSHAKE_TIMEOUT)")
 	fs.Float64Var(&c.ReadTimeout, "read-timeout", envFloat("COLLECTOR_READ_TIMEOUT", 600), "seconds without data before reconnecting (env COLLECTOR_READ_TIMEOUT)")
 	fs.IntVar(&c.HTTPPort, "http-port", envInt("COLLECTOR_HTTP_PORT", 0), "port for /livez, /readyz and /metrics; 0 disables (env COLLECTOR_HTTP_PORT)")
@@ -301,6 +307,20 @@ func run(cfg *Config) int {
 	}
 	if pg != nil {
 		collector.Reject = pg.SubmitReject // quarantine: templates_rejected (#105)
+		collector.Event = pg.SubmitEvent   // ingest_events: bursts (#105)
+	}
+	if cfg.BurstThreshold > 0 {
+		collector.Bursts = NewBurstDetector(BurstConfig{Threshold: cfg.BurstThreshold, Gap: secs(cfg.BurstGap),
+			MaxSegment: defaultBurstConfig.MaxSegment})
+		go func() { // close episodes when the pool goes quiet (no template would trigger it)
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for range t.C {
+				for _, e := range collector.Bursts.Flush(time.Now()) {
+					collector.event(e)
+				}
+			}
+		}()
 	}
 
 	if cfg.HTTPPort > 0 {

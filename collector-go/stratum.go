@@ -125,6 +125,9 @@ type Collector struct {
 	// Reject quarantines what the pool sent that can't be stored as a template (quarantine.go); nil = log only.
 	// Must not block (PostgresSink.SubmitReject).
 	Reject func(Rejection)
+	// Bursts detects burst episodes; Event receives them (PostgresSink.SubmitEvent). Either may be nil.
+	Bursts *BurstDetector
+	Event  func(IngestEvent)
 
 	sendMu  sync.Mutex
 	nextID  int64
@@ -343,6 +346,9 @@ func (c *Collector) process(msg pyValue, l line) {
 				"coinbase1", truncate(pyStrOf(params[pCoinbase1]), 80))
 		}
 		c.metrics.Notify(l.ts, l.app)
+		for _, e := range c.Bursts.Observe(l.ts, pyStrOf(params[pJobID]), pyStrOf(params[pPrevHash]), params[pCleanJobs].truthy()) {
+			c.event(e)
+		}
 		c.log.Info("mining.notify", "job_id", truncate(pyStrOf(params[pJobID]), 64),
 			"prev_hash", truncate(pyStrOf(params[pPrevHash]), 16), "clean", pyStrOf(params[pCleanJobs]),
 			"height", d.Height, "app_minus_rx_us", (l.app-l.ts)/1000)
@@ -382,6 +388,17 @@ func (c *Collector) rejectLineError(err error) {
 	var tl *errLineTooLong
 	if errors.As(err, &tl) {
 		c.reject(Rejection{TsNs: time.Now().UnixNano(), Stage: "line", Reason: tl.Error(), Raw: tl.prefix})
+	}
+}
+
+func (c *Collector) event(e IngestEvent) {
+	if e.Kind == "burst" {
+		c.metrics.Bursts.Add(1)
+		c.log.Warn("burst of templates", "start", e.Start, "end", e.End, "templates", e.Templates, "peak_per_second", e.Peak,
+			"continued", e.Detail["continued"] == true)
+	}
+	if c.Event != nil {
+		c.Event(e)
 	}
 }
 

@@ -25,6 +25,7 @@ type PGConfig struct {
 type pgConn interface {
 	UpsertSource(ctx context.Context, name, site, replica, stratumURL string) (int16, error)
 	WriteBatch(ctx context.Context, btc, other [][]any) error
+	WriteRejects(ctx context.Context, rows [][]any) error
 	Close()
 }
 
@@ -43,19 +44,27 @@ type PostgresSink struct {
 	cond  *sync.Cond
 	queue []*Document
 	stop  bool
-	stats map[string]int64
-	done  chan struct{}
+	// Quarantine (quarantine.go): rows for templates_rejected, bounded and written separately from templates, so
+	// a problem there (the table not migrated yet, a bad row) can never block or lose templates.
+	rejQ        []rejectRow
+	maxRejQueue int
+	quar        quarantine
+	wake        time.Duration // periodic wake-up, so a quarantine window closes even when nothing arrives
+	stats       map[string]int64
+	done        chan struct{}
 
 	conn     pgConn
 	sourceID int16
 }
 
-var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors"}
+// dropped_invalid: not storable as a template; such a document is quarantined (rejected), not silently lost.
+var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors",
+	"rejected", "rejects_written", "rejects_suppressed", "rejects_dropped", "rejects_db_errors"}
 
 func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (int64, bool), log *slog.Logger) *PostgresSink {
 	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 10_000,
 		batchSize: 500, statsInterval: 10 * time.Minute, connect: pgxConnect, log: log, stats: map[string]int64{},
-		done: make(chan struct{})}
+		done: make(chan struct{}), maxRejQueue: 1000, quar: quarantine{b: defaultQuarantineBudget}, wake: time.Minute}
 	for _, k := range pgStatKeys {
 		s.stats[k] = 0
 	}
@@ -65,7 +74,46 @@ func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (in
 
 func (s *PostgresSink) Start() *PostgresSink {
 	go s.run()
+	go func() {
+		t := time.NewTicker(s.wake)
+		defer t.Stop()
+		for {
+			select {
+			case <-s.done:
+				return
+			case <-t.C:
+				s.mu.Lock()
+				s.enqueueRejectsLocked(s.quar.expire(time.Now()))
+				s.mu.Unlock()
+				s.cond.Signal()
+			}
+		}
+	}()
 	return s
+}
+
+// SubmitReject quarantines a message that can't be stored as a template (quarantine.go). Never blocks on I/O:
+// the budget decides what's kept, and the queue drops its oldest rows when full (counted).
+func (s *PostgresSink) SubmitReject(r Rejection) {
+	s.mu.Lock()
+	rows, suppressed := s.quar.admit(r, time.Now())
+	s.stats["rejected"]++
+	if suppressed {
+		s.stats["rejects_suppressed"]++
+	}
+	s.enqueueRejectsLocked(rows)
+	s.mu.Unlock()
+	s.cond.Signal()
+}
+
+func (s *PostgresSink) enqueueRejectsLocked(rows []rejectRow) {
+	for _, r := range rows {
+		if len(s.rejQ) >= s.maxRejQueue {
+			s.rejQ = s.rejQ[1:]
+			s.stats["rejects_dropped"]++
+		}
+		s.rejQ = append(s.rejQ, r)
+	}
 }
 
 // Submit queues a document. Never blocks on I/O; drops (and counts) the oldest when the queue is full.
@@ -116,17 +164,36 @@ func (s *PostgresSink) Close(timeout time.Duration) {
 	}
 }
 
-func (s *PostgresSink) takeBatch() []*Document {
+// takeWork waits for templates or quarantine rows (or a stop) and takes a batch of each. ok is false once
+// stopped with nothing left.
+func (s *PostgresSink) takeWork() (batch []*Document, rejects []rejectRow, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.queue) == 0 && !s.stop {
+	for len(s.queue) == 0 && len(s.rejQ) == 0 && !s.stop {
 		s.cond.Wait()
 	}
+	if s.stop && len(s.queue) == 0 {
+		s.enqueueRejectsLocked(s.quar.expire(time.Now().Add(s.quar.b.Window))) // flush a pending summary
+	}
+	if len(s.queue) == 0 && len(s.rejQ) == 0 {
+		return nil, nil, false
+	}
 	n := min(s.batchSize, len(s.queue))
-	b := append([]*Document(nil), s.queue[:n]...)
+	batch = append([]*Document(nil), s.queue[:n]...)
 	clear(s.queue[:n])
 	s.queue = s.queue[n:]
-	return b
+	rejects, s.rejQ = s.rejQ, nil
+	return batch, rejects, true
+}
+
+// requeueRejects puts quarantine rows back (newest kept within the bound) after a connection failure.
+func (s *PostgresSink) requeueRejects(rows []rejectRow) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := s.rejQ
+	s.rejQ = nil
+	s.enqueueRejectsLocked(rows)
+	s.enqueueRejectsLocked(pending)
 }
 
 // requeueFront puts a failed batch back at the front, keeping the newest entries if the queue can't hold all.
@@ -177,8 +244,10 @@ func (s *PostgresSink) write(ctx context.Context, batch []*Document) error {
 		row, err := toRow(d, s.sourceID)
 		if err != nil {
 			s.count("dropped_invalid", 1)
-			s.log.Warn("postgres sink: dropping malformed template", "job_id", truncate(pyStrOf(d.Params[pJobID]), 64),
+			s.log.Warn("postgres sink: template not storable, quarantined", "job_id", truncate(pyStrOf(d.Params[pJobID]), 64),
 				"err", err)
+			s.SubmitReject(Rejection{TsNs: d.TsNs, Stage: "row", Reason: err.Error(),
+				Raw: pyDumps(pyValue{kind: pyList, items: d.Params[:]})})
 			continue
 		}
 		r := route(int64(row.Height), d.ChainFamily, tip, tipOK)
@@ -194,6 +263,25 @@ func (s *PostgresSink) write(ctx context.Context, batch []*Document) error {
 	s.count("written", len(btc))
 	s.count("written_other", len(other))
 	return nil
+}
+
+// writeRejects stores quarantine rows in their own statement. On failure they're dropped and counted, never
+// retried in a loop: the templates already committed, and a missing table (an older schema) must not stall them.
+func (s *PostgresSink) writeRejects(ctx context.Context, rows []rejectRow) {
+	if len(rows) == 0 {
+		return
+	}
+	vals := make([][]any, len(rows))
+	for i, r := range rows {
+		vals[i] = r.values(s.sourceID)
+	}
+	if err := s.conn.WriteRejects(ctx, vals); err != nil {
+		s.count("rejects_db_errors", 1)
+		s.count("rejects_dropped", len(rows))
+		s.log.Warn("postgres sink: could not store quarantined messages", "rows", len(rows), "err", err)
+		return
+	}
+	s.count("rejects_written", len(rows))
 }
 
 func (s *PostgresSink) logStats() {
@@ -222,12 +310,20 @@ func (s *PostgresSink) run() {
 			lastStats = time.Now()
 			s.logStats()
 		}
-		batch := s.takeBatch()
-		if len(batch) == 0 {
+		batch, rejects, ok := s.takeWork()
+		if !ok {
 			return // stopped and drained
 		}
 		wctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		err := s.write(wctx, batch)
+		var err error
+		if len(batch) > 0 {
+			err = s.write(wctx, batch)
+		} else {
+			err = s.ensureConnected(wctx)
+		}
+		if err == nil {
+			s.writeRejects(wctx, rejects)
+		}
 		cancel()
 		if err == nil {
 			backoff = time.Second
@@ -237,6 +333,7 @@ func (s *PostgresSink) run() {
 		s.log.Error("postgres sink write failed, retrying", "queued", len(batch)+s.Queued(), "in", backoff, "err", err)
 		s.disconnect()
 		s.requeueFront(batch)
+		s.requeueRejects(rejects)
 		s.mu.Lock()
 		stopping := s.stop
 		s.mu.Unlock()
@@ -319,6 +416,11 @@ func (p *pgxConn) WriteBatch(ctx context.Context, btc, other [][]any) error {
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func (p *pgxConn) WriteRejects(ctx context.Context, rows [][]any) error {
+	_, err := p.c.CopyFrom(ctx, pgx.Identifier{"templates_rejected"}, rejectColumns, pgx.CopyFromRows(rows))
+	return err
 }
 
 func (p *pgxConn) Close() {

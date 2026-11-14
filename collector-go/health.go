@@ -26,6 +26,7 @@ type Metrics struct {
 	LastNotifyMono   atomic.Int64
 	Reconnects       atomic.Int64
 	NotifyMalformed  atomic.Int64
+	Rejected         atomic.Int64 // quarantined: undecodable, over a limit, or not storable (quarantine.go)
 	Subscribed       atomic.Bool
 	KernelTimestamps atomic.Bool
 	TipUpdates       atomic.Int64
@@ -165,8 +166,10 @@ func (h *HealthServer) render() string {
 	p.sample(ns+"templates_received_total", nil, float64(m.Templates.Load()))
 	p.metric(ns+"last_notify_timestamp_seconds", "gauge", "Receipt time of the last mining.notify (unix seconds).")
 	p.sample(ns+"last_notify_timestamp_seconds", nil, float64(m.LastNotifyNs.Load())/1e9)
-	p.metric(ns+"notify_malformed_total", "counter", "mining.notify messages skipped as malformed.")
+	p.metric(ns+"notify_malformed_total", "counter", "mining.notify messages without usable params (quarantined, not stored as templates).")
 	p.sample(ns+"notify_malformed_total", nil, float64(m.NotifyMalformed.Load()))
+	p.metric(ns+"rejected_total", "counter", "Messages from the pool quarantined instead of stored as templates.")
+	p.sample(ns+"rejected_total", nil, float64(m.Rejected.Load()))
 	p.metric(ns+"reconnects_total", "counter", "Lost or failed pool connections.")
 	p.sample(ns+"reconnects_total", nil, float64(m.Reconnects.Load()))
 	p.metric(ns+"subscribed", "gauge", "1 while subscribed to the pool.")

@@ -25,6 +25,14 @@ import (
 
 const maxLineBytes = 4 << 20 // a mining.notify is a few KB; a pool that sends 4 MiB without a newline is broken
 
+// errLineTooLong is a line over maxLineBytes; it keeps the start of the data for the quarantine.
+type errLineTooLong struct {
+	n      int
+	prefix []byte
+}
+
+func (e *errLineTooLong) Error() string { return fmt.Sprintf("no newline in %d bytes", e.n) }
+
 type line struct {
 	b    []byte
 	ts   int64 // receipt time, ns since the epoch (kernel if available)
@@ -59,7 +67,7 @@ func (r *lineReader) next(deadline time.Time) (line, error) {
 			return l, nil
 		}
 		if len(r.buf) > maxLineBytes {
-			return line{}, fmt.Errorf("no newline in %d bytes", len(r.buf))
+			return line{}, &errLineTooLong{n: len(r.buf), prefix: append([]byte{}, r.buf[:256<<10]...)}
 		}
 		if len(r.buf) == 0 {
 			r.buf = r.chunk[:0:0] // release the backing array once drained
@@ -114,6 +122,9 @@ type Collector struct {
 	tracker *LatencyTracker
 	metrics *Metrics
 	emit    func(*Document) // non-blocking hand-off (Classifier.Submit)
+	// Reject quarantines what the pool sent that can't be stored as a template (quarantine.go); nil = log only.
+	// Must not block (PostgresSink.SubmitReject).
+	Reject func(Rejection)
 
 	sendMu  sync.Mutex
 	nextID  int64
@@ -243,11 +254,11 @@ func (c *Collector) call(r *lineReader, method string, params pyValue, pending *
 			if isTimeout(err) {
 				return pyValue{}, fmt.Errorf("no response to %s within %s", method, c.cfg.HandshakeTimeout)
 			}
+			c.rejectLineError(err)
 			return pyValue{}, err
 		}
-		msg, err := pyLoads(l.b)
-		if err != nil {
-			c.log.Debug("skipping undecodable line", "bytes", len(l.b))
+		msg, ok := c.decode(l)
+		if !ok {
 			continue
 		}
 		if idv, ok := msg.get("id"); ok {
@@ -320,7 +331,9 @@ func (c *Collector) process(msg pyValue, l line) {
 		params, ok := notifyParams(msg)
 		if !ok {
 			c.metrics.NotifyMalformed.Add(1)
-			c.log.Warn("skipping malformed mining.notify", "msg", truncate(string(pyDumps(msg)), 300))
+			c.log.Warn("malformed mining.notify, quarantined", "msg", truncate(string(pyDumps(msg)), 300))
+			c.reject(Rejection{TsNs: l.ts, Stage: "notify", Reason: "params: need a list of at least 9, job_id first and prev_hash a string or list",
+				Raw: l.b})
 			return
 		}
 		d := newDocument(params, c.cfg.PoolName, c.extranonce1, c.extranonce2, l.ts, c.tracker.Estimate())
@@ -344,6 +357,38 @@ func (c *Collector) process(msg pyValue, l line) {
 	default:
 		p, _ := msg.get("params")
 		c.log.Info("server notification", "method", m.s, "params", truncate(string(pyDumps(p)), 300))
+	}
+}
+
+// decode parses a pool line with the pool limits, quarantining what can't be decoded.
+func (c *Collector) decode(l line) (pyValue, bool) {
+	msg, err := pyLoadsWith(l.b, poolLimits)
+	if err != nil {
+		reason := "invalid JSON"
+		var le *pyLimitError
+		if errors.As(err, &le) {
+			reason = "JSON limit exceeded: " + le.Limit
+		}
+		c.log.Warn("undecodable line from pool, quarantined", "bytes", len(l.b), "reason", reason,
+			"line", truncate(string(l.b), 200))
+		c.reject(Rejection{TsNs: l.ts, Stage: "json", Reason: reason, Raw: l.b})
+		return pyValue{}, false
+	}
+	return msg, true
+}
+
+// rejectLineError quarantines a line over the line cap (the connection is dropped by the caller).
+func (c *Collector) rejectLineError(err error) {
+	var tl *errLineTooLong
+	if errors.As(err, &tl) {
+		c.reject(Rejection{TsNs: time.Now().UnixNano(), Stage: "line", Reason: tl.Error(), Raw: tl.prefix})
+	}
+}
+
+func (c *Collector) reject(r Rejection) {
+	c.metrics.Rejected.Add(1)
+	if c.Reject != nil {
+		c.Reject(r)
 	}
 }
 
@@ -399,11 +444,11 @@ func (c *Collector) session(ctx context.Context) error {
 	for {
 		l, err := r.next(time.Now().Add(c.cfg.ReadTimeout))
 		if err != nil {
+			c.rejectLineError(err)
 			return err
 		}
-		msg, err := pyLoads(l.b)
-		if err != nil {
-			c.log.Debug("skipping undecodable line", "bytes", len(l.b), "line", truncate(string(l.b), 200))
+		msg, ok := c.decode(l)
+		if !ok {
 			continue
 		}
 		if c.tracker.TryResolve(msg, l.mono) {
@@ -523,11 +568,12 @@ func (c *Collector) relaySession(ctx context.Context, client net.Conn) error {
 		for {
 			l, err := r.next(time.Now().Add(c.cfg.ReadTimeout))
 			if err != nil {
+				c.rejectLineError(err)
 				errs <- fmt.Errorf("pool: %w", err)
 				cancel()
 				return
 			}
-			if msg, err := pyLoads(l.b); err == nil && msg.truthy() {
+			if msg, ok := c.decode(l); ok && msg.truthy() {
 				c.process(msg, l)
 				if res, ok := msg.get("result"); ok && res.kind == pyList && len(res.items) >= 2 {
 					c.extranonce1, c.extranonce2 = res.items[len(res.items)-2], res.items[len(res.items)-1]

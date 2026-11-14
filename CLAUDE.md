@@ -6,6 +6,7 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | Path | What | Stack |
 |---|---|---|
 | `collector/` | Connects to one pool over Stratum. Publishes each `mining.notify` to RabbitMQ and MongoDB (`mining_notify`), with latency estimates and BTC/BCH chain detection. | Python |
+| `collector-go/` | Go port of the collector (#148): one process per pool, Postgres + RabbitMQ (no MongoDB), kernel receive timestamps, `/livez` `/readyz` `/metrics`. Same flags; passwords from env only. Golden tests against the Python functions (`testdata/gen_golden.py`). | Go |
 | `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see README "Adding a New Analyzer"), publishes block events. | Python |
 | `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views. API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
@@ -24,6 +25,7 @@ docker compose up --build     # dev mode: web hot-reloads from ./web
 ## Test
 ```bash
 python -m pytest collector/tests        # from the repo root
+(cd collector-go && go test ./...)      # Go collector (no local Go? run it in the golang image)
 (cd backend && python -m pytest tests)  # from backend/
 (cd web && npm test && npm run lint)    # vitest + eslint
 db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
@@ -44,9 +46,9 @@ The README shows how to run these inside the containers.
 - Templates for height `h` are the work for the block *after* tip `h-1`.
 
 ## Images and deployment
-`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend` and `collector`:
+`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend`, `collector`, `collector-go` and `postgres`:
 - **PRs:** build the changed components, push nothing.
-- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `postgres`).
+- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `collector-go`, `postgres`).
 - **Releases:** push all components as `:<tag>` and `:latest`.
 
 Deployments pin `sha-<7>` tags, and the same image is promoted from dev to prod, never rebuilt. Production deployment is managed in a separate repository. Never build or push images by hand.

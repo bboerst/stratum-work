@@ -14,12 +14,61 @@ interface UseDataStreamOptions {
   onMessage?: (item: StreamData) => void;
 }
 
+/** The latest burst seen for a pool: the stream route showed only some of its templates live (#105). */
+export interface PoolBurst {
+  /** Templates not shown live during this burst so far (all of them are stored). */
+  suppressed: number;
+  /** When the burst started and when it was last reported (ms since the epoch, server clock). */
+  firstMs: number;
+  lastMs: number;
+  /** When this client last received a marker (client clock), for fading the indicator. */
+  seenAt: number;
+}
+
 interface UseDataStreamResult {
   data: StreamData[];
   isConnected: boolean;
   clearData: () => void;
   filterByType: (type: StreamDataType) => StreamData[];
   latestMessagesByPool: { [poolName: string]: StratumV1Data };
+  burstsByPool: { [poolName: string]: PoolBurst };
+}
+
+/** A burst episode ends (for the indicator) when no marker came for this long. */
+export const BURST_EPISODE_GAP_MS = 30_000;
+
+/** A pool's burst is shown for this long after its last marker. */
+export const BURST_DISPLAY_MS = 2 * 60_000;
+
+/** Drops bursts older than BURST_DISPLAY_MS; returns `prev` itself when nothing changes (no re-render). */
+export function pruneBursts(
+  prev: { [poolName: string]: PoolBurst },
+  now: number,
+): { [poolName: string]: PoolBurst } {
+  const stale = Object.keys(prev).filter(p => now - prev[p].seenAt >= BURST_DISPLAY_MS);
+  if (stale.length === 0) return prev;
+  const next = { ...prev };
+  for (const p of stale) delete next[p];
+  return next;
+}
+
+/** Folds a burst marker into the per-pool state; a marker after a quiet gap starts a new episode. */
+export function applyBurstMarker(
+  prev: { [poolName: string]: PoolBurst },
+  marker: { pool_name: string; suppressed: number; first_ms: number; last_ms: number },
+  now: number,
+): { [poolName: string]: PoolBurst } {
+  const cur = prev[marker.pool_name];
+  const continues = cur !== undefined && now - cur.seenAt < BURST_EPISODE_GAP_MS;
+  return {
+    ...prev,
+    [marker.pool_name]: {
+      suppressed: (continues ? cur.suppressed : 0) + marker.suppressed,
+      firstMs: continues ? cur.firstMs : marker.first_ms,
+      lastMs: marker.last_ms,
+      seenAt: now,
+    },
+  };
 }
 
 /**
@@ -41,6 +90,11 @@ export function useDataStream({
   const [data, setData] = useState<StreamData[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [latestMessagesByPool, setLatestMessagesByPool] = useState<{ [poolName: string]: StratumV1Data }>({});
+  const [burstsByPool, setBurstsByPool] = useState<{ [poolName: string]: PoolBurst }>({});
+  useEffect(() => {
+    const id = setInterval(() => setBurstsByPool(prev => pruneBursts(prev, Date.now())), 10_000);
+    return () => clearInterval(id);
+  }, []);
   
   // Add useTransition for non-urgent updates
   const [, startTransition] = useTransition();
@@ -91,7 +145,15 @@ export function useDataStream({
       let newData: StreamData | null = null;
       let stratumData: StratumV1Data | null = null;
       
-      if ('type' in parsedData) {
+      if ('type' in parsedData && parsedData.type === 'burst') {
+        // The stream route throttled this pool's templates (#105): record it, don't add it to the data.
+        if (typeof parsedData.pool_name === 'string' && typeof parsedData.suppressed === 'number') {
+          startTransition(() => setBurstsByPool(prev => applyBurstMarker(prev, parsedData, Date.now())));
+        }
+        return;
+      } else if ('type' in parsedData) {
+        // Only known types enter the data (e.g. the route's {"type":"connection"} greeting doesn't).
+        if (parsedData.type !== StreamDataType.STRATUM_V1 && parsedData.type !== StreamDataType.BLOCK) return;
         // New format - already has type field
         newData = parsedData as StreamData;
         if (newData.type === StreamDataType.STRATUM_V1) {
@@ -220,5 +282,5 @@ export function useDataStream({
     };
   }, [enabled, endpoint, initialReconnectFrequency, maxReconnectFrequency, processMessage]);
 
-  return { data, isConnected, clearData, filterByType, latestMessagesByPool };
+  return { data, isConnected, clearData, filterByType, latestMessagesByPool, burstsByPool };
 }

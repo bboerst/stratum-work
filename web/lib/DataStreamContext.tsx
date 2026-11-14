@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, ReactNode, useState, useEffect, useRef, useCallback } from "react";
 
-import { useDataStream } from "./useDataStream";
+import { useDataStream, type PoolBurst } from "./useDataStream";
 import { DEFAULT_STREAM_ENDPOINT } from "./streamEndpoint";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";
@@ -19,6 +19,7 @@ interface DataStreamContextType {
   setDataTypes: (types: StreamDataType[]) => void;
   activeDataTypes: StreamDataType[];
   latestMessagesByPool: { [poolName: string]: StratumV1Data };
+  burstsByPool: { [poolName: string]: PoolBurst };
 }
 
 const DataStreamContext = createContext<DataStreamContextType | undefined>(undefined);

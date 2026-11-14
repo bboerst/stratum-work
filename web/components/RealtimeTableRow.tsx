@@ -5,10 +5,13 @@ import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
 import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
-import { History } from 'lucide-react';
+import { History, Zap } from 'lucide-react';
+import type { PoolBurst } from '@/lib/useDataStream';
 
 interface RealtimeTableRowProps {
   row: SortedRow;
+  /** This pool recently sent templates faster than the live display shows them (#105). */
+  burst?: PoolBurst;
   columnsVisible: { [key: string]: boolean };
   columnWidths: { [key: string]: number };
   handleTemplateSelect: (row: SortedRow) => void;
@@ -16,6 +19,7 @@ interface RealtimeTableRowProps {
 
 export default function RealtimeTableRowComponent({
   row,
+  burst,
   columnsVisible,
   columnWidths,
   handleTemplateSelect
@@ -33,6 +37,16 @@ export default function RealtimeTableRowComponent({
         >
           <div className="flex items-center justify-between">
             <span className="truncate">{row.pool_name}</span>
+            {burst && (
+              <span
+                className="ml-1 shrink-0 text-amber-600 dark:text-amber-400"
+                title={`Burst: this pool sent templates faster than the live display shows them. ${burst.suppressed.toLocaleString()} weren't shown live since ${new Date(burst.firstMs).toLocaleTimeString()}; all of them are stored.`}
+                aria-label="Burst of templates"
+                data-burst={burst.suppressed}
+              >
+                <Zap className="h-3 w-3" aria-hidden="true" />
+              </span>
+            )}
             {row.origin === 'prefill' && (
               <span
                 className="ml-1 shrink-0 text-muted-foreground opacity-60"

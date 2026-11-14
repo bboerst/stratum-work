@@ -185,9 +185,9 @@ func (h *HealthServer) render() string {
 	p.metric(ns+"rx_clock_lag_max_seconds", "gauge", "Largest post-read clock lag seen.")
 	p.sample(ns+"rx_clock_lag_max_seconds", nil, mx)
 	if h.Tracker != nil {
-		p.metric(ns+"latency_estimate_ms", "gauge", "Current one-way latency estimate (RTT/2) by method.")
+		p.metric(ns+"latency_estimate_seconds", "gauge", "Current one-way latency estimate (RTT/2) by method.")
 		if e := h.Tracker.Estimate(); e != nil {
-			p.sample(ns+"latency_estimate_ms", map[string]string{"method": e.method}, e.ms)
+			p.sample(ns+"latency_estimate_seconds", map[string]string{"method": e.method}, e.ms/1000)
 		}
 	}
 	if h.Tip != nil {
@@ -206,8 +206,8 @@ func (h *HealthServer) render() string {
 		p.metric(ns+"bch_lookups_skipped_total", "counter", "Lookups skipped (queue full); classified unknown.")
 		p.sample(ns+"bch_lookups_skipped_total", nil, float64(h.Classifier.SkippedFullQ.Load()))
 	}
+	// Each family's samples must directly follow its TYPE line.
 	p.metric(ns+"sink_queue_depth", "gauge", "Documents waiting in a sink queue.")
-	p.metric(ns+"sink_events_total", "counter", "Sink counters (submitted, written, dropped by reason, errors).")
 	var events []string
 	if h.Classifier != nil {
 		p.sample(ns+"sink_queue_depth", map[string]string{"sink": "bch_lookup"}, float64(h.Classifier.Queued()))
@@ -226,6 +226,7 @@ func (h *HealthServer) render() string {
 			events = append(events, fmt.Sprintf("rabbitmq\x00%s\x00%d", k, st[k]))
 		}
 	}
+	p.metric(ns+"sink_events_total", "counter", "Sink counters (submitted, written, dropped by reason, errors).")
 	for _, e := range events {
 		parts := strings.SplitN(e, "\x00", 3)
 		v, _ := strconv.ParseFloat(parts[2], 64)

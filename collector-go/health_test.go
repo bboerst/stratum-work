@@ -65,6 +65,21 @@ func TestHealthEndpointsAndMetrics(t *testing.T) {
 		t.Error("readyz", code)
 	}
 	_, body := get(t, h, "/metrics")
+	// Text format: every sample belongs to the family of the closest preceding TYPE line.
+	family := ""
+	for _, l := range strings.Split(strings.TrimSpace(body), "\n") {
+		if strings.HasPrefix(l, "# TYPE ") {
+			family = strings.Fields(l)[2]
+			continue
+		}
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		name := strings.FieldsFunc(l, func(r rune) bool { return r == '{' || r == ' ' })[0]
+		if name != family && strings.TrimSuffix(strings.TrimSuffix(name, "_sum"), "_count") != family {
+			t.Errorf("sample %q outside its family (%s)", name, family)
+		}
+	}
 	for _, want := range []string{
 		`stratum_collector_info{pool="F2\"Pool",replica="b",site="s",version="dev"} 1`,
 		"stratum_collector_templates_received_total 1",
@@ -74,7 +89,7 @@ func TestHealthEndpointsAndMetrics(t *testing.T) {
 		`stratum_collector_sink_queue_depth{sink="rabbitmq"} 1`,
 		`stratum_collector_sink_events_total{event="submitted",sink="postgres"} 1`,
 		`stratum_collector_sink_events_total{event="dropped_queue_full",sink="rabbitmq"} 0`,
-		`stratum_collector_latency_estimate_ms{method="tcp"} 10`,
+		`stratum_collector_latency_estimate_seconds{method="tcp"} 0.01`,
 		"stratum_collector_rx_clock_lag_seconds_count 1",
 		"stratum_collector_rx_clock_lag_max_seconds 8e-05",
 		"# TYPE stratum_collector_reconnects_total counter",

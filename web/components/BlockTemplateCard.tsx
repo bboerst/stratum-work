@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { getMerkleColor } from '@/utils/colorUtils';
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import ScriptSigMap from './ScriptSigMap';
 
 interface BlockTemplateCardProps {
   latestMessage?: StratumV1Data;
@@ -422,6 +423,18 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                             <div className="border rounded-sm p-3 mb-4 bg-muted/20 grow">
                                 <div className="text-sm font-semibold text-center text-foreground pb-1 mb-3 border-b">ScriptSig Data</div>
                                 <div className="space-y-4 text-[10px]">
+                                    {displayMessage && (
+                                        <div>
+                                            <div className="font-medium text-muted-foreground mb-0.5">Byte map:</div>
+                                            <ScriptSigMap
+                                                coinbase1={displayMessage.coinbase1}
+                                                extranonce1={displayMessage.extranonce1}
+                                                extranonce2Length={displayMessage.extranonce2_length}
+                                                coinbase2={displayMessage.coinbase2}
+                                                ntime={displayMessage.ntime}
+                                            />
+                                        </div>
+                                    )}
                                     {rowData.coinbaseHeight !== null && rowData.coinbaseHeight !== undefined && (
                                         <div>
                                             <div className="font-medium text-muted-foreground mb-0.5">Parsed Height:</div>
@@ -432,7 +445,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                         <div className="font-medium text-muted-foreground mb-0.5">
                                             <Tooltip>
                                                 <TooltipTrigger asChild><span className="underline decoration-dotted cursor-help">ASCII tag:</span></TooltipTrigger>
-                                                <TooltipContent className="bg-background text-foreground"><p>The ASCII-printable parts of the Coinbase input script, excluding parsed height and AuxPOW data.</p></TooltipContent>
+                                                <TooltipContent className="bg-background text-foreground"><p>Text in the coinbase input script (runs of 5+ printable characters), excluding the height, AuxPoW, a pushed timestamp and the per-connection extranonce bytes.</p></TooltipContent>
                                             </Tooltip>
                                         </div>
                                         <div className={`p-2 border rounded-sm wrap-break-word font-mono text-[11px] bg-card/80 ${scriptAsciiFlash}`}>

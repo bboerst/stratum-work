@@ -1,5 +1,5 @@
 import { Transaction, address, networks } from "bitcoinjs-lib";
-import { formatCoinbaseRaw } from './formatters'; // Import necessary formatter
+import { coinbaseTagText, parseCoinbase } from './coinbaseParser';
 
 /**
  * Performance Optimization Strategy:
@@ -158,32 +158,22 @@ function manageCache<T>(cache: Map<string, T>, key: string, value: T): void {
   cache.set(key, value);
 }
 
-// Computes the final ASCII tag from coinbase parts, excluding height/auxpow
+// The pool's text tags from the coinbase scriptSig (coinbaseParser): printable text only, never the height, AuxPoW,
+// a pushed timestamp or the extranonce bytes (which are per connection and would otherwise show up as noise).
+const coinbaseTagCache = new Map<string, string>();
+
 export function getFormattedCoinbaseAsciiTag(
   coinbase1: string,
   extranonce1: string,
   extranonce2_length: number,
   coinbase2: string
 ): string {
-  try {
-    // 1. Construct raw coinbase
-    const cbRaw = formatCoinbaseRaw(coinbase1, extranonce1, extranonce2_length, coinbase2);
-    // 2. Get transaction (use cache)
-    const tx = getTransaction(cbRaw);
-    if (!tx.ins || tx.ins.length === 0) {
-      return ""; // No input script
-    }
-    const scriptSigBuffer = Buffer.from(tx.ins[0].script);
-    // 3. Decode script sig to get remaining hex (use cache)
-    const scriptSigInfo = decodeCoinbaseScriptSigInfo(scriptSigBuffer);
-    // 4. Format remaining hex to ASCII (use cache)
-    return formatCoinbaseScriptASCII(scriptSigInfo.remainingScriptHex);
-  } catch (error) {
-    if (!isCachedParseError(error)) {
-      console.error("Error in getFormattedCoinbaseAsciiTag:", error);
-    }
-    return "";
-  }
+  const key = `${coinbase1}|${extranonce1}|${extranonce2_length}|${coinbase2}`;
+  const cached = coinbaseTagCache.get(key);
+  if (cached !== undefined) return cached;
+  const tag = coinbaseTagText(parseCoinbase(coinbase1, extranonce1 || "", Number(extranonce2_length), coinbase2));
+  manageCache(coinbaseTagCache, key, tag);
+  return tag;
 }
 
 // Takes pre-filtered hex string

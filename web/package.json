@@ -9,9 +9,10 @@
     "dev": "ENABLE_HISTORICAL_DATA=true next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app components lib",
+    "lint": "eslint app components lib visuals",
     "test": "vitest run",
-    "parity": "tsx scripts/read-parity.ts"
+    "parity": "tsx scripts/read-parity.ts",
+    "new-visual": "node scripts/new-visual.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

@@ -31,7 +31,12 @@ func NewRPC(scheme, host, port, user, password, caFile string, timeout time.Dura
 	if scheme != "http" && scheme != "https" {
 		return nil, fmt.Errorf("unsupported RPC scheme %q", scheme)
 	}
-	tr := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	// A fresh connection per call: the collector calls getblockcount about once per block (~10 min apart), and bitcoind
+	// closes idle RPC connections after -rpcservertimeout (30 s). Behind NAT or proxies (e.g. a tailnet path) that close
+	// may never reach the client, so a kept-alive connection would be written into and the call would time out
+	// "awaiting headers". One extra round trip per block costs nothing.
+	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, DisableKeepAlives: true,
+		DialContext: (&net.Dialer{Timeout: timeout, KeepAlive: -1}).DialContext}
 	if scheme == "https" && caFile != "" {
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
@@ -136,17 +141,39 @@ func (f *TipFollower) follow(ctx context.Context) error {
 		if len(msg.Frames) < 2 {
 			continue
 		}
+		f.update(ctx)
+	}
+}
+
+// tipRetryDelays: after a failed getblockcount, try again after these delays (about 30 s in all) instead of keeping the
+// old tip until the next block, ~10 minutes later.
+var tipRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
+
+func (f *TipFollower) update(ctx context.Context) {
+	for attempt := 0; ; attempt++ {
 		rctx, rcancel := context.WithTimeout(ctx, f.RPC.Client.Timeout+time.Second)
 		h, err := f.RPC.BlockCount(rctx)
 		rcancel()
-		if err != nil {
-			f.log.Warn("BTC tip update failed", "err", err)
-			continue
+		if err == nil {
+			f.Tip.Set(h)
+			if f.Updates != nil {
+				f.Updates()
+			}
+			if attempt > 0 {
+				f.log.Info("BTC tip update succeeded after retry", "height", h, "attempts", attempt+1)
+			}
+			f.log.Debug("updated BTC tip state", "height", h)
+			return
 		}
-		f.Tip.Set(h)
-		if f.Updates != nil {
-			f.Updates()
+		if attempt >= len(tipRetryDelays) {
+			f.log.Warn("BTC tip update failed; giving up until the next block", "err", err, "attempts", attempt+1)
+			return
 		}
-		f.log.Debug("updated BTC tip state", "height", h)
+		f.log.Warn("BTC tip update failed; retrying", "err", err, "attempt", attempt+1, "retry_in", tipRetryDelays[attempt])
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(tipRetryDelays[attempt]):
+		}
 	}
 }

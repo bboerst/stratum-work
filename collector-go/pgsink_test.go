@@ -86,7 +86,9 @@ func TestRouteOtherTables(t *testing.T) {
 		{975_500, "unknown", 975_499, true, Route{"templates_other", "unknown", "unknown_chain"}},
 		{6_976_415, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}},
 		{975_492, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}},
-		{975_502, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}},
+		{975_506, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}}, // tip + 7
+		{975_502, "", 975_499, true, routeBTC},                                                  // tip + 3: pools ahead of our node by two blocks
+		{975_505, "", 975_499, true, routeBTC},                                                  // tip + 6
 	}
 	for _, c := range cases {
 		if r := route(c.h, c.chain, c.tip, c.tipOK); r != c.want {

@@ -97,7 +97,7 @@ Every read is by height, but partitioning by height would let other chains' and 
 ### Ingest rules (collector)
 1. **Parse the BIP34 height correctly:** read the push length from `script[0]` and decode that many bytes. Today's parser reads a fixed `script[1:4]` (#98).
 2. **Route each template:**
-   - **`templates`:** the parse succeeded, the collector's chain classifier doesn't flag it (`bch`/`unknown`), and, when the collector knows our tip, `tip − 6 ≤ height ≤ tip + 2`.
+   - **`templates`:** the parse succeeded, the collector's chain classifier doesn't flag it (`bch`/`unknown`), and, when the collector knows our tip, `tip − 6 ≤ height ≤ tip + 6` (it was `tip + 2`; pools are regularly ahead of our node by two or more blocks right after blocks, which misfiled real templates).
    - **`templates_other`:** everything else, with `reason`: `height_parse_failed`, `bch`, `unknown_chain`, or `height_implausible`.
    - **Without a node configured** (contributors' local setups), parsed templates go to `templates`. That's today's behavior.
 3. `sources` upsert at collector startup. Inserts are single-row: ~1.4/s average, bursts of a few dozen per second when a block is found. That's trivial for Postgres, so no batching is needed.
@@ -337,7 +337,7 @@ Per document → row (all lossless):
 - **Routing**, with the same rules as live ingest. A template goes to `templates_other` with a `reason` if any of these holds:
   - it has a `chain_family`
   - the height doesn't parse
-  - the height is implausible against the Bitcoin tip *at that time*, i.e. `blocks` with `block_time <= received_at`: outside `[tip − 6, tip + 2]`. Header times can be minutes *after* a block really arrived (seen on dev data: two consecutive blocks 2–3 min late made the next height's first templates look like tip + 3). So the tool also counts a block as known once any template has built on it (its `prev_hash`): `tip(t) = max(header-time tip, highest known block built on by t)`.
+  - the height is implausible against the Bitcoin tip *at that time*, i.e. `blocks` with `block_time <= received_at`: outside `[tip − 6, tip + 6]` (the live collectors' window; it was `tip + 2`). Header times can be minutes *after* a block really arrived (seen on dev data: two consecutive blocks 2–3 min late made the next height's first templates look like tip + 3). So the tool also counts a block as known once any template has built on it (its `prev_hash`): `tip(t) = max(header-time tip, highest known block built on by t)`.
 
   Everything else goes to `templates`.
 - `pool_name` → `sources` (one row per historical name; see "Collector site" below).

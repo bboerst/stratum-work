@@ -17,7 +17,7 @@ interface RealtimeTableRowProps {
   handleTemplateSelect: (row: SortedRow) => void;
 }
 
-export default function RealtimeTableRowComponent({
+function RealtimeTableRowComponent({
   row,
   burst,
   columnsVisible,
@@ -292,4 +292,8 @@ export default function RealtimeTableRowComponent({
       )}
     </TableRow>
   );
-} 
+}
+
+// Memoized: rows are reused objects while their pool's template is unchanged (useTableData), so a new template
+// re-renders only its own row, not the whole table (perf harness, #157).
+export default React.memo(RealtimeTableRowComponent);

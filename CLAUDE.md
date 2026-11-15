@@ -29,6 +29,7 @@ python -m pytest collector/tests        # from the repo root
 (cd collector-go && go test ./...)      # Go collector (no local Go? run it in the golang image)
 (cd backend && python -m pytest tests)  # from backend/
 (cd web && npm test && npm run lint)    # vitest + eslint
+(cd web && npm run perf)               # client performance against a running build (web/perf/README.md); CI runs it on every web PR
 db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
 tools/mongo-to-postgres/test-e2e.sh     # backfill tool: unit tests + synthetic fixture end to end (Docker)
 tools/replica-compare/test-e2e.sh       # replica comparison: unit tests + synthetic fixture end to end (Docker)

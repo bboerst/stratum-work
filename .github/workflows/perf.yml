@@ -1,0 +1,80 @@
+# Client performance (web/perf, #157): every PR that touches web/ is measured against its base in the same job, so
+# runner noise largely cancels out. Results go to the job summary, a sticky PR comment (same-repository PRs; forks get
+# the summary only) and an artifact. Synthetic data only (web/perf/fixture.ts). See web/perf/README.md.
+name: perf
+
+on:
+  pull_request:
+    paths: ["web/**", ".github/workflows/perf.yml"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Build the PR and its base
+        run: |
+          for d in pr base; do
+            (cd "$d/web" && npm ci --no-audit --no-fund && npx prisma generate && npm run build)
+          done
+
+      - name: Install Chromium (the PR's Playwright version)
+        working-directory: pr/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Measure
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          (cd base/web && npx next start -p 3102 -H 127.0.0.1 > ../../base-server.log 2>&1 &)
+          (cd pr/web && npx next start -p 3100 -H 127.0.0.1 > ../../pr-server.log 2>&1 &)
+          for port in 3100 3102; do
+            for _ in $(seq 1 60); do node -e "fetch('http://127.0.0.1:$port/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" && break; sleep 2; done
+          done
+          cd pr/web
+          npx tsx perf/run.ts --base-url http://127.0.0.1:3102 --label "base (${BASE_SHA::7})" --out ../../perf-base.json
+          npx tsx perf/run.ts --base-url http://127.0.0.1:3100 --label "this PR" --compare ../../perf-base.json \
+            --out ../../perf-pr.json --markdown ../../perf.md
+          cat ../../perf.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf-results
+          path: |
+            perf-base.json
+            perf-pr.json
+            perf.md
+            base-server.log
+            pr-server.log
+
+      - name: Comment on the PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: node pr/web/perf/comment.mjs perf.md

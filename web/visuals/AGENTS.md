@@ -70,6 +70,9 @@ Use the hooks in `framework/data.ts`; never fetch APIs or open the stream in a v
 - Cache per-template work by object identity (`WeakMap<StratumV1Data, …>`): buffered templates don't change.
 - Cap what you draw (e.g. the last N points per pool) and say so in the UI if it matters.
 
+Measure it: `npm run perf` (`web/perf/README.md`) reports load time, main-thread blocking, streaming CPU, FPS and
+memory per page; CI posts it on every web PR. Add a primary visual's path to the harness's default pages.
+
 ## Tests
 `__tests__/<name>.test.ts` next to the visual: unit-test the selectors with **synthetic** templates (never real
 coinbases, pool names or endpoints: this repository is public). `npm test`, `npx tsc --noEmit`, `npm run lint`.

@@ -12,7 +12,8 @@
     "lint": "eslint app components lib visuals",
     "test": "vitest run",
     "parity": "tsx scripts/read-parity.ts",
-    "new-visual": "node scripts/new-visual.mjs"
+    "new-visual": "node scripts/new-visual.mjs",
+    "perf": "tsx perf/run.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -53,6 +54,7 @@
     "bitcoinjs-lib": "^7.0.4",
     "eslint": "^10.13.0",
     "eslint-config-next": "16.4.5",
+    "playwright": "1.49.0",
     "postcss": "^8.5.31",
     "tailwindcss": "^4.3.3",
     "tsx": "4.23.15",

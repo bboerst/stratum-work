@@ -1,4 +1,5 @@
-import { Transaction, address, networks } from "bitcoinjs-lib";
+import { Transaction } from "bitcoinjs-lib";
+import { addressFromScript } from "./addressFromScript";
 import { coinbaseTagText, parseCoinbase } from './coinbaseParser';
 import { decodeOpReturnPayload, decodeOpReturnScript, OpReturnDecoded, DecodedField, Confidence, OpReturnProtocolId } from './mergeMining';
 
@@ -312,15 +313,13 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
           }
         } else {
           // Cache miss - perform expensive operation and cache result
-          try {
-            const addr = address.fromOutputScript(scriptBytes, networks.bitcoin);
+          // Pattern match, no exceptions (addressFromScript.ts): fromOutputScript threw for every OP_RETURN.
+          const addr = addressFromScript(scriptBytes);
+          manageCache(outputScriptAddressCache, scriptHex, addr);
+          if (addr !== null) {
             outputDetail.type = 'address';
             outputDetail.address = addr;
-            // Cache the successful result
-            manageCache(outputScriptAddressCache, scriptHex, addr);
-          } catch (addrError) {
-            // Cache the failed result as null to avoid repeated expensive calls
-            manageCache(outputScriptAddressCache, scriptHex, null);
+          } else {
             processNonAddressScript();
           }
         }

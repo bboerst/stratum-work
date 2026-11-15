@@ -8,6 +8,10 @@ describe("compareMetric", () => {
     // from a PR that changed only the measuring tool: both sides ran the same app
     expect(compareMetric(col("streamLongTasks"), 84, 62)).toBe("same");
     expect(compareMetric(col("streamCpuPct"), 59.3, 57.3)).toBe("same");
+    // a PR with no app change measured the table page's streaming CPU at 56.9 % against a base of 64.3 %
+    expect(compareMetric(col("streamCpuPct"), 56.9, 64.3)).toBe("same");
+    // a real CPU change still shows (the Sankey fix: 41.3 % -> 28.0 %)
+    expect(compareMetric(col("streamCpuPct"), 28.0, 41.3)).toBe("better");
   });
 
   it("flags real changes in either direction", () => {

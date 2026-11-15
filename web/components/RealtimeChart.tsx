@@ -150,6 +150,32 @@ const extractChangeContentKey = (changeInfo: TemplateChangeResult): string => {
   return parts.join('|');
 };
 
+// Segment colours, cached across redraws (perf harness, #157). A point's change info is computed once and reused, so
+// the first lookup is by object (no content string built); the content-key map dedupes equal changes across points.
+type SegmentColor = { hsl: string; rgb: string; text: string };
+const segmentColorByChange = new WeakMap<TemplateChangeResult, SegmentColor>();
+const segmentColorByKey = new Map<string, SegmentColor>();
+let noChangeColor: SegmentColor | undefined;
+
+function segmentColorFor(changeInfo: TemplateChangeResult | undefined): SegmentColor {
+  if (!changeInfo) return (noChangeColor ??= colorTriple(NO_CHANGE_COLOR));
+  const byObject = segmentColorByChange.get(changeInfo);
+  if (byObject) return byObject;
+  const contentKey = extractChangeContentKey(changeInfo);
+  let c = segmentColorByKey.get(contentKey);
+  if (!c) {
+    c = colorTriple(contentKey ? stringToColor(contentKey) : NO_CHANGE_COLOR);
+    if (segmentColorByKey.size >= 5000) segmentColorByKey.clear(); // bounded
+    segmentColorByKey.set(contentKey, c);
+  }
+  segmentColorByChange.set(changeInfo, c);
+  return c;
+}
+
+function colorTriple(hsl: string): SegmentColor {
+  return { hsl, rgb: hslToRgb(hsl), text: getContrastingTextColor(hsl) };
+}
+
 // Determine if a color is light or dark to choose appropriate text color
 const getContrastingTextColor = (backgroundColor: string): string => {
   // Parse HSL color (format: "hsl(h, s%, l%)")
@@ -565,20 +591,7 @@ function RealtimeChartBase({
     const barRowHeight = availableHeight / barDenominator;
     const barHeight = Math.max(barRowHeight - 1, 1); // 1px vertical gap between rows
 
-    // Cache computed segment colors keyed by change content to avoid redundant conversions
-    const segmentColorCache = new Map<string, { hsl: string; rgb: string; text: string }>();
-    const getSegmentColor = (changeInfo: TemplateChangeResult | undefined) => {
-      const contentKey = changeInfo ? extractChangeContentKey(changeInfo) : '';
-      let cached = segmentColorCache.get(contentKey);
-      if (!cached) {
-        const hsl = contentKey ? stringToColor(contentKey) : NO_CHANGE_COLOR;
-        const rgb = hslToRgb(hsl);
-        const text = getContrastingTextColor(hsl);
-        cached = { hsl, rgb, text };
-        segmentColorCache.set(contentKey, cached);
-      }
-      return cached;
-    };
+    const getSegmentColor = segmentColorFor;
 
     groupedData.forEach((points, poolName) => {
       // Sort points oldest to newest (should already be sorted, but ensure)

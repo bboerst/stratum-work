@@ -73,6 +73,12 @@ export function useTableData(
 
   // Each pool's merge-mining state, updated as its templates arrive
   const mergeMiningByPool = useRef<Map<string, MergeMiningState>>(new Map());
+  // Row objects reused while their inputs are unchanged (see computedRowsBase). WeakMaps: entries go with the
+  // templates they're keyed on.
+  const baseRowCache = useRef(
+    new WeakMap<StratumV1Data, { latencyAdjusted: boolean; mm: MergeMiningState | undefined; row: Omit<SortedRow, 'feeRateComputed'> }>()
+  );
+  const feeRowCache = useRef(new WeakMap<object, { fee: unknown; row: SortedRow }>());
 
   // Add state for filtered data and loading
   const [filteredData, setFilteredData] = useState<SortedRow[]>([]);
@@ -165,6 +171,18 @@ export function useTableData(
   // Compute derived fields without fee rate
   const computedRowsBase: Omit<SortedRow, 'feeRateComputed'>[] = useMemo(() => {
     return rows.map((row) => {
+      // A pool's row only changes when its template (an immutable buffered object), the latency mode or its
+      // merge-mining state does: reuse the previous row object otherwise, so memoized rows skip re-rendering and the
+      // coinbase isn't decoded again on every update (perf harness, #157).
+      const mmState = mergeMiningByPool.current.get(row.pool_name);
+      const cached = baseRowCache.current.get(row);
+      if (cached && cached.latencyAdjusted === latencyAdjusted && cached.mm === mmState) return cached.row;
+      const built = buildBaseRow(row);
+      baseRowCache.current.set(row, { latencyAdjusted, mm: mmState, row: built });
+      return built;
+    });
+
+    function buildBaseRow(row: StratumV1Data): Omit<SortedRow, 'feeRateComputed'> {
       // Effective timestamp drives display/sorting; raw + latency ride along
       const timingFields = {
         timestamp: effectiveTimestamp(row, latencyAdjusted),
@@ -216,15 +234,19 @@ export function useTableData(
           coinbase_outputs: [],
         };
       }
-    });
+    }
   }, [rows, latencyAdjusted]);
 
   // Add fee rates to computed rows
   const computedRows: SortedRow[] = useMemo(() => {
-    return computedRowsBase.map(row => ({
-      ...row,
-      feeRateComputed: feeRateMap[row.first_transaction] ?? row.fee_rate
-    }));
+    return computedRowsBase.map(row => {
+      const fee = feeRateMap[row.first_transaction] ?? row.fee_rate;
+      const cached = feeRowCache.current.get(row);
+      if (cached && cached.fee === fee) return cached.row;
+      const withFee = { ...row, feeRateComputed: fee } as SortedRow;
+      feeRowCache.current.set(row, { fee, row: withFee });
+      return withFee;
+    });
   }, [computedRowsBase, feeRateMap]);
 
   // Cache or fetch missing fee rates, but never re-fetch the same txid

@@ -180,6 +180,16 @@ export default function RealtimeTable({
       : sortData(rows);
     return base.filter(row => isPoolVisible(row.pool_name));
   }, [isFiltering, visibleRows, rows, sortData, isPoolVisible]);
+  // Stable keys by template (a duplicate gets a suffix), so a re-sort moves rows instead of re-rendering them all.
+  const rowKeys = useMemo(() => {
+    const seen = new Map<string, number>();
+    return displayedRows.map((r) => {
+      const k = `${r.pool_name}|${r.height}|${r.job_id}|${r.raw_timestamp ?? r.timestamp}`;
+      const n = seen.get(k) ?? 0;
+      seen.set(k, n + 1);
+      return n ? `${k}#${n}` : k;
+    });
+  }, [displayedRows]);
   
 
   // Handle template selection for BlockTemplateCard
@@ -296,7 +306,8 @@ export default function RealtimeTable({
         <TableBody>
           {displayedRows.map((row, idx) => (
             <RealtimeTableRowComponent
-              key={idx}
+              // Keyed by template, not position, so a re-sort moves rows instead of re-rendering them all.
+              key={rowKeys[idx]}
               row={row}
               burst={burstsByPool?.[row.pool_name]}
               columnsVisible={columnsVisible}

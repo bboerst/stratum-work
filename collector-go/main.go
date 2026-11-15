@@ -156,7 +156,7 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 		"seconds without a burst second that end a burst episode (env COLLECTOR_BURST_GAP)")
 	fs.Float64Var(&c.HandshakeTimeout, "handshake-timeout", envFloat("COLLECTOR_HANDSHAKE_TIMEOUT", 30), "seconds for the TCP/proxy connect and each subscribe/authorize round trip (env COLLECTOR_HANDSHAKE_TIMEOUT)")
 	fs.Float64Var(&c.ReadTimeout, "read-timeout", envFloat("COLLECTOR_READ_TIMEOUT", 600), "seconds without data before reconnecting (env COLLECTOR_READ_TIMEOUT)")
-	fs.Float64Var(&c.ReplicaStagger, "replica-stagger", envFloat("COLLECTOR_REPLICA_STAGGER", 0), "seconds per replica index to delay the first connection (a: 0, b: 1x, ...), so replicas of a pool stay out of phase; 0 = off (env COLLECTOR_REPLICA_STAGGER)")
+	fs.Float64Var(&c.ReplicaStagger, "replica-stagger", envFloat("COLLECTOR_REPLICA_STAGGER", 0), "seconds per replica index to delay the first connection (a or 0: none, b or 1: 1x, ...), so replicas of a pool stay out of phase; 0 = off (env COLLECTOR_REPLICA_STAGGER)")
 	fs.IntVar(&c.HTTPPort, "http-port", envInt("COLLECTOR_HTTP_PORT", 0), "port for /livez, /readyz and /metrics; 0 disables (env COLLECTOR_HTTP_PORT)")
 	fs.Float64Var(&c.ReadyMaxNotifyAgeMin, "ready-max-notify-age", envFloat("COLLECTOR_READY_MAX_NOTIFY_AGE", 10), "/readyz fails when the last mining.notify is older than this many minutes (env COLLECTOR_READY_MAX_NOTIFY_AGE)")
 	if err := fs.Parse(args); err != nil {
@@ -356,13 +356,19 @@ func run(cfg *Config) int {
 	return code
 }
 
-// replicaStartDelay staggers replicas of a pool: replica "a" starts at once, "b" after one stagger, "c" after two.
-// Some pools drop idle connections on a fixed timer after they connect, so replicas started together are dropped
-// together; a fixed offset keeps their gaps apart (a random jitter wouldn't: it overlaps often and drifts). Replica
-// names that aren't a single lower-case letter start at once.
+// replicaStartDelay staggers replicas of a pool by their index: replica "a" (or "0", a StatefulSet ordinal) starts
+// at once, "b" ("1") after one stagger, "c" ("2") after two. Some pools drop idle connections on a fixed timer after
+// they connect, so replicas started together are dropped together; a fixed offset keeps their gaps apart (a random
+// jitter wouldn't: it overlaps often and drifts). Other replica names start at once.
 func replicaStartDelay(replica string, stagger time.Duration) time.Duration {
-	if stagger <= 0 || len(replica) != 1 || replica[0] < 'a' || replica[0] > 'z' {
+	if stagger <= 0 || len(replica) != 1 {
 		return 0
 	}
-	return time.Duration(replica[0]-'a') * stagger
+	switch r := replica[0]; {
+	case r >= 'a' && r <= 'z':
+		return time.Duration(r-'a') * stagger
+	case r >= '0' && r <= '9':
+		return time.Duration(r-'0') * stagger
+	}
+	return 0
 }

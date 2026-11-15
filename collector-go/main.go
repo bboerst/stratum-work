@@ -46,6 +46,7 @@ type Config struct {
 	BCHTimeout                                                float64
 	ProbeInterval                                             float64
 	HandshakeTimeout, ReadTimeout                             float64
+	ReplicaStagger                                            float64
 	BurstThreshold                                            int     // templates per second that make a burst second; 0 = off
 	BurstGap                                                  float64 // seconds without a burst second that end an episode
 	HTTPPort                                                  int
@@ -155,6 +156,7 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 		"seconds without a burst second that end a burst episode (env COLLECTOR_BURST_GAP)")
 	fs.Float64Var(&c.HandshakeTimeout, "handshake-timeout", envFloat("COLLECTOR_HANDSHAKE_TIMEOUT", 30), "seconds for the TCP/proxy connect and each subscribe/authorize round trip (env COLLECTOR_HANDSHAKE_TIMEOUT)")
 	fs.Float64Var(&c.ReadTimeout, "read-timeout", envFloat("COLLECTOR_READ_TIMEOUT", 600), "seconds without data before reconnecting (env COLLECTOR_READ_TIMEOUT)")
+	fs.Float64Var(&c.ReplicaStagger, "replica-stagger", envFloat("COLLECTOR_REPLICA_STAGGER", 0), "seconds per replica index to delay the first connection (a: 0, b: 1x, ...), so replicas of a pool stay out of phase; 0 = off (env COLLECTOR_REPLICA_STAGGER)")
 	fs.IntVar(&c.HTTPPort, "http-port", envInt("COLLECTOR_HTTP_PORT", 0), "port for /livez, /readyz and /metrics; 0 disables (env COLLECTOR_HTTP_PORT)")
 	fs.Float64Var(&c.ReadyMaxNotifyAgeMin, "ready-max-notify-age", envFloat("COLLECTOR_READY_MAX_NOTIFY_AGE", 10), "/readyz fails when the last mining.notify is older than this many minutes (env COLLECTOR_READY_MAX_NOTIFY_AGE)")
 	if err := fs.Parse(args); err != nil {
@@ -299,6 +301,7 @@ func run(cfg *Config) int {
 		URL: cfg.URL, UserPass: cfg.UserPass, UserAgent: cfg.UserAgent, PoolName: cfg.PoolName,
 		UseProxy: cfg.UseProxy, ProxyHost: cfg.ProxyHost, ProxyPort: cfg.ProxyPort,
 		HandshakeTimeout: secs(cfg.HandshakeTimeout), ReadTimeout: secs(cfg.ReadTimeout), RetryDelay: 5 * time.Second,
+		StartDelay:    replicaStartDelay(cfg.Replica, secs(cfg.ReplicaStagger)),
 		ProbeInterval: secs(cfg.ProbeInterval), KeepAlive: cfg.KeepAlive, KeepAliveEvery: 480 * time.Second,
 	}, log, metrics, classifier.Submit)
 	if err != nil {
@@ -351,4 +354,15 @@ func run(cfg *Config) int {
 		rmq.Close(5 * time.Second)
 	}
 	return code
+}
+
+// replicaStartDelay staggers replicas of a pool: replica "a" starts at once, "b" after one stagger, "c" after two.
+// Some pools drop idle connections on a fixed timer after they connect, so replicas started together are dropped
+// together; a fixed offset keeps their gaps apart (a random jitter wouldn't: it overlaps often and drifts). Replica
+// names that aren't a single lower-case letter start at once.
+func replicaStartDelay(replica string, stagger time.Duration) time.Duration {
+	if stagger <= 0 || len(replica) != 1 || replica[0] < 'a' || replica[0] > 'z' {
+		return 0
+	}
+	return time.Duration(replica[0]-'a') * stagger
 }

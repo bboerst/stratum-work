@@ -621,3 +621,58 @@ func TestRelayMinerNotReadingDoesNotBlockCollection(t *testing.T) {
 		}
 	}
 }
+
+func TestReplicaStartDelay(t *testing.T) {
+	cases := []struct {
+		replica string
+		stagger time.Duration
+		want    time.Duration
+	}{
+		{"a", 30 * time.Second, 0},
+		{"b", 30 * time.Second, 30 * time.Second},
+		{"c", 30 * time.Second, 60 * time.Second},
+		{"b", 0, 0},                        // off by default
+		{"replica-2", 30 * time.Second, 0}, // not a single letter: no stagger
+		{"B", 30 * time.Second, 0},
+		{"", 30 * time.Second, 0},
+	}
+	for _, c := range cases {
+		if got := replicaStartDelay(c.replica, c.stagger); got != c.want {
+			t.Errorf("replicaStartDelay(%q, %v) = %v, want %v", c.replica, c.stagger, got, c.want)
+		}
+	}
+}
+
+func TestStaggeredStartWaitsBeforeTheFirstConnection(t *testing.T) {
+	pool := newFakePool(t)
+	c, _, _, cancel := testCollector(t, poolURL(pool), func(cfg *StratumConfig) { cfg.StartDelay = 400 * time.Millisecond })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	defer cancel()
+	start := time.Now()
+	go c.Run(ctx)
+	select {
+	case <-pool.conns:
+		t.Fatal("connected before the start delay")
+	case <-time.After(250 * time.Millisecond):
+	}
+	pool.accept(t)
+	if waited := time.Since(start); waited < 400*time.Millisecond {
+		t.Errorf("connected after %v, want >= 400ms", waited)
+	}
+}
+
+func TestStaggeredStartStopsOnCancel(t *testing.T) {
+	pool := newFakePool(t)
+	c, _, _, cancel := testCollector(t, poolURL(pool), func(cfg *StratumConfig) { cfg.StartDelay = time.Hour })
+	defer cancel()
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { c.Run(ctx); close(done) }()
+	stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run didn't return on cancel during the start delay")
+	}
+}

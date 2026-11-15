@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { chromium, type Browser, type Page } from "playwright";
 import { Fixture } from "./fixture";
+import { markdown, type PageMetrics, type Results } from "./report";
 
 interface Options {
   baseUrl: string;
@@ -110,18 +111,6 @@ function startReplay(fixture: Fixture, rate: number, blockAfterS: number) {
 
 // ── one measurement ─────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface PageMetrics {
-  loadScriptS: number; // script time until settled
-  loadLongestTaskMs: number;
-  loadLongTasksMs: number; // total long-task time until settled
-  streamCpuPct: number; // main-thread busy share while streaming
-  streamLongTasks: number;
-  streamLongestTaskMs: number;
-  fps: number;
-  heapMB: number; // after GC, end of the stream window
-  heapGrowthMB: number; // over the stream window, after GC (leak signal)
-  domNodes: number;
-}
 
 const INIT = `
   window.__perf = { lt: [], frames: 0 };
@@ -218,51 +207,6 @@ const median = (xs: number[]) => {
   const n = s.length;
   return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
 };
-
-type Results = { label?: string; options: Omit<Options, "out" | "markdown" | "compare">; pages: Record<string, PageMetrics> };
-
-const COLUMNS: { key: keyof PageMetrics; title: string; digits: number; higherIsWorse: boolean; noise: number }[] = [
-  { key: "loadScriptS", title: "Load script (s)", digits: 2, higherIsWorse: true, noise: 0.1 },
-  { key: "loadLongestTaskMs", title: "Load longest task (ms)", digits: 0, higherIsWorse: true, noise: 50 },
-  { key: "streamCpuPct", title: "Streaming CPU (%)", digits: 1, higherIsWorse: true, noise: 2 },
-  { key: "streamLongTasks", title: "Streaming long tasks", digits: 0, higherIsWorse: true, noise: 2 },
-  { key: "streamLongestTaskMs", title: "Streaming longest task (ms)", digits: 0, higherIsWorse: true, noise: 50 },
-  { key: "fps", title: "FPS", digits: 0, higherIsWorse: false, noise: 3 },
-  { key: "heapMB", title: "Heap (MB)", digits: 1, higherIsWorse: true, noise: 1 },
-  { key: "heapGrowthMB", title: "Heap growth (MB)", digits: 1, higherIsWorse: true, noise: 1 },
-  { key: "domNodes", title: "DOM nodes", digits: 0, higherIsWorse: true, noise: 100 },
-];
-
-export function markdown(r: Results, base?: Results): string {
-  const o = r.options;
-  const lines = [
-    `**Client performance** (median of ${o.runs} runs; Chromium, CPU ×${o.cpu}; ${o.settleSeconds} s settle, then ${o.streamSeconds} s of stream at ${o.rate} templates/s with a new block halfway${base ? `; compared with ${base.label ?? "base"}` : ""})`,
-    "",
-    `| Page | ${COLUMNS.map((c) => c.title).join(" | ")} |`,
-    `|---|${COLUMNS.map(() => "---:").join("|")}|`,
-  ];
-  let worse = 0;
-  for (const [path, m] of Object.entries(r.pages)) {
-    const cells = COLUMNS.map((c) => {
-      const v = m[c.key];
-      let cell = v.toFixed(c.digits);
-      const b = base?.pages[path]?.[c.key];
-      if (b !== undefined) {
-        const d = v - b;
-        if (Math.abs(d) > c.noise) {
-          const bad = c.higherIsWorse ? d > 0 : d < 0;
-          if (bad) worse++;
-          cell += ` (${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(c.digits)} ${bad ? "⚠️" : "✅"})`;
-        }
-      }
-      return cell;
-    });
-    lines.push(`| \`${path}\` | ${cells.join(" | ")} |`);
-  }
-  if (base) lines.push("", worse ? `⚠️ ${worse} metric(s) worse than ${base.label ?? "base"} beyond noise.` : `No metric worse than ${base.label ?? "base"} beyond noise.`);
-  lines.push("", "Long task: main thread blocked > 50 ms. Heap growth: after GC, over the streaming window (a leak signal). Lower is better except FPS.");
-  return lines.join("\n");
-}
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));

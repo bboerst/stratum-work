@@ -631,8 +631,11 @@ func TestReplicaStartDelay(t *testing.T) {
 		{"a", 30 * time.Second, 0},
 		{"b", 30 * time.Second, 30 * time.Second},
 		{"c", 30 * time.Second, 60 * time.Second},
-		{"b", 0, 0},                        // off by default
-		{"replica-2", 30 * time.Second, 0}, // not a single letter: no stagger
+		{"b", 0, 0},                // off by default
+		{"0", 30 * time.Second, 0}, // StatefulSet ordinals
+		{"1", 30 * time.Second, 30 * time.Second},
+		{"2", 30 * time.Second, 60 * time.Second},
+		{"replica-2", 30 * time.Second, 0}, // not a single letter or digit: no stagger
 		{"B", 30 * time.Second, 0},
 		{"", 30 * time.Second, 0},
 	}

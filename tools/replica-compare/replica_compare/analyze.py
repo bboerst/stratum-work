@@ -165,10 +165,12 @@ def coinbase_diff(pairs: list[tuple[Template, Template]], min_share: float = 0.0
     res = {"pairs": len(pairs), "decoded": len(ok), "identical_outside_extranonce": 0,
            "outputs_identical": 0, "output_count_differs": 0, "output_values_differ": 0, "output_scripts_differ": 0,
            "differing_output_kinds": Counter(), "scriptsig_differs": 0, "scriptsig_length_differs": 0,
-           "regions": Counter(), "region_length_differs": Counter(), "extranonce_regions": Counter()}
+           "regions": Counter(), "region_length_differs": Counter(), "extranonce_regions": Counter(),
+           "same_job_id": 0, "same_job_id_identical": 0}
     hist: dict[tuple[str, str], Counter] = defaultdict(Counter)
     per_pair: list[set] = []
-    for cx, cy in ok:
+    ok_pairs = [(x, y) for x, y in pairs if x.coinbase is not None and y.coinbase is not None]
+    for (tx, ty), (cx, cy) in zip(ok_pairs, ok):
         res["extranonce_regions"]["+".join(cx.extranonce_regions())] += 1
         rx, ry = cx.region_bytes(), cy.region_bytes()
         same_outputs = len(cx.outputs) == len(cy.outputs) and all(
@@ -202,6 +204,9 @@ def coinbase_diff(pairs: list[tuple[Template, Template]], min_share: float = 0.0
                 mine.add((name, anchor, pos))
         per_pair.append(mine)
         res["identical_outside_extranonce"] += not mine
+        if tx.job_id == ty.job_id:
+            res["same_job_id"] += 1
+            res["same_job_id_identical"] += not mine
     total = len(ok)
     fields = []
     for (name, anchor), h in hist.items():
@@ -367,7 +372,9 @@ def classify_location(templates: Iterable[Template], region: str, anchor: tuple[
             ev["time_unit"] = units.most_common(1)[0][0]
     pos_steps = [x for x in steps_all if x > 0]
     rate = None
-    if small and constant_sessions < n_sessions:
+    n_steps = n_templates - n_sessions
+    changing = n_steps > 0 and val_changes >= 0.5 * n_steps   # the field's own bytes change with most templates
+    if small and changing:
         rate = _clock_rate(sessions, region,
                            (lambda rl: anchor[1]) if anchor[0] == "start" else (lambda rl: rl + anchor[1]), length)
         if rate:
@@ -385,6 +392,8 @@ def classify_location(templates: Iterable[Template], region: str, anchor: tuple[
             label += " (extranonce1 bytes)"
         elif len(set(session_values)) < n_sessions:
             label += " (repeats across sessions)"
+    elif n_steps and val_changes < 0.2 * n_steps:
+        label = "mostly constant per session (changes occasionally)"
     elif small and ev.get("reads_as_unix_time", 0) > 0.9:
         label = f"timestamp ({ev['time_unit']}, low bytes)" if length < 8 else f"timestamp ({ev['time_unit']})"
     elif rate:
@@ -396,7 +405,7 @@ def classify_location(templates: Iterable[Template], region: str, anchor: tuple[
     elif ev["mean_distinct_ratio"] > 0.9:
         label = "random (new value per template)"
     elif ev["mean_distinct_ratio"] < 0.5:
-        label = "per connection, changes occasionally"
+        label = "changes occasionally"
     else:
         label = "varies within a session"
     ev["label"] = label

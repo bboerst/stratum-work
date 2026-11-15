@@ -95,6 +95,10 @@ def render(result: dict) -> str:
                 f"- scriptSig differs: {_pct(c['scriptsig_differs'] / d)} (length differs "
                 f"{_pct(c['scriptsig_length_differs'] / d)})",
                 "- differing regions (pairs): " + (", ".join(f"`{k}` {v}" for k, v in c["regions"].items()) or "none")]
+        if c["same_job_id"]:
+            out.append(f"- same `job_id` on both replicas: {c['same_job_id']} pairs, coinbase identical outside the "
+                       f"extranonce in {c['same_job_id_identical']} of them (both connections were served by the same "
+                       "job builder)")
         out.append("- extranonce sits in: " + ", ".join(f"`{k}` {v}" for k, v in c["extranonce_regions"].items()))
         if c["region_length_differs"]:
             out.append("- region length differs (pairs): "

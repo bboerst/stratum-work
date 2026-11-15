@@ -13,7 +13,7 @@ Per pool (`sources.name`, comparing two `sources.replica` values):
   - whether the **outputs** are identical across replicas (payout scripts, OP_RETURNs, witness commitment), and if not, which outputs differ, by kind;
   - where the extranonce sits (normally the scriptSig; some pools let it run into the sequence field);
   - **fields** that differ across connections. With the extranonce bytes masked, a field is a run of adjacent bytes that differs in at least 2 % of pairs. Each field gets a region, an offset from the region start and from its end, a length, and the share of pairs it differs in.
-  - **a classification** from how the field behaves within each session (one extranonce1 of one replica): per-session constant, timestamp (s/ms/µs/ns, often only the low bytes differ), clock-like counter (steady ticks per second), per-session counter, new value with each job, random per template, changes occasionally, or "usually equal" (it differs in under half the pairs, i.e. an update reached the connections at different moments).
+  - **a classification** from how the field behaves within each session (one extranonce1 of one replica): per-session constant, timestamp (s/ms/µs/ns, often only the low bytes differ), clock-like counter (steady ticks per second), per-session counter, new value with each job, random per template, mostly constant per session, changes occasionally, or "usually equal" (it differs in under half the pairs, i.e. an update reached the connections at different moments).
 - **Candidate job keys**, by default:
   - `prev_hash + merkle_branches + version + nbits`
   - the same plus `ntime`

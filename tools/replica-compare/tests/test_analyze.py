@@ -141,3 +141,22 @@ def test_per_connection_locktime_with_extranonce_in_the_sequence():
     assert cb["outputs_identical"] == 10 and cb["scriptsig_differs"] == 0
     assert cb["regions"] == {"locktime": 10}
     assert {f["region"] for f in cb["fields"]} == {"locktime"}
+
+
+def test_mostly_constant_tag_next_to_a_clock_and_shared_job_builder():
+    """A builder tag (2 bytes) followed by the builder's clock (4 bytes). b switches to a's builder for the last
+    5 jobs: then job id and coinbase are identical too."""
+    rows = []
+    for i in range(30):
+        merkle = bytes([i]) * 32
+        for r, en1 in (("a", EN_A), ("b", EN_B)):
+            builder = "a" if r == "a" or i >= 25 else "b"
+            tag = b"\x01\x01" if builder == "a" else b"\x02\x02"
+            clock = (5_000_000 + 1_000_000 * i + (0 if builder == "a" else 40)).to_bytes(4, "big")
+            rows.append(template(r, i * 10_000 + (0 if r == "a" else 3), merkle=merkle, en1=en1,
+                                 sig_pre=b"/p/" + tag + clock, job_id=f"{builder}{i}"))
+    cb = analyze_pool(rows)["coinbase"]
+    labels = {(f["from_start"], f["length"]): f["classification"]["label"] for f in cb["fields"]}
+    assert labels[(7, 2)] == "mostly constant per session (changes occasionally)"
+    assert labels[(12, 1)].startswith("clock-like")
+    assert cb["same_job_id"] == 5 and cb["same_job_id_identical"] == 5

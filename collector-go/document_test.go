@@ -84,3 +84,15 @@ func TestUUID4(t *testing.T) {
 		t.Error(a, b)
 	}
 }
+
+func TestSiteAndReplicaInTheLiveMessage(t *testing.T) {
+	d := docFromLine(t, notifyLine("job1"), nil)
+	if j := string(d.JSON()); strings.Contains(j, `"site"`) || strings.Contains(j, `"replica"`) {
+		t.Error("omitted when unset (golden parity with Python's document):", j)
+	}
+	d.ChainFamily = "bch"
+	d.Site, d.Replica = "s1", "b"
+	if j := string(d.JSON()); !strings.HasSuffix(j, `, "chain_family": "bch", "site": "s1", "replica": "b"}`) {
+		t.Error(j)
+	}
+}

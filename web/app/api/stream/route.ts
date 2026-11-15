@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { maskStreamMessage } from '../../../lib/connectionMask';
 import { isPoolBlacklisted } from '../../../lib/poolBlacklist';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
+import { StreamTemplateDedup } from '../../../lib/streamDedup';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from '../../../lib/rabbitmq';
 import type { Channel, ConsumeMessage, Replies } from 'amqplib';
 
@@ -24,6 +25,9 @@ export async function GET(request: NextRequest) {
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
+      // Several collectors per pool (#178): forward each exact template once, whichever collector's copy arrives
+      // first. Templates without site/replica (one collector per pool, MongoDB mode) are never filtered.
+      const dedup = new StreamTemplateDedup();
 
       // Helper function to safely enqueue data to the controller
       const safeEnqueue = (data: string) => {
@@ -133,7 +137,14 @@ export async function GET(request: NextRequest) {
                 return;
               }
               // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
-              if (typeof parsed.pool_name === 'string' && parsed.type === undefined) poolName = parsed.pool_name;
+              if (typeof parsed.pool_name === 'string' && parsed.type === undefined) {
+                // Before the throttle, so another collector's exact copy doesn't use up the pool's rate.
+                if (!dedup.accept(parsed)) {
+                  channel?.ack(msg);
+                  return;
+                }
+                poolName = parsed.pool_name;
+              }
             } catch {
               // JSON parse failed — forward message unfiltered (fail-open)
             }

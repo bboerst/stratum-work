@@ -103,6 +103,7 @@ type StratumConfig struct {
 	UserPass         string
 	UserAgent        *string // nil = omit the identifier
 	PoolName         string
+	Site, Replica    string // this collector's identity, added to the live (RabbitMQ) message; "" = omitted
 	UseProxy         bool
 	ProxyHost        string
 	ProxyPort        int
@@ -342,6 +343,7 @@ func (c *Collector) process(msg pyValue, l line) {
 		}
 		d := newDocument(params, c.cfg.PoolName, c.extranonce1, c.extranonce2, l.ts, c.tracker.Estimate())
 		d.AppTsNs = l.app
+		d.Site, d.Replica = c.cfg.Site, c.cfg.Replica
 		if params[pCoinbase1].kind != pyStr || d.Height == 0 {
 			c.log.Warn("could not parse BIP34 height from coinbase1 (stored as 0)",
 				"coinbase1", truncate(pyStrOf(params[pCoinbase1]), 80))

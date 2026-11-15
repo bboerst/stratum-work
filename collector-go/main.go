@@ -299,6 +299,7 @@ func run(cfg *Config) int {
 
 	collector, err := NewCollector(StratumConfig{
 		URL: cfg.URL, UserPass: cfg.UserPass, UserAgent: cfg.UserAgent, PoolName: cfg.PoolName,
+		Site: cfg.Site, Replica: cfg.Replica,
 		UseProxy: cfg.UseProxy, ProxyHost: cfg.ProxyHost, ProxyPort: cfg.ProxyPort,
 		HandshakeTimeout: secs(cfg.HandshakeTimeout), ReadTimeout: secs(cfg.ReadTimeout), RetryDelay: 5 * time.Second,
 		StartDelay:    replicaStartDelay(cfg.Replica, secs(cfg.ReplicaStagger)),

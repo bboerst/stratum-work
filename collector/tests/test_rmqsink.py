@@ -93,6 +93,17 @@ class RabbitMQPublisherTests(unittest.TestCase):
         self.assertEqual(broker.declared[0], {"exchange": "mining_notify_exchange", "exchange_type": "fanout",
                                               "durable": True})
 
+    def test_site_and_replica_are_added_to_the_message_not_the_document(self):
+        from dataclasses import replace
+        broker = FakeBroker()
+        pub = RabbitMQPublisher(replace(CONFIG, site="s1", replica="b"), connect=broker.connect).start()
+        doc = {"job_id": "j0"}
+        pub.submit(doc)
+        self.assertTrue(wait_for(lambda: len(broker.published) == 1))
+        pub.close()
+        self.assertEqual(broker.published[0][1], {"job_id": "j0", "site": "s1", "replica": "b"})
+        self.assertEqual(doc, {"job_id": "j0"})   # the stored document is unchanged
+
     def test_submit_never_blocks_while_the_broker_hangs(self):
         broker = FakeBroker(hang_s=2.0)          # every publish takes 2 s (a stalled transatlantic link)
         pub = make(broker).start()

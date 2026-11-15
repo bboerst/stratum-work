@@ -888,6 +888,7 @@ def main():
         rabbitmq_publisher = RabbitMQPublisher(RabbitMQConfig(
             host=args.rabbitmq_host, port=args.rabbitmq_port, username=args.rabbitmq_username,
             password=args.rabbitmq_password, exchange=args.rabbitmq_exchange,
+            site=args.collector_site, replica=args.collector_replica,
         )).start()
 
     global postgres_sink

@@ -39,6 +39,10 @@ class RabbitMQConfig:
     heartbeat_s: int = 30                  # broker and client detect a dead connection within ~2 heartbeats
     blocked_connection_timeout_s: float = 30.0
     socket_timeout_s: float = 10.0
+    # This collector's --collector-site / --collector-replica, added to each message (not to the stored document) so
+    # the website's live stream can drop exact copies from a pool's other collectors (#178). None = omitted.
+    site: Optional[str] = None
+    replica: Optional[str] = None
 
 
 class RabbitMQPublisher:
@@ -143,6 +147,12 @@ class RabbitMQPublisher:
 
     def _publish(self, document: dict) -> None:
         try:
+            if self.config.site is not None or self.config.replica is not None:
+                document = dict(document)   # a copy: the caller's document (stored elsewhere) is left as is
+                if self.config.site is not None:
+                    document["site"] = self.config.site
+                if self.config.replica is not None:
+                    document["replica"] = self.config.replica
             body = json.dumps(document)
         except (TypeError, ValueError) as exc:
             self.stats["dropped_unserializable"] += 1

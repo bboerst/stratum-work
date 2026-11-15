@@ -679,3 +679,18 @@ func TestStaggeredStartStopsOnCancel(t *testing.T) {
 		t.Fatal("Run didn't return on cancel during the start delay")
 	}
 }
+
+func TestDocumentsCarryTheCollectorSiteAndReplica(t *testing.T) {
+	pool := newFakePool(t)
+	c, docs, _, cancel := testCollector(t, poolURL(pool), func(cfg *StratumConfig) { cfg.Site, cfg.Replica = "s1", "b" })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	defer cancel()
+	go c.Run(ctx)
+	f := pool.accept(t)
+	f.handshake(t)
+	f.send(t, notifyLine("j1"))
+	if d := nextDoc(t, docs); d.Site != "s1" || d.Replica != "b" {
+		t.Errorf("site %q replica %q", d.Site, d.Replica)
+	}
+}

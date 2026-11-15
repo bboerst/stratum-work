@@ -27,6 +27,8 @@ type Document struct {
 	LatencyMs      float64
 	LatencyMethod  string
 	ChainFamily    string // "" (Bitcoin / not classified), "bch", "unknown"
+	Site, Replica  string // the collector's --collector-site / --collector-replica, for the live stream's replica
+	// de-duplication (#178); RabbitMQ message only (the Postgres row has them via source_id), omitted when empty
 
 	AppTsNs  int64 // clock after the read returned (for the app-vs-kernel measurement only; never stored)
 	needsBCH bool  // chain classification waits for the BCH confirmation API (resolved off the read path)
@@ -124,6 +126,14 @@ func (d *Document) JSON() []byte {
 	if d.ChainFamily != "" {
 		field(false, "chain_family")
 		pyEncodeString(&b, d.ChainFamily)
+	}
+	if d.Site != "" {
+		field(false, "site")
+		pyEncodeString(&b, d.Site)
+	}
+	if d.Replica != "" {
+		field(false, "replica")
+		pyEncodeString(&b, d.Replica)
 	}
 	b.WriteByte('}')
 	return b.Bytes()

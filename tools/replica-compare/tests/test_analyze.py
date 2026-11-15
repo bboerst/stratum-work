@@ -160,3 +160,17 @@ def test_mostly_constant_tag_next_to_a_clock_and_shared_job_builder():
     assert labels[(7, 2)] == "mostly constant per session (changes occasionally)"
     assert labels[(12, 1)].startswith("clock-like")
     assert cb["same_job_id"] == 5 and cb["same_job_id_identical"] == 5
+
+
+def test_dedup_section():
+    row = {"day": "2030-01-01", "pool": "pool-1", "site": None, "rows": 59, "primary_rows": 30, "secondary_rows": 29,
+           "secondary_hidden": 27, "secondary_shown": 2, "extra_copies": 0, "near_misses": 1,
+           "near_miss_ntime_1s": 1, "near_miss_ntime_2s": 0, "near_miss_ntime_3s": 0, "near_miss_ntime_4_10s": 0,
+           "near_miss_ntime_over_10s": 0, "gap_fills": 1, "first_seen_gains": 3, "gain_ms_p50": 4.5,
+           "gain_ms_p95": 9.0, "gain_ms_max": 9.5}
+    rows = scenario()
+    md = render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0, dedup=[row, dict(row, site="s1")]))
+    assert "| 2030-01-01 | pool-1 | *all* | 59 | 30 | 29 | 27 | 2 | 0 | 1 | 1 / 0 / 0 / 0 / 0 | 1 | 3 | 4.5 / 9.0 / 9.5 |" in md
+    assert "| 2030-01-01 | pool-1 | s1 |" in md
+    assert "Not available" in render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0))
+    assert "No templates in the window" in render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0, dedup=[]))

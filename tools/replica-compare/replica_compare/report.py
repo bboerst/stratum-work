@@ -16,6 +16,37 @@ def _dist(d: dict) -> str:
     return f"{_ms(d['p50'])} / {_ms(d['p95'])} / {_ms(d['max'])}"
 
 
+def _n(x) -> str:
+    return "–" if x is None else str(x)
+
+
+def _dedup_section(rows) -> list[str]:
+    """The database's template_dedup_report: what the read path's de-duplication does with these replicas."""
+    out = ["", "## De-duplication on the read path (`template_dedup_report`)", ""]
+    if rows is None:
+        return out + ["Not available: the database has no `template_dedup_report` (migration "
+                      "`20261115000001_templates_dedup.sql`).", ""]
+    if not rows:
+        return out + ["No templates in the window.", ""]
+    out += ["Per UTC day, pool and site (*all* = the pool's total; every site, regardless of `--site`). Per pool and "
+            "height the first source by (site, replica) is the primary; its rows are all shown. A secondary row is "
+            "hidden only as an exact copy of a primary row (same prev_hash, merkle_branches, version, nbits, ntime). "
+            "*Near miss* = same job, other ntime (|Δntime| 1 / 2 / 3 / 4–10 / >10 s); *gap fill* = a job the primary "
+            "doesn't have; *extra* = more exact copies than the primary has. *Gains*: for *all*, shown primary rows "
+            "whose first_seen came from an earlier copy; per site, that site's copies that beat the primary row.", "",
+            "| day | pool | site | rows | primary | secondary | hidden (exact copies) | shown | extra | near misses "
+            "| Δntime 1 / 2 / 3 / 4–10 / >10 s | gap fills | gains | gain ms p50 / p95 / max |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        out.append(f"| {r['day']} | {r['pool']} | {r['site'] or '*all*'} | {r['rows']} | {r['primary_rows']} "
+                   f"| {r['secondary_rows']} | {r['secondary_hidden']} | {r['secondary_shown']} | {r['extra_copies']} "
+                   f"| {r['near_misses']} | {r['near_miss_ntime_1s']} / {r['near_miss_ntime_2s']} / "
+                   f"{r['near_miss_ntime_3s']} / {r['near_miss_ntime_4_10s']} / {r['near_miss_ntime_over_10s']} "
+                   f"| {r['gap_fills']} | {_n(r['first_seen_gains'])} "
+                   f"| {_ms(r['gain_ms_p50'])} / {_ms(r['gain_ms_p95'])} / {_ms(r['gain_ms_max'])} |")
+    return out + [""]
+
+
 def render(result: dict) -> str:
     meta, pools = result["meta"], result["pools"]
     ra, rb = meta["replicas"]
@@ -43,6 +74,7 @@ def render(result: dict) -> str:
                    f"| {_pct(p['field_equal_share']['coinbase_outputs'])} | {_pct(j['match_rate'])} "
                    f"| {j['only_a']} / {j['only_b']} | {_dist(j['offset_ms'])} | {j['a_first']} / {j['b_first']} / "
                    f"{j['ties']} |")
+    out += _dedup_section(result.get("dedup"))
     active = {n: p for n, p in pools.items() if "skipped" not in p}
     if not active:
         return "\n".join(out + ["", "No pool has templates from both replicas in the window."])

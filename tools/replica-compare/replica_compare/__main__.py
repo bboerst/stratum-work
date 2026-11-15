@@ -5,7 +5,8 @@
 
 Postgres: --pg-host/--pg-port/--pg-database/--pg-user/--pg-sslmode or libpq's PGHOST/PGPORT/PGDATABASE/PGUSER/
 PGSSLMODE; the password only via PGPASSWORD or PGPASSFILE. Read-only: any role that can SELECT templates,
-templates_other and sources (e.g. stratum_backend or stratum_web). The output holds counts, shares, offsets and byte
+templates_other and sources (e.g. stratum_backend or stratum_web). If the database has template_dedup_report, its
+per-pool, per-day, per-site summary of the read path's de-duplication is included (all sites; --site doesn't filter it). The output holds counts, shares, offsets and byte
 positions only, never coinbase, extranonce or job id values.
 """
 from __future__ import annotations
@@ -54,10 +55,12 @@ def parser() -> argparse.ArgumentParser:
 
 
 def run(by_pool: dict, since: datetime, until: datetime, replicas: tuple[str, str], max_offset: float,
-        tie_ms: float = 0.0, site=None) -> dict:
+        tie_ms: float = 0.0, site=None, dedup=None) -> dict:
+    """dedup: rows of the database's template_dedup_report for the window (None: not available)."""
     return {"meta": {"since": since.isoformat(), "until": until.isoformat(), "replicas": list(replicas),
                      "site": site, "max_offset_s": max_offset, "tie_ms": tie_ms},
-            "pools": {name: analyze_pool(rows, replicas, max_offset, tie_ms) for name, rows in sorted(by_pool.items())}}
+            "pools": {name: analyze_pool(rows, replicas, max_offset, tie_ms) for name, rows in sorted(by_pool.items())},
+            "dedup": dedup}
 
 
 def main(argv=None) -> int:
@@ -70,11 +73,12 @@ def main(argv=None) -> int:
     since = args.since or until - args.last
     import psycopg  # only needed against a database; the analysis itself has no dependencies
 
-    from .db import connect_kwargs, fetch
+    from .db import connect_kwargs, fetch, fetch_dedup_report
     with psycopg.connect(**connect_kwargs(args)) as conn:
         conn.read_only = True
         by_pool = fetch(conn, since, until, list(replicas), args.site, args.pools)
-    result = run(by_pool, since, until, replicas, args.max_offset, args.tie_ms, args.site)
+        dedup = fetch_dedup_report(conn, since, until, args.pools)
+    result = run(by_pool, since, until, replicas, args.max_offset, args.tie_ms, args.site, dedup)
     md = render(result)
     if args.out:
         with open(args.out, "w") as f:

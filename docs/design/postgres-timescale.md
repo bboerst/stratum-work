@@ -113,14 +113,41 @@ Coinbase parts stay inline in both: coinbase outputs change with fees, so they'r
 ### Current reads in the new schema
 | # | SQL |
 |---|---|
-| R1, R8 | `SELECT … FROM templates WHERE height = $1` (Bitcoin by construction; the chain filter is gone) |
-| R2 | R1, plus `UNION ALL … FROM templates_other WHERE height = $1` only if the details page should keep showing non-BTC templates (decision for #98) |
+| R1, R8 | `SELECT … FROM templates_dedup WHERE height = $1` (Bitcoin by construction; the chain filter is gone). Exact copies from secondary collector replicas hidden, see below |
+| R2 | R1, plus `UNION ALL … FROM templates_other_dedup WHERE height = $1` only if the details page should keep showing non-BTC templates (decision for #98) |
 | R3 | `SELECT … FROM blocks WHERE (analysis - 'pool_identification') <> '{}' ORDER BY height DESC LIMIT 200`: **index-only scan** on the partial index (verified), replacing today's full `$expr` scan |
 | R4 | `SELECT DISTINCT ON (source_id) source_id, received_at, latency_ms FROM templates WHERE height = $1 ORDER BY source_id, received_at` (verified) |
 | R5, R6, R9 | `blocks` by `height` range or equality (`blocks_height` index), or by `block_hash` (PK). Today these are unindexed 128k-document scans. |
 | R7, R11 | `pools`: by name, all, or `addresses @> ARRAY[$1]` (GIN) |
 | R10 | `SELECT block_hash FROM blocks ORDER BY height DESC` |
 | R12 | Replaced by WAL archiving + base backups (section 4). No more dump-based incrementals. |
+
+### Redundant collection: reading each template once
+With several collectors per pool (`sources.replica`, and sites in several regions), each template is stored once per connection that saw it. Migration `20261115000001_templates_dedup.sql` adds views that show each template once, without merging anything a pool sent on one connection:
+
+- **Primary.** At each height, the pool's (`sources.name`) sources with rows at that height are ordered by `(site, replica)`; the first is the primary, the others are secondaries. The order is stable and decided by the names: to make a site the primary, give it the name that sorts first. Per height, so a height the usual primary missed (collector down) is served by the next source instead of being shown twice.
+- **Every primary row is shown as stored.** Re-sends (same job, new `ntime`) and any other change stay separate rows. With one source per pool the views return exactly the raw rows.
+- **A secondary row is hidden only if it is an exact copy of a primary row:** same height, pool, `prev_hash`, `merkle_branches`, `version`, `nbits` and `ntime`. There's no time or ntime tolerance and no threshold. Per-connection fields (`job_id`, `extranonce1`, coinbase, latency, `received_at`) may differ. Matching is one-to-one: per source, the copies of a key are numbered in that source's own receive order (`copy_no`), and a secondary's *n*-th copy hides only the primary's *n*-th.
+- **Shown secondary rows** have `is_primary = false` and a `class`. `gap_fill`: the primary has no row of that job. `near_miss`: the primary has the job with another `ntime` only. `extra`: the primary has that exact template, but fewer times.
+- **Times.** `first_seen` = the earliest `received_at` over a primary row and its hidden copies; `received_at` stays the row's own. `site_first_seen` (jsonb `{site: earliest received_at at that site}`) keeps each region's own time. `copies`, `replicas` and `sites` say who saw it.
+- **Multi-site (regions).** The rule is the same across sites. Hiding never compares clocks, because matching is by identical fields and per-source order, so clock skew between sites can only move `first_seen`, never what is shown. Anything only one site saw is shown. For timing by region use `site_first_seen` or `templates_copies`, not `first_seen`, which mixes geographies.
+- **Views.** `templates_copies` holds every row, classified (`primary`, `copy` = hidden, `extra`, `near_miss`, `gap_fill`). `templates_dedup` holds the rows to show. The `templates_other_*` views do the same for `templates_other`, with `chain` in every key. Filters on height (or a height range, or pool) reach the height index and the columnstore's height metadata, at the cost of two sorts of that height's rows. Without a height filter the views read the whole table.
+- **Reads.** R1, R2 and R8 read `templates_dedup` / `templates_other_dedup`, with `timestamp` = `first_seen` and the template `id` keeping the row's own receive time. R4 and R4b keep reading `templates`: a pool's earliest row is either shown or a hidden copy whose time became its primary's `first_seen`, so the earliest time is the same, and a set of names can't be doubled. Block and pool reads are unaffected. MongoDB mode keeps one collector per pool.
+
+**How to see what it does.** `template_dedup_report(from_ts, to_ts)` returns, for Bitcoin templates received in the window, one row per UTC day, pool and site, plus `site IS NULL` for the pool's total:
+- rows, primary rows, secondary rows, secondary rows hidden as exact copies and shown;
+- the shown rows split into `extra_copies`, `near_misses` (with `near_miss_ntime_1s` / `_2s` / `_3s` / `_4_10s` / `_over_10s`, the |ntime difference| to the closest primary row of the job) and `gap_fills`;
+- first-seen gains with `gain_ms_p50` / `_p95` / `_max`. For the total, that's shown primary rows whose `first_seen` came from an earlier copy. Per site, it's that site's copies that arrived before the primary row.
+
+Heights are classified whole, so copies just outside the window still count as matched. `tools/replica-compare` includes the same table in its Markdown and JSON output.
+
+```sql
+-- yesterday, pool totals
+SELECT * FROM template_dedup_report(date_trunc('day', now()) - interval '1 day', date_trunc('day', now())) WHERE site IS NULL;
+-- one height: what was hidden and why, with per-site times of the shown rows
+SELECT pool, site, replica, class, received_at, first_seen FROM templates_copies WHERE height = 925000 ORDER BY pool, first_seen;
+SELECT pool, class, copies, sites, site_first_seen FROM templates_dedup WHERE height = 925000 AND copies > 1;
+```
 
 ### Database users and credentials (from day one)
 The current MongoDB setup has every component sharing one admin account, with the password in plaintext in deployment manifests. Not again:

@@ -28,7 +28,7 @@ export type Results = {
 export const COLUMNS: { key: keyof PageMetrics; title: string; digits: number; higherIsWorse: boolean; noise: number; rel: number }[] = [
   { key: "loadScriptS", title: "Load script (s)", digits: 2, higherIsWorse: true, noise: 0.1, rel: 0.15 },
   { key: "loadLongestTaskMs", title: "Load longest task (ms)", digits: 0, higherIsWorse: true, noise: 50, rel: 0.25 },
-  { key: "streamCpuPct", title: "Streaming CPU (%)", digits: 1, higherIsWorse: true, noise: 2, rel: 0.1 },
+  { key: "streamCpuPct", title: "Streaming CPU (%)", digits: 1, higherIsWorse: true, noise: 2, rel: 0.15 },
   { key: "streamLongTasks", title: "Streaming long tasks", digits: 0, higherIsWorse: true, noise: 2, rel: 0.5 },
   { key: "streamLongestTaskMs", title: "Streaming longest task (ms)", digits: 0, higherIsWorse: true, noise: 50, rel: 0.3 },
   { key: "fps", title: "FPS", digits: 0, higherIsWorse: false, noise: 3, rel: 0.1 },

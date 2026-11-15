@@ -169,6 +169,14 @@ topologySpreadConstraints: []
 terminationGracePeriodSeconds: 10
 readinessProbe: {}
 startupProbe: {}
+# Container lifecycle hooks. For rollouts without 502s, keep a pod serving for a few seconds after it's marked for
+# deletion, so the ingress controller stops routing to it before the server exits on SIGTERM:
+#   lifecycle:
+#     preStop:
+#       exec:
+#         command: ["sleep", "10"]
+# terminationGracePeriodSeconds must cover the sleep plus the shutdown.
+lifecycle: {}
 podDisruptionBudget:
   enabled: false
   maxUnavailable: 1

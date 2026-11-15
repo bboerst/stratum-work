@@ -136,6 +136,9 @@ class PostgresStore:
                   sslmode=os.getenv("PG_SSLMODE", "prefer"), connect_timeout=10, application_name="stratum-work-backend")
         if os.getenv("PG_PASSWORD"):
             kw["password"] = os.environ["PG_PASSWORD"]
+        # CA for sslmode=verify-ca/verify-full (a private CA); without it libpq looks for ~/.postgresql/root.crt.
+        if os.getenv("PG_SSLROOTCERT"):
+            kw["sslrootcert"] = os.environ["PG_SSLROOTCERT"]
         return cls(kw)
 
     enabled = True

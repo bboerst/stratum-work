@@ -18,6 +18,36 @@ import {
     reportParseFailure,
 } from '@/utils/bitcoinUtils';
 import { sortRowsByKey } from '@/utils/sortUtils';
+import { decodeMergeMining, diffMergeMining, formatMergeMiningChange, MergeMiningSummary } from '@/utils/mergeMining';
+
+// Merge-mining summary of a template, and how it differs from the same pool's previous template (#42).
+interface MergeMiningState {
+  raw: string; // the coinbase this state is for
+  summary: MergeMiningSummary;
+  change: string; // "" for a pool's first template, "unchanged", or e.g. "+Syscoin AuxPoW RSK"
+  setChanged: boolean; // chains added or removed (or the AuxPoW tree size changed)
+}
+
+function mergeMiningSummaryOf(
+  t: Pick<StratumV1Data, 'coinbase1' | 'extranonce1' | 'extranonce2_length' | 'coinbase2'>
+): MergeMiningSummary {
+  return decodeMergeMining(t.coinbase1, t.extranonce1 || '', Number(t.extranonce2_length), t.coinbase2).summary;
+}
+
+function nextMergeMiningState(prev: MergeMiningState | undefined, raw: string, summary: MergeMiningSummary): MergeMiningState {
+  if (!prev) return { raw, summary, change: '', setChanged: false };
+  if (prev.raw === raw) return prev;
+  const diff = diffMergeMining(prev.summary, summary);
+  return { raw, summary, change: formatMergeMiningChange(diff) || 'unchanged', setChanged: diff.setChanged };
+}
+
+function mergeMiningFields(state: MergeMiningState | undefined) {
+  return {
+    mergeMining: state?.summary.label ?? '',
+    mergeMiningChange: state?.change ?? '',
+    mergeMiningSetChanged: state?.setChanged ?? false,
+  };
+}
 
 // Constants for pagination
 const ITEMS_PER_PAGE = 50;
@@ -40,6 +70,9 @@ export function useTableData(
 
   // Track each pool's current coinbaseRaw, so we know when it changes
   const poolCoinbaseMap = useRef<Map<string, string>>(new Map());
+
+  // Each pool's merge-mining state, updated as its templates arrive
+  const mergeMiningByPool = useRef<Map<string, MergeMiningState>>(new Map());
 
   // Add state for filtered data and loading
   const [filteredData, setFilteredData] = useState<SortedRow[]>([]);
@@ -102,6 +135,14 @@ export function useTableData(
   
       // Store the new coinbaseRaw for this pool
       poolCoinbaseMap.current.set(data.pool_name, newCoinbaseRaw);
+
+      const mmPrev = mergeMiningByPool.current.get(data.pool_name);
+      if (!mmPrev || mmPrev.raw !== newCoinbaseRaw) {
+        mergeMiningByPool.current.set(
+          data.pool_name,
+          nextMergeMiningState(mmPrev, newCoinbaseRaw, mergeMiningSummaryOf(data))
+        );
+      }
       
       // Store this data as the latest for this pool
       // If this is data for the current height, update the pool's data
@@ -148,10 +189,12 @@ export function useTableData(
         );
         const coinbaseOutputValue = computeCoinbaseOutputValue(coinbaseRaw);
         const computedFirstTx = computeFirstTransaction(row.merkle_branches);
+        const mm = mergeMiningByPool.current.get(row.pool_name);
 
         return {
           ...row,
           ...timingFields,
+          ...mergeMiningFields(mm && mm.raw === coinbaseRaw ? mm : undefined),
           coinbaseRaw,
           coinbaseScriptASCII,
           coinbaseOutputValue,
@@ -335,6 +378,14 @@ export function useTableData(
     const sortedData = [...processedData].sort((a, b) => {
       return a.timestamp.localeCompare(b.timestamp);
     });
+
+    // Merge-mining changes, per pool, in time order
+    const mmStates = new Map<string, MergeMiningState>();
+    for (const item of sortedData) {
+      const state = nextMergeMiningState(mmStates.get(item.pool_name), item.coinbaseRaw, mergeMiningSummaryOf(item));
+      mmStates.set(item.pool_name, state);
+      Object.assign(item, mergeMiningFields(state));
+    }
 
     // Store the processed data for pagination
     setAllData(sortedData);

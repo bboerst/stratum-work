@@ -56,9 +56,13 @@ export interface ScriptPush extends ByteRange {
 
 export interface AuxPow {
   range: ByteRange;
-  root: string; // aux chain merkle root / block hash, displayed byte-reversed as usual
-  merkleSize?: number;
-  nonce?: number;
+  // The aux chain merkle root (for a single aux chain: that chain's block hash), as the hex of the bytes in the
+  // coinbase. That is already the usual display order: Namecoin's CAuxPow::check reverses the root's internal bytes
+  // before searching the scriptSig for it, so the coinbase holds it the way RPCs and explorers print hashes.
+  root: string;
+  merkleSize?: number; // number of slots in the aux tree (a power of two per the spec); absent if the script ends early
+  nonce?: number; // merkle nonce, picks each chain's slot
+  magicCount: number; // how many times the magic appears in the scriptSig (more than one is invalid for aux chains)
 }
 
 export interface ParsedScriptSig extends ByteRange {
@@ -375,8 +379,12 @@ function findAuxPow(b: Uint8Array, start: number, end: number): AuxPow | null {
     if (b[i] !== AUXPOW_MAGIC[0] || b[i + 1] !== AUXPOW_MAGIC[1] || b[i + 2] !== AUXPOW_MAGIC[2] || b[i + 3] !== AUXPOW_MAGIC[3])
       continue;
     const rootStart = i + 4;
-    const root = b.slice(rootStart, rootStart + 32).reverse();
-    const aux: AuxPow = { range: { start: i, end: rootStart + 32 }, root: bytesToHex(root) };
+    const root = b.slice(rootStart, rootStart + 32);
+    let magicCount = 0;
+    for (let j = start; j + AUXPOW_MAGIC.length <= end; j++)
+      if (b[j] === AUXPOW_MAGIC[0] && b[j + 1] === AUXPOW_MAGIC[1] && b[j + 2] === AUXPOW_MAGIC[2] && b[j + 3] === AUXPOW_MAGIC[3])
+        magicCount++;
+    const aux: AuxPow = { range: { start: i, end: rootStart + 32 }, root: bytesToHex(root), magicCount };
     if (rootStart + 40 <= end) {
       const rd = new Reader(b);
       rd.pos = rootStart + 32;

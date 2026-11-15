@@ -23,6 +23,8 @@ import { getMerkleColor } from '@/utils/colorUtils';
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import ScriptSigMap from './ScriptSigMap';
+import { decodeMergeMining, OpReturnDecoded } from '@/utils/mergeMining';
+import { AuxPowDetails, MergeMiningSummaryLine, OpReturnFields } from './MergeMiningDetails';
 
 interface BlockTemplateCardProps {
   latestMessage?: StratumV1Data;
@@ -84,10 +86,11 @@ const useFlashOnUpdate = (currentValue: unknown) => {
 // Modify CoinbaseOutputItem props
 interface CoinbaseOutputItemProps {
   output: CoinbaseOutput;
+  decoded?: OpReturnDecoded | null; // from utils/mergeMining, for OP_RETURN outputs
   showRawData: boolean; // Added prop
 }
 
-const CoinbaseOutputItem: React.FC<CoinbaseOutputItemProps> = React.memo(({ output, showRawData }) => {
+const CoinbaseOutputItem: React.FC<CoinbaseOutputItemProps> = React.memo(({ output, decoded, showRawData }) => {
     // Call the hook correctly at the top level of this component
     const outputFlash = useFlashOnUpdate(JSON.stringify(output));
 
@@ -108,30 +111,17 @@ const CoinbaseOutputItem: React.FC<CoinbaseOutputItemProps> = React.memo(({ outp
                                 <TooltipContent className="bg-background text-foreground"><p>Unspendable output used to store arbitrary data on the blockchain (e.g., for merged mining).</p></TooltipContent>
                             </Tooltip> OP_RETURN 
                         </span> 
-                        {output.decodedData && output.decodedData.protocol !== 'Unknown' && ( 
-                            <span className="italic text-blue-500 dark:text-blue-400"> ({output.decodedData.protocol})</span>
-                        )}
                     </div>
                     <div className="mb-1">
                         <span className="font-medium">Value (BTC):</span> {(output.value / 100000000).toFixed(8) || 'N/A'}
                     </div>
-                    {output.decodedData?.details && Object.keys(output.decodedData.details).length > 0 && (
+                    {decoded ? (
+                        <OpReturnFields decoded={decoded} />
+                    ) : output.decodedData ? (
                         <div className="mb-1 border-t border-gray-300 dark:border-gray-600 pt-1">
-                            <span className="font-medium">Decoded:</span>
-                            <ul className="list-disc list-inside pl-2">
-                                {output.decodedData.protocol === 'CoreDAO' && output.decodedData.details.validatorAddress ? (
-                                    <> 
-                                        <li><span className="font-semibold">Validator Address:</span> <a href={`https://scan.coredao.org/address/${output.decodedData.details.validatorAddress}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">{output.decodedData.details.validatorAddress}</a></li>
-                                        <li><span className="font-semibold">Reward Address:</span> <a href={`https://scan.coredao.org/address/${output.decodedData.details.rewardAddress}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">{output.decodedData.details.rewardAddress || 'N/A'}</a></li>
-                                    </>
-                                ) : (
-                                    Object.entries(output.decodedData.details).map(([key, value]) => (
-                                        <li key={key}><span className="font-semibold capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span> <span className="break-all">{String(value)}</span></li>
-                                    ))
-                                )}
-                            </ul>
+                            <span className="font-medium">Protocol:</span> <span className="italic">{output.decodedData.protocol}</span>
                         </div>
-                    )}
+                    ) : null}
                     {showRawData && (
                         <div className="border-t border-gray-300 dark:border-gray-600 pt-1">
                             <span className="font-medium">Data (hex):</span> <span className="break-all">{output.decodedData?.dataHex || output.hex || 'N/A'}</span>
@@ -285,6 +275,16 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
         }
     }, [displayMessage]);
 
+    const mergeMining = useMemo(() => {
+        if (!displayMessage) return null;
+        return decodeMergeMining(
+            displayMessage.coinbase1,
+            displayMessage.extranonce1,
+            Number(displayMessage.extranonce2_length),
+            displayMessage.coinbase2
+        );
+    }, [displayMessage]);
+
     const prevMessageRef = useRef<StratumV1Data | undefined>(undefined);
 
     useEffect(() => {
@@ -297,7 +297,7 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
     const prevHashFlash = useFlashOnUpdate(displayMessage?.prev_hash);
     const parsedHeightFlash = useFlashOnUpdate(rowData?.coinbaseHeight);
     const scriptAsciiFlash = useFlashOnUpdate(rowData?.coinbaseScriptASCII);
-    const auxPowFlash = useFlashOnUpdate(JSON.stringify(rowData?.auxPowData));
+    const auxPowFlash = useFlashOnUpdate(JSON.stringify(mergeMining?.auxpow ?? null));
     const txVersionFlash = useFlashOnUpdate(rowData?.txVersion);
     const inputSequenceFlash = useFlashOnUpdate(rowData?.inputSequence);
     const txLocktimeFlash = useFlashOnUpdate(rowData?.txLocktime);
@@ -473,30 +473,8 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                             <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 ${extranonce2LenFlash}`}>{displayMessage.extranonce2_length} bytes</div>
                                         </div>
                                     )}
-                                    {rowData.auxPowData && (
-                                        <div className="mt-2 border-t pt-3">
-                                            <div className="font-medium text-muted-foreground mb-1">Auxiliary Proof-of-Work (AuxPOW):</div>
-                                            <div className={`space-y-2 text-[10px] border rounded-sm p-2 bg-card/50 ${auxPowFlash}`}>
-                                                <div>
-                                                    <span className="font-semibold">
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild><span className="underline decoration-dotted cursor-help">Aux Merkle Root:</span></TooltipTrigger>
-                                                            <TooltipContent className="bg-background text-foreground"><p>Merkle Root of the auxiliary chain block, found after AuxPOW magic bytes.</p></TooltipContent>
-                                                        </Tooltip>
-                                                    </span>
-                                                    <span className="break-all ml-1">
-                                                        {rowData.auxPowData.auxHashOrRoot}
-                                                    </span>
-                                                </div>
-                                                {rowData.auxPowData.merkleSize !== undefined && rowData.auxPowData.merkleSize !== null && (
-                                                    <div><span className="font-semibold">Aux Merkle Size:</span> <span>{rowData.auxPowData.merkleSize}</span></div>
-                                                )}
-                                                {rowData.auxPowData.nonce !== undefined && rowData.auxPowData.nonce !== null && (
-                                                    <div><span className="font-semibold">Aux Nonce:</span> <span>{rowData.auxPowData.nonce}</span></div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
+                                    {mergeMining && <MergeMiningSummaryLine summary={mergeMining.summary} />}
+                                    {mergeMining?.auxpow && <AuxPowDetails aux={mergeMining.auxpow} flashClass={auxPowFlash} />}
                                 </div>
                             </div>
                         </div> 
@@ -517,7 +495,12 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                 <div className="space-y-2 text-[10px]">
                                     {rowData.coinbase_outputs && rowData.coinbase_outputs.length > 0 ? (
                                         rowData.coinbase_outputs.map((output, index) => (
-                                            <CoinbaseOutputItem key={index} output={output} showRawData={showRawOutputData} />
+                                            <CoinbaseOutputItem
+                                                key={index}
+                                                output={output}
+                                                decoded={mergeMining?.outputs[index]?.opReturn}
+                                                showRawData={showRawOutputData}
+                                            />
                                         ))
                                     ) : (
                                         <div className="p-1.5 border rounded-sm italic text-[10px]">

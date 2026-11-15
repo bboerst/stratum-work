@@ -140,7 +140,8 @@ describe("parseCoinbase: structure", () => {
     const b = build({ sigBefore: heightPush(975_900) + push(hex("merge") + aux) });
     const s = parse(b).scriptSig!;
     expect(s.auxpow).not.toBeNull();
-    expect(s.auxpow!.root).toBe("66" + "55".repeat(31)); // displayed reversed
+    expect(s.auxpow!.root).toBe(root); // coinbase byte order is already display order
+    expect(s.auxpow!.magicCount).toBe(1);
     expect(s.auxpow!.merkleSize).toBe(8);
     expect(s.auxpow!.nonce).toBe(7);
     expect(s.segments.find((x) => x.kind === "auxpow")!.end - s.segments.find((x) => x.kind === "auxpow")!.start).toBe(44);

@@ -265,6 +265,31 @@ export default function RealtimeTableRowComponent({
             : (row.coinbaseOutputValue / 100000000).toFixed(8)}
         </TableCell>
       )}
+
+      {columnsVisible.mergeMining && (
+        <TableCell
+          style={{ width: columnWidths.mergeMining }}
+          className="p-1 truncate"
+          title={row.mergeMining || "No merge-mining commitments"}
+        >
+          {row.mergeMining || "–"}
+        </TableCell>
+      )}
+
+      {columnsVisible.mergeMiningChange && (
+        <TableCell
+          style={{ width: columnWidths.mergeMiningChange }}
+          className={`p-1 truncate ${row.mergeMiningSetChanged ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}
+          title={
+            row.mergeMiningChange
+              ? `${row.mergeMiningChange} (vs this pool's previous template${row.mergeMiningSetChanged ? "; the set of chains changed" : ""})`
+              : "First template seen from this pool"
+          }
+          data-mm-set-changed={row.mergeMiningSetChanged ? "true" : undefined}
+        >
+          {row.mergeMiningChange || ""}
+        </TableCell>
+      )}
     </TableRow>
   );
 } 

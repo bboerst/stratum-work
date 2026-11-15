@@ -40,6 +40,10 @@ export interface SortedRow {
   inputSequence?: number;
   txLocktime?: number;
   witnessCommitmentNonce?: string | null;
+  // Merge mining (#42): chains this template commits to, and what changed vs the pool's previous template
+  mergeMining?: string;
+  mergeMiningChange?: string;
+  mergeMiningSetChanged?: boolean;
 }
 
 // Sort direction type

@@ -76,6 +76,7 @@ export default function RealtimeTableHeader({
               }}
               className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
               style={{ width: columnWidths[key] }}
+              title={key === "coinbaseRaw" ? "The extranonce1 bytes are masked per connection (same length, not the real value)" : undefined}
             >
               {label}{renderSortIndicator(key)}
               <div

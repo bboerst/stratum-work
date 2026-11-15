@@ -212,6 +212,8 @@ services:
       # Live display limit per pool (#105); 0 disables.
       STREAM_POOL_RATE: ${STREAM_POOL_RATE:-5}
       STREAM_POOL_BURST: ${STREAM_POOL_BURST:-20}
+      # Key for masking extranonce1 in served data (#105); optional, empty = random per start.
+      EXTRANONCE1_MASK_KEY: ${EXTRANONCE1_MASK_KEY:-}
     volumes:
       - ./web:/app
       - /app/node_modules

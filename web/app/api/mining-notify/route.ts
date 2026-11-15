@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMiningNotifyByHeight } from "@/lib/db/mining-notify";
+import { maskTemplates } from "@/lib/connectionMask";
 import { filterBlacklistedItems } from "@/lib/poolBlacklist";
 
 export async function GET(request: NextRequest) {
@@ -12,7 +13,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const records = await getMiningNotifyByHeight(parseInt(height));
-    const filtered = filterBlacklistedItems(records, r => r.pool_name);
+    // extranonce1 identifies the collector's connection: served masked (#105).
+    const filtered = maskTemplates(filterBlacklistedItems(records, r => r.pool_name));
     
     return NextResponse.json(filtered);
   } catch (error: Error | unknown) {

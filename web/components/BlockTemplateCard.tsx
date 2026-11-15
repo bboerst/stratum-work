@@ -166,7 +166,6 @@ const JsonViewerWithMerkleColors: React.FC<JsonViewerProps> = ({ data }) => {
   // Manually remove/redact properties
   delete (displayMessage as Record<string, unknown>)._id;
   delete (displayMessage as Record<string, unknown>).job_id;
-  delete (displayMessage as Record<string, unknown>).extranonce1;
   delete (displayMessage as Record<string, unknown>).timestamp; // Hide timestamp
   delete (displayMessage as Record<string, unknown>).pool_name; // Hide pool_name
   delete (displayMessage as Record<string, unknown>).height;    // Hide height
@@ -175,7 +174,7 @@ const JsonViewerWithMerkleColors: React.FC<JsonViewerProps> = ({ data }) => {
   const redactedMessage = {
     ...displayMessage,
     job_id: '[REDACTED]',
-    extranonce1: '[REDACTED]',
+    // extranonce1 arrives masked from the server (a per-connection pseudonym of the same length), so it's shown as is.
   };
 
   const jsonString = JSON.stringify(redactedMessage, null, 2);
@@ -456,11 +455,11 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                                         <div>
                                             <div className="font-medium text-muted-foreground mb-0.5">
                                                 <Tooltip>
-                                                    <TooltipTrigger asChild><span className="underline decoration-dotted cursor-help">Extranonce1 (Pool):</span></TooltipTrigger>
-                                                    <TooltipContent className="bg-background text-foreground"><p>Pool-provided nonce part (usually static per job).</p></TooltipContent>
+                                                    <TooltipTrigger asChild><span className="underline decoration-dotted cursor-help">Extranonce1 (Pool, masked):</span></TooltipTrigger>
+                                                    <TooltipContent className="bg-background text-foreground"><p>Assigned by the pool per connection, so it identifies the collector&apos;s session. Shown masked: a pseudonym with the same length that stays the same while the session does. The coinbase shown here contains the pseudonym, not the real bytes.</p></TooltipContent>
                                                 </Tooltip>
                                             </div>
-                                            <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 text-muted-foreground`}>[REDACTED]</div>
+                                            <div className={`p-2 border rounded-sm font-mono text-[11px] bg-card/80 text-muted-foreground break-all`}>{displayMessage.extranonce1}</div>
                                         </div>
                                     )}
                                     {displayMessage?.extranonce2_length !== undefined && (

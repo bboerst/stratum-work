@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/realtimePrefillRoute.test.ts)
 import { enableHistoricalData, getHighestBlock } from "../../../lib/db/blocks";
 import { fetchMiningNotifyByHeight } from "../../../lib/db/mining-notify";
+import { maskTemplates } from "../../../lib/connectionMask";
 import { isPoolBlacklisted } from "../../../lib/poolBlacklist";
 import { prefillHeights, selectPrefillTemplates } from "../../../lib/prefill";
 
@@ -34,7 +35,8 @@ async function buildPrefill(nowMs: number): Promise<PrefillResponse> {
   const heights = prefillHeights(tip, nowMs);
   const records = (await Promise.all(heights.map(h => fetchMiningNotifyByHeight(h)))).flat();
   const templates = selectPrefillTemplates(records, { nowMs, isBlacklisted: isPoolBlacklisted });
-  return { enabled: true, tip, heights, templates };
+  // extranonce1 identifies the collector's connection: served masked (#105).
+  return { enabled: true, tip, heights, templates: maskTemplates(templates) };
 }
 
 export async function GET() {

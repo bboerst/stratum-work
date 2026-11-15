@@ -171,11 +171,23 @@ describe("parseCoinbase: structure", () => {
     const b = build({ sigBefore: heightPush(975_900) + push("0102796a") + hex("ExamplePool/42/") + "b0" });
     const tags = parse(b).scriptSig!.tags.map((t) => t.text);
     expect(tags).toEqual(["ExamplePool/42/"]);
+    // also when 3 of the 4 pushed bytes are printable
+    const c = build({ sigBefore: heightPush(975_900) + push("3b796a71") + hex("ExamplePool/42/") + "b0" });
+    expect(parse(c).scriptSig!.tags.map((t) => t.text)).toEqual(["ExamplePool/42/"]);
   });
 
-  it("ignores short printable runs in binary data, but keeps a whole 4-byte text push", () => {
-    const b = build({ sigBefore: heightPush(975_900) + push("00" + hex("CvYH") + "00ff") + push(hex("ABCD")) + push(hex("Mined by X")) });
-    expect(parse(b).scriptSig!.tags.map((t) => t.text)).toEqual(["ABCD", "Mined by X"]);
+  it("ignores short printable runs in binary data, including a pushed 4-byte value that happens to be printable", () => {
+    const b = build({ sigBefore: heightPush(975_900) + push("00" + hex("CvYH") + "00ff") + push(hex("&bF$")) + push(hex("Mined by X")) });
+    expect(parse(b).scriptSig!.tags.map((t) => t.text)).toEqual(["Mined by X"]);
+  });
+
+  it("keeps a tag whole when the pool's push length doesn't match its text", () => {
+    // After the extranonce: 0a "tagpool" 0d "/longer/name/": the 0x0a push length cuts into the second string.
+    const b = build({ sigBefore: heightPush(975_900), sigAfter: "0a" + hex("tagpool") + "0d" + hex("/longer/name/") });
+    expect(coinbaseTagText(parse(b))).toBe("tagpool /longer/name/");
+    // the same with a 19-byte second push
+    const c = build({ sigBefore: heightPush(975_900), sigAfter: "0a" + hex("tagpool") + "13" + hex("ab/solo.example.org") });
+    expect(coinbaseTagText(parse(c))).toBe("tagpool ab/solo.example.org");
   });
 
   it("matches the existing BIP34 height decoder on all its cases", () => {

@@ -9,7 +9,11 @@ import { useTheme } from 'next-themes';
 import { useRenderDiagram } from "@/hooks/useRenderDiagram";
 import SankeyTooltip, { TooltipData } from './sankey/SankeyTooltip';
 import SankeyStates from './sankey/SankeyStates';
+
 import { useSankeyControls } from '@/hooks/useSankeyControls';
+
+/** Minimum time between two full re-renders of the diagram. */
+const RENDER_INTERVAL_MS = 500;
 
 interface SankeyDiagramProps {
   height: number;
@@ -99,15 +103,40 @@ export default function SankeyDiagram({
     getBranchColor
   });
   
-  // Consolidated useEffect for all rendering triggers
+  // The diagram depends only on which merkle branches each pool's latest template has. Most new templates keep
+  // them (a new job id or ntime), so re-rendering on every update rebuilt the whole SVG for nothing: re-render only
+  // when this structure changes (perf harness, #157).
+  const structureKey = useMemo(
+    () =>
+      actualStratumV1Data
+        .map((d: StratumV1Data) => `${d.pool_name}\u0000${(d.merkle_branches ?? []).join(",")}`)
+        .sort()
+        .join("\n"),
+    [actualStratumV1Data]
+  );
+
+  // Each render rebuilds the whole SVG, so when the structure changes in quick succession (a new block: every pool
+  // sends new work within a second) renders are coalesced: at most one per RENDER_INTERVAL_MS, always the latest.
+  const lastRenderRef = useRef(0);
+  const pendingRenderRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (actualStratumV1Data.length > 0) {
+    if (structureKey === "") return;
+    const run = () => {
+      pendingRenderRef.current = null;
+      lastRenderRef.current = performance.now();
       // Clear tooltips when any major state changes to prevent stale tooltips
       setTooltipData(null);
       setTooltipPosition(null);
       renderDiagram();
-    }
-  }, [actualStratumV1Data, paused, showLabels, colors, renderDiagram]);
+    };
+    if (pendingRenderRef.current) clearTimeout(pendingRenderRef.current);
+    const wait = RENDER_INTERVAL_MS - (performance.now() - lastRenderRef.current);
+    if (wait <= 0) run();
+    else pendingRenderRef.current = setTimeout(run, wait);
+  }, [structureKey, paused, showLabels, colors, renderDiagram]);
+  useEffect(() => () => {
+    if (pendingRenderRef.current) clearTimeout(pendingRenderRef.current);
+  }, []);
   
   return (
     <div 

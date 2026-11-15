@@ -22,6 +22,8 @@ Per pool (`sources.name`, comparing two `sources.replica` values):
 
   For each key: jobs per replica, jobs both saw (match rate), jobs only one saw, templates per job, jobs whose templates carry several output sets (the key merges them), the first-seen offset of matched jobs (p50 / p95 / max), and which replica saw them first how often. For jobs only one replica saw, also how long they lived before that replica's next job.
 
+- **De-duplication on the read path**: when the database has `template_dedup_report` (migration `20261115000001_templates_dedup.sql`), its table for the window, per UTC day, pool and site, plus the pool's total. It covers primary and secondary rows, secondary rows hidden as exact copies and shown (extra copies, near misses by |ntime difference|, gap fills), and first-seen gains (p50 / p95 / max ms). It covers every site of each pool (`--site` doesn't filter it). The rule is in the [design doc](../../docs/design/postgres-timescale.md) ("Redundant collection").
+
 **Privacy of the output:** counts, shares, offsets, lengths and byte positions only. Coinbase bytes, extranonce values and job ids are never printed, in the Markdown or the JSON.
 
 ## Run it

@@ -172,6 +172,36 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertEqual(got[0], doc)
         self.assertEqual(int(timestamp, 16) // 1000, 1_794_437_000_123_456)   # hex ns, µs precision
 
+    def test_templates_at_height_hides_only_exact_copies_from_secondary_replicas(self):
+        """Primary ci/a, secondaries ci/b and ci2/a: only an exact copy (same ntime too) is dropped, and its earlier
+        receive time becomes the primary row's timestamp; re-sends, near misses and gap fills stay."""
+        h = self.h + 30
+        name = f"itest-{h}"
+        aa, bb = bytes.fromhex("aa" * 32), bytes.fromhex("bb" * 32)
+        with self.psycopg.connect(self.admin) as c:
+            sid = {}
+            for site, replica in (("ci", "a"), ("ci", "b"), ("ci2", "a")):
+                sid[site, replica] = c.execute(
+                    "INSERT INTO sources (name, site, replica) VALUES (%s, %s, %s) ON CONFLICT (name, site, replica)"
+                    " DO UPDATE SET name = EXCLUDED.name RETURNING id", (name, site, replica)).fetchone()[0]
+            # (source, seconds, job_id, branches, ntime, coinbase byte)
+            rows = [(("ci", "a"), 0.020, "a1", aa, 100, "a1"),
+                    (("ci", "b"), 0.010, "b7", aa, 100, "b1"),    # exact copy of a1, earlier: dropped
+                    (("ci2", "a"), 0.015, "c3", aa, 99, "c1"),    # same job, other ntime: kept (near miss)
+                    (("ci", "a"), 30.0, "a2", aa, 130, "a2"),     # the primary re-sends the job: kept
+                    (("ci", "b"), 5.0, "b8", bb, 105, "b2")]      # the primary never sent it: kept (gap fill)
+            for src, s, job_id, br, ntime, cb in rows:
+                c.execute("""INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2,
+                             merkle_branches, version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
+                             VALUES (to_timestamp(1794437000 + %s), %s, %s, %s, %s, %s, '\\xffffffff', %s, 536870912, 386000000,
+                                     %s, true, %s, 8)""",
+                          (s, sid[src], h, job_id, bytes.fromhex("11" * 32), bytes.fromhex(cb), br, ntime, bytes.fromhex(cb)))
+        got = self.store.templates_at_height(h)
+        self.assertEqual([(t["pool_name"], t["job_id"], t["coinbase1"], t["ntime"]) for t in got],
+                         [(name, "a1", "a1", "00000064"), (name, "c3", "c1", "00000063"),
+                          (name, "b8", "b2", "00000069"), (name, "a2", "a2", "00000082")])
+        self.assertEqual(int(got[0]["timestamp"], 16) // 1000, 1_794_437_000_010_000)   # first seen: the copy's time
+
 
 if __name__ == "__main__":
     unittest.main()

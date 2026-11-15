@@ -37,7 +37,7 @@ check "timescaledb loaded"               '[ -n "$(psql_ "SELECT extversion FROM 
 check "templates + templates_other are hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 2 ]'
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
 check "2 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 2 ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 8 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 9 ]'
 
 # role privileges: create login users the way an environment would
 psql_ "CREATE USER t_collector LOGIN PASSWORD 'x' IN ROLE stratum_collector; CREATE USER t_backend LOGIN PASSWORD 'x' IN ROLE stratum_backend; CREATE USER t_web LOGIN PASSWORD 'x' IN ROLE stratum_web;" >/dev/null
@@ -70,9 +70,16 @@ check "backend: cannot write templates"  '! as_user t_backend "$INS"'
 check "web: read blocks"                 '[ "$(as_user t_web "SELECT count(*) FROM blocks")" = 1 ]'
 check "web: cannot write anything"       '! as_user t_web "INSERT INTO pools (id, name) VALUES (1, '"'"'x'"'"')"'
 check "web: no DDL"                      '! as_user t_web "CREATE TABLE x (i int)"'
+check "web: read the de-duplicated views" 'as_user t_web "SELECT count(*) FROM templates_dedup WHERE height = 975500; SELECT count(*) FROM templates_other_dedup WHERE height = 975500; SELECT count(*) FROM templates_copies WHERE height = 975500; SELECT count(*) FROM templates_other_copies WHERE height = 975500"'
+check "backend: read the de-duplicated view" '[ "$(as_user t_backend "SELECT copies FROM templates_dedup WHERE height = 975500")" = 1 ]'
+check "web + backend: run the dedup report" 'as_user t_web "SELECT * FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now() + interval '"'"'1 day'"'"')" && as_user t_backend "SELECT * FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now() + interval '"'"'1 day'"'"')"'
+check "collector: cannot read the views"  '! as_user t_collector "SELECT 1 FROM templates_dedup WHERE height = 975500"'
+check "collector: cannot run the report"  '! as_user t_collector "SELECT * FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now())"'
+check "dedup: synthetic replicas, sites and report" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-templates-dedup.sql'
 psql_ "DROP OWNED BY t_collector, t_backend, t_web; DROP USER t_collector, t_backend, t_web;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
+check "down drops the dedup views + report" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_views WHERE viewname LIKE '"'"'templates%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname = '"'"'template_dedup_report'"'"'")" = 0 ]'
 check "down drops ingest_events"        'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'ingest_events'"'"'")" = 0 ]'
 check "down drops the quarantine table"  'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'templates_rejected'"'"'")" = 0 ]'
 check "down refuses to merge two replicas" '! dbmate down && [ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 6 ]'
@@ -80,7 +87,7 @@ psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 8 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 9 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

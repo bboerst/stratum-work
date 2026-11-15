@@ -5,6 +5,21 @@
  *
  * `templates` holds Bitcoin templates only (the collector routes everything else to `templates_other`), so the
  * BTC-only reads need no chain filter.
+ *
+ * Redundant collection (several collectors per pool, `sources.replica`, possibly at several sites): reads that mean
+ * "the templates" read the views `templates_dedup` / `templates_other_dedup`
+ * (db/migrations/20261115000001_templates_dedup.sql). Per pool and height, every row of the primary source (first by
+ * site, replica) is shown exactly as stored; a secondary's row is hidden only when it is an exact copy of a primary
+ * row (same prev_hash, merkle_branches, version, nbits and ntime), and shown otherwise (gap fills, near misses). With
+ * one collector per pool the result is the raw rows. Per read:
+ *   R1   templatesAtHeight     de-duplicated (realtime table history, realtime pre-fill)
+ *   R2   allTemplatesAtHeight  de-duplicated, both tables (template details page)
+ *   R4   firstSeenByPool       raw rows: a pool's earliest row is either shown or a hidden copy whose time became
+ *                              its primary's first_seen, so the earliest time is the same. Latency comes from the
+ *                              connection that saw it first.
+ *   R4b  poolNamesAtHeight     raw rows: a set of names, copies can't change it
+ *   R3, R5–R7                  blocks / pools: not affected
+ * MongoDB mode is unchanged (one collector per pool there).
  */
 import type { MiningNotify } from '@prisma/client';
 import { getPgPool } from './pg';
@@ -21,41 +36,46 @@ async function query<T>(text: string, values: unknown[] = []): Promise<T[]> {
 // ── templates (R1, R2, R4) ────────────────────────────────────────────────────────────────────────────────────────
 
 const RECEIVED_US = '(extract(epoch FROM t.received_at) * 1000000)::bigint';
+const FIRST_SEEN_US = '(extract(epoch FROM j.first_seen) * 1000000)::bigint';
+const OWN_RECEIVED_US = '(extract(epoch FROM j.received_at) * 1000000)::bigint';
 
-// Columns the template responses use. The coinbase and branch columns are the expensive ones to decompress, but
-// both responses include them; R4 below reads only three columns.
-const TEMPLATE_COLUMNS = `t.source_id, s.name AS source_name, ${RECEIVED_US} AS received_us, t.height, t.job_id,
-  t.prev_hash, t.coinbase1, t.coinbase2, t.merkle_branches, t.version, t.nbits, t.ntime, t.clean_jobs,
-  t.extranonce1, t.extranonce2_length`;
+// Columns the template responses use, from a templates_dedup / templates_other_dedup row (alias j). The coinbase and
+// branch columns are the expensive ones to decompress, but both responses include them; R4 below reads only three
+// columns. source_name is the pool (sources.name, the same for every replica and site). received_us is the row's own
+// receive time (part of the template id), first_seen_us the time shown (earliest over it and its hidden copies).
+const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${OWN_RECEIVED_US} AS received_us,
+  ${FIRST_SEEN_US} AS first_seen_us, j.height, j.job_id, j.prev_hash, j.coinbase1, j.coinbase2, j.merkle_branches,
+  j.version, j.nbits, j.ntime, j.clean_jobs, j.extranonce1, j.extranonce2_length`;
 
-/** R1: Bitcoin templates at a height, earliest first. */
+/** R1: Bitcoin templates at a height (exact copies from secondary replicas hidden), earliest first. */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
   const rows = await query<TemplateRow>(
-    `SELECT ${TEMPLATE_COLUMNS}, t.latency_ms, t.latency_method::text AS latency_method
-       FROM templates t JOIN sources s ON s.id = t.source_id
-      WHERE t.height = $1
-      ORDER BY t.received_at, t.source_id, t.job_id`,
+    `SELECT ${DEDUP_COLUMNS}, j.latency_ms, j.latency_method::text AS latency_method
+       FROM templates_dedup j
+      WHERE j.height = $1
+      ORDER BY j.first_seen, j.source_id, j.job_id`,
     [height],
   );
   return rows.map(templateRowToMiningNotify);
 }
 
 /**
- * R2: every template at a height, Bitcoin or not (the template details page has always shown all of them).
- * Rows from templates_other carry their chain as chain_family. Latency isn't part of the R2 response, so it's not read.
+ * R2: every template at a height, Bitcoin or not (the template details page has always shown all of them), with
+ * exact copies from secondary replicas hidden. Rows from templates_other carry their chain as chain_family. Latency
+ * isn't part of the R2 response, so it's not read.
  */
 export async function allTemplatesAtHeight(height: number): Promise<MiningNotify[]> {
   const rows = await query<TemplateRow>(
     `SELECT * FROM (
-       SELECT ${TEMPLATE_COLUMNS}, NULL::text AS chain
-         FROM templates t JOIN sources s ON s.id = t.source_id
-        WHERE t.height = $1
+       SELECT ${DEDUP_COLUMNS}, NULL::text AS chain
+         FROM templates_dedup j
+        WHERE j.height = $1
        UNION ALL
-       SELECT ${TEMPLATE_COLUMNS}, t.chain::text AS chain
-         FROM templates_other t JOIN sources s ON s.id = t.source_id
-        WHERE t.height = $1
+       SELECT ${DEDUP_COLUMNS}, j.chain::text AS chain
+         FROM templates_other_dedup j
+        WHERE j.height = $1
      ) u
-     ORDER BY received_us, source_id, job_id`,
+     ORDER BY first_seen_us, source_id, job_id`,
     [height],
   );
   return rows.map(templateRowToMiningNotify);
@@ -63,7 +83,9 @@ export async function allTemplatesAtHeight(height: number): Promise<MiningNotify
 
 /**
  * R4: each pool's first Bitcoin template at a height, ordered by time. Grouped by source name, like MongoDB's
- * pool_name (with several collection sites, one name can have a source per site; see the report for #113).
+ * pool_name, so all replicas and sites of a pool count as one (see the report for #113). Reads the table, not
+ * templates_dedup: the earliest time is the same (see the header), and this skips the view's sorts.
+ * Note: across sites the receive times come from different clocks and network paths (design doc section 5).
  */
 export async function firstSeenByPool(height: number) {
   const rows = await query<FirstSeenRow>(
@@ -79,7 +101,7 @@ export async function firstSeenByPool(height: number) {
   return rows.map(firstSeenRowToItem);
 }
 
-/** R4b (#104): names of the sources with at least one Bitcoin template at a height. */
+/** R4b (#104): names of the sources with at least one Bitcoin template at a height (a set: replicas can't change it). */
 export async function poolNamesAtHeight(height: number): Promise<string[]> {
   const rows = await query<{ name: string }>(
     `SELECT s.name FROM sources s

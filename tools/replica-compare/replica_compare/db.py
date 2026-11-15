@@ -49,3 +49,24 @@ def fetch(conn, since: datetime, until: datetime, replicas: list[str], site: Opt
                                           bytes(cb2), bytes(merkle), version, nbits, ntime, clean, bytes(en1),
                                           en2len, chain))
     return dict(by_pool)
+
+
+DEDUP_COLUMNS = ("day", "pool", "site", "rows", "primary_rows", "secondary_rows", "secondary_hidden",
+                 "secondary_shown", "extra_copies", "near_misses", "near_miss_ntime_1s", "near_miss_ntime_2s",
+                 "near_miss_ntime_3s", "near_miss_ntime_4_10s", "near_miss_ntime_over_10s", "gap_fills",
+                 "first_seen_gains", "gain_ms_p50", "gain_ms_p95", "gain_ms_max")
+
+
+def fetch_dedup_report(conn, since: datetime, until: datetime, pools: Optional[list[str]] = None) -> Optional[list[dict]]:
+    """The database's template_dedup_report (db/migrations/20261115000001_templates_dedup.sql) for the window: what
+    the read path's de-duplication does per UTC day, pool and site (site None = the pool's total). None if the
+    database doesn't have the function yet. Counts and times only."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regprocedure('template_dedup_report(timestamptz, timestamptz)') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            return None
+        cur.execute("SELECT " + ", ".join(DEDUP_COLUMNS) + " FROM template_dedup_report(%(since)s, %(until)s)"
+                    " WHERE %(pools)s::text[] IS NULL OR pool = ANY(%(pools)s)",
+                    {"since": since, "until": until, "pools": pools or None})
+        return [{k: (v.isoformat() if k == "day" else v) for k, v in zip(DEDUP_COLUMNS, row)} for row in cur]
+

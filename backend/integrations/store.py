@@ -6,7 +6,8 @@ One small interface, two implementations, selected by DB_BACKEND (default: mongo
 
 Both return the same shapes, so main.py and the analytics plug-ins don't care which is in use:
   * templates_at_height() returns dicts with the MongoDB field names and hex strings (pool_name, prev_hash,
-    coinbase1, coinbase2, extranonce1, extranonce2_length, merkle_branches [list of hex], version, nbits, ntime, ...)
+    coinbase1, coinbase2, extranonce1, extranonce2_length, merkle_branches [list of hex], version, nbits, ntime, ...),
+    with exact copies from a pool's secondary collector replicas left out (MongoDB has one collector per pool)
   * blocks are dicts {height, block_hash (hex), timestamp (unix s), coinbase_script_sig (hex), mining_pool, analysis}
   * pools are the mempool/mining-pools `pools-v2.json` entries, as loaded
 """
@@ -236,15 +237,20 @@ class PostgresStore:
     def has_block_at_height(self, height: int) -> bool:
         return self._run(lambda c: c.execute("SELECT EXISTS (SELECT 1 FROM blocks WHERE height = %s)", (height,)).fetchone()[0])
 
-    # templates (Bitcoin only by construction: other chains live in templates_other)
+    # templates (Bitcoin only by construction: other chains live in templates_other).
+    # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read
+    # the templates_dedup view (db/migrations/20261115000001_templates_dedup.sql). Every row of the pool's primary
+    # source is kept as stored (re-sends included); a secondary's row is dropped only if it is an exact copy of a
+    # primary row (same prev_hash, merkle_branches, version, nbits, ntime). With one collector per pool that's the raw
+    # rows. timestamp = first seen over the row and its dropped copies; pool_name is sources.name.
     _TEMPLATES_AT_HEIGHT = """
-        SELECT s.name, t.height, t.job_id, encode(t.prev_hash, 'hex'), encode(t.coinbase1, 'hex'), encode(t.coinbase2, 'hex'),
-               encode(t.merkle_branches, 'hex'), lpad(to_hex(t.version), 8, '0'), lpad(to_hex(t.nbits), 8, '0'),
-               lpad(to_hex(t.ntime), 8, '0'), t.clean_jobs, encode(t.extranonce1, 'hex'), t.extranonce2_length,
-               t.latency_ms, t.latency_method::text, (extract(epoch FROM t.received_at) * 1000000)::bigint
-          FROM templates t JOIN sources s ON s.id = t.source_id
-         WHERE t.height = %s
-         ORDER BY t.received_at"""
+        SELECT j.pool, j.height, j.job_id, encode(j.prev_hash, 'hex'), encode(j.coinbase1, 'hex'), encode(j.coinbase2, 'hex'),
+               encode(j.merkle_branches, 'hex'), lpad(to_hex(j.version), 8, '0'), lpad(to_hex(j.nbits), 8, '0'),
+               lpad(to_hex(j.ntime), 8, '0'), j.clean_jobs, encode(j.extranonce1, 'hex'), j.extranonce2_length,
+               j.latency_ms, j.latency_method::text, (extract(epoch FROM j.first_seen) * 1000000)::bigint
+          FROM templates_dedup j
+         WHERE j.height = %s
+         ORDER BY j.first_seen, j.source_id, j.job_id"""
 
     def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
         rows = self._run(lambda c: c.execute(self._TEMPLATES_AT_HEIGHT, (height,)).fetchall())

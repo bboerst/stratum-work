@@ -17,7 +17,8 @@ import { formatMiningPool, type MiningPool } from './mining-pool';
 export interface TemplateRow {
   source_id: number;
   source_name: string;
-  received_us: string;            // (extract(epoch FROM received_at) * 1e6)::bigint
+  received_us: string;            // (extract(epoch FROM received_at) * 1e6)::bigint: this row's own receive time
+  first_seen_us?: string;         // templates_dedup: first seen over the row and its copies from other replicas
   height: number;
   job_id: string;
   prev_hash: Buffer;
@@ -97,7 +98,11 @@ export function templateId(row: Pick<TemplateRow, 'source_id' | 'received_us' | 
   return `${row.source_id}-${row.received_us}-${row.job_id}`;
 }
 
-/** A templates / templates_other row → the MiningNotify shape (same keys and order as Prisma's MongoDB model). */
+/**
+ * A templates / templates_other row → the MiningNotify shape (same keys and order as Prisma's MongoDB model).
+ * `timestamp` is the first-seen time when the read provides one (templates_dedup: a secondary replica's copy may have
+ * arrived earlier); `id` always uses the row's own receive time, so it stays the table's de-duplication key.
+ */
 export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
   return {
     id: templateId(row),
@@ -109,7 +114,7 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     merkle_branches: splitBranches(row.merkle_branches),
     version: u32Hex(row.version),
     prev_hash: hex(row.prev_hash),
-    timestamp: timestampHexFromMicros(row.received_us),
+    timestamp: timestampHexFromMicros(row.first_seen_us ?? row.received_us),
     nbits: u32Hex(row.nbits),
     ntime: u32Hex(row.ntime),
     clean_jobs: row.clean_jobs,

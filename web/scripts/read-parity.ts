@@ -14,7 +14,10 @@
  *  - pool `id`: MongoDB's ObjectId vs the mining-pools id
  *  - JSON key order inside jsonb (analysis, mining_pool): compared order-insensitively
  * Templates present in only one database are classified: before Postgres collection started for that source, routed
- * to templates_other by the collector (height_implausible / height_parse_failed / …), or unexplained.
+ * to templates_other by the collector (height_implausible / height_parse_failed / …), shown from a secondary collector
+ * replica (Postgres only: gap fills, near misses, extra copies; see lib/db/postgres.ts), or unexplained.
+ * With replicas, Postgres's `timestamp` is the first-seen time (a secondary's exact copy can be earlier), so templates
+ * are matched on the row's own receive time, which is part of the Postgres id.
  */
 import { writeFileSync } from 'fs';
 import { NextRequest } from 'next/server';
@@ -111,6 +114,23 @@ interface Ctx {
   firstPgHeight: Map<string, number>;
 }
 
+/** `<source_id>-<µs>` of the rows shown from a secondary replica at a height (both tables). */
+async function secondaryRowsAt(height: number): Promise<Set<string>> {
+  const { rows } = await getPgPool().query(
+    `SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint AS us FROM templates_dedup
+      WHERE height = $1 AND NOT is_primary
+     UNION ALL
+     SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint FROM templates_other_dedup
+      WHERE height = $1 AND NOT is_primary`, [height]);
+  return new Set(rows.map(r => `${r.source_id}-${r.us}`));
+}
+
+/** A Postgres template id `<source_id>-<own µs>-<job_id>` → `<source_id>-<own µs>`, and the own µs. */
+function ownReceipt(id: Json): { key: string; us: bigint } {
+  const [sourceId, us] = String(id).split('-');
+  return { key: `${sourceId}-${us}`, us: BigInt(us) };
+}
+
 /** (pool, µs) → templates_other reason, for templates the collector didn't put in `templates`. */
 async function templatesOtherAt(height: number): Promise<Map<string, string>> {
   const { rows } = await getPgPool().query(
@@ -128,10 +148,11 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
   // same receive time. So keep a list per key and pick the candidate with identical content.
   const pgByKey = new Map<string, Tpl[]>();
   for (const t of pg) {
-    const k = `${t.pool_name}|${nsToUs(t.timestamp)}`;
+    const k = `${t.pool_name}|${ownReceipt(t.id).us}`;
     pgByKey.set(k, [...(pgByKey.get(k) ?? []), t]);
   }
   const other = await templatesOtherAt(height);
+  const secondary = await secondaryRowsAt(height);
   const matchedPg = new Set<Tpl>();
   const mongoOrder: Tpl[] = [];
   const content = (t: Tpl) => { const { id: _i, timestamp: _t, chain_family: _c, ...rest } = t; void _i; void _t; void _c; return rest; };
@@ -160,7 +181,8 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
     }
     matchedPg.add(p);
     mongoOrder.push(p);
-    if (m.timestamp !== p.timestamp) expected(r, 'timestamp sub-µs digits (Postgres keeps µs)');
+    if (nsToUs(p.timestamp) !== ownReceipt(p.id).us) expected(r, 'timestamp: first seen from a secondary replica\'s earlier exact copy');
+    else if (m.timestamp !== p.timestamp) expected(r, 'timestamp sub-µs digits (Postgres keeps µs)');
     if (m.id !== p.id) expected(r, 'template id (no MongoDB _id in Postgres)');
     const { id: _a, timestamp: _b, ...mRest } = m;
     const { id: _c, timestamp: _d, ...pRest } = p;
@@ -176,7 +198,9 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
     else if (keyOrderDiffers(mRest, pRest)) expected(r, 'key order');
   }
   for (const p of pg) {
-    if (!matchedPg.has(p)) { ok = false; mismatch(r, `h=${height} Postgres-only template ${p.pool_name} ts=${p.timestamp}`); }
+    if (matchedPg.has(p)) continue;
+    if (secondary.has(ownReceipt(p.id).key)) expected(r, 'Postgres-only: shown from a secondary replica (gap fill / near miss / extra copy)');
+    else { ok = false; mismatch(r, `h=${height} Postgres-only template ${p.pool_name} ts=${p.timestamp}`); }
   }
   // Order: MongoDB has no ORDER BY (natural order ≈ insertion order); Postgres orders by received_at.
   // The UI sorts rows itself, so order is informational: count whether it differs only among same-µs ties.

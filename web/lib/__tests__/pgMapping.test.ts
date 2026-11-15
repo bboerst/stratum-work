@@ -94,6 +94,12 @@ describe('templateRowToMiningNotify', () => {
   it('builds a stable id from the de-duplication key', () => {
     expect(templateId({ source_id: 7, received_us: '42', job_id: 'a-b' })).toBe('7-42-a-b');
   });
+
+  it('shows the first-seen time when given (templates_dedup) but keeps the own receive time in the id', () => {
+    const doc = templateRowToMiningNotify(templateRow({ received_us: '1794491650123456', first_seen_us: '1794491650100000' }));
+    expect(doc.timestamp).toBe(timestampHexFromMicros('1794491650100000'));
+    expect(doc.id).toBe('3-1794491650123456-2687119');
+  });
 });
 
 function blockRow(overrides: Partial<BlockRow> = {}): BlockRow {

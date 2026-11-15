@@ -20,7 +20,7 @@ func TestPythonFlagsAndDefaults(t *testing.T) {
 		c.RabbitExchange != "ex" || c.RabbitPort != 5672 || !c.KeepAlive || !c.UseProxy || c.ProxyPort != 9150 ||
 		c.ProxyHost != "localhost" || c.PGHost != "pg" || c.Site != "local" || c.Replica != "a" ||
 		c.RabbitPassword != "mq-secret" || c.UserAgent != nil || c.ProbeInterval != 60 || c.Divergence != 5 ||
-		c.TipStaleSeconds != 1800 || c.HandshakeTimeout != 30 || c.ReadTimeout != 600 || c.HTTPPort != 0 ||
+		c.TipStaleSeconds != 1800 || c.HandshakeTimeout != 30 || c.ReadTimeout != 600 || c.ReplicaStagger != 0 || c.HTTPPort != 0 ||
 		c.ReadyMaxNotifyAgeMin != 10 || c.StratumClientPort != 3333 || c.ZMQBlock != "tcp://bitcoin-node:28332" {
 		t.Errorf("%+v", c)
 	}

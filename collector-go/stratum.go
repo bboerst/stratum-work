@@ -109,6 +109,7 @@ type StratumConfig struct {
 	HandshakeTimeout time.Duration // TCP/SOCKS connect and each handshake round trip (#146)
 	ReadTimeout      time.Duration // steady-state read timeout (Python: 600 s)
 	RetryDelay       time.Duration // between connection attempts (Python: 5 s)
+	StartDelay       time.Duration // before the first connection (replica stagger; 0 = none)
 	ProbeInterval    time.Duration // latency probes; 0 disables
 	KeepAlive        bool          // re-subscribe every KeepAliveEvery
 	KeepAliveEvery   time.Duration
@@ -419,6 +420,14 @@ func truncate(s string, n int) string {
 // Run collects until ctx is done, reconnecting after every error (Python: get_stratum_work + main loop).
 func (c *Collector) Run(ctx context.Context) {
 	go c.background(ctx)
+	if c.cfg.StartDelay > 0 {
+		c.log.Info("staggered start", "in", c.cfg.StartDelay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(c.cfg.StartDelay):
+		}
+	}
 	for ctx.Err() == nil {
 		err := c.session(ctx)
 		c.metrics.SetSubscribed(false)

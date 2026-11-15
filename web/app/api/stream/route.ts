@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { maskStreamMessage } from '../../../lib/connectionMask';
 import { isPoolBlacklisted } from '../../../lib/poolBlacklist';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from '../../../lib/rabbitmq';
@@ -116,7 +117,13 @@ export async function GET(request: NextRequest) {
           }
 
           try {
-            const data = msg.content.toString();
+            // Mask per-connection identifiers (extranonce1, #105) before anything else, so the throttle's held
+            // templates are masked too. An unparseable message that mentions extranonce1 is dropped.
+            const data = maskStreamMessage(msg.content.toString());
+            if (data === null) {
+              channel?.ack(msg);
+              return;
+            }
 
             let poolName: string | undefined;
             try {

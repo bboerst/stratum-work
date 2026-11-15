@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBlockByHeight, getInterestingBlocks } from "@/lib/db/blocks";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
+import { maskTemplates } from "@/lib/connectionMask";
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
@@ -69,8 +70,10 @@ export async function GET(request: NextRequest) {
     // Process each height in parallel
     const results = await Promise.all(heights.map(async (height) => {
       // Fetch mining notifications for the requested height
+      // extranonce1 identifies the collector's connection: masked (#105) before anything is derived from it, so
+      // coinbaseRaw and the ASCII text carry the pseudonym too.
       const miningNotifications = enableHistoricalData
-        ? await getAllMiningNotifyAtHeight(height)
+        ? maskTemplates(await getAllMiningNotifyAtHeight(height))
         : [];
       
       // Fetch block details for the requested height and previous height

@@ -87,6 +87,31 @@ class MongoStoreTests(unittest.TestCase):
         self.assertEqual([c[0] for c in self.db.pools.calls], ["delete_many", "insert_many"])
 
 
+class PostgresStoreFromEnvTests(unittest.TestCase):
+    ENV = ("PG_HOST", "PG_PORT", "PG_DATABASE", "PG_USER", "PG_PASSWORD", "PG_SSLMODE", "PG_SSLROOTCERT")
+
+    def setUp(self):
+        self.saved = {k: os.environ.pop(k, None) for k in self.ENV}
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+    def test_sslrootcert_is_passed_to_libpq(self):
+        os.environ.update(PG_HOST="db", PG_SSLMODE="verify-full", PG_SSLROOTCERT="/etc/postgres-ca/ca.crt")
+        kw = PostgresStore.from_env()._connect_kwargs
+        self.assertEqual(kw["sslmode"], "verify-full")
+        self.assertEqual(kw["sslrootcert"], "/etc/postgres-ca/ca.crt")
+
+    def test_defaults_without_sslrootcert(self):
+        kw = PostgresStore.from_env()._connect_kwargs
+        self.assertNotIn("sslrootcert", kw)
+        self.assertEqual((kw["host"], kw["sslmode"]), ("postgres", "prefer"))
+        self.assertNotIn("password", kw)
+
+
 @unittest.skipUnless(os.getenv("PG_TEST_HOST"), "set PG_TEST_HOST etc. to run against a migrated Postgres")
 class PostgresStoreIntegrationTests(unittest.TestCase):
     """Against a real, migrated database, as a user in the stratum_backend role (least privilege)."""

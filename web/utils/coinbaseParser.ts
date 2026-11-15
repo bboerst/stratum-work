@@ -39,7 +39,7 @@ export type ScriptSegmentKind =
   | "extranonce1" // per connection, assigned by the pool
   | "extranonce2" // per share, chosen by the miner (zeros here)
   | "time" // a pushed 4-byte Unix time close to the template's ntime (the pool's clock)
-  | "tag" // printable text (5+ characters, or a whole 4-byte push)
+  | "tag" // printable text (5+ characters)
   | "push" // push opcode or PUSHDATA length bytes
   | "data"; // anything else: pushed binary data or non-push opcodes
 
@@ -434,9 +434,16 @@ function parseScriptSig(
       }
     }
   }
-  // Text never runs across the end of a well-formed push: that's a field boundary.
-  const breaks = new Set(aligned.map((p) => p.data.end));
-  const wholePush = new Set(aligned.map((p) => `${p.data.start}:${p.data.end}`));
+  // Text doesn't run across the end of a pushed *binary* value (e.g. a timestamp whose last bytes happen to be
+  // printable, followed by raw text). A push that is itself mostly text and runs into more text is the same text:
+  // some pools' push lengths don't match their tag (e.g. `0a "tagpool" 0d "/name/"`), so its end isn't a boundary.
+  const isMostlyText = (r: ByteRange) => {
+    let printable = 0;
+    for (let i = r.start; i < r.end; i++) if (isPrintable(tx[i])) printable++;
+    // Shorter than a tag: a pushed number (time, nonce), whatever its bytes look like.
+    return r.end - r.start >= MIN_TAG_LENGTH && printable / (r.end - r.start) >= 0.75;
+  };
+  const breaks = new Set(aligned.filter((p) => !isMostlyText(p.data)).map((p) => p.data.end));
 
   // Tags: runs of printable bytes among the remaining data bytes.
   const tags: { start: number; end: number; text: string }[] = [];
@@ -445,7 +452,7 @@ function parseScriptSig(
     const ok = i < end && kind[i - start] === "data" && isPrintable(tx[i]) && !(runStart >= 0 && breaks.has(i));
     if (!ok && runStart >= 0) {
       const len = i - runStart;
-      if (len >= MIN_TAG_LENGTH || (len === 4 && wholePush.has(`${runStart}:${i}`))) {
+      if (len >= MIN_TAG_LENGTH) {
         tags.push({ start: runStart, end: i, text: ascii(tx, runStart, i) });
         mark({ start: runStart, end: i }, "tag", ["data"]);
       }

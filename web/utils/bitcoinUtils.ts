@@ -1,5 +1,6 @@
 import { Transaction, address, networks } from "bitcoinjs-lib";
 import { coinbaseTagText, parseCoinbase } from './coinbaseParser';
+import { decodeOpReturnPayload, decodeOpReturnScript, OpReturnDecoded, DecodedField, Confidence, OpReturnProtocolId } from './mergeMining';
 
 /**
  * Performance Optimization Strategy:
@@ -63,33 +64,67 @@ export interface CoinbaseOutputDetail {
   decodedData?: OpReturnData | null; // Decoded OP_RETURN data
 }
 
-// Type definition for decoded OP_RETURN data
+// Type definition for decoded OP_RETURN data (decoders in ./mergeMining)
 export interface OpReturnData {
-  protocol: string; 
+  protocol: string; // display name, stable (template change detection keys on it)
+  id?: OpReturnProtocolId;
+  chain?: string; // other chain this commits to, if any
+  confidence?: Confidence;
+  fields?: DecodedField[]; // named fields, in display order
+  commitment?: string;
   details?: {
-    // CoreDAO specific
+    // Legacy keys, kept for existing consumers (change-detection tooltips)
     validatorAddress?: string;
     rewardAddress?: string;
-    // RSK specific
     rskBlockHash?: string;
-    // ExSat specific
     synchronizerAccount?: string;
-    // Hathor specific
     auxBlockHash?: string;
-    // Syscoin specific
-    relatedHash?: string; // If merge-mining: Syscoin block hash? Else: TXID, asset ID, etc.
-    suffixDataHex?: string; // If merge-mining: Flags/version? Else: Other context-dependent data.
-    remainingDataHex?: string; // If pattern doesn't match
-    // Generic error
+    relatedHash?: string;
+    suffixDataHex?: string;
     error?: string;
-    // Other protocols might add fields here
   };
   dataHex: string; // The raw data hex (the part pushed after push opcodes)
 }
 
+// Legacy `details` from the new decode, so existing consumers keep working.
+function toOpReturnData(d: OpReturnDecoded): OpReturnData {
+  const field = (label: string) => d.fields.find((f) => f.label === label)?.value;
+  const details: NonNullable<OpReturnData["details"]> = {};
+  switch (d.id) {
+    case "core":
+      if (field("Validator")) details.validatorAddress = field("Validator");
+      if (field("Reward address")) details.rewardAddress = field("Reward address");
+      break;
+    case "rsk":
+      if (d.commitment) details.rskBlockHash = d.commitment;
+      break;
+    case "exsat":
+      if (field("Account")) details.synchronizerAccount = field("Account");
+      break;
+    case "hathor":
+      if (d.commitment) details.auxBlockHash = d.commitment;
+      break;
+    case "syscoin":
+      if (field("Syscoin block")) details.relatedHash = field("Syscoin block");
+      if (d.dataHex.length > 70) details.suffixDataHex = d.dataHex.slice(70);
+      break;
+  }
+  if (d.error) details.error = d.error;
+  return {
+    protocol: d.protocol,
+    id: d.id,
+    chain: d.chain,
+    confidence: d.confidence,
+    fields: d.fields,
+    commitment: d.commitment,
+    details: Object.keys(details).length ? details : undefined,
+    dataHex: d.dataHex,
+  };
+}
+
 // Interface for decoded AuxPOW data 
 export interface AuxPowData {
-  auxHashOrRoot: string; // Merkle Root (Dogecoin) or Aux Block Hash (Namecoin-style)
+  auxHashOrRoot: string; // aux merkle root (with one aux chain: its block hash), display order
   merkleSize?: number;   // Optional: Size of aux chain merkle tree (if found)
   nonce?: number;        // Optional: Nonce used in aux chain merkle calc (if found)
 }
@@ -241,143 +276,11 @@ export function computeFirstTransaction(merkle_branches: string[]): string {
   }
 }
 
-// Helper function to decode ExSat synchronizer account hex
-const EXSAT_ENCODING_MAP = [
-  'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p',
-  'q','r','s','t','u','v','w','x','y','z','1','2','3','4','5','.'
-];
-
-function decodeExsatAccount(hexString: string): string {
-  let result = '';
-  for (let i = 0; i < hexString.length; i += 2) {
-    const byteVal = parseInt(hexString.substring(i, i + 2), 16);
-    if (!isNaN(byteVal) && byteVal >= 0 && byteVal < EXSAT_ENCODING_MAP.length) {
-      result += EXSAT_ENCODING_MAP[byteVal];
-    } else {
-      result += '?'; // Indicate unknown byte
-    }
-  }
-  return result;
-}
-
-// Helper function to decode OP_RETURN data based on known patterns
+// Decode the data pushed after OP_RETURN (hex). Never throws; see ./mergeMining for the protocols.
 export function decodeOpReturnData(dataHex: string): OpReturnData {
   if (!dataHex) return { protocol: 'Empty OP_RETURN', dataHex: '' };
-
-  const dataBuffer = Buffer.from(dataHex, 'hex');
-  const dataLength = dataBuffer.length; // Get length for checks
-
-  // Runestone: Handled specifically in computeCoinbaseOutputs due to its unique marker (6a5d)
-
-  // Witness Commitment: Starts with 'aa21a9ed'
-  if (dataHex.startsWith('aa21a9ed')) {
-    return { protocol: 'WitnessCommitment', dataHex };
-  }
-
-  // Omni: Starts with '6f6d6e69' ('omni')
-  if (dataHex.startsWith('6f6d6e69')) {
-    return { protocol: 'Omni', dataHex };
-  }
-
-  // RSK Block: Starts with '52534b424c4f434b3a' ('RSKBLOCK:')
-  if (dataHex.startsWith('52534b424c4f434b3a')) {
-    const rskMarker = '52534b424c4f434b3a';
-    const rskMarkerBytesLength = Buffer.from(rskMarker, 'hex').length;
-    if (dataBuffer.length >= rskMarkerBytesLength + 32) {
-        const rskBlockHash = dataBuffer.slice(rskMarkerBytesLength, rskMarkerBytesLength + 32).toString('hex');
-        return { protocol: 'RSK Block', details: { rskBlockHash }, dataHex };
-    } else {
-        return { protocol: 'RSK Block', details: { error: 'Incomplete data' }, dataHex };
-    }
-  }
-
-  // CoreDAO: Starts with '434f524501' ('CORE' + version 1)
-  if (dataHex.startsWith('434f524501')) {
-    const coreMarker = '434f524501';
-    const coreMarkerBytesLength = Buffer.from(coreMarker, 'hex').length;
-    const expectedDataLength = coreMarkerBytesLength + 20 + 20; // Marker + Validator Addr + Reward Addr
-     if (dataBuffer.length >= expectedDataLength) {
-        const validatorAddress = '0x' + dataBuffer.slice(coreMarkerBytesLength, coreMarkerBytesLength + 20).toString('hex');
-        const rewardAddress = '0x' + dataBuffer.slice(coreMarkerBytesLength + 20, coreMarkerBytesLength + 40).toString('hex');
-        return { protocol: 'CoreDAO', details: { validatorAddress, rewardAddress }, dataHex };
-     } else {
-        return { protocol: 'CoreDAO', details: { error: 'Incomplete data' }, dataHex };
-     }
-  }
-
-  // ExSat: Starts with '455853415401' ('EXSAT' + version 1)
-  if (dataHex.startsWith('455853415401')) {
-    const exsatMarker = '455853415401';
-    const exsatMarkerBytesLength = Buffer.from(exsatMarker, 'hex').length;
-    const accountHex = dataBuffer.slice(exsatMarkerBytesLength).toString('hex'); // Rest is account hex
-    const synchronizerAccount = decodeExsatAccount(accountHex);
-    return { protocol: 'ExSat', details: { synchronizerAccount }, dataHex };
-  }
-
-  // Hathor Network: Starts with '48617468' ('Hath')
-  if (dataHex.startsWith('48617468')) {
-     const hathorMarker = '48617468';
-     const hathorMarkerBytes = Buffer.from(hathorMarker, 'hex');
-     if (dataBuffer.length >= hathorMarkerBytes.length + 32) {
-        const auxBlockHash = dataBuffer.slice(hathorMarkerBytes.length, hathorMarkerBytes.length + 32).toString('hex');
-        return { protocol: 'Hathor Network', details: { auxBlockHash }, dataHex };
-     } else {
-        return { protocol: 'Hathor Network', details: { error: 'Incomplete data' }, dataHex };
-     }
-  }
-
-  // Syscoin: Starts with '737973' ('sys')
-  if (dataHex.startsWith('737973')) {
-    const sysMarker = '737973';
-    const sysMarkerBytesLength = 3; // Buffer.from(sysMarker, 'hex').length;
-    const expectedHashLength = 32;
-    const expectedSuffixLength = 3;
-    const minExpectedDataLength = sysMarkerBytesLength + expectedHashLength + expectedSuffixLength;
-
-    if (dataBuffer.length >= minExpectedDataLength) {
-        const relatedHash = dataBuffer.slice(sysMarkerBytesLength, sysMarkerBytesLength + expectedHashLength).toString('hex');
-        // Capture the assumed 3-byte suffix, and potentially more if the total length is greater
-        const suffixDataHex = dataBuffer.slice(sysMarkerBytesLength + expectedHashLength).toString('hex'); 
-        return { 
-           protocol: 'Syscoin', 
-           details: { 
-              relatedHash, // Potentially Syscoin block hash if merge-mining data
-              suffixDataHex // Potentially flags/version if merge-mining data
-           }, 
-           dataHex // Keep the original full data hex
-        };
-    } else if (dataBuffer.length > sysMarkerBytesLength) {
-        // It's Syscoin, but not long enough for the hash + suffix pattern observed
-        const remainingDataHex = dataBuffer.slice(sysMarkerBytesLength).toString('hex');
-        return { protocol: 'Syscoin', details: { error: 'Incomplete data for observed pattern', remainingDataHex }, dataHex };
-    } else {
-       // Just 'sys' marker
-       return { protocol: 'Syscoin', details: { error: 'Marker only' }, dataHex };
-    }
-  }
-
-  // Stacks Block Commit and BIP47 are handled contextually in computeCoinbaseOutputs
-  // due to reliance on push opcodes and exact script length.
-
-  // Generic length-based protocols (checked if others don't match)
-  if (dataLength === 0) {
-    return { protocol: 'OP_RETURN (0 byte)', dataHex };
-  }
-  if (dataLength === 20) {
-    return { protocol: 'OP_RETURN (20 byte)', dataHex };
-  }
-  if (dataLength === 80) {
-    // Check if it *might* be Stacks or BIP47 but didn't match the full script context
-    // Avoid mislabeling them if they somehow end up here
-    if (!dataHex.startsWith('58325b') && // Stacks 'X2[' start after push op
-        !(dataHex.length === 80 && (dataBuffer[0] === 0x01 || dataBuffer[0] === 0x02) && (dataBuffer[2] === 0x02 || dataBuffer[2] === 0x03))) // BIP47 payload check
-    {
-      return { protocol: 'OP_RETURN (80 byte)', dataHex };
-    }
-  }
-
-  // If none of the above match
-  return { protocol: 'Unknown', dataHex };
+  if (!/^(?:[0-9a-fA-F]{2})*$/.test(dataHex)) return { protocol: 'Malformed OP_RETURN', dataHex };
+  return toOpReturnData(decodeOpReturnPayload(Uint8Array.from(Buffer.from(dataHex, 'hex'))));
 }
 
 // Extract all coinbase outputs with details
@@ -424,75 +327,10 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
         
         // Helper function to process non-address scripts (OP_RETURN, unknown, etc.)
         function processNonAddressScript() {
-          // Check for OP_RETURN (0x6a)
-          if (scriptBytes.length > 0 && scriptBytes[0] === 0x6a) { 
+          const opReturn = decodeOpReturnScript(Uint8Array.from(scriptBytes));
+          if (opReturn) {
             outputDetail.type = 'nulldata';
-            let dataHex = ''; // Data portion after OP_RETURN and push ops
-
-            // === Special Protocol Checks (Based on full scriptHex) ===
-
-            // Runestone: Starts with '6a5d' (OP_RETURN OP_PUSHNUM_13)
-            if (scriptHex.startsWith('6a5d')) {
-                // Data starts after '6a5d'
-                dataHex = scriptBytes.slice(2).toString('hex');
-                outputDetail.decodedData = { protocol: 'Runestone', dataHex };
-            } 
-            // Stacks Block Commit: Specific marker and length
-            else if (scriptHex.startsWith('6a4c5058325b') && scriptBytes.length === 83) { // OP_RETURN OP_PUSHDATA1 80 'X2['...
-                dataHex = scriptBytes.slice(3).toString('hex'); // Data after '6a4c50'
-                outputDetail.decodedData = { protocol: 'Stacks Block Commit', dataHex };
-            } 
-            // BIP47 Payment Code: Specific marker, length, and payload structure
-            else if (scriptHex.startsWith('6a4c50') && scriptBytes.length === 83) { // OP_RETURN OP_PUSHDATA1 80 ...
-                const payload = scriptBytes.slice(3); // Data after '6a4c50'
-                dataHex = payload.toString('hex');
-                if ((payload[0] === 0x01 || payload[0] === 0x02) && (payload[2] === 0x02 || payload[2] === 0x03)) {
-                    outputDetail.decodedData = { protocol: 'BIP47 Payment Code', dataHex };
-                } else {
-                    // Wasn't BIP47, decode normally using the extracted dataHex
-                    outputDetail.decodedData = decodeOpReturnData(dataHex);
-                }
-            } 
-            // === General OP_RETURN Data Extraction (if no special case matched) ===
-            else if (scriptBytes.length > 1) {
-                const pushOp = scriptBytes[1];
-                if (pushOp >= 0x01 && pushOp <= 0x4b) { // OP_PUSHBYTES_X
-                    if (scriptBytes.length >= 2 + pushOp) {
-                       dataHex = scriptBytes.slice(2, 2 + pushOp).toString('hex');
-                    }
-                } else if (pushOp === 0x4c) { // OP_PUSHDATA1
-                    if (scriptBytes.length >= 3) {
-                        const dataLen = scriptBytes[2];
-                         if (scriptBytes.length >= 3 + dataLen) {
-                            dataHex = scriptBytes.slice(3, 3 + dataLen).toString('hex');
-                         }
-                    }
-                } else if (pushOp === 0x4d) { // OP_PUSHDATA2
-                    if (scriptBytes.length >= 4) {
-                         const dataLen = scriptBytes.readUInt16LE(2);
-                         if (scriptBytes.length >= 4 + dataLen) {
-                             dataHex = scriptBytes.slice(4, 4 + dataLen).toString('hex');
-                         }
-                    }
-                } else if (pushOp === 0x4e) { // OP_PUSHDATA4
-                    if (scriptBytes.length >= 6) {
-                        const dataLen = scriptBytes.readUInt32LE(2);
-                         if (scriptBytes.length >= 6 + dataLen) {
-                            dataHex = scriptBytes.slice(6, 6 + dataLen).toString('hex');
-                         }
-                    }
-                }
-                // If data was extracted, decode it
-                if (dataHex.length > 0 || (pushOp === 0x00 || (pushOp === 0x4c && scriptBytes[2] === 0x00))) { // Handle OP_0 or PUSHDATA1 0
-                   outputDetail.decodedData = decodeOpReturnData(dataHex);
-                } else {
-                   // If no data could be extracted (malformed push?)
-                   outputDetail.decodedData = { protocol: 'Malformed OP_RETURN', dataHex: scriptHex.substring(2) }; // Show hex after 6a
-                }
-            } else {
-                 // Only OP_RETURN (6a), no push op or data
-                 outputDetail.decodedData = { protocol: 'Empty OP_RETURN', dataHex: '' };
-            }
+            outputDetail.decodedData = toOpReturnData(opReturn);
           } else {
             outputDetail.type = 'unknown';
           }
@@ -597,8 +435,8 @@ export function decodeAuxPowData(scriptSig: Buffer): AuxPowData | null {
   let auxPowResult: Partial<AuxPowData> = {};
 
   try {
-    // Always extract the 32-byte hash/root
-    auxPowResult.auxHashOrRoot = scriptSig.slice(dataStartIndex, dataStartIndex + 32).reverse().toString('hex');
+    // The 32-byte root as the coinbase holds it, which is already display order (see coinbaseParser AuxPow.root)
+    auxPowResult.auxHashOrRoot = scriptSig.slice(dataStartIndex, dataStartIndex + 32).toString('hex');
 
     // Check if there's enough data for size and nonce (Dogecoin style)
     const expectedFullLength = dataStartIndex + 32 + 4 + 4;

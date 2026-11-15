@@ -21,6 +21,9 @@ export function useColumnVisibility() {
     ntime: true,
     coinbase_outputs: true,
     coinbaseOutputValue: true,
+    // Off by default (#42)
+    mergeMining: false,
+    mergeMiningChange: false,
   });
 
   // Load visibility settings from local storage
@@ -69,6 +72,8 @@ export function useColumnResizing() {
     ntime: 72,
     coinbaseRaw: 120,
     coinbaseOutputValue: 65,
+    mergeMining: 150,
+    mergeMiningChange: 110,
   });
 
   const isResizing = useRef(false);

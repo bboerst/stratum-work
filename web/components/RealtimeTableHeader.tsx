@@ -154,6 +154,60 @@ export default function RealtimeTableHeader({
             />
           </TableHead>
         )}
+
+        {columnsVisible.mergeMining && (
+          <TableHead
+            key="mergeMining"
+            onClick={() => {
+              if (resizeActiveRef.current) {
+                resizeActiveRef.current = false;
+                return;
+              }
+              handleSort("mergeMining");
+            }}
+            className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
+            style={{ width: columnWidths.mergeMining }}
+            title="Other chains this template commits to: AuxPoW (with its tree size) and OP_RETURN protocols"
+          >
+            Merge Mining{renderSortIndicator("mergeMining")}
+            <div
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleMouseDown("mergeMining", e);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+            />
+          </TableHead>
+        )}
+
+        {columnsVisible.mergeMiningChange && (
+          <TableHead
+            key="mergeMiningChange"
+            onClick={() => {
+              if (resizeActiveRef.current) {
+                resizeActiveRef.current = false;
+                return;
+              }
+              handleSort("mergeMiningChange");
+            }}
+            className="relative p-1 border-r-2 text-xs cursor-pointer select-none"
+            style={{ width: columnWidths.mergeMiningChange }}
+            title="What changed vs this pool's previous template: +added, −removed, or chains whose commitment changed"
+          >
+            MM Change{renderSortIndicator("mergeMiningChange")}
+            <div
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleMouseDown("mergeMiningChange", e);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-gray-400"
+            />
+          </TableHead>
+        )}
       </TableRow>
     </TableHeader>
   );

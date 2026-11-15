@@ -38,6 +38,8 @@ export default function RealtimeTableSettings({
     { key: "ntime", label: "Ntime" },
     { key: "coinbase_outputs", label: "Coinbase Outputs" },
     { key: "coinbaseOutputValue", label: "Coinbase Output Value" },
+    { key: "mergeMining", label: "Merge Mining" },
+    { key: "mergeMiningChange", label: "Merge Mining Change" },
   ];
 
   // Auto-hide settings panel if clicked outside

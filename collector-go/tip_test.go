@@ -151,3 +151,64 @@ func TestZMQBlockNotificationsUpdateTheTip(t *testing.T) {
 		t.Error(updates.Load())
 	}
 }
+
+// Each RPC call uses its own connection: a kept-alive one may have been closed by the node (-rpcservertimeout) without
+// the client seeing it, behind NAT or a proxy.
+func TestRPCDoesNotReuseConnections(t *testing.T) {
+	var h atomic.Int64
+	h.Store(1)
+	var conns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result": 1, "error": null, "id": "tip"}`))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	rpc, _ := NewRPC("http", host, port, "u", "p", "", 2*time.Second)
+	for i := 0; i < 3; i++ {
+		if _, err := rpc.BlockCount(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := conns.Load(); got != 3 {
+		t.Errorf("connections = %d, want 3 (one per call)", got)
+	}
+}
+
+// A failed getblockcount after a block is retried, so the tip doesn't stay stale until the next block.
+func TestTipUpdateRetriesAfterFailure(t *testing.T) {
+	old := tipRetryDelays
+	tipRetryDelays = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 10 * time.Millisecond}
+	t.Cleanup(func() { tipRetryDelays = old })
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			w.WriteHeader(500)
+			return
+		}
+		_, _ = w.Write([]byte(`{"result": 200, "error": null, "id": "tip"}`))
+	}))
+	t.Cleanup(srv.Close)
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	rpc, _ := NewRPC("http", host, port, "u", "p", "", 2*time.Second)
+	tip := NewTipState(time.Hour)
+	f := &TipFollower{Tip: tip, RPC: rpc, log: quietLog}
+	f.update(context.Background())
+	if got, ok := tip.Current(); !ok || got != 200 || calls.Load() != 3 {
+		t.Errorf("tip %d ok=%v calls=%d", got, ok, calls.Load())
+	}
+
+	// Every attempt fails: give up after the last delay (the next block tries again).
+	calls.Store(-100)
+	tip2 := NewTipState(time.Hour)
+	f2 := &TipFollower{Tip: tip2, RPC: rpc, log: quietLog}
+	f2.update(context.Background())
+	if _, ok := tip2.Current(); ok || calls.Load() != -100+int64(len(tipRetryDelays))+1 {
+		t.Errorf("ok=%v calls=%d", ok, calls.Load())
+	}
+}

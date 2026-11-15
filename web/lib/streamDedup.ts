@@ -22,6 +22,8 @@
  * never hide a template.
  */
 
+import { createHash } from "crypto";
+
 export interface StreamDedupOptions {
   /** Distinct heights remembered per pool. */
   maxHeights: number;
@@ -75,8 +77,12 @@ export class StreamTemplateDedup {
     if (typeof t.height !== "number" || !Number.isFinite(t.height)) return true;
     if (t.prev_hash === undefined || t.merkle_branches === undefined || t.version === undefined
       || t.nbits === undefined || t.ntime === undefined) return true;
-    // Exact, unambiguous key: the values as published (strings, the branch list in order).
-    const key = JSON.stringify([t.prev_hash, t.merkle_branches, t.version, t.nbits, t.ntime]);
+    // Exact, unambiguous key: the values as published (strings, the branch list in order), stored as its SHA-256
+    // (32 bytes instead of ~1 KB with a dozen branches; a collision is computationally infeasible, so this is still
+    // an exact match).
+    const key = createHash("sha256")
+      .update(JSON.stringify([t.prev_hash, t.merkle_branches, t.version, t.nbits, t.ntime]))
+      .digest("base64");
     const source = JSON.stringify([t.site, t.replica]);
 
     const pool = this.pool(t.pool_name);

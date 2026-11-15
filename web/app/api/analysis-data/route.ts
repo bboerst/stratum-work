@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBlockByHeight, getInterestingBlocks } from "@/lib/db/blocks";
+import { getBlockByHeight, getHighestBlock, getInterestingBlocks } from "@/lib/db/blocks";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
 import { maskTemplates } from "@/lib/connectionMask";
+import { filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
@@ -67,13 +68,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid block height" }, { status: 400 });
     }
     
+    // Blacklisted pools (POOL_BLACKLIST) are kept out of the realtime view only: templates above the tip (the work
+    // being handed out now) are filtered, mined heights keep them for analysis.
+    const tip = enableHistoricalData ? ((await getHighestBlock())?.height ?? null) : null;
+
     // Process each height in parallel
     const results = await Promise.all(heights.map(async (height) => {
       // Fetch mining notifications for the requested height
       // extranonce1 identifies the collector's connection: masked (#105) before anything is derived from it, so
       // coinbaseRaw and the ASCII text carry the pseudonym too.
       const miningNotifications = enableHistoricalData
-        ? maskTemplates(await getAllMiningNotifyAtHeight(height))
+        ? maskTemplates(filterBlacklistedAboveTip(await getAllMiningNotifyAtHeight(height), height, tip, n => n.pool_name))
         : [];
       
       // Fetch block details for the requested height and previous height

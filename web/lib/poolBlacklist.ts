@@ -17,3 +17,19 @@ export function filterBlacklistedItems<T>(
   if (blacklistedPools.size === 0) return items;
   return items.filter(item => !isPoolBlacklisted(getPoolName(item)));
 }
+
+/**
+ * POOL_BLACKLIST hides pools from the realtime view only; their history stays available to downstream analysis
+ * (first-seen, forks). Templates for a height above the chain tip are the work being handed out right now, i.e. the
+ * realtime view under another URL, so they are filtered there. An unknown tip filters too (fail closed).
+ */
+export function filterBlacklistedAboveTip<T>(
+  items: T[],
+  height: number,
+  tip: number | null | undefined,
+  getPoolName: (item: T) => string | undefined | null
+): T[] {
+  if (blacklistedPools.size === 0) return items;
+  if (typeof tip === 'number' && Number.isFinite(tip) && height <= tip) return items;
+  return filterBlacklistedItems(items, getPoolName);
+}

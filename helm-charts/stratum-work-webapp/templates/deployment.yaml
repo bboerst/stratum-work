@@ -102,6 +102,10 @@ spec:
           startupProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: "nextjs"
               containerPort: {{ .Values.service.ports.nextjs }}

@@ -209,6 +209,9 @@ services:
       PG_USER: ${WEB_PG_USER:-web}
       PG_PASSWORD: ${WEB_PG_PASSWORD:-web}
       PG_SSLMODE: ${WEB_PG_SSLMODE:-disable}
+      # Live display limit per pool (#105); 0 disables.
+      STREAM_POOL_RATE: ${STREAM_POOL_RATE:-5}
+      STREAM_POOL_BURST: ${STREAM_POOL_BURST:-20}
     volumes:
       - ./web:/app
       - /app/node_modules

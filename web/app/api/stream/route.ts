@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { isPoolBlacklisted } from '../../../lib/poolBlacklist';
+import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from '../../../lib/rabbitmq';
 import type { Channel, ConsumeMessage, Replies } from 'amqplib';
 
@@ -18,6 +19,10 @@ export async function GET(request: NextRequest) {
       let channel: Channel | undefined;
       let consumer: Replies.Consume | undefined;
       let queueName = '';
+      // Per-pool rate limit for templates (#105): a pool flooding templates can't freeze the browser. Normal traffic
+      // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
+      const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
+      let throttleTimer: ReturnType<typeof setInterval> | undefined;
 
       // Helper function to safely enqueue data to the controller
       const safeEnqueue = (data: string) => {
@@ -45,6 +50,7 @@ export async function GET(request: NextRequest) {
       const cleanup = async () => {
         if (cleanupInitiated) return; // Prevent multiple cleanup attempts
         cleanupInitiated = true;
+        if (throttleTimer) clearInterval(throttleTimer);
 
         try {
           if (consumer?.consumerTag && channel) {
@@ -99,6 +105,11 @@ export async function GET(request: NextRequest) {
         }
 
         // Consumer: on every message, send an SSE event to the client.
+        if (throttle.enabled) {
+          throttleTimer = setInterval(() => {
+            for (const out of throttle.tick(Date.now())) safeEnqueue(out);
+          }, 200);
+        }
         consumer = await channel.consume(queueName, (msg: ConsumeMessage | null) => {
           if (!msg || isControllerClosed || cleanupInitiated) {
             return;
@@ -107,17 +118,24 @@ export async function GET(request: NextRequest) {
           try {
             const data = msg.content.toString();
 
+            let poolName: string | undefined;
             try {
               const parsed = JSON.parse(data);
               if (parsed.pool_name && isPoolBlacklisted(parsed.pool_name)) {
                 channel?.ack(msg);
                 return;
               }
+              // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
+              if (typeof parsed.pool_name === 'string' && parsed.type === undefined) poolName = parsed.pool_name;
             } catch {
               // JSON parse failed — forward message unfiltered (fail-open)
             }
 
-            safeEnqueue(data);
+            if (poolName !== undefined) {
+              for (const out of throttle.offer(poolName, data, Date.now())) safeEnqueue(out);
+            } else {
+              safeEnqueue(data);
+            }
             channel?.ack(msg);
           } catch (err) {
             console.error('Error processing message:', err);

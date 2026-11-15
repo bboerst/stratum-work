@@ -28,7 +28,8 @@ export default function RealtimeTable({
   const effectiveLatencySettingKey = latencySettingKey ?? tableLatencySettingKey(filterBlockHeight);
   
   // Get data from the global data stream
-  const { filterByType } = useGlobalDataStream();
+  // Pools that recently sent templates faster than the live display shows them (#105); expired by the stream hook.
+  const { filterByType, burstsByPool } = useGlobalDataStream();
 
   // Shared template buffer: pre-filled from history, then fed by the stream; survives switching views (#130)
   const { entries: bufferedTemplates } = useTemplateBuffer();
@@ -297,6 +298,7 @@ export default function RealtimeTable({
             <RealtimeTableRowComponent
               key={idx}
               row={row}
+              burst={burstsByPool?.[row.pool_name]}
               columnsVisible={columnsVisible}
               columnWidths={columnWidths}
               handleTemplateSelect={handleTemplateSelect}

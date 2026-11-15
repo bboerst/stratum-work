@@ -268,9 +268,13 @@ func toRow(d *Document, sourceID int16) (Row, error) {
 
 // ── routing (pgsink.py route) ────────────────────────────────────────────────────────────────────────────────────
 
+// A Bitcoin template's height is plausible within [tip-6, tip+6] of our node's tip at receive time. Ahead by more
+// than one is normal when pools see new blocks before our node does (blocks in quick succession, a node far away or
+// still validating): +2 misfiled real templates as height_implausible right after blocks. Other chains' heights are
+// tens of thousands or millions of blocks away, so the wider window doesn't let them in.
 const (
 	tipBehind = 6
-	tipAhead  = 2
+	tipAhead  = 6
 )
 
 type Route struct{ Table, Chain, Reason string }
@@ -285,7 +289,7 @@ func route(height int64, chainFamily string, tip int64, tipOK bool) Route {
 		return Route{"templates_other", "bch", "bch"}
 	case chainFamily != "":
 		return Route{"templates_other", "unknown", "unknown_chain"}
-	case tipOK && (height < tip-tipBehind || height > tip+tipAhead): // not tip-6 <= height <= tip+2
+	case tipOK && (height < tip-tipBehind || height > tip+tipAhead): // not tip-6 <= height <= tip+6
 		return Route{"templates_other", "unknown", "height_implausible"}
 	}
 	return routeBTC

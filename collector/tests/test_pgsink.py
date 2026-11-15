@@ -28,6 +28,8 @@ class RouteTests(unittest.TestCase):
         self.assertIs(route(975_500, None, 975_499), BTC)       # tip + 1: the normal case
         self.assertIs(route(975_493, None, 975_499), BTC)       # tip - 6: still plausible
         self.assertIs(route(975_501, None, 975_499), BTC)       # tip + 2
+        self.assertIs(route(975_502, None, 975_499), BTC)       # tip + 3: pools ahead of our node
+        self.assertIs(route(975_505, None, 975_499), BTC)       # tip + 6
         self.assertIs(route(975_500, None, None), BTC)          # no node: today's behavior
 
     def test_other_tables(self):
@@ -38,7 +40,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(route(975_500, "unknown", 975_499).reason, "unknown_chain")
         self.assertEqual(route(6_976_415, None, 975_499).reason, "height_implausible")
         self.assertEqual(route(975_492, None, 975_499).reason, "height_implausible")   # tip - 7
-        self.assertEqual(route(975_502, None, 975_499).reason, "height_implausible")   # tip + 3
+        self.assertEqual(route(975_506, None, 975_499).reason, "height_implausible")   # tip + 7
 
 
 class ToRowTests(unittest.TestCase):

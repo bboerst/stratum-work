@@ -184,10 +184,19 @@ class TestDayTips:
                 prev_hash=cv.stratum_prev_hash(hashes[975_564]).hex())
         c = convert(d)
         assert tips.tip_at(t) == 975_562
-        assert cv.route_converted(c, tips).reason == "height_implausible"      # header times alone: misrouted
+        # tip + 3 on header times alone: inside the live collectors' tip + 6 window, so no longer misrouted
+        assert cv.route_converted(c, tips).table == "templates"
         day = cv.DayTips(tips, [c])
         assert day.tip_at(t) == 975_564 and day.tip_at(t - timedelta(seconds=1)) == 975_562
         assert cv.route_converted(c, day).table == "templates"
+        # a lag beyond the window (tip + 7 on header times) is only fixed by the prev_hash evidence
+        far = convert(doc("z", hex_ts(t), height=975_569, coinbase1=coinbase1(975_569),
+                          prev_hash=cv.stratum_prev_hash(format(975_568, "064x")).hex()))
+        far_blocks = blocks + [(h, int((base + timedelta(minutes=58)).timestamp()), format(h, "064x")) for h in range(975_565, 975_569)]
+        far_tips = TipIndex(far_blocks)
+        assert far_tips.tip_at(t) == 975_562
+        assert cv.route_converted(far, far_tips).reason == "height_implausible"   # header times alone: misrouted
+        assert cv.route_converted(far, cv.DayTips(far_tips, [far])).table == "templates"
         # evidence never lowers the tip, and a stale template is still implausible
         stale = convert(doc("y", hex_ts(t), height=975_555, coinbase1=coinbase1(975_555),
                             prev_hash=cv.stratum_prev_hash(hashes[975_562]).hex()))

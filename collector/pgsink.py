@@ -21,7 +21,7 @@ LOG = logging.getLogger(__name__)
 
 # Plausible template heights relative to the collector's own Bitcoin tip (design doc, section 2: ingest rules).
 TIP_BEHIND = 6
-TIP_AHEAD = 2
+TIP_AHEAD = 6  # pools can be ahead of our node by more than a block (see collector-go/document.go)
 
 COLUMNS = (
     "received_at", "source_id", "height", "job_id", "prev_hash", "coinbase1", "coinbase2", "merkle_branches",

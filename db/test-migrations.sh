@@ -37,7 +37,7 @@ check "timescaledb loaded"               '[ -n "$(psql_ "SELECT extversion FROM 
 check "templates + templates_other are hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 2 ]'
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
 check "2 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 2 ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 7 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 8 ]'
 
 # role privileges: create login users the way an environment would
 psql_ "CREATE USER t_collector LOGIN PASSWORD 'x' IN ROLE stratum_collector; CREATE USER t_backend LOGIN PASSWORD 'x' IN ROLE stratum_backend; CREATE USER t_web LOGIN PASSWORD 'x' IN ROLE stratum_web;" >/dev/null
@@ -56,6 +56,12 @@ check "collector: cannot read quarantine" '! as_user t_collector "SELECT 1 FROM 
 check "backend: read quarantine"         '[ "$(as_user t_backend "SELECT count(*) FROM templates_rejected")" = 1 ]'
 check "web: no quarantine access"        '! as_user t_web "SELECT 1 FROM templates_rejected"'
 check "quarantine: unknown stage rejected" '! psql_ "INSERT INTO templates_rejected (received_at, source_id, stage, reason, raw_length) SELECT now(), id, '"'"'other'"'"', '"'"'x'"'"', 0 FROM sources LIMIT 1"'
+EV="INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates, peak_per_second, detail) SELECT id, 'burst', now(), now(), 3000, 2500, '{\"per_second\": [500, 2500]}' FROM sources LIMIT 1"
+check "collector: record an ingest event" 'as_user t_collector "$EV"'
+check "collector: cannot read events"    '! as_user t_collector "SELECT 1 FROM ingest_events"'
+check "backend: read events"             '[ "$(as_user t_backend "SELECT detail->'"'"'per_second'"'"'->>1 FROM ingest_events")" = 2500 ]'
+check "web: no event access"             '! as_user t_web "SELECT 1 FROM ingest_events"'
+check "events: end before start rejected" '! psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'burst'"'"', now(), now() - interval '"'"'1 s'"'"', 1 FROM sources LIMIT 1"'
 check "collector: cannot read blocks"    '! as_user t_collector "SELECT 1 FROM blocks"'
 check "collector: cannot delete templates" '! as_user t_collector "DELETE FROM templates"'
 check "backend: read templates"          '[ "$(as_user t_backend "SELECT count(*) FROM templates")" = 1 ]'
@@ -67,13 +73,14 @@ check "web: no DDL"                      '! as_user t_web "CREATE TABLE x (i int
 psql_ "DROP OWNED BY t_collector, t_backend, t_web; DROP USER t_collector, t_backend, t_web;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
+check "down drops ingest_events"        'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'ingest_events'"'"'")" = 0 ]'
 check "down drops the quarantine table"  'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'templates_rejected'"'"'")" = 0 ]'
 check "down refuses to merge two replicas" '! dbmate down && [ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 6 ]'
 psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 7 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 8 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

@@ -26,6 +26,7 @@ type pgConn interface {
 	UpsertSource(ctx context.Context, name, site, replica, stratumURL string) (int16, error)
 	WriteBatch(ctx context.Context, btc, other [][]any) error
 	WriteRejects(ctx context.Context, rows [][]any) error
+	WriteEvents(ctx context.Context, rows [][]any) error
 	Close()
 }
 
@@ -49,9 +50,15 @@ type PostgresSink struct {
 	rejQ        []rejectRow
 	maxRejQueue int
 	quar        quarantine
-	wake        time.Duration // periodic wake-up, so a quarantine window closes even when nothing arrives
-	stats       map[string]int64
-	done        chan struct{}
+	// Ingest events (burst.go): episodes worth analyzing, and template drops when the queue overflows. Same
+	// isolation as the quarantine.
+	evQ           []IngestEvent
+	overflowStart time.Time
+	overflowEnd   time.Time
+	overflowCount int
+	wake          time.Duration // periodic wake-up, so a quarantine window closes even when nothing arrives
+	stats         map[string]int64
+	done          chan struct{}
 
 	conn     pgConn
 	sourceID int16
@@ -59,7 +66,8 @@ type PostgresSink struct {
 
 // dropped_invalid: not storable as a template; such a document is quarantined (rejected), not silently lost.
 var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors",
-	"rejected", "rejects_written", "rejects_suppressed", "rejects_dropped", "rejects_db_errors"}
+	"rejected", "rejects_written", "rejects_suppressed", "rejects_dropped", "rejects_db_errors",
+	"events", "events_written", "events_dropped", "events_db_errors"}
 
 func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (int64, bool), log *slog.Logger) *PostgresSink {
 	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 10_000,
@@ -84,6 +92,7 @@ func (s *PostgresSink) Start() *PostgresSink {
 			case <-t.C:
 				s.mu.Lock()
 				s.enqueueRejectsLocked(s.quar.expire(time.Now()))
+				s.flushOverflowLocked()
 				s.mu.Unlock()
 				s.cond.Signal()
 			}
@@ -106,6 +115,46 @@ func (s *PostgresSink) SubmitReject(r Rejection) {
 	s.cond.Signal()
 }
 
+// SubmitEvent queues an ingest event (never blocks; bounded like the quarantine).
+func (s *PostgresSink) SubmitEvent(e IngestEvent) {
+	s.mu.Lock()
+	s.stats["events"]++
+	s.enqueueEventsLocked([]IngestEvent{e})
+	s.mu.Unlock()
+	s.cond.Signal()
+}
+
+func (s *PostgresSink) enqueueEventsLocked(evs []IngestEvent) {
+	for _, e := range evs {
+		if len(s.evQ) >= s.maxRejQueue {
+			s.evQ = s.evQ[1:]
+			s.stats["events_dropped"]++
+		}
+		s.evQ = append(s.evQ, e)
+	}
+}
+
+// noteOverflowLocked records templates the queue had to drop (data loss, so it's an event, not just a counter).
+func (s *PostgresSink) noteOverflowLocked(n int) {
+	now := time.Now()
+	if s.overflowCount == 0 {
+		s.overflowStart = now
+	}
+	s.overflowEnd = now
+	s.overflowCount += n
+}
+
+// flushOverflowLocked turns the drops since the last flush into one sink_overflow event.
+func (s *PostgresSink) flushOverflowLocked() {
+	if s.overflowCount == 0 {
+		return
+	}
+	s.stats["events"]++
+	s.enqueueEventsLocked([]IngestEvent{{Kind: "sink_overflow", Start: s.overflowStart, End: s.overflowEnd,
+		Templates: s.overflowCount, Detail: map[string]any{"max_queue": s.maxQueue}}})
+	s.overflowCount = 0
+}
+
 func (s *PostgresSink) enqueueRejectsLocked(rows []rejectRow) {
 	for _, r := range rows {
 		if len(s.rejQ) >= s.maxRejQueue {
@@ -123,6 +172,7 @@ func (s *PostgresSink) Submit(d *Document) {
 		s.queue[0] = nil
 		s.queue = s.queue[1:]
 		s.stats["dropped_queue_full"]++
+		s.noteOverflowLocked(1)
 	}
 	s.queue = append(s.queue, d)
 	s.stats["submitted"]++
@@ -166,24 +216,36 @@ func (s *PostgresSink) Close(timeout time.Duration) {
 
 // takeWork waits for templates or quarantine rows (or a stop) and takes a batch of each. ok is false once
 // stopped with nothing left.
-func (s *PostgresSink) takeWork() (batch []*Document, rejects []rejectRow, ok bool) {
+func (s *PostgresSink) takeWork() (batch []*Document, rejects []rejectRow, events []IngestEvent, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.queue) == 0 && len(s.rejQ) == 0 && !s.stop {
+	for len(s.queue) == 0 && len(s.rejQ) == 0 && len(s.evQ) == 0 && !s.stop {
 		s.cond.Wait()
 	}
 	if s.stop && len(s.queue) == 0 {
 		s.enqueueRejectsLocked(s.quar.expire(time.Now().Add(s.quar.b.Window))) // flush a pending summary
+		s.flushOverflowLocked()
 	}
-	if len(s.queue) == 0 && len(s.rejQ) == 0 {
-		return nil, nil, false
+	if len(s.queue) == 0 && len(s.rejQ) == 0 && len(s.evQ) == 0 {
+		return nil, nil, nil, false
 	}
 	n := min(s.batchSize, len(s.queue))
 	batch = append([]*Document(nil), s.queue[:n]...)
 	clear(s.queue[:n])
 	s.queue = s.queue[n:]
 	rejects, s.rejQ = s.rejQ, nil
-	return batch, rejects, true
+	events, s.evQ = s.evQ, nil
+	return batch, rejects, events, true
+}
+
+// requeueEvents puts events back after a connection failure (bounded).
+func (s *PostgresSink) requeueEvents(evs []IngestEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := s.evQ
+	s.evQ = nil
+	s.enqueueEventsLocked(evs)
+	s.enqueueEventsLocked(pending)
 }
 
 // requeueRejects puts quarantine rows back (newest kept within the bound) after a connection failure.
@@ -203,6 +265,7 @@ func (s *PostgresSink) requeueFront(b []*Document) {
 	room := s.maxQueue - len(s.queue)
 	if room < len(b) {
 		s.stats["dropped_queue_full"] += int64(len(b) - max(room, 0))
+		s.noteOverflowLocked(len(b) - max(room, 0))
 		b = b[len(b)-max(room, 0):]
 	}
 	s.queue = append(append(make([]*Document, 0, len(b)+len(s.queue)), b...), s.queue...)
@@ -284,6 +347,24 @@ func (s *PostgresSink) writeRejects(ctx context.Context, rows []rejectRow) {
 	s.count("rejects_written", len(rows))
 }
 
+// writeEvents stores ingest events in their own statement; failures are counted and dropped, like the quarantine.
+func (s *PostgresSink) writeEvents(ctx context.Context, evs []IngestEvent) {
+	if len(evs) == 0 {
+		return
+	}
+	vals := make([][]any, len(evs))
+	for i, e := range evs {
+		vals[i] = e.values(s.sourceID)
+	}
+	if err := s.conn.WriteEvents(ctx, vals); err != nil {
+		s.count("events_db_errors", 1)
+		s.count("events_dropped", len(evs))
+		s.log.Warn("postgres sink: could not store ingest events", "rows", len(evs), "err", err)
+		return
+	}
+	s.count("events_written", len(evs))
+}
+
 func (s *PostgresSink) logStats() {
 	s.log.Info("postgres sink stats", "stats", fmtStats(s.Stats(), pgStatKeys), "queued", s.Queued())
 }
@@ -310,7 +391,7 @@ func (s *PostgresSink) run() {
 			lastStats = time.Now()
 			s.logStats()
 		}
-		batch, rejects, ok := s.takeWork()
+		batch, rejects, events, ok := s.takeWork()
 		if !ok {
 			return // stopped and drained
 		}
@@ -323,6 +404,7 @@ func (s *PostgresSink) run() {
 		}
 		if err == nil {
 			s.writeRejects(wctx, rejects)
+			s.writeEvents(wctx, events)
 		}
 		cancel()
 		if err == nil {
@@ -334,6 +416,7 @@ func (s *PostgresSink) run() {
 		s.disconnect()
 		s.requeueFront(batch)
 		s.requeueRejects(rejects)
+		s.requeueEvents(events)
 		s.mu.Lock()
 		stopping := s.stop
 		s.mu.Unlock()
@@ -420,6 +503,11 @@ func (p *pgxConn) WriteBatch(ctx context.Context, btc, other [][]any) error {
 
 func (p *pgxConn) WriteRejects(ctx context.Context, rows [][]any) error {
 	_, err := p.c.CopyFrom(ctx, pgx.Identifier{"templates_rejected"}, rejectColumns, pgx.CopyFromRows(rows))
+	return err
+}
+
+func (p *pgxConn) WriteEvents(ctx context.Context, rows [][]any) error {
+	_, err := p.c.CopyFrom(ctx, pgx.Identifier{"ingest_events"}, eventColumns, pgx.CopyFromRows(rows))
 	return err
 }
 

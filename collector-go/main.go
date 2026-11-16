@@ -145,7 +145,7 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	str(&c.RPCScheme, []string{"bitcoin-rpc-scheme"}, envOr("BITCOIN_RPC_SCHEME", "http"), "http or https (env BITCOIN_RPC_SCHEME)")
 	str(&c.RPCCA, []string{"bitcoin-rpc-ca-file"}, os.Getenv("BITCOIN_RPC_CA_FILE"), "PEM CA bundle for an https RPC endpoint (env BITCOIN_RPC_CA_FILE)")
 	fs.Float64Var(&c.RPCTimeout, "bitcoin-rpc-timeout", 3.0, "Bitcoin RPC timeout in seconds")
-	fs.Int64Var(&c.Divergence, "btc-chain-divergence-threshold", 5, "height divergence before non-BTC confirmation")
+	fs.Int64Var(&c.Divergence, "btc-chain-divergence-threshold", tipAhead, "height divergence before non-BTC confirmation (default: the routing window, tip ±6)")
 	fs.IntVar(&c.TipStaleSeconds, "btc-tip-stale-seconds", 1800, "seconds before the local BTC tip is considered stale")
 	fs.StringVar(&c.BCHURL, "bch-confirmation-url", "https://api.blockchair.com/bitcoin-cash/raw/block", "BCH block confirmation API base URL")
 	fs.Float64Var(&c.BCHTimeout, "bch-confirmation-timeout", 3.0, "BCH confirmation timeout in seconds")

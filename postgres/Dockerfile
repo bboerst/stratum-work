@@ -8,7 +8,7 @@
 # Local development uses the official timescale/timescaledb image instead (docker compose --profile postgres).
 
 # 18.6-standard-trixie, pinned by digest (CNPG rebuilds tags for security fixes; bump deliberately)
-FROM ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie@sha256:de572898499fab9406f0da51929da562f96f3be40ca79fafea8ec1a8d5b42065
+FROM ghcr.io/cloudnative-pg/postgresql:18.7-standard-trixie@sha256:37fdeea29a4d3ed14570f719488ba55bd21e8975eaea864be5ce74d25a9a13de
 
 # Timescale packages ship the .so of every past release (~400 MB) so `ALTER EXTENSION timescaledb UPDATE` works from any
 # older version. Kept on purpose: pruning would break in-place upgrades when this image is bumped.

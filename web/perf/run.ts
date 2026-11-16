@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { chromium, type Browser, type Page } from "playwright";
 import { Fixture } from "./fixture";
+import { aggregate, schedule, type Side } from "./interleave";
 import { markdown, type PageMetrics, type Results } from "./report";
 
 interface Options {
@@ -24,6 +25,10 @@ interface Options {
   markdown?: string;
   compare?: string;
   label?: string;
+  /** A second running build (the base) measured in the same process, alternating with --base-url run by run. */
+  compareUrl?: string;
+  compareLabel?: string;
+  compareOut: string;
   /** Write CPU profiles of each page's load and stream phases to <dir>/<page>-{load,stream}.cpuprofile (Chrome DevTools). */
   profile?: string;
 }
@@ -38,6 +43,7 @@ function parseArgs(argv: string[]): Options {
     rate: 10,
     cpu: 4,
     out: "perf-results.json",
+    compareOut: "perf-compare.json",
   };
   for (let i = 0; i < argv.length; i++) {
     const [k, v] = [argv[i], argv[i + 1]];
@@ -56,9 +62,14 @@ function parseArgs(argv: string[]): Options {
     else if (k === "--markdown") o.markdown = take();
     else if (k === "--compare") o.compare = take();
     else if (k === "--label") o.label = take();
+    else if (k === "--compare-url") o.compareUrl = take();
+    else if (k === "--compare-label") o.compareLabel = take();
+    else if (k === "--compare-out") o.compareOut = take();
     else if (k === "--profile") o.profile = take();
     else throw new Error(`unknown argument ${k}`);
   }
+  if (o.compare && o.compareUrl) throw new Error("--compare (a results file) and --compare-url (a running build) are exclusive");
+  if (!Number.isInteger(o.runs) || o.runs < 1) throw new Error("--runs must be a positive integer");
   return o;
 }
 
@@ -132,17 +143,26 @@ function syntheticTxs(txids: string) {
   });
 }
 
-// Requests to /api/tx and to mempool.space (base builds look fee rates up there), per measured page load
-let txRequests = 0;
-let mempoolSpaceRequests = 0;
+// Requests to /api/tx and to mempool.space (base builds look fee rates up there), per page and side
+interface FeeLookups {
+  tx: number;
+  mempoolSpace: number;
+}
 
-async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl: string, path: string): Promise<PageMetrics> {
+/** What one measurement runs against: a build's URL, where its CPU profiles go, and its fee-lookup counters. */
+interface Target {
+  baseUrl: string;
+  profile?: string;
+  lookups: FeeLookups;
+}
+
+async function measure(browser: Browser, o: Options, t: Target, fixture: Fixture, streamUrl: string, path: string): Promise<PageMetrics> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await ctx.newPage();
   await page.addInitScript(INIT);
   await page.route("**/api/**", (route) => {
     const url = new URL(route.request().url());
-    if (url.hostname === "mempool.space") mempoolSpaceRequests++;
+    if (url.hostname === "mempool.space") t.lookups.mempoolSpace++;
     const nowS = Date.now() / 1000;
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     switch (url.pathname) {
@@ -150,7 +170,7 @@ async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl
         // Fee rates from this deployment's /api/tx (#198), as a Postgres deployment serves them
         return json({ streamEndpoint: streamUrl, historicalDataEnabled: true, txApi: { source: "local", mempoolSpaceFallback: false } });
       case "/api/tx":
-        txRequests++;
+        t.lookups.tx++;
         return json({ enabled: true, supported: true, txs: syntheticTxs(url.searchParams.get("txids") ?? "") });
       case "/api/realtime-prefill":
         return json(fixture.prefill(nowS));
@@ -174,17 +194,17 @@ async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl
     return (await metrics()).JSHeapUsedSize / 1e6;
   };
 
-  if (o.profile) {
+  if (t.profile) {
     await cdp.send("Profiler.enable");
     await cdp.send("Profiler.setSamplingInterval", { interval: 200 });
     await cdp.send("Profiler.start");
   }
-  await page.goto(o.baseUrl + path, { waitUntil: "load" });
+  await page.goto(t.baseUrl + path, { waitUntil: "load" });
   await page.waitForTimeout(o.settleSeconds * 1000);
-  if (o.profile) {
+  if (t.profile) {
     const { profile } = (await cdp.send("Profiler.stop")) as { profile: unknown };
-    mkdirSync(o.profile, { recursive: true });
-    writeFileSync(`${o.profile}/${path.replace(/[^a-z0-9]+/gi, "_") || "root"}-load.cpuprofile`, JSON.stringify(profile));
+    mkdirSync(t.profile, { recursive: true });
+    writeFileSync(`${t.profile}/${path.replace(/[^a-z0-9]+/gi, "_") || "root"}-load.cpuprofile`, JSON.stringify(profile));
     await cdp.send("Profiler.start");
   }
   const m1 = await metrics();
@@ -193,9 +213,9 @@ async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl
   const frames0 = await page.evaluate(() => (window as unknown as { __perf: { frames: number } }).__perf.frames);
   await page.waitForTimeout(o.streamSeconds * 1000);
   const frames1 = await page.evaluate(() => (window as unknown as { __perf: { frames: number } }).__perf.frames);
-  if (o.profile) {
+  if (t.profile) {
     const { profile } = (await cdp.send("Profiler.stop")) as { profile: unknown };
-    writeFileSync(`${o.profile}/${path.replace(/[^a-z0-9]+/gi, "_") || "root"}-stream.cpuprofile`, JSON.stringify(profile));
+    writeFileSync(`${t.profile}/${path.replace(/[^a-z0-9]+/gi, "_") || "root"}-stream.cpuprofile`, JSON.stringify(profile));
   }
   const heap2 = await heap();
   const m2 = await metrics();
@@ -219,42 +239,56 @@ async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl
   };
 }
 
-// ── reporting ───────────────────────────────────────────────────────────────────────────────────────────────────
-
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  const n = s.length;
-  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
-};
+// ── main ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
+  const sides: Side[] = o.compareUrl ? ["compare", "primary"] : ["primary"];
+  // With two builds, profiles go to <dir>/primary and <dir>/compare so the sides don't overwrite each other
+  const profileDir = (side: Side) => (o.profile && o.compareUrl ? `${o.profile}/${side}` : o.profile);
+  const targets = {} as Record<Side, Target>;
+  for (const side of sides) {
+    const baseUrl = side === "primary" ? o.baseUrl : o.compareUrl!;
+    targets[side] = { baseUrl, profile: profileDir(side), lookups: { tx: 0, mempoolSpace: 0 } };
+  }
   const fixture = new Fixture();
   const replay = await startReplay(fixture, o.rate, o.settleSeconds + o.streamSeconds / 2);
   const browser = await chromium.launch();
-  const pages: Record<string, PageMetrics> = {};
+  const pages = { primary: {}, compare: {} } as Record<Side, Record<string, PageMetrics>>;
   try {
+    const steps = schedule(o.pages, o.runs, Boolean(o.compareUrl));
     for (const path of o.pages) {
-      const runs: PageMetrics[] = [];
-      txRequests = mempoolSpaceRequests = 0;
-      for (let i = 0; i < o.runs; i++) runs.push(await measure(browser, o, fixture, replay.url, path));
-      // Fee-rate lookups the page made (not a metric: base and branch builds may use different sources)
-      if (txRequests || mempoolSpaceRequests) {
-        console.error(`${path}: fee-rate requests per run: /api/tx ${txRequests / o.runs}, mempool.space ${mempoolSpaceRequests / o.runs}`);
+      const runs = { primary: [], compare: [] } as Record<Side, PageMetrics[]>;
+      for (const side of sides) targets[side].lookups = { tx: 0, mempoolSpace: 0 };
+      for (const step of steps.filter((s) => s.path === path)) {
+        runs[step.side].push(await measure(browser, o, targets[step.side], fixture, replay.url, path));
       }
-      pages[path] = Object.fromEntries(
-        (Object.keys(runs[0]) as (keyof PageMetrics)[]).map((k) => [k, median(runs.map((r) => r[k]))])
-      ) as unknown as PageMetrics;
+      for (const side of sides) {
+        const { tx, mempoolSpace } = targets[side].lookups;
+        // Fee-rate lookups the page made (not a metric: base and branch builds may use different sources)
+        if (tx || mempoolSpace) {
+          const who = o.compareUrl ? ` (${side === "primary" ? o.label ?? "primary" : o.compareLabel ?? "compare"})` : "";
+          console.error(`${path}${who}: fee-rate requests per run: /api/tx ${tx / o.runs}, mempool.space ${mempoolSpace / o.runs}`);
+        }
+        pages[side][path] = aggregate(runs[side]);
+      }
       console.error(`measured ${path}`);
     }
   } finally {
     await browser.close();
     replay.close();
   }
-  const { out, markdown: md, compare, ...options } = o;
-  const results: Results = { label: o.label, options, pages };
+  const { out, markdown: md, compare, compareUrl, compareLabel, compareOut, ...options } = o;
+  const results: Results = { label: o.label, options: { ...options, ...(compareUrl ? { interleaved: true } : {}) }, pages: pages.primary };
   writeFileSync(out, JSON.stringify(results, null, 2));
-  const base = compare ? (JSON.parse(readFileSync(compare, "utf8")) as Results) : undefined;
+  let base: Results | undefined;
+  if (compareUrl) {
+    // The compare side's own results, in the same format as a separate run, so it can be fed to --compare later
+    base = { label: compareLabel, options: { ...results.options, baseUrl: compareUrl }, pages: pages.compare };
+    writeFileSync(compareOut, JSON.stringify(base, null, 2));
+  } else if (compare) {
+    base = JSON.parse(readFileSync(compare, "utf8")) as Results;
+  }
   const text = markdown(results, base);
   if (md) writeFileSync(md, text + "\n");
   console.log(text);

@@ -35,17 +35,26 @@ Playwright needs Chromium: `npx playwright install --with-deps chromium` (or run
 `mcr.microsoft.com/playwright` image of the same version).
 
 Options: `--pages` (comma-separated paths), `--runs`, `--settle` / `--stream` (seconds), `--rate` (templates/s),
-`--cpu` (throttling factor, 1 = off), `--out` (JSON), `--markdown`, `--label`, `--compare <base.json>` (marks changes
-beyond noise with ⚠️ / ✅), `--profile <dir>` (CPU profiles of the load and stream phases; open them in Chrome DevTools,
+`--cpu` (throttling factor, 1 = off), `--out` (JSON), `--markdown`, `--label`, `--compare-url <url>` with
+`--compare-label` / `--compare-out` (measure a second build alternately and compare, below), `--compare <base.json>`
+(compare with an earlier results file; changes beyond noise are marked ⚠️ / ✅), `--profile <dir>` (CPU profiles of the load and stream phases; open them in Chrome DevTools,
 and use a `next dev` server when you need readable function names).
 
 ## Comparing branches
-Build both, serve them on two ports, and measure the base first:
+Build both and serve them on two ports. One process then measures both, alternating run by run within each page
+(base, branch | branch, base | base, branch …), so drift on the machine lands on both sides instead of on whichever
+pass ran second:
 ```bash
-npm run perf -- --base-url http://127.0.0.1:3102 --label main --out main.json
-npm run perf -- --base-url http://127.0.0.1:3100 --label branch --compare main.json
+npm run perf -- --base-url http://127.0.0.1:3100 --label branch \
+  --compare-url http://127.0.0.1:3102 --compare-label main --out branch.json --compare-out main.json --markdown perf.md
 ```
-CI does exactly this for each PR (base = the PR's base commit) and posts the table as a comment.
+`--out` gets the `--base-url` build's results, `--compare-out` (default `perf-compare.json`) the other's, and the table
+marks the branch's changes beyond noise with ⚠️ / ✅. CI does exactly this for each PR (base = the PR's base commit)
+and posts the table as a comment. With `--profile <dir>`, each side's profiles go to `<dir>/primary` and
+`<dir>/compare`.
+
+You can also compare against an earlier results file: `--compare main.json` instead of `--compare-url`. The two
+were then measured at different times, so expect more noise.
 
 ## When adding a page or visual
 Add its path to the default `--pages` in `run.ts` if it's a primary view. If it needs another API, answer it in

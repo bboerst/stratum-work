@@ -16,14 +16,24 @@ export interface PageMetrics {
 
 export type Results = {
   label?: string;
-  options: { runs: number; cpu: number; settleSeconds: number; streamSeconds: number; rate: number } & Record<string, unknown>;
+  options: {
+    runs: number;
+    cpu: number;
+    settleSeconds: number;
+    streamSeconds: number;
+    rate: number;
+    /** Measured in one process alternating run by run with the build it's compared with (run.ts --compare-url). */
+    interleaved?: boolean;
+  } & Record<string, unknown>;
   pages: Record<string, PageMetrics>;
 };
 
 /**
  * A change counts only beyond its noise: the larger of an absolute floor and a share of the base value. The shares
  * come from the spread between runs of identical code in CI (e.g. a page's streaming long-task count varied by ~35 %
- * between two runs of the same build), so a PR isn't flagged for noise.
+ * between two runs of the same build), so a PR isn't flagged for noise. They were measured when CI ran the base and
+ * the PR in two passes minutes apart, so runner drift landed on one side; CI now interleaves the two (interleave.ts),
+ * which should narrow the spread. Re-derive the shares from interleaved runs before tightening them.
  */
 export const COLUMNS: { key: keyof PageMetrics; title: string; digits: number; higherIsWorse: boolean; noise: number; rel: number }[] = [
   { key: "loadScriptS", title: "Load script (s)", digits: 2, higherIsWorse: true, noise: 0.1, rel: 0.15 },
@@ -47,7 +57,7 @@ export function compareMetric(c: (typeof COLUMNS)[number], value: number, base: 
 export function markdown(r: Results, base?: Results): string {
   const o = r.options;
   const lines = [
-    `**Client performance** (median of ${o.runs} runs; Chromium, CPU ×${o.cpu}; ${o.settleSeconds} s settle, then ${o.streamSeconds} s of stream at ${o.rate} templates/s with a new block halfway${base ? `; compared with ${base.label ?? "base"}` : ""})`,
+    `**Client performance** (median of ${o.runs} runs; Chromium, CPU ×${o.cpu}; ${o.settleSeconds} s settle, then ${o.streamSeconds} s of stream at ${o.rate} templates/s with a new block halfway${base ? `; compared with ${base.label ?? "base"}${o.interleaved ? ", measured alternately in the same browser" : ""}` : ""})`,
     "",
     `| Page | ${COLUMNS.map((c) => c.title).join(" | ")} |`,
     `|---|${COLUMNS.map(() => "---:").join("|")}|`,

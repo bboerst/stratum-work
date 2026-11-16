@@ -79,6 +79,8 @@ export function useTableData(
     new WeakMap<StratumV1Data, { latencyAdjusted: boolean; mm: MergeMiningState | undefined; row: Omit<SortedRow, 'feeRateComputed'> }>()
   );
   const feeRowCache = useRef(new WeakMap<object, { fee: unknown; row: SortedRow }>());
+  // Templates the stream effect below has already folded into the caches
+  const processedTemplates = useRef(new WeakSet<StratumV1Data>());
 
   // Add state for filtered data and loading
   const [filteredData, setFilteredData] = useState<SortedRow[]>([]);
@@ -122,8 +124,14 @@ export function useTableData(
     
     if (paused) return;
     
-    // Process each new data item to update caches
+    // Process each new data item to update caches. Templates are the same objects across updates while a pool's
+    // template is unchanged (RealtimeTable), and processing one again changes nothing: skip those, and keep the
+    // rows as they are when no template is new.
+    let changed = false;
     stratumV1Data.forEach(data => {
+      if (processedTemplates.current.has(data)) return;
+      processedTemplates.current.add(data);
+      changed = true;
       // Reconstruct the coinbaseRaw so we know its unique string
       const newCoinbaseRaw = formatCoinbaseRaw(
         data.coinbase1,
@@ -165,7 +173,7 @@ export function useTableData(
     });
 
     // Update rows state with all the latest data from each pool
-    setRows(Array.from(latestPoolDataRef.current.values()));
+    if (changed) setRows(Array.from(latestPoolDataRef.current.values()));
   }, [stratumV1Data, paused]);
 
   // Compute derived fields without fee rate

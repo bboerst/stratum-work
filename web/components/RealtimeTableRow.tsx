@@ -25,8 +25,10 @@ function RealtimeTableRowComponent({
   handleTemplateSelect
 }: RealtimeTableRowProps) {
   return (
-    <TableRow 
-      className="hover:bg-[hsl(var(--muted))] cursor-pointer"
+    <TableRow
+      // relative z-0: each row is its own stacking context, so the browser repaints only the rows that changed instead
+      // of the whole table on every update (no visual change).
+      className="relative z-0 hover:bg-[hsl(var(--muted))] cursor-pointer"
       onClick={() => handleTemplateSelect(row)}
     >
       {columnsVisible.pool_name && (

@@ -51,6 +51,7 @@ export interface BlockRow {
   bits: string | number | null;
   nonce: string | number | null;
   difficulty: number | null;
+  stale?: boolean;                // only the lookup by hash selects it (recorded as stale, not active again; #194)
 }
 
 export interface PoolRow {
@@ -145,6 +146,7 @@ export interface PgBlock {
   nonce?: number;
   difficulty?: number;
   id: string;
+  stale?: true;                   // lookup by hash only: a block a reorg disconnected (absent otherwise)
 }
 
 /**
@@ -172,6 +174,7 @@ export function blockRowToBlock(row: BlockRow): PgBlock {
   if (row.nonce != null) block.nonce = Number(row.nonce);
   if (row.difficulty != null) block.difficulty = row.difficulty;
   block.id = block.block_hash;
+  if (row.stale === true) block.stale = true;
   return block;
 }
 

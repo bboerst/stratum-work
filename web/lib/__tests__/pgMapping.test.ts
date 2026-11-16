@@ -147,6 +147,12 @@ describe('blockRowToBlock', () => {
     expect(block).toMatchObject({ transactions: 3000, version: 536870912, bits: '1701e5ac', nonce: 4294967295,
       merkle_root: 'ab'.repeat(32), size: 1, weight: 4, difficulty: 1.5 });
   });
+
+  it('flags a stale block (lookup by hash) and adds nothing otherwise', () => {
+    expect(blockRowToBlock(blockRow({ stale: true })).stale).toBe(true);
+    expect(blockRowToBlock(blockRow({ stale: false }))).not.toHaveProperty('stale');
+    expect(blockRowToBlock(blockRow())).not.toHaveProperty('stale');
+  });
 });
 
 describe('other rows', () => {

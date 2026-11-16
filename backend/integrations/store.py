@@ -203,6 +203,12 @@ class PostgresStore:
         params = self._block_params(doc, seen_now=False)
         self._run(lambda c: c.execute(self._BLOCK_UPSERT, params))
 
+    # Reorgs (#194): blocks keeps blocks a reorg disconnected (keyed by hash). Reads by height (the tip, gaps, "is
+    # height h done") go through the view blocks_best (db/migrations/20261116300001_blocks_best.sql), which leaves
+    # out blocks recorded in stale_blocks as currently stale (reorged_in_at IS NULL; active again = shown). So sync
+    # stores the active block at a height whose only stored block is stale. Per-block maintenance (full reindex, pool
+    # re-identification, known_block_hashes) reads every stored block: those work by hash, and a stale block's
+    # analysis and pool stay correct. With no stale_blocks rows blocks_best is exactly blocks.
     def block_hashes_by_height_desc(self) -> Iterator[Dict[str, Any]]:
         rows = self._run(lambda c: c.execute("SELECT encode(block_hash, 'hex'), height FROM blocks ORDER BY height DESC").fetchall())
         return iter({"block_hash": h, "height": height} for h, height in rows)
@@ -228,18 +234,22 @@ class PostgresStore:
         self._run(lambda c: c.execute(self._BLOCK_POOL_UPDATE, params))
 
     def highest_block_height(self) -> Optional[int]:
-        return self._run(lambda c: c.execute("SELECT max(height) FROM blocks").fetchone()[0])
+        # ORDER BY ... LIMIT 1, not max(): through the view's anti-join max() would scan the table (no min/max index
+        # shortcut); this walks blocks_height from the top and stops at the first best-chain block.
+        row = self._run(lambda c: c.execute("SELECT height FROM blocks_best ORDER BY height DESC LIMIT 1").fetchone())
+        return row[0] if row else None
 
     def lowest_block_height(self) -> Optional[int]:
-        return self._run(lambda c: c.execute("SELECT min(height) FROM blocks").fetchone()[0])
+        row = self._run(lambda c: c.execute("SELECT height FROM blocks_best ORDER BY height ASC LIMIT 1").fetchone())
+        return row[0] if row else None
 
     def block_heights_between(self, low: int, high_exclusive: int) -> Set[int]:
-        rows = self._run(lambda c: c.execute("SELECT height FROM blocks WHERE height >= %s AND height < %s",
+        rows = self._run(lambda c: c.execute("SELECT height FROM blocks_best WHERE height >= %s AND height < %s",
                                              (low, high_exclusive)).fetchall())
         return {r[0] for r in rows}
 
     def has_block_at_height(self, height: int) -> bool:
-        return self._run(lambda c: c.execute("SELECT EXISTS (SELECT 1 FROM blocks WHERE height = %s)", (height,)).fetchone()[0])
+        return self._run(lambda c: c.execute("SELECT EXISTS (SELECT 1 FROM blocks_best WHERE height = %s)", (height,)).fetchone()[0])
 
     # templates (Bitcoin only by construction: other chains live in templates_other).
     # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read

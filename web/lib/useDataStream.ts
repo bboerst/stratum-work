@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useTransition } from "react";
 import { getStreamEndpoint } from "./streamEndpoint";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
+import { StreamBatch, appendStreamItems, mergeLatestByPool } from "./streamBatch";
 
 interface UseDataStreamOptions {
   endpoint?: string;
@@ -12,6 +13,13 @@ interface UseDataStreamOptions {
   dataTypes?: StreamDataType[];
   /** Called with every message that isn't dropped by pause, e.g. to feed the shared template buffer (#130). */
   onMessage?: (item: StreamData) => void;
+  /**
+   * Apply queued messages to the state at most this often (ms), as one render instead of one per message. 0 (the
+   * default) applies each message as it arrives.
+   */
+  coalesceMs?: number;
+  /** Called inside each flush, so state updates made there (e.g. publishing the template buffer) share its render. */
+  onFlush?: () => void;
 }
 
 /** The latest burst seen for a pool: the stream route showed only some of its templates live (#105). */
@@ -86,6 +94,8 @@ export function useDataStream({
   maxItems = 50,
   dataTypes = Object.values(StreamDataType),
   onMessage,
+  coalesceMs = 0,
+  onFlush,
 }: UseDataStreamOptions = {}): UseDataStreamResult {
   const [data, setData] = useState<StreamData[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -107,6 +117,11 @@ export function useDataStream({
   const dataTypesRef = useRef(dataTypes);
   const maxItemsRef = useRef(maxItems);
   const onMessageRef = useRef(onMessage);
+  const onFlushRef = useRef(onFlush);
+  const coalesceMsRef = useRef(coalesceMs);
+  // Messages received since the last flush, and the pending flush
+  const batchRef = useRef(new StreamBatch());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Update refs when props change
   useEffect(() => {
@@ -124,6 +139,33 @@ export function useDataStream({
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
+
+  useEffect(() => {
+    onFlushRef.current = onFlush;
+  }, [onFlush]);
+
+  useEffect(() => {
+    coalesceMsRef.current = coalesceMs;
+  }, [coalesceMs]);
+
+  // Apply the queued messages in one batch of state updates: same final state as applying them one by one
+  // (lib/streamBatch.ts), one render.
+  const flush = useCallback(() => {
+    flushTimerRef.current = null;
+    const batch = batchRef.current;
+    batchRef.current = new StreamBatch();
+    startTransition(() => {
+      if (!batch.empty) {
+        setLatestMessagesByPool(prev => mergeLatestByPool(prev, batch.latestByPool));
+        setData(prev => appendStreamItems(prev, batch.items, maxItemsRef.current));
+      }
+      onFlushRef.current?.();
+    });
+  }, [startTransition]);
+
+  useEffect(() => () => {
+    if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
+  }, []);
 
   // Function to clear all data
   const clearData = useCallback(() => setData([]), []);
@@ -179,47 +221,14 @@ export function useDataStream({
 
       onMessageRef.current?.(newData);
 
-      // If it was StratumV1 data, update the latest message for that pool
-      if (stratumData && stratumData.pool_name) {
-        startTransition(() => {
-             setLatestMessagesByPool(prev => ({
-                ...prev,
-                [stratumData!.pool_name]: stratumData!
-             }));
-        });
-      }
-      
-      // Process the new data immediately for the main data array
-      startTransition(() => {
-        setData((prev) => {
-          let filteredData = [...prev];
-          
-          if (newData!.type === StreamDataType.STRATUM_V1) {
-            // For Stratum data, we replace existing entries with the same pool_name and height
-            filteredData = filteredData.filter(item => 
-              !(item.type === StreamDataType.STRATUM_V1 && 
-                item.data.pool_name === (newData!.data as StratumV1Data).pool_name &&
-                item.data.height === (newData!.data as StratumV1Data).height)
-            );
-          } else if (newData!.type === StreamDataType.BLOCK) {
-            // For Block data, we replace existing entries with the same hash
-            filteredData = filteredData.filter(item => 
-              !(item.type === StreamDataType.BLOCK && 
-                item.data.hash === newData!.data.hash)
-            );
-          }
-          
-          // Add the new data
-          filteredData.push(newData!);
-          
-          // Limit how many rows we keep
-          return filteredData.slice(-maxItemsRef.current);
-        });
-      });
+      // Queue it for the next flush: the per-pool latest template and the recent-messages list
+      batchRef.current.add(newData, stratumData);
+      if (coalesceMsRef.current <= 0) flush();
+      else if (flushTimerRef.current === null) flushTimerRef.current = setTimeout(flush, coalesceMsRef.current);
     } catch (error) {
       console.error("Error parsing SSE data", error);
     }
-  }, [startTransition]);
+  }, [startTransition, flush]);
 
   // Set up and tear down the EventSource
   useEffect(() => {

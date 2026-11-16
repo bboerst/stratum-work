@@ -25,6 +25,17 @@ interface DataStreamContextType {
 
 const DataStreamContext = createContext<DataStreamContextType | undefined>(undefined);
 
+/**
+ * The part of the stream context that changes rarely (connection, pause, bursts). Components that need only these
+ * read useStreamStatus(), so they don't re-render on every stream flush the way useGlobalDataStream() consumers do.
+ */
+export type StreamStatusContextType = Pick<
+  DataStreamContextType,
+  "isConnected" | "paused" | "setPaused" | "setDataTypes" | "activeDataTypes" | "burstsByPool"
+>;
+
+const StreamStatusContext = createContext<StreamStatusContextType | undefined>(undefined);
+
 export type PrefillStatus = "pending" | "loading" | "loaded" | "disabled" | "error";
 
 /** A render-time snapshot of the shared template buffer (lib/templateBuffer.ts, #130). */
@@ -43,7 +54,10 @@ export interface TemplateBufferSnapshot {
 
 const TemplateBufferContext = createContext<TemplateBufferSnapshot | undefined>(undefined);
 
-/** Coalesce buffer updates so a burst of stream messages costs one re-render of the visuals. */
+/**
+ * Coalesce stream messages and buffer updates so a burst of stream messages costs one re-render: the stream state
+ * (recent messages, latest per pool) and the template buffer snapshot are applied together, at most this often.
+ */
 const BUFFER_NOTIFY_MS = 150;
 
 interface RuntimeConfig {
@@ -69,10 +83,11 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
   const [bufferSnapshot, setBufferSnapshot] = useState<Omit<TemplateBufferSnapshot, "prefill">>(() => ({
     entries: [], version: 0, epoch: 0, tipHeight: null, currentHeight: null, liveSinceMs: null,
   }));
-  const notifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Buffer version last published to the snapshot
+  const publishedVersionRef = useRef(-1);
 
   const publishBuffer = useCallback(() => {
-    notifyTimerRef.current = null;
+    publishedVersionRef.current = buffer.version;
     const entries = buffer.entries();
     setBufferSnapshot({
       entries,
@@ -84,26 +99,19 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     });
   }, [buffer]);
 
-  const scheduleBufferPublish = useCallback(() => {
-    if (notifyTimerRef.current === null) {
-      notifyTimerRef.current = setTimeout(publishBuffer, BUFFER_NOTIFY_MS);
-    }
-  }, [publishBuffer]);
-
-  useEffect(() => () => {
-    if (notifyTimerRef.current !== null) clearTimeout(notifyTimerRef.current);
-  }, []);
-
-  // Feed the buffer from the stream. useDataStream only calls this for messages that pass the pause check.
+  // Feed the buffer from the stream. useDataStream only calls this for messages that pass the pause check; the
+  // snapshot is published in the stream's next flush (handleStreamFlush), in the same render as the stream state.
   const handleStreamMessage = useCallback((item: StreamData) => {
-    const before = buffer.version;
     if (item.type === StreamDataType.STRATUM_V1) {
       buffer.add([item.data], "live");
     } else if (item.type === StreamDataType.BLOCK) {
       buffer.setTip(item.data?.height);
     }
-    if (buffer.version !== before) scheduleBufferPublish();
-  }, [buffer, scheduleBufferPublish]);
+  }, [buffer]);
+
+  const handleStreamFlush = useCallback(() => {
+    if (buffer.version !== publishedVersionRef.current) publishBuffer();
+  }, [buffer, publishBuffer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,17 +180,33 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     paused,
     dataTypes,
     onMessage: handleStreamMessage,
+    coalesceMs: BUFFER_NOTIFY_MS,
+    onFlush: handleStreamFlush,
   });
-  
-  // Combine the data stream with the paused state
-  const value = {
-    ...dataStream,
+  const { data, isConnected, clearData, filterByType, latestMessagesByPool, burstsByPool } = dataStream;
+
+  // Combine the data stream with the paused state. Memoized, so consumers re-render only when a field changes.
+  const value = React.useMemo<DataStreamContextType>(() => ({
+    data,
+    isConnected,
+    clearData,
+    filterByType,
+    latestMessagesByPool,
+    burstsByPool,
     setPaused,
     paused,
     setDataTypes,
     activeDataTypes: dataTypes,
-    latestMessagesByPool: dataStream.latestMessagesByPool
-  };
+  }), [data, isConnected, clearData, filterByType, latestMessagesByPool, burstsByPool, paused, dataTypes]);
+
+  const statusValue = React.useMemo<StreamStatusContextType>(() => ({
+    isConnected,
+    paused,
+    setPaused,
+    setDataTypes,
+    activeDataTypes: dataTypes,
+    burstsByPool,
+  }), [isConnected, paused, dataTypes, burstsByPool]);
 
   const templateBufferValue = React.useMemo<TemplateBufferSnapshot>(
     () => ({ ...bufferSnapshot, prefill }),
@@ -191,9 +215,11 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
 
   return (
     <DataStreamContext.Provider value={value}>
-      <TemplateBufferContext.Provider value={templateBufferValue}>
-        {children}
-      </TemplateBufferContext.Provider>
+      <StreamStatusContext.Provider value={statusValue}>
+        <TemplateBufferContext.Provider value={templateBufferValue}>
+          {children}
+        </TemplateBufferContext.Provider>
+      </StreamStatusContext.Provider>
     </DataStreamContext.Provider>
   );
 }
@@ -202,6 +228,15 @@ export function useGlobalDataStream() {
   const context = useContext(DataStreamContext);
   if (context === undefined) {
     throw new Error("useGlobalDataStream must be used within a DataStreamProvider");
+  }
+  return context;
+}
+
+/** Connection, pause and burst state only: doesn't re-render on every stream flush (see StreamStatusContextType). */
+export function useStreamStatus() {
+  const context = useContext(StreamStatusContext);
+  if (context === undefined) {
+    throw new Error("useStreamStatus must be used within a DataStreamProvider");
   }
   return context;
 }

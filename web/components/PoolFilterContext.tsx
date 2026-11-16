@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from "react";
 import { useGlobalDataStream } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
+import { poolListFromKey, poolListKey, sortPoolNames } from "@/lib/poolList";
 
 const STORAGE_KEY_HIDDEN = "poolFilterHidden";
 
@@ -46,7 +47,8 @@ export function PoolFilterProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY_HIDDEN, JSON.stringify(Array.from(hiddenPools)));
   }, [hiddenPools, hydrated]);
 
-  const allPools = useMemo(() => {
+  // Keyed on the names, so the list stays the same array while the set of pools is unchanged (lib/poolList.ts)
+  const allPoolsKey = useMemo(() => {
     const poolSet = new Set<string>();
     Object.keys(latestMessagesByPool).forEach(name => poolSet.add(name));
     data.forEach(item => {
@@ -54,8 +56,9 @@ export function PoolFilterProvider({ children }: { children: ReactNode }) {
         poolSet.add(item.data.pool_name);
       }
     });
-    return Array.from(poolSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return poolListKey(sortPoolNames(poolSet));
   }, [data, latestMessagesByPool]);
+  const allPools = useMemo(() => poolListFromKey(allPoolsKey), [allPoolsKey]);
 
   const togglePool = useCallback((poolName: string) => {
     setHiddenPools(prev => {

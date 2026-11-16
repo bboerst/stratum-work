@@ -5,7 +5,7 @@ import RealtimeTable from "@/components/RealtimeTable";
 import Blocks from "@/components/Blocks";
 import RealtimeTableMenu from "@/components/RealtimeTableMenu";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useStreamStatus } from "@/lib/DataStreamContext";
 import { useBlocks } from "@/lib/BlocksContext";
 import { useVisualization } from "@/components/VisualizationContext";
 import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
@@ -25,7 +25,7 @@ export default function HeightPage() {
   const [paused, setPaused] = useState(true); // Start paused when viewing historical data
   const [showSettings, setShowSettings] = useState(false);
   const { setMenuContent } = useGlobalMenu();
-  const { isConnected } = useGlobalDataStream();
+  const { isConnected } = useStreamStatus();
   const { resetBlocksState } = useBlocks();
   const { isPanelVisible } = useVisualization();
   const { selectedTemplate, setSelectedTemplate } = useSelectedTemplate();

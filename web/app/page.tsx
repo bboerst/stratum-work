@@ -5,7 +5,7 @@ import Blocks from "../components/Blocks";
 import RealtimeTable from "../components/RealtimeTable";
 import RealtimeTableMenu from "../components/RealtimeTableMenu";
 import { useGlobalMenu } from "../components/GlobalMenuContext";
-import { useGlobalDataStream } from "../lib/DataStreamContext";
+import { useStreamStatus } from "../lib/DataStreamContext";
 import { useBlocks } from "../lib/BlocksContext";
 import { useVisualization } from "../components/VisualizationContext";
 import { useSelectedTemplate } from "../lib/SelectedTemplateContext";
@@ -18,7 +18,7 @@ export default function HomePage() {
   const [paused, setPaused] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const { setMenuContent } = useGlobalMenu();
-  const { isConnected } = useGlobalDataStream();
+  const { isConnected } = useStreamStatus();
   const { resetBlocksState } = useBlocks();
   const { isPanelVisible } = useVisualization();
   const { selectedTemplate, setSelectedTemplate } = useSelectedTemplate();

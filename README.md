@@ -111,7 +111,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BITCOIN_RPC_SCHEME` / `_CA_FILE` | `http` / *(empty)* | `https` and a CA file for nodes behind a TLS proxy |
 | `BITCOIN_ZMQ_BLOCK` | `tcp://host.docker.internal:28332` | ZMQ block notifications |
 | `MIN_BLOCK_HEIGHT` | `863998` | Lowest height the backend backfills on first start |
-| `BLOCK_GAP_WINDOW` | `144` | Heights below the tip the backend re-checks for missing blocks after each sync and new block (0 = off) |
+| `BLOCK_GAP_WINDOW` | `144` | Heights below the tip the backend checks against the node's active chain after each sync, new block and reorg: missing blocks are fetched, blocks a reorg replaced are swapped for the node's and marked stale (0 = off; see "Best chain" below) |
 | `POSTGRES_PORT` | `5432` | Host port of the Postgres profile |
 | `COLLECTOR_PG_HOST` (+ `_USER`, `_PASSWORD`) | *(empty: off)* | Collectors also write to Postgres |
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |
@@ -215,6 +215,8 @@ psql postgres://web:web@localhost:5432/stratum                           # from 
 ```
 
 **Stale blocks** (backend in Postgres mode): on every new block and every `STALE_POLL_INTERVAL_S` (60) seconds the backend calls `getchaintips`, walks each non-active branch to the fork point and stores its blocks in `stale_blocks` (header always; coinbase, size and pool when the node has the full block); reorgs of the active chain go to `chain_reorgs`. `STALE_BLOCKS_ENABLED=false` turns it off. RPC methods used: `getchaintips`, `getblockheader`, `getblock`, `getblockhash`.
+
+**Best chain** (both database modes): after each sync, new block and reorg the backend compares its stored best block at each of the last `BLOCK_GAP_WINDOW` heights with the node's (`getblockhash`). A missing block is fetched; a stored block the node's active chain no longer has (a reorg) is replaced by the node's block, stored with `seen_at` = when the backend noticed. The replaced block stays stored: in Postgres it gets a `stale_blocks` row (`was_active`, and a `chain_reorgs` row), so `blocks_best` hides it, even with `STALE_BLOCKS_ENABLED=false`; in MongoDB its document gets `stale: true` (and `stale_at`), and every read of "the block at a height" or "the tip" skips such documents. RPC methods used: `getblockcount`, `getblockhash`, `getblock`, plus `getchaintips` and `getblockheader` in Postgres mode.
 
 **Migrations:** `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then fill `-- migrate:up` and a working `-- migrate:down`. TimescaleDB procedures such as `add_columnstore_policy` need `-- migrate:up transaction:false`. `db/test-migrations.sh` runs them up/down/up and checks the role privileges.
 
@@ -333,6 +335,7 @@ End-to-end scripts (need Docker; everything runs in throwaway containers):
 ```bash
 db/test-migrations.sh                  # migrations up/down/up + role privileges
 backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork and a reorg, backend in Postgres mode
+backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
 tools/mongo-to-postgres/test-e2e.sh    # backfill: unit tests + synthetic fixture
 tools/replica-compare/test-e2e.sh      # unit tests + synthetic fixture
@@ -344,7 +347,7 @@ Client performance: `npm run perf` against a running production build ([web/perf
 | Workflow | Runs on | Checks |
 |---|---|---|
 | `images.yml` | PRs, `main`, releases | Builds multi-arch images (amd64 + arm64) of changed components; PRs push nothing, `main` pushes `bboerst/stratum-work-<component>:sha-<7>` and `:main`, releases push every component as `:<tag>` and `:latest` |
-| `db.yml` | Changes to `db/`, `postgres/`, the Postgres code paths | Migrations on the local and the production image, collector sink and backend store against a migrated database (as their roles), backfill tool e2e, stale blocks e2e |
+| `db.yml` | Changes to `db/`, `postgres/`, the Postgres code paths | Migrations on the local and the production image, collector sink and backend store against a migrated database (as their roles), backfill tool e2e, stale blocks e2e, best-chain reconciliation e2e |
 | `mempool-recorder.yml` | Changes to `mempool-recorder/` or migrations | gofmt, go vet, go test, e2e |
 | `perf.yml` | PRs touching `web/` | Measures the PR against its base with `web/perf` and posts the table as a PR comment |
 

@@ -17,5 +17,6 @@ COPY analytics ./analytics
 COPY integrations ./integrations
 COPY bitcoin_utils.py .
 COPY stale_blocks.py .
+COPY reconcile.py .
 
 CMD ["python", "main.py"] 

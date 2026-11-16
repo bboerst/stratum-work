@@ -72,7 +72,7 @@ export interface PrefillResult {
 /** What the browser needs from TemplateBuffer, so this can be tested without the class. */
 export interface PrefillTarget {
   setTip(height: number | null | undefined): unknown;
-  add(templates: StratumV1Data[], origin: 'prefill'): number;
+  add(templates: StratumV1Data[]): number;
 }
 
 /**
@@ -95,6 +95,6 @@ export async function prefillTemplateBuffer(
   if (body.enabled === false) return { status: 'disabled', count: 0 };
 
   buffer.setTip(body.tip?.height);
-  const count = buffer.add(Array.isArray(body.templates) ? body.templates : [], 'prefill');
+  const count = buffer.add(Array.isArray(body.templates) ? body.templates : []);
   return { status: 'loaded', count };
 }

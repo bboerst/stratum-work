@@ -2,7 +2,7 @@
 
 import { useStreamStatus, useTemplateBuffer } from "@/lib/DataStreamContext";
 import { StreamData, StreamDataType } from '@/lib/types';
-import { latestPerPool, withOrigin } from "@/lib/templateBuffer";
+import { latestPerPool } from "@/lib/templateBuffer";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import SankeyDiagram from "@/components/SankeyDiagram";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
@@ -29,7 +29,7 @@ export default function SankeyPage() {
   
   // Global state
   const { paused, setPaused } = useStreamStatus();
-  const { entries: bufferedTemplates, currentHeight, prefill } = useTemplateBuffer();
+  const { entries: bufferedTemplates, currentHeight } = useTemplateBuffer();
   const { setMenuContent } = useGlobalMenu();
   const { isPoolVisible } = usePoolFilter();
   
@@ -47,12 +47,8 @@ export default function SankeyPage() {
       type: StreamDataType.STRATUM_V1,
       id: entry.key,
       timestamp: entry.data.timestamp,
-      data: withOrigin(entry),
+      data: entry.data,
     })),
-    [latestTemplates]
-  );
-  const prefilledPoolCount = useMemo(
-    () => latestTemplates.filter(entry => entry.origin === 'prefill').length,
     [latestTemplates]
   );
   
@@ -112,11 +108,6 @@ export default function SankeyPage() {
     <main className="flex min-h-screen flex-col items-center p-8">
       <div className="w-full max-w-7xl">
         <h1 className="text-2xl font-bold mb-6">Sankey Merkle Branches</h1>
-        {prefill.status === 'loaded' && prefilledPoolCount > 0 && (
-          <p className="-mt-4 mb-2 text-xs text-muted-foreground" data-origin-summary>
-            {prefilledPoolCount} of {latestTemplates.length} pools loaded from history when the page opened; each switches to live with its next message.
-          </p>
-        )}
         {/* Sankey Diagram visualization */}
         <div className="w-full border border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 

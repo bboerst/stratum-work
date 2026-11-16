@@ -6,7 +6,7 @@ import { useDataStream, type PoolBurst } from "./useDataStream";
 import { DEFAULT_STREAM_ENDPOINT } from "./streamEndpoint";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";
-import { BufferedTemplate, TemplateBuffer, liveSinceMs } from "./templateBuffer";
+import { BufferedTemplate, TemplateBuffer } from "./templateBuffer";
 import { prefillTemplateBuffer } from "./prefill";
 import { fetchWithRetry } from "./fetchRetry";
 
@@ -47,8 +47,6 @@ export interface TemplateBufferSnapshot {
   epoch: number;
   tipHeight: number | null;
   currentHeight: number | null;
-  /** Receive time of the first template that came over the stream (the history/live boundary). */
-  liveSinceMs: number | null;
   prefill: { status: PrefillStatus; count: number };
 }
 
@@ -81,21 +79,19 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     return prefillResult ?? { status: "loading", count: 0 };
   }, [historicalDataEnabled, prefillResult]);
   const [bufferSnapshot, setBufferSnapshot] = useState<Omit<TemplateBufferSnapshot, "prefill">>(() => ({
-    entries: [], version: 0, epoch: 0, tipHeight: null, currentHeight: null, liveSinceMs: null,
+    entries: [], version: 0, epoch: 0, tipHeight: null, currentHeight: null,
   }));
   // Buffer version last published to the snapshot
   const publishedVersionRef = useRef(-1);
 
   const publishBuffer = useCallback(() => {
     publishedVersionRef.current = buffer.version;
-    const entries = buffer.entries();
     setBufferSnapshot({
-      entries,
+      entries: buffer.entries(),
       version: buffer.version,
       epoch: buffer.epoch,
       tipHeight: buffer.tipHeight,
       currentHeight: buffer.currentHeight,
-      liveSinceMs: liveSinceMs(entries),
     });
   }, [buffer]);
 
@@ -103,7 +99,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
   // snapshot is published in the stream's next flush (handleStreamFlush), in the same render as the stream state.
   const handleStreamMessage = useCallback((item: StreamData) => {
     if (item.type === StreamDataType.STRATUM_V1) {
-      buffer.add([item.data], "live");
+      buffer.add([item.data]);
     } else if (item.type === StreamDataType.BLOCK) {
       buffer.setTip(item.data?.height);
     }

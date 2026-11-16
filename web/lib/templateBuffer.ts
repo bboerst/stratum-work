@@ -7,15 +7,12 @@
  *
  * Pure TypeScript, no React: unit-tested in lib/__tests__/templateBuffer.test.ts.
  */
-import type { StratumV1Data, TemplateOrigin } from './types';
-
-export type { TemplateOrigin };
+import type { StratumV1Data } from './types';
 
 export interface BufferedTemplate {
   key: string;
   /** Insertion order, strictly increasing. Incremental consumers process entries with seq > the last one they saw. */
   seq: number;
-  origin: TemplateOrigin;
   /** Collector receive time, ms since the epoch (from the hex-nanosecond `timestamp`). */
   timeMs: number;
   data: StratumV1Data;
@@ -135,17 +132,14 @@ export class TemplateBuffer {
   }
 
   /**
-   * Merge templates. Returns how many new entries were added. A template already buffered is not added again; if it
-   * was pre-filled and now arrives live, it's marked live. Non-Bitcoin templates and pools rejected by `isAllowed`
-   * are skipped.
+   * Merge templates (the history pre-fill or the live stream). Returns how many new entries were added. A template
+   * already buffered is not added again. Non-Bitcoin templates and pools rejected by `isAllowed` are skipped.
    */
   add(
     templates: StratumV1Data[],
-    origin: TemplateOrigin,
     isAllowed: (poolName: string) => boolean = () => true,
   ): number {
     let added = 0;
-    let touched = false;
     let outOfOrder = false;
     const newestByPool = this.newestByPool();
 
@@ -159,21 +153,14 @@ export class TemplateBuffer {
       const key = templateKey(data);
       if (key === null) continue;
 
-      const existing = this.byKey.get(key);
-      if (existing) {
-        if (origin === 'live' && existing.origin === 'prefill') {
-          existing.origin = 'live';
-          touched = true;
-        }
-        continue;
-      }
+      if (this.byKey.has(key)) continue;
 
       const timeMs = Number(timestampMicros(data.timestamp)!) / 1000;
       const newest = newestByPool.get(data.pool_name);
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
       if (newest === undefined || timeMs > newest) newestByPool.set(data.pool_name, timeMs);
 
-      this.byKey.set(key, { key, seq: this.nextSeq++, origin, timeMs, data });
+      this.byKey.set(key, { key, seq: this.nextSeq++, timeMs, data });
       if (this.maxTemplateHeight === null || data.height > this.maxTemplateHeight) {
         this.maxTemplateHeight = data.height;
       }
@@ -182,7 +169,7 @@ export class TemplateBuffer {
 
     if (added > 0) this.trim();
     if (outOfOrder) this.epoch++;
-    if (added > 0 || touched) this.changed();
+    if (added > 0) this.changed();
     return added;
   }
 
@@ -293,33 +280,4 @@ export function chartWindow(
     }
   }
   return [...lastBefore.values(), ...inWindow].sort(compareEntries);
-}
-
-/** Earliest receive time of a template that came over the live stream, or null if none has yet. */
-export function liveSinceMs(entries: BufferedTemplate[]): number | null {
-  for (const entry of entries) {
-    if (entry.origin === 'live') return entry.timeMs;
-  }
-  return null;
-}
-
-/** The template with its origin attached, for components that only take StratumV1Data. */
-export function withOrigin(entry: BufferedTemplate): StratumV1Data {
-  return { ...entry.data, origin: entry.origin };
-}
-
-/**
- * withOrigin(), returning the same object for an entry until its origin changes (a pre-filled template seen live).
- * The table keys its row cache on these objects, so a fresh copy on every buffer update would rebuild (and re-render)
- * every row, not just the pools with a new template. One cache per consumer; entries are held weakly.
- */
-export function cachedWithOrigin(): (entry: BufferedTemplate) => StratumV1Data {
-  const cache = new WeakMap<BufferedTemplate, StratumV1Data>();
-  return (entry) => {
-    const hit = cache.get(entry);
-    if (hit && hit.origin === entry.origin) return hit;
-    const value = withOrigin(entry);
-    cache.set(entry, value);
-    return value;
-  };
 }

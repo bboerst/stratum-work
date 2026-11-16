@@ -17,8 +17,6 @@ export interface TemplatesView {
   tipHeight: number | null;
   /** True until the history prefill has finished (or was skipped): "no data yet" isn't "no data". */
   loading: boolean;
-  /** Receive time of the first template that came over the live stream (history before it, live after). */
-  liveSinceMs: number | null;
 }
 
 /**
@@ -26,7 +24,7 @@ export interface TemplatesView {
  * The result only changes when the buffer does, so it's safe to derive memoized data from it.
  */
 export function useTemplates({ heights }: { heights?: number } = {}): TemplatesView {
-  const { entries, currentHeight, tipHeight, prefill, liveSinceMs } = useTemplateBuffer();
+  const { entries, currentHeight, tipHeight, prefill } = useTemplateBuffer();
   const { isPoolVisible } = usePoolFilter();
   const templates = useMemo(() => {
     const minHeight = heights && currentHeight !== null ? currentHeight - heights + 1 : null;
@@ -39,6 +37,5 @@ export function useTemplates({ heights }: { heights?: number } = {}): TemplatesV
     currentHeight,
     tipHeight,
     loading: prefill.status === "pending" || prefill.status === "loading",
-    liveSinceMs,
   };
 }

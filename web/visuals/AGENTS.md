@@ -45,7 +45,7 @@ browser storage (the viewer's last choice). `settings` in your component is type
 ## Data
 Use the hooks in `framework/data.ts`; never fetch APIs or open the stream in a visual.
 - `useTemplates({ heights })`: recent Bitcoin templates (live stream + history prefill) for the pools the viewer has
-  selected, oldest first, plus `currentHeight`, `tipHeight`, `loading`, `liveSinceMs`. Flood protection and the
+  selected, oldest first, plus `currentHeight`, `tipHeight`, `loading`. Flood protection and the
   pool blacklist are already applied.
 - Shared decoding lives in `web/utils/`: `coinbaseParser.ts` (scriptSig segments: height, pool time, tags, AuxPoW,
   extranonce placement; outputs by byte range), `bitcoinUtils.ts` (outputs, OP_RETURN protocols). Use them instead

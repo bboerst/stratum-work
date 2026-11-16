@@ -58,7 +58,7 @@ describe('prefillTemplateBuffer', () => {
     expect(buffer.size).toBe(0);
   });
 
-  it('seeds the tip and templates, marked as pre-filled', async () => {
+  it('seeds the tip and templates', async () => {
     const templates = [rec('A', 2000), rec('B', 1000)] as unknown as StratumV1Data[];
     const fetchFn = vi.fn(async () => okResponse({ enabled: true, tip: { height: 100 }, templates }));
     const buffer = new TemplateBuffer();
@@ -66,7 +66,7 @@ describe('prefillTemplateBuffer', () => {
     expect(fetchFn).toHaveBeenCalledWith('/api/realtime-prefill', { cache: 'no-store' });
     expect(result).toEqual({ status: 'loaded', count: 2 });
     expect(buffer.tipHeight).toBe(100);
-    expect(buffer.entries().every(e => e.origin === 'prefill')).toBe(true);
+    expect(buffer.size).toBe(2);
   });
 
   it('respects a server that has history disabled', async () => {

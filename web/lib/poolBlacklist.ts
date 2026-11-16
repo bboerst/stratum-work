@@ -10,6 +10,11 @@ export function isPoolBlacklisted(name: string | undefined | null): boolean {
   return blacklistedPools.has(name);
 }
 
+/** The POOL_BLACKLIST names, for reads that exclude them in SQL (e.g. /api/other-chains, which hides them entirely). */
+export function blacklistedPoolNames(): string[] {
+  return [...blacklistedPools];
+}
+
 export function filterBlacklistedItems<T>(
   items: T[],
   getPoolName: (item: T) => string | undefined | null

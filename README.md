@@ -55,7 +55,7 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 | [`collector/`](collector/) | Stratum client, one per pool: `mining.notify` to RabbitMQ and MongoDB (`mining_notify`) and/or Postgres (`collector/pgsink.py`), latency estimates, chain detection | Python |
 | [`collector-go/`](collector-go/) | Go port of the collector: Postgres + RabbitMQ only, kernel receive timestamps, quarantine and burst records, `/livez` `/readyz` `/metrics`. Golden tests against the Python functions (`testdata/gen_golden.py`) | Go |
 | [`backend/`](backend/) | Follows the node; `blocks`, `pools`, analytics (`backend/analytics/`), stale blocks (`stale_blocks.py`), storage layer for both databases (`integrations/store.py`) | Python |
-| [`web/`](web/) | Next.js app: realtime table, template details, timing, Sankey, infra/latency views; API routes in `web/app/api/`, data layer in `web/lib/db/`, Prisma schema (MongoDB) in `web/prisma/`, perf harness in [`web/perf/`](web/perf/README.md) | TypeScript, Next.js 16 |
+| [`web/`](web/) | Next.js app: realtime table, template details, timing, Sankey, infra/latency and other-chains views; API routes in `web/app/api/`, data layer in `web/lib/db/`, Prisma schema (MongoDB) in `web/prisma/`, perf harness in [`web/perf/`](web/perf/README.md) | TypeScript, Next.js 16 |
 | [`mempool-recorder/`](mempool-recorder/README.md) | Records the node's mempool in Postgres | Go |
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
@@ -279,7 +279,8 @@ SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vs
   JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32)
  WHERE t.height = 925000;
 
--- Templates that weren't Bitcoin's, by chain and reason (last day)
+-- Templates that weren't Bitcoin's, by chain and reason (last day; the web's Other chains view, /other-chains, shows
+-- all time)
 SELECT s.name AS pool, o.chain, o.reason, count(*)
   FROM templates_other o JOIN sources s ON s.id = o.source_id
  WHERE o.received_at > now() - interval '1 day' GROUP BY 1, 2, 3;
@@ -309,6 +310,8 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them (Postgres deployments) |
+| `GET /api/other-chains` | Templates that weren't Bitcoin's (`templates_other`), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes (Postgres deployments) |
+| `GET /api/other-chains?pool=P[&chain=bch\|unknown][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. One stream per pool, like the other template reads |
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md); Postgres deployments) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 

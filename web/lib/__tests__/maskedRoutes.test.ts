@@ -50,6 +50,7 @@ afterEach(() => {
   vi.doUnmock('../db/blocks');
   vi.doUnmock('../db/mining-notify');
   vi.doUnmock('../rabbitmq');
+  vi.doUnmock('../db/other-chains');
   resetConnectionMaskForTests();
 });
 
@@ -84,6 +85,26 @@ describe('served templates carry masked extranonce1', () => {
     // The coinbase is rebuilt from the pseudonym: same length as the real one.
     const a = served.find((t: { pool_name: string }) => t.pool_name === 'PoolA');
     expect(a.coinbaseRaw).toBe(COINBASE1 + a.extranonce1 + '00'.repeat(4) + COINBASE2);
+  });
+
+  it('/api/other-chains (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
+    vi.stubEnv('DB_BACKEND', 'postgres');
+    vi.doMock('../db/blocks', () => ({ enableHistoricalData: true }));
+    const pgRow = (pool: keyof typeof RAW, job: string) => ({
+      source_id: 1, source_name: pool, received_us: String(NOW_MS * 1000), height: 6_976_415, job_id: job,
+      prev_hash: Buffer.alloc(32), coinbase1: Buffer.from(COINBASE1, 'hex'), coinbase2: Buffer.from(COINBASE2, 'hex'),
+      merkle_branches: Buffer.alloc(0), version: 536870912, nbits: 386000000, ntime: 1_711_276_032, clean_jobs: true,
+      extranonce1: Buffer.from(RAW[pool], 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'height_implausible', copies: 1,
+    });
+    vi.doMock('../db/other-chains', async importOriginal => ({
+      ...(await importOriginal<object>()),
+      getOtherTemplates: vi.fn(async (q: { pool: keyof typeof RAW }) => ({ rows: [pgRow(q.pool, 'j1')], next_before: null })),
+    }));
+    const { GET } = await import('../../app/api/other-chains/route');
+    for (const pool of Object.keys(RAW)) {
+      const text = await (await GET(new Request(`http://test/api/other-chains?pool=${pool}`))).text();
+      expectMasked(text, JSON.parse(text).templates);
+    }
   });
 
   it('/api/stream (direct and throttle-held templates)', async () => {

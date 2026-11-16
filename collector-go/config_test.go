@@ -87,3 +87,27 @@ func TestInvalidConfig(t *testing.T) {
 		}
 	}
 }
+
+// The RabbitMQ settings have env fallbacks like the Postgres and Bitcoin ones; flags win.
+func TestRabbitMQSettingsFromEnv(t *testing.T) {
+	t.Setenv("RABBITMQ_HOST", "mq.example")
+	t.Setenv("RABBITMQ_PORT", "5673")
+	t.Setenv("RABBITMQ_USERNAME", "envuser")
+	t.Setenv("RABBITMQ_EXCHANGE", "env_exchange")
+	t.Setenv("RABBITMQ_PASSWORD", "mq-secret")
+	c, err := parseConfig([]string{"--url", "stratum+tcp://p:1", "--userpass", "u:p"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RabbitHost != "mq.example" || c.RabbitPort != 5673 || c.RabbitUser != "envuser" || c.RabbitExchange != "env_exchange" {
+		t.Errorf("%+v", c)
+	}
+	c, err = parseConfig([]string{"--url", "stratum+tcp://p:1", "--userpass", "u:p", "-r", "flaghost", "-ru", "flaguser",
+		"-re", "flag_exchange", "--rabbitmq-port", "5674"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RabbitHost != "flaghost" || c.RabbitPort != 5674 || c.RabbitUser != "flaguser" || c.RabbitExchange != "flag_exchange" {
+		t.Errorf("flags should win: %+v", c)
+	}
+}

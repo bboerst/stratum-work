@@ -153,6 +153,24 @@ export async function getBlockByHeight(height: number): Promise<PgBlock | null> 
  * chain: a block a reorg disconnected is still found by its hash, with `stale: true` (the field is absent otherwise,
  * so the response is unchanged for best-chain blocks and in MongoDB mode).
  */
+/**
+ * Which of these block hashes (display order, lower-case hex) we know: stored in `blocks`, or recorded in
+ * `stale_blocks` as a currently stale side block (headers-only side blocks are only there). For the fork visual's
+ * stale vs unknown label (lib/forkStatus.ts).
+ */
+export async function knownBlockHashes(hashes: string[]): Promise<Set<string>> {
+  const valid = [...new Set(hashes.map(h => h.toLowerCase()))].filter(h => /^(?:[0-9a-f]{2})+$/.test(h));
+  if (valid.length === 0) return new Set();
+  const rows = await query<{ h: string }>(
+    `WITH q AS (SELECT decode(x, 'hex') AS bh FROM unnest($1::text[]) x)
+     SELECT encode(b.block_hash, 'hex') AS h FROM blocks b JOIN q ON b.block_hash = q.bh
+     UNION
+     SELECT encode(s.block_hash, 'hex') FROM stale_blocks s JOIN q ON s.block_hash = q.bh WHERE s.reorged_in_at IS NULL`,
+    [valid],
+  );
+  return new Set(rows.map(r => r.h));
+}
+
 export async function getBlockByHash(blockHash: string): Promise<PgBlock | null> {
   if (!/^(?:[0-9a-f]{2})+$/.test(blockHash)) return null;
   const [row] = await query<BlockRow>(

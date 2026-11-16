@@ -449,6 +449,26 @@ export async function getBlockByHeight(height: number) {
  * @param blockHash Block hash
  * @returns Block or null if not found
  */
+/** Which of these block hashes we have a stored block for (both modes); see lib/forkStatus.ts. */
+export async function knownBlockHashes(hashes: string[]): Promise<Set<string>> {
+  if (!enableHistoricalData || hashes.length === 0) return new Set();
+  if (isPostgres()) return pg.knownBlockHashes(hashes);
+  try {
+    const wanted = [...new Set(hashes.map(h => h.toLowerCase()))];
+    const result = await prisma.$runCommandRaw({
+      find: 'blocks',
+      filter: { block_hash: { $in: wanted } },
+      projection: { block_hash: 1 },
+      limit: wanted.length * 4,
+    }) as MongoDBCommandResult;
+    const batch = (result?.cursor?.firstBatch ?? []) as Array<{ block_hash?: string }>;
+    return new Set(batch.map(b => (b.block_hash ?? '').toLowerCase()).filter(Boolean));
+  } catch (e) {
+    console.error('Error looking up block hashes:', e);
+    return new Set();
+  }
+}
+
 export async function getBlockByHash(blockHash: string) {
   if (!enableHistoricalData) {
     console.log(`Historical data is disabled. Skipping fetch for block hash ${blockHash}.`);

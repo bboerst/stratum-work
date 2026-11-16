@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ForkTimeline from "./ForkTimeline";
 import { reverseHex } from "@/utils/formatters";
+import type { PrevHashStatus } from "@/lib/forkStatus";
 
 type AnalysisFlag = {
   key?: string;
@@ -35,6 +36,7 @@ interface AnalysisDataResult {
   previous_block?: {
     hash?: string;
   } | null;
+  prev_hash_status?: Record<string, PrevHashStatus> | null;
 }
 
 interface AnalysisDataResponse {
@@ -46,6 +48,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
   const [loading, setLoading] = useState(false);
   const [miningNotifications, setMiningNotifications] = useState<RawMiningNotify[]>([]);
   const [prevBlockHash, setPrevBlockHash] = useState<string | undefined>(undefined);
+  const [prevHashStatus, setPrevHashStatus] = useState<Record<string, PrevHashStatus> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +65,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
 
         let notifs: RawMiningNotify[] = [];
         let canonicalHash: string | undefined;
+        let statuses: Record<string, PrevHashStatus> | null = null;
         try {
           const analysisData = await analysisRes.json();
           const analysisResponse = analysisData as AnalysisDataResponse;
@@ -71,18 +75,21 @@ export default function AnalyticsPanel({ height }: { height: number }) {
           const analysisResult = analysisResults.find((result) => result.height === height) || null;
           notifs = analysisResult?.mining_notifications ?? [];
           canonicalHash = analysisResult?.previous_block?.hash;
+          statuses = analysisResult?.prev_hash_status ?? null;
         } catch { /* ignore */ }
 
         if (!cancelled) {
           setBlock(found);
           setMiningNotifications(notifs);
           setPrevBlockHash(canonicalHash);
+          setPrevHashStatus(statuses);
         }
       } catch {
         if (!cancelled) {
           setBlock(null);
           setMiningNotifications([]);
           setPrevBlockHash(undefined);
+          setPrevHashStatus(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -129,7 +136,11 @@ export default function AnalyticsPanel({ height }: { height: number }) {
 
   function renderPrevHashFork() {
     if (forkTimelineNotifications.length === 0) return null;
-    return <ForkTimeline notifications={forkTimelineNotifications} canonicalBlockHash={prevBlockHash} />;
+    return <ForkTimeline
+        notifications={forkTimelineNotifications}
+        canonicalBlockHash={prevBlockHash}
+        prevHashStatus={prevHashStatus}
+      />;
   }
 
   function renderInvalidTemplates(flag: AnalysisFlag) {

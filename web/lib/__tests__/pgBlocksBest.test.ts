@@ -19,7 +19,8 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
   const h = 4_000_000 + off * 4;
   const top = 9_000_000 + off;
   const hash = (k: string) => '00000000' + k.repeat(28);
-  const [lost, won, back, plain, topStale, belowTop] = ['a4', 'b4', 'c4', 'd4', 'e4', 'f4'].map(hash);
+  const [lost, won, back, plain, topStale, belowTop, sideOnly, nowhere] =
+    ['a4', 'b4', 'c4', 'd4', 'e4', 'f4', '1a', '2b'].map(hash);
   const T0 = 1_794_437_000;
   let pg: typeof import('../db/postgres');
   let admin: Client;
@@ -52,6 +53,7 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     await stale(lost, h, false);
     await stale(back, h + 1, true);
     await stale(topStale, top, false);
+    await stale(sideOnly, h, false);    // a side block known only from the stale tracker (headers only)
   });
 
   afterAll(async () => {
@@ -89,6 +91,12 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     expect(after.blocks.map(b => b.block_hash)).toEqual([plain, back, won]);
     const latest = await pg.getBlocks(5);
     expect(latest.blocks.map(b => b.block_hash)).not.toContain(topStale);
+  });
+
+  it('fork visual (#212): known block hashes are blocks and currently stale side blocks', async () => {
+    const known = await pg.knownBlockHashes([lost, won, sideOnly, nowhere, won.toUpperCase(), 'not-hex']);
+    expect([...known].sort()).toEqual([lost, sideOnly, won].sort());
+    expect((await pg.knownBlockHashes([])).size).toBe(0);
   });
 
   it('tip and R3: a reorged-out block above the new tip is neither the tip nor listed', async () => {

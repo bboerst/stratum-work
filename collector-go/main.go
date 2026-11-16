@@ -105,12 +105,12 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	str(&c.URL, []string{"u", "url"}, "", "stratum server URL, e.g. stratum+tcp://pool.example:3333 (required)")
 	str(&c.UserPass, []string{"up", "userpass"}, "", "user:password for mining.authorize (required)")
 	str(&c.PoolName, []string{"p", "pool-name"}, "", "pool name (default: hostname from --url)")
-	str(&c.RabbitHost, []string{"r", "rabbitmq-host"}, "localhost", "RabbitMQ host")
-	integer(&c.RabbitPort, []string{"rpc", "rabbitmq-port"}, 5672, "RabbitMQ port")
-	str(&c.RabbitUser, []string{"ru", "rabbitmq-username"}, "", "RabbitMQ username (publishing is enabled when this and env RABBITMQ_PASSWORD are set)")
+	str(&c.RabbitHost, []string{"r", "rabbitmq-host"}, envOr("RABBITMQ_HOST", "localhost"), "RabbitMQ host (env RABBITMQ_HOST)")
+	integer(&c.RabbitPort, []string{"rpc", "rabbitmq-port"}, envInt("RABBITMQ_PORT", 5672), "RabbitMQ port (env RABBITMQ_PORT)")
+	str(&c.RabbitUser, []string{"ru", "rabbitmq-username"}, os.Getenv("RABBITMQ_USERNAME"), "RabbitMQ username (env RABBITMQ_USERNAME; publishing is enabled when this and env RABBITMQ_PASSWORD are set)")
 	var rabbitPassFlag, pgPassFlag, rpcPassFlag string
 	str(&rabbitPassFlag, []string{"rp", "rabbitmq-password"}, "", "not accepted: set env RABBITMQ_PASSWORD")
-	str(&c.RabbitExchange, []string{"re", "rabbitmq-exchange"}, "mining_notify_exchange", "RabbitMQ fanout exchange")
+	str(&c.RabbitExchange, []string{"re", "rabbitmq-exchange"}, envOr("RABBITMQ_EXCHANGE", "mining_notify_exchange"), "RabbitMQ fanout exchange (env RABBITMQ_EXCHANGE)")
 	var mongo [4]string
 	str(&mongo[0], []string{"d", "db-url"}, "", "MongoDB URL (ignored: the Go collector writes Postgres only)")
 	str(&mongo[1], []string{"dn", "db-name"}, "", "ignored (MongoDB)")

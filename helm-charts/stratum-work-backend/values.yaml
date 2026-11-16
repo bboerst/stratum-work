@@ -57,7 +57,8 @@ env:
   # PG_PASSWORD: take it from a Secret with envValueFrom instead of putting it here
   #
   # Stale blocks (#180, Postgres mode only): getchaintips on every new block and on this timer. The node's RPC user
-  # needs getchaintips, getblockheader, getblock and getblockhash.
+  # needs getchaintips, getblockheader, getblock and getblockhash (getchaintips and getblockheader also with the
+  # tracker off: the best-chain reconciler, #212, records the blocks it replaces the same way).
   # STALE_BLOCKS_ENABLED: "true"
   # STALE_POLL_INTERVAL_S: "60"
 

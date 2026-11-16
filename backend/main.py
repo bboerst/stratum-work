@@ -52,10 +52,11 @@ LOCAL_POOL_FILE = os.getenv("LOCAL_POOL_FILE", "pool_definitions.json")  # Local
 # Controls whether to start a full background reindex on startup
 START_FULL_REINDEX_ON_BOOT = False
 
-# Gap filling: after each sync and each new block, the last BLOCK_GAP_WINDOW heights below the tip are checked for
-# missing blocks (a block whose processing failed, e.g. the database was unreachable when it arrived), which are then
-# fetched from the node. The startup sync only fills below the lowest and above the highest stored block, never inside.
-# 0 turns it off.
+# Best-chain reconciliation (#212, reconcile.py): after each sync, each new block and each reorg the stale-block
+# tracker sees, the last BLOCK_GAP_WINDOW heights below the tip are compared with the node's active chain. A missing
+# block (e.g. the database was unreachable when it arrived) is fetched; a stored block the node no longer has at that
+# height (a reorg) is replaced by the node's and marked stale. The startup sync only fills below the lowest and above
+# the highest stored block, and never replaces one. 0 turns the window off.
 BLOCK_GAP_WINDOW = int(os.getenv("BLOCK_GAP_WINDOW", "144"))
 
 # --- Connections ---
@@ -91,8 +92,9 @@ def create_rpc_connection():
 
 bitcoin_rpc = create_rpc_connection()
 
-# Create thread pool for block processing (ZMQ real-time handling)
-block_processor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="block_processor")
+# Block processing (ZMQ real-time handling and best-chain reconciliation). One worker: every write of a block at a
+# height goes through it in order, so a new tip and the reconciliation after it never race for the same height.
+block_processor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="block_processor")
 
 # --- RPC Connection Pool ---
 class RPCConnectionPool:
@@ -279,7 +281,9 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
     }
     return doc
 
-def process_block(block_hash: str, is_new_block: bool = False):
+def process_block(block_hash: str, is_new_block: bool = False) -> bool:
+    """Fetch, analyse, store and publish one block. is_new_block: seen live now (Postgres: seen_at = now; MongoDB:
+    upsert by hash). Returns False when it failed (logged)."""
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
@@ -303,8 +307,10 @@ def process_block(block_hash: str, is_new_block: bool = False):
             }
         }
         publish_to_rabbitmq(rabbitmq_doc)
+        return True
     except Exception as e:
         logger.error("Error processing block %s: %s", block_hash, e)
+        return False
 
 def reprocess_block_full(block_hash: str, publish_update: bool = False) -> str:
     """Rebuild one block from RPC. Returns "ok", "pruned" or "error"."""
@@ -511,8 +517,9 @@ def sync_blocks():
         else:
             logger.info(f"Already synced to tip at height {best_height}")
 
-        # Interior gaps in the recent window (the checks above only extend the stored range at both ends)
-        fill_recent_gaps(best_height)
+        # Interior gaps and replaced blocks in the recent window (the checks above only extend the stored range at
+        # both ends). On the block processor, so it never races a new block's processing.
+        block_processor.submit(reconcile_recent_window)
         
         # Check if we need to sync any missing blocks between MIN_BLOCK_HEIGHT and the lowest processed block
         if lowest_processed_height is not None and lowest_processed_height > MIN_BLOCK_HEIGHT:
@@ -603,40 +610,47 @@ def sync_blocks():
         logger.error(f"Error during block sync: {e}")
 
 
-def missing_heights(low: int, high: int, present) -> list:
-    """Heights in [low, high] (inclusive) not in `present`, highest first."""
-    if high < low:
-        return []
-    have = set(present)
-    return [h for h in range(high, low - 1, -1) if h not in have]
-
-
-def fill_recent_gaps(tip_height=None):
-    """Fetch blocks missing within the last BLOCK_GAP_WINDOW heights up to tip_height (default: the highest stored
-    block). Each one goes through process_block like a sync; a failure is logged and retried on the next call."""
-    if BLOCK_GAP_WINDOW <= 0 or not store.enabled:
-        return 0
-    try:
-        tip = tip_height if tip_height is not None else store.highest_block_height()
-        if tip is None:
-            return 0
-        low = max(MIN_BLOCK_HEIGHT, tip - BLOCK_GAP_WINDOW + 1)
-        gaps = missing_heights(low, tip, store.block_heights_between(low, tip + 1))
-        if not gaps:
-            return 0
-        logger.info("Gap fill: %d missing block(s) in %d..%d: %s", len(gaps), low, tip, gaps[:20])
-        filled = 0
-        for height in gaps:
+def node_block_hashes(heights) -> Dict[int, str]:
+    """The node's active-chain hash at each height, on one RPC connection. A height that fails is left out (the
+    reconciler retries it next time)."""
+    out: Dict[int, str] = {}
+    with rpc_pool.get_connection() as conn:
+        for height in heights:
             try:
-                block_hash = retry_rpc(get_block_hash, f"getblockhash({height})", height)
-                process_block(block_hash, is_new_block=False)
-                filled += 1
+                out[height] = conn.getblockhash(height)
             except Exception as e:
-                logger.error("Gap fill: block at height %d failed (retried next time): %s", height, e)
-        return filled
+                logger.error("getblockhash(%d) failed: %s", height, e)
+    return out
+
+
+def mark_replaced_blocks(hashes) -> None:
+    """Mark stored blocks the node's active chain no longer has as not best. Postgres: stale_blocks rows written by
+    the stale-block tracker's code (blocks_best hides them; this runs even with STALE_BLOCKS_ENABLED=false). MongoDB:
+    `stale: true` on the document."""
+    if getattr(store, "supports_stale_blocks", False):
+        stale_recorder().record_replaced(list(hashes))
+    else:
+        store.mark_blocks_stale(list(hashes))
+
+
+_reconciler = None
+
+
+def reconcile_recent_window(low_height=None) -> Dict[str, int]:
+    """Make the stored best chain equal the node's active chain over the recent window (reconcile.py). Run it on the
+    block processor. low_height: check from there instead (a reorg's fork point + 1). Never raises."""
+    global _reconciler
+    try:
+        if _reconciler is None:
+            from reconcile import BestChainReconciler
+            _reconciler = BestChainReconciler(
+                node_height=lambda: node_rpc("getblockcount"), node_hashes=node_block_hashes, store=store,
+                store_block=lambda h: process_block(h, is_new_block=True),   # seen_at = detection time
+                mark_replaced=mark_replaced_blocks, window=BLOCK_GAP_WINDOW, min_height=MIN_BLOCK_HEIGHT)
+        return _reconciler.reconcile(low_height)
     except Exception as e:
-        logger.error("Gap fill failed: %s", e)
-        return 0
+        logger.error("Best-chain reconciliation failed (retried on the next block): %s", e)
+        return {}
 
 
 def sync_range(start_height, end_height):
@@ -736,8 +750,9 @@ def zmq_listener():
                         logger.info("ZMQ received new block hash: %s", bhash)
                         # Submit new block to the block processor
                         block_processor.submit(process_block, bhash, True)
-                        # Then any block that failed earlier in the recent window (e.g. the DB was down when it came)
-                        block_processor.submit(fill_recent_gaps)
+                        # Then the recent window against the node's chain: blocks a reorg replaced (ZMQ announces only
+                        # the new tip) and blocks that failed earlier (e.g. the DB was down when they came)
+                        block_processor.submit(reconcile_recent_window)
                         if stale_tracker is not None:
                             stale_tracker.request_poll()   # a new tip may have made another branch stale
                         
@@ -767,14 +782,26 @@ def node_rpc(method, *args):
         return getattr(conn, method)(*args)
 
 
-def store_reorged_in_blocks(fork_height: int, tip_height: int, tip_hash: str):
-    """After a reorg: store the newly active blocks. ZMQ announces only the new tip, and sync skips heights that
-    already have a (now stale) block."""
-    for height in range(fork_height + 1, tip_height + 1):
-        block_hash = tip_hash if height == tip_height else node_rpc("getblockhash", height)
-        if not store.known_block_hashes([block_hash]):
-            logger.info("Reorg: storing newly active block %d (%s)", height, block_hash)
-            block_processor.submit(process_block, block_hash, False)
+_stale_recorder = None
+
+
+def stale_recorder():
+    """The StaleBlockTracker (Postgres mode). Also built when its poll loop is off: the reconciler records the blocks
+    it replaces through it."""
+    global _stale_recorder
+    if _stale_recorder is None:
+        from stale_blocks import StaleBlockTracker
+        _stale_recorder = StaleBlockTracker(
+            node_rpc, store, identify_pool=lambda script, addresses: identify_pool_from_data(pools_cache, script, addresses),
+            # a reorg the poll saw: reconcile from its fork point (may be deeper than the window, and runs with
+            # BLOCK_GAP_WINDOW=0 too); this stores the newly active blocks ZMQ didn't announce
+            on_reorg=lambda fork_height, tip_height, tip_hash: block_processor.submit(reconcile_recent_window, fork_height + 1))
+    return _stale_recorder
+
+
+def _after_stale_poll(stats) -> None:
+    if stats.get("reactivated"):   # a recorded stale block is active again: our best chain may have to follow
+        block_processor.submit(reconcile_recent_window)
 
 
 def start_stale_block_tracker():
@@ -782,11 +809,8 @@ def start_stale_block_tracker():
     if not (STALE_BLOCKS_ENABLED and store.enabled and getattr(store, "supports_stale_blocks", False)):
         logger.info("Stale block tracking off (needs DB_BACKEND=postgres; STALE_BLOCKS_ENABLED=%s)", STALE_BLOCKS_ENABLED)
         return
-    from stale_blocks import StaleBlockTracker
-    stale_tracker = StaleBlockTracker(
-        node_rpc, store, identify_pool=lambda script, addresses: identify_pool_from_data(pools_cache, script, addresses),
-        on_reorg=store_reorged_in_blocks)
-    threading.Thread(target=stale_tracker.run_forever, args=(STALE_POLL_INTERVAL_S,), daemon=True,
+    stale_tracker = stale_recorder()
+    threading.Thread(target=stale_tracker.run_forever, args=(STALE_POLL_INTERVAL_S, _after_stale_poll), daemon=True,
                      name="stale_blocks").start()
     logger.info("Stale block tracking started")
 

@@ -7,6 +7,14 @@ import * as pg from './postgres';
 // Default to true if the variable is not set
 export const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? 'true').toLowerCase() === 'true';
 
+/**
+ * MongoDB best chain (#212): when a reorg replaces a stored block, the backend keeps the old document and flags it
+ * `stale: true`. Every read that means "the block at a height", "recent blocks" or "the tip" skips those documents
+ * (`$ne: true` also matches documents without the field). Lookups by hash still return them. When two unflagged
+ * documents share a height (briefly, before the backend reconciles), the newest one (highest `_id`) wins.
+ */
+export const MONGO_NOT_STALE = { stale: { $ne: true } } as const;
+
 // Define a type for raw MongoDB document
 interface RawDocument {
   _document?: {
@@ -75,7 +83,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
         height: { 
           $gt: after,
           $gte: 1 // Ensure we only get positive heights (exclude being-mined)
-        } 
+        },
+        ...MONGO_NOT_STALE,
       };
       
       // Fetch the blocks
@@ -131,7 +140,8 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
         height: { 
           $gte: Math.max(0, height - halfN),
           $lte: height + halfN 
-        } 
+        },
+        ...MONGO_NOT_STALE,
       };
       
       // Fetch the blocks
@@ -199,7 +209,7 @@ export async function getBlocks(n: number = 20, before?: number, height?: number
     
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     // This allows us to access all fields in the document, including those not in the Prisma schema
-    const query = before ? { height: { $lte: before } } : {};
+    const query = before ? { height: { $lte: before }, ...MONGO_NOT_STALE } : { ...MONGO_NOT_STALE };
     
     const result = await prisma.$runCommandRaw({
       find: 'blocks',
@@ -329,7 +339,8 @@ export async function getBlockByHeight(height: number) {
     // Use Prisma's $runCommandRaw to execute a direct MongoDB query
     const result = await prisma.$runCommandRaw({
       find: 'blocks',
-      filter: { height },
+      filter: { height, ...MONGO_NOT_STALE },
+      sort: { _id: -1 },
       limit: 1,
     }) as MongoDBCommandResult;
     
@@ -592,6 +603,17 @@ export async function getBlockByHash(blockHash: string) {
   }
 }
 
+/** The highest (-1) or lowest (1) best-chain block (stale documents skipped, see MONGO_NOT_STALE). */
+async function mongoEndBlock(direction: 1 | -1): Promise<MongoDBBlock | null> {
+  const result = await prisma.$runCommandRaw({
+    find: 'blocks',
+    filter: { ...MONGO_NOT_STALE },
+    sort: { height: direction, _id: -1 },
+    limit: 1,
+  }) as unknown as MongoDBCommandResult;
+  return result?.cursor?.firstBatch?.[0] ?? null;
+}
+
 /**
  * Get the highest processed block
  * @returns The highest block or null if none exist
@@ -605,9 +627,7 @@ export async function getHighestBlock() {
   if (isPostgres()) return pg.getHighestBlock();
 
   try {
-    return prisma.block.findFirst({
-      orderBy: { height: 'desc' },
-    });
+    return await mongoEndBlock(-1);
   } catch (error) {
     console.error('Error fetching highest block:', error);
     return null;
@@ -627,9 +647,7 @@ export async function getLowestBlock() {
   if (isPostgres()) return pg.getLowestBlock();
 
   try {
-    return prisma.block.findFirst({
-      orderBy: { height: 'asc' },
-    });
+    return await mongoEndBlock(1);
   } catch (error) {
     console.error('Error fetching lowest block:', error);
     return null;
@@ -656,6 +674,7 @@ export async function getInterestingBlocks(): Promise<InterestingBlockItem[]> {
   const raw = await prisma.$runCommandRaw({
     find: 'blocks',
     filter: {
+      ...MONGO_NOT_STALE,
       analysis: { $exists: true, $type: 'object' },
       $expr: {
         $gt: [

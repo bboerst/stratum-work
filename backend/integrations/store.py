@@ -26,7 +26,7 @@ logger = logging.getLogger("backend.store")
 
 
 class MongoStore:
-    """Today's behavior, verbatim."""
+    """MongoDB queries (the original backend behavior, plus the best-chain `stale` flag, #212)."""
 
     def __init__(self, db: Any):
         self.db = db
@@ -69,19 +69,47 @@ class MongoStore:
             update = {"mining_pool": mining_pool, "analysis": {"pool_identification": pool_identification}}
         self.db.blocks.update_one({"block_hash": block_hash}, {"$set": update})
 
+    # Best chain (#212): a block the best-chain reconciler replaced keeps its document, flagged `stale: true`
+    # (stale_at = when). Reads that mean "the block at height h", "the tip" or "is height h done" skip it
+    # ({"stale": {"$ne": True}} also matches documents without the field, i.e. every block stored before this).
+    # Per-block maintenance (full reindex, pool re-identification, known_block_hashes) reads every document by hash.
+    NOT_STALE = {"stale": {"$ne": True}}
+
     def highest_block_height(self) -> Optional[int]:
-        b = self.db.blocks.find_one(sort=[("height", -1)])
+        b = self.db.blocks.find_one(self.NOT_STALE, sort=[("height", -1)])
         return b["height"] if b else None
 
     def lowest_block_height(self) -> Optional[int]:
-        b = self.db.blocks.find_one(sort=[("height", 1)])
+        b = self.db.blocks.find_one(self.NOT_STALE, sort=[("height", 1)])
         return b["height"] if b else None
 
     def block_heights_between(self, low: int, high_exclusive: int) -> Set[int]:
-        return {d["height"] for d in self.db.blocks.find({"height": {"$gte": low, "$lt": high_exclusive}}, {"height": 1, "_id": 0})}
+        return {d["height"] for d in self.db.blocks.find({"height": {"$gte": low, "$lt": high_exclusive}, **self.NOT_STALE},
+                                                         {"height": 1, "_id": 0})}
 
     def has_block_at_height(self, height: int) -> bool:
-        return self.db.blocks.find_one({"height": height}) is not None
+        return self.db.blocks.find_one({"height": height, **self.NOT_STALE}) is not None
+
+    def best_block_hashes_between(self, low: int, high: int) -> Dict[int, List[str]]:
+        """{height: [hash, ...]} of the best-chain (not stale) blocks in [low, high]."""
+        out: Dict[int, List[str]] = {}
+        for d in self.db.blocks.find({"height": {"$gte": low, "$lte": high}, **self.NOT_STALE},
+                                     {"height": 1, "block_hash": 1, "_id": 0}):
+            out.setdefault(d["height"], []).append(d["block_hash"])
+        return out
+
+    def known_block_hashes(self, hashes: List[str]) -> Set[str]:
+        if not hashes:
+            return set()
+        return {d["block_hash"] for d in self.db.blocks.find({"block_hash": {"$in": list(hashes)}}, {"block_hash": 1, "_id": 0})}
+
+    def mark_blocks_stale(self, hashes: List[str]) -> None:
+        self.db.blocks.update_many({"block_hash": {"$in": list(hashes)}},
+                                   {"$set": {"stale": True, "stale_at": datetime.now(timezone.utc)}})
+
+    def mark_block_best(self, block_hash: str) -> None:
+        """A replaced block that is on the node's active chain again."""
+        self.db.blocks.update_many({"block_hash": block_hash, "stale": True}, {"$unset": {"stale": "", "stale_at": ""}})
 
     # templates
     def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
@@ -250,6 +278,20 @@ class PostgresStore:
 
     def has_block_at_height(self, height: int) -> bool:
         return self._run(lambda c: c.execute("SELECT EXISTS (SELECT 1 FROM blocks_best WHERE height = %s)", (height,)).fetchone()[0])
+
+    def best_block_hashes_between(self, low: int, high: int) -> Dict[int, List[str]]:
+        """{height: [hash, ...]} of the blocks_best rows in [low, high]."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT height, encode(block_hash, 'hex') FROM blocks_best WHERE height >= %s AND height <= %s",
+            (low, high)).fetchall())
+        out: Dict[int, List[str]] = {}
+        for height, block_hash in rows:
+            out.setdefault(height, []).append(block_hash)
+        return out
+
+    def mark_block_best(self, block_hash: str) -> None:
+        """A replaced block that is on the node's active chain again (blocks_best shows it once more)."""
+        self.mark_stale_block_reactivated(block_hash)
 
     # templates (Bitcoin only by construction: other chains live in templates_other).
     # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read

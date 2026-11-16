@@ -79,8 +79,30 @@ class MongoStoreTests(unittest.TestCase):
         self.assertEqual(self.store.highest_block_height(), 7)
         self.assertEqual(self.store.block_heights_between(1, 9), {3, 5})
         self.assertTrue(self.store.has_block_at_height(7))
-        self.assertEqual(self.db.blocks.calls[0], ("find_one", (), {"sort": [("height", -1)]}))
-        self.assertEqual(self.db.blocks.calls[1][1], ({"height": {"$gte": 1, "$lt": 9}}, {"height": 1, "_id": 0}))
+        # #212: best-chain reads skip documents the reconciler flagged stale
+        self.assertEqual(self.db.blocks.calls[0], ("find_one", ({"stale": {"$ne": True}},), {"sort": [("height", -1)]}))
+        self.assertEqual(self.db.blocks.calls[1][1], ({"height": {"$gte": 1, "$lt": 9}, "stale": {"$ne": True}},
+                                                      {"height": 1, "_id": 0}))
+        self.assertEqual(self.db.blocks.calls[2][1], ({"height": 7, "stale": {"$ne": True}},))
+        self.store.lowest_block_height()
+        self.assertEqual(self.db.blocks.calls[3], ("find_one", ({"stale": {"$ne": True}},), {"sort": [("height", 1)]}))
+
+    def test_best_chain_reconciliation_queries(self):
+        self.db.blocks.results = {"find": lambda: [{"height": 5, "block_hash": "aa"}, {"height": 5, "block_hash": "bb"},
+                                                   {"height": 6, "block_hash": "cc"}]}
+        self.assertEqual(self.store.best_block_hashes_between(5, 6), {5: ["aa", "bb"], 6: ["cc"]})
+        self.assertEqual(self.db.blocks.calls[0][1], ({"height": {"$gte": 5, "$lte": 6}, "stale": {"$ne": True}},
+                                                      {"height": 1, "block_hash": 1, "_id": 0}))
+        self.assertEqual(self.store.known_block_hashes(["aa", "cc"]), {"aa", "bb", "cc"})   # whatever find returns
+        self.assertEqual(self.db.blocks.calls[1][1], ({"block_hash": {"$in": ["aa", "cc"]}}, {"block_hash": 1, "_id": 0}))
+        self.assertEqual(self.store.known_block_hashes([]), set())
+        self.store.mark_blocks_stale(["aa"])
+        name, (flt, update), _ = self.db.blocks.calls[2]
+        self.assertEqual((name, flt, update["$set"]["stale"]), ("update_many", {"block_hash": {"$in": ["aa"]}}, True))
+        self.assertIsNotNone(update["$set"]["stale_at"].tzinfo)
+        self.store.mark_block_best("aa")
+        self.assertEqual(self.db.blocks.calls[3], ("update_many", ({"block_hash": "aa", "stale": True},
+                                                                   {"$unset": {"stale": "", "stale_at": ""}}), {}))
 
     def test_pools(self):
         self.store.replace_pools([{"id": 1}])
@@ -180,6 +202,19 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             with self.psycopg.connect(self.admin) as c:
                 c.execute("DELETE FROM stale_blocks WHERE height = %s", (top,))
                 c.execute("DELETE FROM blocks WHERE height = %s", (top,))
+
+    def test_best_block_hashes_and_mark_best(self):
+        # #212: the reconciler's read (every best block per height) and "active again" (the stale row is reactivated)
+        h = self.h + 40
+        for height, hb in ((h, "e1"), (h, "e2"), (h + 1, "e3")):
+            self.store.save_block(self._block(height, hb), is_new_block=False)
+        with self.psycopg.connect(self.admin) as c:
+            self._stale(c, "e1", h)
+        self.assertEqual(self.store.best_block_hashes_between(h, h + 1), {h: ["e2" * 32], h + 1: ["e3" * 32]})
+        self.store.mark_block_best("e1" * 32)
+        self.assertEqual(sorted(self.store.best_block_hashes_between(h, h)[h]), ["e1" * 32, "e2" * 32])
+        self.store.mark_block_best("e3" * 32)   # never stale: no-op
+        self.assertEqual(self.store.best_block_hashes_between(h + 1, h + 1), {h + 1: ["e3" * 32]})
 
     def test_reidentify_reads_and_updates_only_pool_fields(self):
         h = self.h + 20

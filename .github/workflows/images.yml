@@ -1,5 +1,6 @@
-# Build the web, backend, collector, collector-go and postgres container images (multi-arch: amd64 + arm64).
-# postgres = CloudNativePG Postgres + TimescaleDB (postgres/Dockerfile). collector-go = the Go collector (#148).
+# Build the web, backend, collector, collector-go, mempool-recorder and postgres container images (multi-arch: amd64 +
+# arm64). postgres = CloudNativePG Postgres + TimescaleDB (postgres/Dockerfile). collector-go = the Go collector (#148).
+# mempool-recorder = the mempool recorder (#180).
 #
 #   pull_request        build changed components for both platforms, push nothing (catches broken Dockerfiles)
 #   push to main        build + push changed components as  bboerst/stratum-work-<component>:sha-<7> and :main
@@ -13,17 +14,17 @@ name: images
 
 on:
   pull_request:
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "mempool-recorder/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "mempool-recorder/**", "postgres/**", "tools/mongo-to-postgres/**", ".github/workflows/images.yml"]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       components:
-        description: "Space-separated components to build (web backend collector collector-go postgres mongo-to-postgres)"
-        default: "web backend collector collector-go postgres mongo-to-postgres"
+        description: "Space-separated components to build (web backend collector collector-go mempool-recorder postgres mongo-to-postgres)"
+        default: "web backend collector collector-go mempool-recorder postgres mongo-to-postgres"
         required: true
 
 permissions:
@@ -62,7 +63,7 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          all="web backend collector collector-go postgres mongo-to-postgres"
+          all="web backend collector collector-go mempool-recorder postgres mongo-to-postgres"
           short=$(git rev-parse --short=7 HEAD)
 
           changed_components() {  # $1 = base commit

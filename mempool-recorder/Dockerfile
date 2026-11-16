@@ -1,0 +1,14 @@
+# Mempool recorder (stratum-work#180): a static binary on scratch, running as an unprivileged user.
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /mempool-recorder . && /mempool-recorder -h 2>&1 | head -1
+
+FROM scratch
+# CA bundle for an https RPC endpoint without a CA file.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /mempool-recorder /mempool-recorder
+USER 65534:65534
+ENTRYPOINT ["/mempool-recorder"]

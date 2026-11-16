@@ -7,6 +7,7 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 |---|---|---|
 | `collector/` | Connects to one pool over Stratum. Publishes each `mining.notify` to RabbitMQ and MongoDB (`mining_notify`), with latency estimates and BTC/BCH chain detection. | Python |
 | `collector-go/` | Go port of the collector (#148): one process per pool, Postgres + RabbitMQ (no MongoDB), kernel receive timestamps, `/livez` `/readyz` `/metrics`. Same flags; passwords from env only. Golden tests against the Python functions (`testdata/gen_golden.py`). | Go |
+| `mempool-recorder/` | Follows the Bitcoin node's mempool over ZMQ (`sequence` + `rawtx`) and records every transaction with first-seen time and how it left (mined, replaced, conflict, reorg, expired, evicted) in `mempool_txs`; blocks and off-mempool block transactions too (#180). Race-free sync and resync, `/livez` `/readyz` `/metrics`. ([README](mempool-recorder/README.md)) | Go |
 | `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see README "Adding a New Analyzer"), publishes block events. | Python |
 | `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views. API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
@@ -28,6 +29,8 @@ docker compose up --build     # dev mode: web hot-reloads from ./web
 ```bash
 python -m pytest collector/tests        # from the repo root
 (cd collector-go && go test ./...)      # Go collector (no local Go? run it in the golang image)
+(cd mempool-recorder && go test ./...)  # mempool recorder: parsing vectors, sequence state machine, pipeline
+mempool-recorder/test-e2e.sh            # mempool recorder end to end: regtest node + TimescaleDB + recorder image (Docker)
 (cd backend && python -m pytest tests)  # from backend/
 (cd web && npm test && npm run lint)    # vitest + eslint
 (cd web && npm run perf)               # client performance against a running build (web/perf/README.md); CI runs it on every web PR
@@ -42,7 +45,7 @@ The README shows how to run these inside the containers.
 - **Defaults preserve existing behavior.** New settings are optional, documented in `.env.example`, and default to the previous value. Never commit machine-specific values (hostnames, IPs, credentials, node URLs).
 - **Collector and backend config:** CLI flags win; env vars (`BITCOIN_*`, etc.) provide defaults. Keep secrets out of command lines.
 - **Bitcoin RPC** may be `http` or `https` (`BITCOIN_RPC_SCHEME`). For private CAs, verify with `BITCOIN_RPC_CA_FILE`; never disable verification.
-- **Database changes go through migrations** in `db/migrations/` (never hand-applied), with a working `-- migrate:down`. Applications connect as least-privilege roles (`stratum_collector`, `stratum_backend`, `stratum_web`), never as the owner or superuser.
+- **Database changes go through migrations** in `db/migrations/` (never hand-applied), with a working `-- migrate:down`. Applications connect as least-privilege roles (`stratum_collector`, `stratum_backend`, `stratum_web`, `stratum_mempool`), never as the owner or superuser.
 - **PRs:** say what was broken or missing, what changed, and how it was tested (commands and results). Keep them focused. Squash merges are titled `Title (#N)`. Preserve contributor credit with `Co-authored-by:` trailers.
 
 ## Data gotchas
@@ -51,9 +54,9 @@ The README shows how to run these inside the containers.
 - Templates for height `h` are the work for the block *after* tip `h-1`.
 
 ## Images and deployment
-`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend`, `collector`, `collector-go`, `postgres` and `mongo-to-postgres` (the backfill tool; built from the repository root, since it loads `collector/` and `backend/` modules):
+`.github/workflows/images.yml` builds multi-arch (amd64 + arm64) images for `web`, `backend`, `collector`, `collector-go`, `mempool-recorder`, `postgres` and `mongo-to-postgres` (the backfill tool; built from the repository root, since it loads `collector/` and `backend/` modules):
 - **PRs:** build the changed components, push nothing.
-- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `collector-go`, `postgres`, `mongo-to-postgres`).
+- **Merge to `main`:** push `bboerst/stratum-work-<component>:sha-<7>` (and `:main`) for each changed component (`web`, `backend`, `collector`, `collector-go`, `mempool-recorder`, `postgres`, `mongo-to-postgres`).
 - **Releases:** push all components as `:<tag>` and `:latest`.
 
 Deployments pin `sha-<7>` tags, and the same image is promoted from dev to prod, never rebuilt. Production deployment is managed in a separate repository. Never build or push images by hand.

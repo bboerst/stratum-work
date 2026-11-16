@@ -347,47 +347,12 @@ export function computeCoinbaseOutputs(coinbaseRaw: string): CoinbaseOutputDetai
     }
 }
 
-// Fetch the fee rate from mempool.space
-// Use a global in-flight map so we don't re-request the same txid
+// Fee rates of first transactions: batched, cached per txid, from this deployment's /api/tx or mempool.space
+// (lib/txFeeRates.ts, #198). Re-exported here for existing callers.
+export { fetchFeeRate, fetchFeeRates, formatFeeRate } from '../lib/txFeeRates';
+
+// Txids whose fee rate a caller is already fetching
 const inFlightRequests: { [txid: string]: boolean } = {};
-
-// Helper function to format fee rate with variable precision
-function formatFeeRate(fee: number): number {
-  if (fee >= 100) {
-    return Math.round(fee); // 0 decimal places
-  } else if (fee < 10) {
-    return Math.round(fee * 100) / 100; // 2 decimal places
-  }
-  return Math.round(fee * 10) / 10; // 1 decimal place
-}
-
-export async function fetchFeeRate(firstTxid: string): Promise<number | string> {
-  try {
-    // Check CPFP endpoint first
-    const cpfpUrl = `https://mempool.space/api/v1/cpfp/${firstTxid}`;
-    let resp = await fetch(cpfpUrl);
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.effectiveFeePerVsize) {
-        return formatFeeRate(data.effectiveFeePerVsize);
-      }
-    }
-
-    // If CPFP not found or invalid, fallback to /api/tx
-    const txUrl = `https://mempool.space/api/tx/${firstTxid}`;
-    resp = await fetch(txUrl);
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.fee && data.weight) {
-        return formatFeeRate(data.fee / (data.weight / 4));
-      }
-    }
-    return "not found";
-  } catch (err) {
-    console.error("Error fetching fee rate:", err);
-    return "Error";
-  }
-}
 
 // Clear a coinbase transaction from all caches
 export function clearCoinbaseFromCaches(coinbaseRaw: string): void {

@@ -9,6 +9,8 @@ import { usePathname } from "next/navigation";
 import { BufferedTemplate, TemplateBuffer } from "./templateBuffer";
 import { prefillTemplateBuffer } from "./prefill";
 import { fetchWithRetry } from "./fetchRetry";
+import { configureTxApi } from "./txFeeRates";
+import type { TxApiConfig } from "./txApiConfig";
 
 interface DataStreamContextType {
   data: StreamData[];
@@ -61,6 +63,7 @@ const BUFFER_NOTIFY_MS = 150;
 interface RuntimeConfig {
   streamEndpoint?: string;
   historicalDataEnabled?: boolean;
+  txApi?: Partial<TxApiConfig>;
 }
 
 export function DataStreamProvider({ children }: { children: ReactNode }) {
@@ -121,6 +124,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setStreamEndpoint(config.streamEndpoint || DEFAULT_STREAM_ENDPOINT);
           setHistoricalDataEnabled(config.historicalDataEnabled === true);
+          configureTxApi(config.txApi);
         }
       } catch (error) {
         console.error("Error loading runtime config", error);
@@ -128,6 +132,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
           setStreamEndpoint(DEFAULT_STREAM_ENDPOINT);
           // Without the config we can't tell whether history is enabled; skip the pre-fill (today's behavior).
           setHistoricalDataEnabled(false);
+          configureTxApi(null);   // fee rates: the previous behavior (mempool.space)
         }
       }
     };

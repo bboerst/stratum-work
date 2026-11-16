@@ -214,6 +214,9 @@ services:
       STREAM_POOL_BURST: ${STREAM_POOL_BURST:-20}
       # Key for masking extranonce1 in served data (#105); optional, empty = random per start.
       EXTRANONCE1_MASK_KEY: ${EXTRANONCE1_MASK_KEY:-}
+      # Fee rates for the table (#198): auto = /api/tx in Postgres mode, else mempool.space.
+      TX_API_SOURCE: ${TX_API_SOURCE:-auto}
+      TX_API_MEMPOOL_SPACE_FALLBACK: ${TX_API_MEMPOOL_SPACE_FALLBACK:-false}
     volumes:
       - ./web:/app
       - /app/node_modules

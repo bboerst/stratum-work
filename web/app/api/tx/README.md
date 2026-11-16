@@ -85,7 +85,7 @@ historical block view passes each template's receive time.
 `Cache-Control: public, max-age=N`, the shortest of the answers': **10 s** if one wasn't seen (it may still arrive),
 **30 s** if one is still in the mempool (it will leave), else **3600 s** (settled, short of a reorg). Errors are
 `no-store`. The server also keeps each answer in memory for the same time, shared by all visitors, so the database
-sees each txid about once per period. The browser (`web/lib/txFeeRates.ts`) batches every txid it needs within 25 ms
+sees each txid about once per period. The browser (`web/lib/txFeeRates.ts`) batches every txid it needs within 250 ms
 into one request and keeps fee rates per txid for the page's lifetime (unseen ones are asked again after 30 s).
 
 ## Settings

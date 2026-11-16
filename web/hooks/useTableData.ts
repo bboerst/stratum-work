@@ -9,7 +9,7 @@ import {
     computeCoinbaseOutputValue, 
     computeFirstTransaction, 
     computeCoinbaseOutputs, 
-    fetchFeeRate, 
+    fetchFeeRates, 
     clearCoinbaseFromCaches, 
     isRequestInFlight, 
     markRequestInFlight, 
@@ -18,6 +18,7 @@ import {
     reportParseFailure,
 } from '@/utils/bitcoinUtils';
 import { sortRowsByKey } from '@/utils/sortUtils';
+import { templateTimeMs } from '@/lib/txFeeRates';
 import { decodeMergeMining, diffMergeMining, formatMergeMiningChange, MergeMiningSummary } from '@/utils/mergeMining';
 
 // Merge-mining summary of a template, and how it differs from the same pool's previous template (#42).
@@ -257,46 +258,41 @@ export function useTableData(
     });
   }, [computedRowsBase, feeRateMap]);
 
-  // Cache or fetch missing fee rates, but never re-fetch the same txid
+  // Cache or fetch missing fee rates, but never re-fetch the same txid. All new txids of one update go out
+  // together: fetchFeeRates batches them into one request (lib/txFeeRates.ts, #198).
   useEffect(() => {
-    // Skip if paused
     if (paused) return;
-    
-    // Keep track of which txids we've processed in this effect run
-    const processedTxids = new Set<string>();
-    
-    // For each row, see if we need to fetch its fee rate
-    computedRows.forEach((row) => {
-      // Skip empty block or if we already have a fee rate in feeRateMap
-      if (!row.first_transaction || row.first_transaction === "empty block") return;
-      
-      const txid = row.first_transaction;
-      
-      // Skip if we've already processed this txid in this effect run
-      if (processedTxids.has(txid)) return;
-      processedTxids.add(txid);
-      
-      // Skip if we already have this fee rate or if it's already being fetched
-      if (feeRateMap[txid] !== undefined) return;
-      if (isRequestInFlight(txid)) return;
 
-      // Mark as in-flight and fetch
-      markRequestInFlight(txid);
-      fetchFeeRate(txid)
-        .then((rate) => {
-          setFeeRateMap((prev) => {
-            // Only update if we don't already have this fee rate
-            if (prev[txid] !== undefined) return prev;
-            return { ...prev, [txid]: rate };
-          });
-        })
-        .catch((error) => {
-          console.error(`Error fetching fee rate for ${txid}:`, error);
-        })
-        .finally(() => {
-          clearRequestInFlight(txid);
-        });
+    const missing = new Set<string>();
+    computedRows.forEach((row) => {
+      const txid = row.first_transaction;
+      if (!txid || txid === "empty block") return;
+      if (feeRateMap[txid] !== undefined || isRequestInFlight(txid)) return;
+      missing.add(txid);
     });
+    if (missing.size === 0) return;
+
+    const txids = [...missing];
+    txids.forEach(markRequestInFlight);
+    fetchFeeRates(txids)
+      .then((rates) => {
+        setFeeRateMap((prev) => {
+          let next: typeof prev | null = null;
+          for (const [txid, rate] of rates) {
+            // Only fill in rates we don't already have
+            if (prev[txid] !== undefined) continue;
+            next ??= { ...prev };
+            next[txid] = rate;
+          }
+          return next ?? prev;
+        });
+      })
+      .catch((error) => {
+        console.error(`Error fetching fee rates for ${txids.length} transactions:`, error);
+      })
+      .finally(() => {
+        txids.forEach(clearRequestInFlight);
+      });
   }, [computedRows, paused]);
 
   // Modified effect to fetch data for a specific block height.
@@ -445,99 +441,58 @@ export function useTableData(
     });
   }, [historicalRawItems, latencyAdjusted, isFiltering]);
 
-  // Separate effect to fetch fee rates for filtered data
+  // Separate effect to fetch fee rates for filtered data: one batched lookup per run for every txid still missing
   useEffect(() => {
-    // Skip if not filtering or no data
     if (!isFiltering || filteredData.length === 0) return;
-    
-    // Keep track of which txids we've processed in this effect run
-    const processedTxids = new Set<string>();
-    
-    // For each item, see if we need to fetch its fee rate
+
+    // Each txid's earliest template time: our API searches the mempool as of then (lib/txFeeRates.ts)
+    const missing = new Map<string, number | undefined>();
     filteredData.forEach(item => {
       const firstTx = item.first_transaction;
       if (!firstTx || firstTx === "empty block" || firstTx === "N/A") return;
-      
-      // Skip if we've already processed this txid in this effect run
-      if (processedTxids.has(firstTx)) return;
-      processedTxids.add(firstTx);
-      
-      // Skip if we already have this fee rate or if it's already being fetched
       if (feeRateMap[firstTx] !== undefined && feeRateMap[firstTx] !== "fetching...") return;
       if (isRequestInFlight(firstTx)) return;
-
-      // Mark as in-flight and fetch
-      markRequestInFlight(firstTx);
-      fetchFeeRate(firstTx)
-        .then((rate) => {
-          setFeeRateMap((prev) => {
-            return { ...prev, [firstTx]: rate };
-          });
-          
-          // Also update the filteredData with the new fee rate
-          setFilteredData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: rate } 
-                : item
-            )
-          );
-          
-          // And update visibleData as well
-          setVisibleData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: rate } 
-                : item
-            )
-          );
-          
-          // Also update allData to ensure consistency
-          setAllData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: rate } 
-                : item
-            )
-          );
-        })
-        .catch((error) => {
-          console.error(`Error fetching fee rate for filtered data ${firstTx}:`, error);
-          // Set an error state in the fee rate map
-          setFeeRateMap((prev) => {
-            return { ...prev, [firstTx]: "Error" };
-          });
-          
-          // Update the data with the error state
-          setFilteredData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: "Error" } 
-                : item
-            )
-          );
-          
-          setVisibleData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: "Error" } 
-                : item
-            )
-          );
-          
-          // Also update allData with the error state
-          setAllData(prevData => 
-            prevData.map(item => 
-              item.first_transaction === firstTx 
-                ? { ...item, feeRateComputed: "Error" } 
-                : item
-            )
-          );
-        })
-        .finally(() => {
-          clearRequestInFlight(firstTx);
-        });
+      const at = templateTimeMs(item.raw_timestamp ?? item.timestamp);
+      const prev = missing.get(firstTx);
+      missing.set(firstTx, prev === undefined || (at !== undefined && at < prev) ? at : prev);
     });
+    if (missing.size === 0) return;
+
+    const txids = [...missing.keys()];
+    txids.forEach(markRequestInFlight);
+    const apply = (rateOf: (txid: string) => number | string | undefined) => {
+      const update = (prevData: SortedRow[]) => {
+        let changed = false;
+        const next = prevData.map(item => {
+          const rate = rateOf(item.first_transaction);
+          if (rate === undefined || item.feeRateComputed === rate) return item;
+          changed = true;
+          return { ...item, feeRateComputed: rate };
+        });
+        return changed ? next : prevData;
+      };
+      setFeeRateMap(prev => {
+        const next = { ...prev };
+        for (const txid of txids) {
+          const rate = rateOf(txid);
+          if (rate !== undefined) next[txid] = rate;
+        }
+        return next;
+      });
+      // Also update the filtered, visible and full data with the new fee rates
+      setFilteredData(update);
+      setVisibleData(update);
+      setAllData(update);
+    };
+    fetchFeeRates(txids, txid => missing.get(txid))
+      .then(rates => apply(txid => rates.get(txid)))
+      .catch((error) => {
+        console.error(`Error fetching fee rates for ${txids.length} transactions of the filtered data:`, error);
+        apply(txid => (missing.has(txid) ? "Error" : undefined));
+      })
+      .finally(() => {
+        txids.forEach(clearRequestInFlight);
+      });
   }, [isFiltering, filteredData, feeRateMap]);
 
   // Update filtered data when data changes

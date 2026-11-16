@@ -14,6 +14,7 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |
 | `tools/mongo-to-postgres/` | One-off backfill of MongoDB history into Postgres, with verification ([README](tools/mongo-to-postgres/README.md)) | Python |
 | `tools/replica-compare/` | Compares two collector replicas of a pool in Postgres: field equality, coinbase diffs, candidate job keys ([README](tools/replica-compare/README.md)) | Python |
+| `tools/site-compare/` | Compares two deployed sites through their public API only (blocks, templates by job key, first seen, pools), for checking a new stack before switching to it ([README](tools/site-compare/README.md)) | Python |
 
 ## Run it
 ```bash
@@ -33,6 +34,7 @@ python -m pytest collector/tests        # from the repo root
 db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
 tools/mongo-to-postgres/test-e2e.sh     # backfill tool: unit tests + synthetic fixture end to end (Docker)
 tools/replica-compare/test-e2e.sh       # replica comparison: unit tests + synthetic fixture end to end (Docker)
+tools/site-compare/test-e2e.sh          # site comparison: unit tests + two synthetic fake sites over HTTP (Docker)
 ```
 The README shows how to run these inside the containers.
 

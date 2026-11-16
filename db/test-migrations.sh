@@ -38,7 +38,7 @@ check "templates(_other), mempool_txs, _tx_inputs, _tx_raw: hypertables with col
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
 check "5 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 5 ]'
 check "retention: inputs 30 days, raw 14 days" '[ "$(psql_ "SELECT string_agg(hypertable_name || '"'"'='"'"'|| (config->>'"'"'drop_after'"'"'), '"'"','"'"' ORDER BY hypertable_name) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_retention'"'"'")" = "mempool_tx_inputs=30 days,mempool_tx_raw=14 days" ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 12 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 13 ]'
 
 # role privileges: create login users the way an environment would
 psql_ "CREATE USER t_collector LOGIN PASSWORD 'x' IN ROLE stratum_collector; CREATE USER t_backend LOGIN PASSWORD 'x' IN ROLE stratum_backend; CREATE USER t_web LOGIN PASSWORD 'x' IN ROLE stratum_web;" >/dev/null
@@ -114,6 +114,8 @@ check "stale blocks: synthetic best / stale / unknown tips" 'docker exec -i "$PG
 psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool; DROP USER t_collector, t_backend, t_web, t_mempool;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
+check "one stream per pool: window constants" '[ "$(psql_ "SELECT template_stream_silence() || '"'"' '"'"' || template_stream_lead()")" = "00:01:30 00:00:10" ]'
+check "down restores the exact-copies-only views" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_views WHERE viewname LIKE '"'"'templates%'"'"'")" = 4 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname LIKE '"'"'template_stream_%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM information_schema.columns WHERE table_name = '"'"'templates_copies'"'"' AND column_name = '"'"'primary_match'"'"'")" = 0 ] && psql_ "SELECT gap_fills FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now())" && ! psql_ "SELECT secondary_stream FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now())"'
 check "down drops the stale-block tables + functions" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename IN ('"'"'stale_blocks'"'"', '"'"'chain_reorgs'"'"')")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname IN ('"'"'stale_tip_templates'"'"', '"'"'stratum_prev_hash_to_block_hash'"'"')")" = 0 ]'
 check "down drops the mempool policies"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name LIKE '"'"'mempool%'"'"'")" = 0 ]'
 check "down drops the mempool tables + role" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename LIKE '"'"'mempool%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_mempool'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname LIKE '"'"'hash_%display'"'"'")" = 0 ]'
@@ -125,7 +127,7 @@ psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 12 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 13 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

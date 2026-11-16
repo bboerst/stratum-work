@@ -75,7 +75,8 @@ def check(path: str) -> int:
     checks.update({
         # b's templates are exact copies of a's (same ntime), 7 ms later: all hidden, no first-seen gains
         "dedup: pool-one exact copies hidden": (t1.get("primary_rows"), t1.get("secondary_rows"), t1.get("secondary_hidden"),
-                                                t1.get("secondary_shown"), t1.get("first_seen_gains")) == (30, 29, 29, 0, 0),
+                                                t1.get("secondary_shown"), t1.get("first_seen_gains"),
+                                                t1.get("exact_copies"), t1.get("secondary_stream")) == (30, 29, 29, 0, 0, 29, 0),
         "dedup: pool-two single source": (t2.get("primary_rows"), t2.get("secondary_rows")) == (5, 0),
         "dedup: per-site row": dedup.get((POOL1, "test"), {}).get("rows") == 59,
     })

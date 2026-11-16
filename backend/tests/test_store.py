@@ -197,12 +197,13 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertEqual(got[0], doc)
         self.assertEqual(int(timestamp, 16) // 1000, 1_794_437_000_123_456)   # hex ns, µs precision
 
-    def test_templates_at_height_hides_only_exact_copies_from_secondary_replicas(self):
-        """Primary ci/a, secondaries ci/b and ci2/a: only an exact copy (same ntime too) is dropped, and its earlier
-        receive time becomes the primary row's timestamp; re-sends, near misses and gap fills stay."""
+    def test_templates_at_height_shows_one_stream_per_pool(self):
+        """Primary ci/a, secondaries ci/b and ci2/a: a secondary's row is dropped as an exact copy (its earlier receive
+        time becomes the primary row's timestamp) or while a lower-ranked source was active (within 90 s before /
+        10 s after); it is kept only as a gap fill, when the lower-ranked sources were silent. Re-sends stay."""
         h = self.h + 30
         name = f"itest-{h}"
-        aa, bb = bytes.fromhex("aa" * 32), bytes.fromhex("bb" * 32)
+        aa, bb, cc = bytes.fromhex("aa" * 32), bytes.fromhex("bb" * 32), bytes.fromhex("cc" * 32)
         with self.psycopg.connect(self.admin) as c:
             sid = {}
             for site, replica in (("ci", "a"), ("ci", "b"), ("ci2", "a")):
@@ -212,9 +213,10 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             # (source, seconds, job_id, branches, ntime, coinbase byte)
             rows = [(("ci", "a"), 0.020, "a1", aa, 100, "a1"),
                     (("ci", "b"), 0.010, "b7", aa, 100, "b1"),    # exact copy of a1, earlier: dropped
-                    (("ci2", "a"), 0.015, "c3", aa, 99, "c1"),    # same job, other ntime: kept (near miss)
+                    (("ci2", "a"), 0.015, "c3", aa, 99, "c1"),    # same job, other ntime, a active: dropped
                     (("ci", "a"), 30.0, "a2", aa, 130, "a2"),     # the primary re-sends the job: kept
-                    (("ci", "b"), 5.0, "b8", bb, 105, "b2")]      # the primary never sent it: kept (gap fill)
+                    (("ci", "b"), 5.0, "b8", bb, 105, "b2"),      # its own job, a active: dropped
+                    (("ci", "b"), 200.0, "b9", cc, 300, "b3")]    # a silent for 170 s: kept (gap fill)
             for src, s, job_id, br, ntime, cb in rows:
                 c.execute("""INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2,
                              merkle_branches, version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
@@ -223,8 +225,7 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                           (s, sid[src], h, job_id, bytes.fromhex("11" * 32), bytes.fromhex(cb), br, ntime, bytes.fromhex(cb)))
         got = self.store.templates_at_height(h)
         self.assertEqual([(t["pool_name"], t["job_id"], t["coinbase1"], t["ntime"]) for t in got],
-                         [(name, "a1", "a1", "00000064"), (name, "c3", "c1", "00000063"),
-                          (name, "b8", "b2", "00000069"), (name, "a2", "a2", "00000082")])
+                         [(name, "a1", "a1", "00000064"), (name, "a2", "a2", "00000082"), (name, "b9", "b3", "0000012c")])
         self.assertEqual(int(got[0]["timestamp"], 16) // 1000, 1_794_437_000_010_000)   # first seen: the copy's time
 
     def test_stale_blocks_upsert_merge_and_reorg(self):

@@ -169,8 +169,10 @@ def test_dedup_section():
            "near_miss_ntime_over_10s": 0, "gap_fills": 1, "first_seen_gains": 3, "gain_ms_p50": 4.5,
            "gain_ms_p95": 9.0, "gain_ms_max": 9.5}
     rows = scenario()
-    md = render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0, dedup=[row, dict(row, site="s1")]))
-    assert "| 2030-01-01 | pool-1 | *all* | 59 | 30 | 29 | 27 | 2 | 0 | 1 | 1 / 0 / 0 / 0 / 0 | 1 | 3 | 4.5 / 9.0 / 9.5 |" in md
+    new = dict(row, exact_copies=20, secondary_stream=7)
+    md = render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0, dedup=[new, dict(row, site="s1")]))
+    assert "| 2030-01-01 | pool-1 | *all* | 59 | 30 | 29 | 27 | 2 | 20 | 7 | 0 | 1 | 1 / 0 / 0 / 0 / 0 | 3 | 4.5 / 9.0 / 9.5 |" in md
+    assert "| 2030-01-01 | pool-1 | s1 | 59 | 30 | 29 | 27 | 2 | – | – | 0 |" in md   # an older database: no such columns
     assert "| 2030-01-01 | pool-1 | s1 |" in md
     assert "Not available" in render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0))
     assert "No templates in the window" in render(run({"pool-1": rows}, T0, T0, ("a", "b"), 2.0, dedup=[]))

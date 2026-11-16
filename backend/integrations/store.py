@@ -242,10 +242,11 @@ class PostgresStore:
 
     # templates (Bitcoin only by construction: other chains live in templates_other).
     # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read
-    # the templates_dedup view (db/migrations/20261115000001_templates_dedup.sql). Every row of the pool's primary
-    # source is kept as stored (re-sends included); a secondary's row is dropped only if it is an exact copy of a
-    # primary row (same prev_hash, merkle_branches, version, nbits, ntime). With one collector per pool that's the raw
-    # rows. timestamp = first seen over the row and its dropped copies; pool_name is sources.name.
+    # the templates_dedup view (db/migrations/20261116100001_one_stream_per_pool.sql): one stream per pool. Every row
+    # of the pool's primary source is kept as stored (re-sends included); another source's row only as a gap fill,
+    # while every lower-ranked source was silent (no row from 90 s before to 10 s after it). With one collector per
+    # pool that's the raw rows. timestamp = first seen over the row and its exact copies; pool_name is sources.name.
+    # The analyses (prev-hash divergence, invalid coinbase) therefore judge each pool by one connection's templates.
     _TEMPLATES_AT_HEIGHT = """
         SELECT j.pool, j.height, j.job_id, encode(j.prev_hash, 'hex'), encode(j.coinbase1, 'hex'), encode(j.coinbase2, 'hex'),
                encode(j.merkle_branches, 'hex'), lpad(to_hex(j.version), 8, '0'), lpad(to_hex(j.nbits), 8, '0'),

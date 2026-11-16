@@ -140,6 +140,9 @@ The backend supports a pluggable analytics system that runs whenever a new block
 Guidelines:
 - Keep findings small (store details needed to render UI, avoid large payloads).
 - Prefer deterministic, height-scoped logic using the templates fetched for that block height.
+- With several collectors per pool (Postgres), the templates are every collector's rows, so the same template can
+  appear once per collector (`site` / `replica` say which). Don't count rows as templates: group by pool, or pair
+  exact copies per collector as `analytics/invalid_coinbase_no_merkle.py` does.
 - Use the shared logger for traceability; avoid printing secrets.
 
 ## Features

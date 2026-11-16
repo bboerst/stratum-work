@@ -1,7 +1,8 @@
 /**
  * The Postgres template reads (lib/db/postgres.ts) against a real, migrated database, as a user in the stratum_web
- * role, with several collector replicas of a pool (and a second site): only exact copies from secondary replicas are
- * hidden; with one collector the reads return the raw rows. Skipped unless a test database is configured, like
+ * role, with several collector replicas of a pool (and a second site): one stream per pool (exact copies and another
+ * connection's rows hidden while a lower-ranked source was active; gap fills shown); with one collector the reads
+ * return the raw rows. Skipped unless a test database is configured, like
  * backend/tests/test_store.py:
  *
  *   PG_TEST_HOST=… PG_TEST_USER=web PG_TEST_PASSWORD=… PG_TEST_ADMIN_DSN=postgresql://… npm test
@@ -46,9 +47,10 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     // primary ci/a, secondaries ci/b and ci2/a
     await insert('ci/a', 0.020, h, 'a1', 'aa', 100, 'a1');
     await insert('ci/b', 0.010, h, 'b7', 'aa', 100, 'b1');    // exact copy of a1, earlier: hidden
-    await insert('ci2/a', 0.015, h, 'c3', 'aa', 99, 'c1');    // same job, other ntime: shown (near miss)
+    await insert('ci2/a', 0.015, h, 'c3', 'aa', 99, 'c1');    // same job, other ntime, ci/a active: hidden
     await insert('ci/a', 30.0, h, 'a2', 'aa', 130, 'a2');     // the primary re-sends the job: shown
-    await insert('ci/b', 5.0, h, 'b8', 'bb', 105, 'b2');      // the primary never sent it: shown (gap fill)
+    await insert('ci/b', 5.0, h, 'b8', 'bb', 105, 'b2');      // its own job, ci/a active: hidden (secondary stream)
+    await insert('ci/b', 200.0, h, 'b9', 'cc', 300, 'b3');    // ci/a silent for 170 s: shown (gap fill)
     // one collector: a re-send with a new ntime and an exact repeat are all kept
     await insert('single', 1.0, h + 1, 's1', 'aa', 100, 'e1');
     await insert('single', 2.0, h + 1, 's2', 'aa', 101, 'e2');
@@ -72,13 +74,12 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
   const us = (s: number) => String(BigInt(Math.round((T0 + s) * 1e6)));
   const hexNs = (s: number) => (BigInt(us(s)) * BigInt(1000)).toString(16);
 
-  it('R1: exact secondary copies hidden, everything else shown; first seen from the earlier copy', async () => {
+  it('R1: one stream per pool, gap fills shown; first seen from the earlier copy', async () => {
     const got = await pg.templatesAtHeight(h);
     expect(got.map(t => [t.pool_name, jobId(t), t.coinbase1, t.ntime, t.lat_ms])).toEqual([
       [name, 'a1', 'a1', '00000064', 20],     // the primary's own fields
-      [name, 'c3', 'c1', '00000063', 15],
-      [name, 'b8', 'b2', '00000069', 5000],
       [name, 'a2', 'a2', '00000082', 30000],
+      [name, 'b9', 'b3', '0000012c', 200000],
     ]);
     expect(got[0].id).toBe(`${sid['ci/a']}-${us(0.020)}-a1`);   // own receive time in the id
     expect(got[0].timestamp).toBe(hexNs(0.010));                 // shown time: the secondary's earlier copy
@@ -95,8 +96,8 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
 
   it('R2: both tables de-duplicated', async () => {
     const got = await pg.allTemplatesAtHeight(h);
-    expect(got.map(t => [jobId(t), t.chain_family])).toEqual([['a1', null], ['c3', null], ['oa', 'bch'], ['b8', null], ['a2', null]]);
-    expect(got[2].timestamp).toBe(hexNs(1.0));
+    expect(got.map(t => [jobId(t), t.chain_family])).toEqual([['a1', null], ['oa', 'bch'], ['a2', null], ['b9', null]]);
+    expect(got[1].timestamp).toBe(hexNs(1.0));
   });
 
   it('R4 / R4b: one entry per pool, first seen over all replicas and sites', async () => {

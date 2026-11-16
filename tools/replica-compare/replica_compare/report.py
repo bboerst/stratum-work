@@ -30,19 +30,24 @@ def _dedup_section(rows) -> list[str]:
         return out + ["No templates in the window.", ""]
     out += ["Per UTC day, pool and site (*all* = the pool's total; every site, regardless of `--site`). Per pool and "
             "height the first source by (site, replica) is the primary; its rows are all shown. A secondary row is "
-            "hidden only as an exact copy of a primary row (same prev_hash, merkle_branches, version, nbits, ntime). "
-            "*Near miss* = same job, other ntime (|Δntime| 1 / 2 / 3 / 4–10 / >10 s); *gap fill* = a job the primary "
-            "doesn't have; *extra* = more exact copies than the primary has. *Gains*: for *all*, shown primary rows "
-            "whose first_seen came from an earlier copy; per site, that site's copies that beat the primary row.", "",
-            "| day | pool | site | rows | primary | secondary | hidden (exact copies) | shown | extra | near misses "
-            "| Δntime 1 / 2 / 3 / 4–10 / >10 s | gap fills | gains | gain ms p50 / p95 / max |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+            "hidden as an *exact copy* of a primary row (same prev_hash, merkle_branches, version, nbits, ntime), or "
+            "as *other stream* while a lower-ranked source of the pool was active (a row within 90 s before / 10 s "
+            "after); it is *shown* only as a *gap fill*, while every lower-ranked source was silent. How the secondary "
+            "rows that aren't exact copies relate to the primary's (hidden or shown): *near miss* = same job, other "
+            "ntime (|Δntime| 1 / 2 / 3 / 4–10 / >10 s); *extra* = more exact copies than the primary has. *Gains*: "
+            "for *all*, shown primary rows whose first_seen came from an earlier copy; per site, that site's copies "
+            "that beat the primary row. – = not reported by this database version.", "",
+            "| day | pool | site | rows | primary | secondary | hidden | shown (gap fills) | exact copies "
+            "| other stream | extra | near misses | Δntime 1 / 2 / 3 / 4–10 / >10 s | gains "
+            "| gain ms p50 / p95 / max |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         out.append(f"| {r['day']} | {r['pool']} | {r['site'] or '*all*'} | {r['rows']} | {r['primary_rows']} "
-                   f"| {r['secondary_rows']} | {r['secondary_hidden']} | {r['secondary_shown']} | {r['extra_copies']} "
+                   f"| {r['secondary_rows']} | {r['secondary_hidden']} | {r['secondary_shown']} "
+                   f"| {_n(r.get('exact_copies'))} | {_n(r.get('secondary_stream'))} | {r['extra_copies']} "
                    f"| {r['near_misses']} | {r['near_miss_ntime_1s']} / {r['near_miss_ntime_2s']} / "
                    f"{r['near_miss_ntime_3s']} / {r['near_miss_ntime_4_10s']} / {r['near_miss_ntime_over_10s']} "
-                   f"| {r['gap_fills']} | {_n(r['first_seen_gains'])} "
+                   f"| {_n(r['first_seen_gains'])} "
                    f"| {_ms(r['gain_ms_p50'])} / {_ms(r['gain_ms_p95'])} / {_ms(r['gain_ms_max'])} |")
     return out + [""]
 

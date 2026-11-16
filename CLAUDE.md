@@ -1,14 +1,14 @@
 # CLAUDE.md
 
-Guidance for AI coding agents (and humans) working in this repo. Start with the [README](README.md) for architecture and local setup.
+Guidance for AI coding agents (and humans) working in this repo. Start with the [README](README.md) for architecture, local setup, Postgres mode, data analysis (schema, example SQL, public API) and CI.
 
 ## Components
 | Path | What | Stack |
 |---|---|---|
-| `collector/` | Connects to one pool over Stratum. Publishes each `mining.notify` to RabbitMQ and MongoDB (`mining_notify`), with latency estimates and BTC/BCH chain detection. | Python |
+| `collector/` | Connects to one pool over Stratum. Publishes each `mining.notify` to RabbitMQ and MongoDB (`mining_notify`), optionally also Postgres (`pgsink.py`), with latency estimates and BTC/BCH chain detection. | Python |
 | `collector-go/` | Go port of the collector (#148): one process per pool, Postgres + RabbitMQ (no MongoDB), kernel receive timestamps, `/livez` `/readyz` `/metrics`. Same flags; passwords from env only. Golden tests against the Python functions (`testdata/gen_golden.py`). | Go |
 | `mempool-recorder/` | Follows the Bitcoin node's mempool over ZMQ (`sequence` + `rawtx`) and records every transaction with first-seen time and how it left (mined, replaced, conflict, reorg, expired, evicted) in `mempool_txs`; blocks and off-mempool block transactions too (#180). Race-free sync and resync, `/livez` `/readyz` `/metrics`. ([README](mempool-recorder/README.md)) | Go |
-| `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see README "Adding a New Analyzer"), publishes block events. | Python |
+| `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see [README "Adding an analyzer"](README.md#adding-an-analyzer)), publishes block events. | Python |
 | `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views. API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
 | `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
@@ -24,6 +24,8 @@ docker compose up --build     # dev mode: web hot-reloads from ./web
 ```
 - Rebuild a Python service after changes: `docker compose up -d --build backend` (or `collector-<pool>`).
 - Machine-specific compose tweaks go in a gitignored `docker-compose.override.yml`, not in `docker-compose.yml`.
+- Postgres: `docker compose --profile postgres up --build`, then `COLLECTOR_PG_HOST=postgres`, `BACKEND_DB_BACKEND=postgres`, `WEB_DB_BACKEND=postgres` in `.env` ([README](README.md#postgres--timescaledb)). MongoDB is still the compose default.
+- **Never `docker compose down -v`** on a stack with data you want: it deletes the `mongo-data` and `pg-data` volumes.
 
 ## Test
 ```bash
@@ -40,7 +42,7 @@ tools/mongo-to-postgres/test-e2e.sh     # backfill tool: unit tests + synthetic 
 tools/replica-compare/test-e2e.sh       # replica comparison: unit tests + synthetic fixture end to end (Docker)
 tools/site-compare/test-e2e.sh          # site comparison: unit tests + two synthetic fake sites over HTTP (Docker)
 ```
-The README shows how to run these inside the containers.
+[README "Testing and CI"](README.md#testing-and-ci) shows how to run them inside the containers and what CI checks.
 
 ## Conventions
 - **Defaults preserve existing behavior.** New settings are optional, documented in `.env.example`, and default to the previous value. Never commit machine-specific values (hostnames, IPs, credentials, node URLs).

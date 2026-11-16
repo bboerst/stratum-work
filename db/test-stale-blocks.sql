@@ -1,5 +1,6 @@
 -- Stale blocks and the stale-tip read (stale_blocks / chain_reorgs / stale_tip_templates,
--- 20261116100001_stale_blocks.sql) on synthetic data. Run by db/test-migrations.sh as the superuser, in a transaction
+-- 20261116100001_stale_blocks.sql; every connection since 20261116400001_stale_tip_all_connections.sql) on synthetic
+-- data. Run by db/test-migrations.sh as the superuser, in a transaction
 -- that is rolled back: inserts as the superuser, reads as the web and backend roles. Any failed ASSERT aborts.
 BEGIN;
 
@@ -14,7 +15,7 @@ BEGIN
 END $$;
 
 INSERT INTO sources (name, site, replica) VALUES ('ts-p1', 's1', 'a'), ('ts-p2', 's1', 'a'), ('ts-p2', 's1', 'b'),
-                                                 ('ts-p3', 's1', 'a');
+                                                 ('ts-p3', 's1', 'a'), ('ts-p4', 's1', 'a'), ('ts-p4', 's1', 'b');
 
 -- Block hashes (display order). b99: best at 975699. s99: a competing block there (stale, never active).
 -- a00: was our tip at 975700 until a reorg; c00: the block that replaced it. x01: stale once, active again.
@@ -58,7 +59,7 @@ SELECT '2026-11-16 00:00:00+00'::timestamptz + make_interval(secs => r.s), src.i
        stratum_prev_hash_to_block_hash(pg_temp.h(r.prev)), '\x01', '\x02', '', 536870912, 386000000, r.ntime, true, '\x03', 8
   FROM (VALUES
     -- 975700 (built on 975699): p1 on the best block, p2 on the stale s99 (3 templates, the last 5 s after our node
-    -- had b99; replica b's exact copy is hidden), p3 on a tip nobody recorded
+    -- had b99; replica b's exact copy counts once), p3 on a tip nobody recorded
     ('ts-p1', 'a', 11.0, 975700, 'j1', 'b99', 100),
     ('ts-p2', 'a',  2.0, 975700, 'j2', 's99', 100),
     ('ts-p2', 'b',  1.5, 975700, 'j2b', 's99', 100),
@@ -77,23 +78,57 @@ SELECT '2026-11-16 00:00:00+00'::timestamptz + make_interval(secs => r.s), src.i
   ) r (pool, replica, s, height, job, prev, ntime)
   JOIN sources src ON src.name = r.pool AND src.site = 's1' AND src.replica = r.replica;
 
+-- ts-p4 gives each connection its own jobs (merkle branches X on a, Y on b), both on the stale s99 at 975700, and a
+-- is up the whole time (so templates_dedup hides b's own jobs as secondary_stream). Every connection counts; exact
+-- copies once per pool, matched one-to-one: (X, 100) sent by a and b -> 1; (X, 101) sent twice by a and once by b
+-- -> 2. Templates: (X,100) 1 + (Y,100) 1 + (X,101) 2 + (X,102) 1 + (Y,102) 1 = 6. First: b's copy at 2.5 s; last:
+-- b's own job at 20 s, 10 s after our node had b99.
+INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
+                       version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
+SELECT '2026-11-16 00:00:00+00'::timestamptz + make_interval(secs => r.s), src.id, 975700, r.job,
+       stratum_prev_hash_to_block_hash(pg_temp.h('s99')), '\x01', '\x02', decode(repeat(r.mb, 32), 'hex'), 536870912,
+       386000000, r.ntime, true, '\x03', 8
+  FROM (VALUES
+    ('a',  3.0, 'q1',  '41', 100),
+    ('b',  2.5, 'r1',  '41', 100),   -- exact copy of a's q1, earlier
+    ('b',  4.0, 'r2',  '42', 100),   -- b's own job
+    ('a',  9.0, 'q2',  '41', 101),
+    ('a',  9.5, 'q2',  '41', 101),   -- a re-send of q2
+    ('b',  9.2, 'r3',  '41', 101),   -- exact copy of q2 (matched to one of a's two)
+    ('a', 18.0, 'q3',  '41', 102),
+    ('b', 20.0, 'r4',  '42', 102)    -- b's own job, the pool's last on s99
+  ) r (replica, s, job, mb, ntime)
+  JOIN sources src ON src.name = 'ts-p4' AND src.site = 's1' AND src.replica = r.replica;
+
 CREATE FUNCTION pg_temp.ts_check() RETURNS void LANGUAGE plpgsql AS $$
 DECLARE j record; n integer; got text;
 BEGIN
   SELECT string_agg(format('%s:%s:%s', s.height, s.pool, s.tip), ',' ORDER BY s.height, s.pool) INTO got
     FROM stale_tip_templates(975690, 975720) s;
-  ASSERT got = '975700:ts-p2:stale,975700:ts-p3:unknown,975701:ts-p1:stale', format('stale-tip rows: %s', got);
+  ASSERT got = '975700:ts-p2:stale,975700:ts-p3:unknown,975700:ts-p4:stale,975701:ts-p1:stale',
+         format('stale-tip rows: %s', got);
 
   SELECT * INTO j FROM stale_tip_templates(975700, 975700) s WHERE s.pool = 'ts-p2';
   ASSERT j.stale_block_hash = pg_temp.h('s99') AND j.prev_block_hash = pg_temp.h('s99') AND j.stale_height = 975699,
          format('p2 stale link %s', row_to_json(j));
-  ASSERT j.templates = 3, format('p2 templates (exact replica copy hidden): %s', j.templates);
+  ASSERT j.templates = 3, format('p2 templates (exact replica copy counted once): %s', j.templates);
   ASSERT j.first_template_at = '2026-11-16 00:00:01.5+00' AND j.last_template_at = '2026-11-16 00:00:15+00',
          format('p2 times %s', row_to_json(j));
   ASSERT j.node_switch_at = '2026-11-16 00:00:10+00' AND j.mined_after_switch = interval '5 s',
          format('p2 switch %s', row_to_json(j));
   ASSERT j.stale_mining_pool->>'name' = 'Synthetic' AND j.stale_full_block AND NOT j.stale_was_active
          AND j.best_block_hash = pg_temp.h('b99'), format('p2 stale details %s', row_to_json(j));
+
+  -- every connection of ts-p4: b's own jobs count although a (the primary) was up the whole time
+  SELECT count(*) INTO n FROM templates_dedup d WHERE d.height = 975700 AND d.pool = 'ts-p4';
+  ASSERT n = 4, format('fixture: templates_dedup shows only a''s rows for p4 (%s)', n);
+  SELECT * INTO j FROM stale_tip_templates(975700, 975700) s WHERE s.pool = 'ts-p4';
+  ASSERT j.tip = 'stale' AND j.stale_block_hash = pg_temp.h('s99'), format('p4 stale link %s', row_to_json(j));
+  ASSERT j.templates = 6, format('p4 templates (both connections, exact copies once): %s', j.templates);
+  ASSERT j.first_template_at = '2026-11-16 00:00:02.5+00' AND j.last_template_at = '2026-11-16 00:00:20+00',
+         format('p4 times over every row %s', row_to_json(j));
+  ASSERT j.node_switch_at = '2026-11-16 00:00:10+00' AND j.mined_after_switch = interval '10 s',
+         format('p4 switch %s', row_to_json(j));
 
   SELECT * INTO j FROM stale_tip_templates(975700, 975700) s WHERE s.pool = 'ts-p3';
   ASSERT j.stale_block_hash IS NULL AND j.prev_block_hash = pg_temp.h('u99') AND j.templates = 1

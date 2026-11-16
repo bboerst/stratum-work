@@ -1,0 +1,46 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $a := .Values.autoscaling }}
+{{- if and (kindIs "invalid" $a.targetCPUUtilizationPercentage) (kindIs "invalid" $a.targetMemoryUtilizationPercentage) }}
+{{- fail "autoscaling.enabled needs targetCPUUtilizationPercentage or targetMemoryUtilizationPercentage" }}
+{{- end }}
+{{- if gt (int $a.minReplicas) (int $a.maxReplicas) }}
+{{- fail "autoscaling.minReplicas must not exceed autoscaling.maxReplicas" }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  # In the release namespace, like the Deployment it scales.
+  name: {{ template "stratum-work-webapp.fullname" . }}
+  labels:
+    app: {{ template "stratum-work-webapp.fullname" . }}
+    chart: {{ template "stratum-work-webapp.chart" . }}
+    heritage: {{ .Release.Service }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ template "stratum-work-webapp.fullname" . }}
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    {{- if not (kindIs "invalid" $a.targetCPUUtilizationPercentage) }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if not (kindIs "invalid" $a.targetMemoryUtilizationPercentage) }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  {{- with $a.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

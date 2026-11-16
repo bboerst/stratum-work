@@ -11,6 +11,12 @@ Web frontend/backend for Pool Work
 | affinity | object | `{}` |  |
 | arguments | list | `[]` |  |
 | automountServiceAccountToken | bool | `false` |  |
+| autoscaling.behavior | object | `{}` | HPA scaling behavior (autoscaling/v2); `{}` keeps the Kubernetes defaults |
+| autoscaling.enabled | bool | `false` | Render a HorizontalPodAutoscaler and leave `replicas` out of the Deployment |
+| autoscaling.maxReplicas | int | `3` |  |
+| autoscaling.minReplicas | int | `1` |  |
+| autoscaling.targetCPUUtilizationPercentage | int | `80` | Percent of the CPU request; null to disable |
+| autoscaling.targetMemoryUtilizationPercentage | int | `nil` | Percent of the memory request; null to disable |
 | env.CORS_ORIGINS | string | `"http://127.0.0.1:8000,http://localhost:8000"` |  |
 | env.MONGODB_HOSTS | string | `"mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017/"` |  |
 | env.MONGODB_PASSWORD | string | `"hunter1"` |  |
@@ -90,7 +96,41 @@ envValueFrom:
 The chart fails if a key exists in both maps. There is no default database
 credential; releases must supply an explicit value or Secret reference.
 
-The infrastructure repository's `scripts/validate-cluster-stability.py` renders
-public/dev/hidden releases, compares existing routing behavior and checks these
-settings against the actual manifests. Public uses Flux Revision reconciliation
-so these changes do not require a chart version bump affecting other releases.
+The deployment repository renders each release with its own values and checks
+these settings against its manifests. Releases built from a Git source with Flux
+Revision reconciliation pick up chart changes without a chart version bump.
+
+## Autoscaling
+
+`autoscaling.enabled` (default `false`) adds an autoscaling/v2
+HorizontalPodAutoscaler for the Deployment and leaves `replicas` out of the
+Deployment, so the HPA owns the replica count and an upgrade doesn't reset it.
+`replicaCount` is ignored while it's enabled.
+
+```yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+  # targetMemoryUtilizationPercentage: 80
+  # behavior:
+  #   scaleDown:
+  #     stabilizationWindowSeconds: 300
+resources:
+  requests:
+    cpu: 100m
+```
+
+Utilization targets are percentages of the container's resource requests, so
+set `resources.requests` for every targeted resource; the cluster needs a
+metrics API such as metrics-server. At least one target is required; set
+`targetCPUUtilizationPercentage: null` to scale on memory only. Rendering fails
+if both are unset or if `minReplicas` exceeds `maxReplicas`.
+
+Turning autoscaling on for a release that already runs removes `replicas` from
+the Deployment, so Kubernetes resets it to 1 until the HPA scales back up to
+`minReplicas` (usually within one HPA sync, about 15 s). Enable it at install
+time, or keep `minReplicas` at the current count and expect the brief dip. With
+a PDB, keep `minReplicas` above `podDisruptionBudget.maxUnavailable` so a
+voluntary disruption never takes every pod.

@@ -180,3 +180,24 @@ lifecycle: {}
 podDisruptionBudget:
   enabled: false
   maxUnavailable: 1
+# Optional HorizontalPodAutoscaler (autoscaling/v2). When enabled, the Deployment leaves out `replicas` (replicaCount
+# is ignored), so the HPA owns the replica count and an upgrade doesn't reset it. Utilization targets are percentages
+# of the container's resource requests, so set `resources.requests` for each targeted resource; the cluster needs a
+# metrics API (e.g. metrics-server). At least one target must be set; set the CPU target to null for memory only.
+#   autoscaling:
+#     enabled: true
+#     minReplicas: 2
+#     maxReplicas: 4
+#     targetCPUUtilizationPercentage: 70
+#     targetMemoryUtilizationPercentage: 80
+#     behavior:
+#       scaleDown:
+#         stabilizationWindowSeconds: 300
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: null
+  # The HPA's scaling behavior (autoscaling/v2 HorizontalPodAutoscalerBehavior); {} keeps the Kubernetes defaults.
+  behavior: {}

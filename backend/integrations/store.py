@@ -298,6 +298,87 @@ class PostgresStore:
         rows = self._run(lambda c: c.execute("SELECT definition FROM pools ORDER BY id").fetchall())
         return [r[0] for r in rows]
 
+    # stale blocks (#180; db/migrations/20261116100001_stale_blocks.sql). Hashes are hex in RPC byte order, stored
+    # as bytea like blocks.block_hash. MongoStore has none of this: the tracker only runs when supports_stale_blocks.
+    supports_stale_blocks = True
+
+    def stale_block_states(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not hashes:
+            return {}
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex'), last_status, full_block, reorged_in_at FROM stale_blocks"
+            " WHERE block_hash = ANY(%s)", ([_to_bytes(h) for h in hashes],)).fetchall())
+        return {h: {"last_status": s, "full_block": f, "reorged_in_at": r} for h, s, f, r in rows}
+
+    def known_block_hashes(self, hashes: List[str]) -> Set[str]:
+        """Which of these hashes are in blocks (the backend stored them as a tip of our active chain)."""
+        if not hashes:
+            return set()
+        rows = self._run(lambda c: c.execute("SELECT encode(block_hash, 'hex') FROM blocks WHERE block_hash = ANY(%s)",
+                                             ([_to_bytes(h) for h in hashes],)).fetchall())
+        return {r[0] for r in rows}
+
+    def current_stale_blocks(self, min_height: int) -> List[Dict[str, Any]]:
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex'), height FROM stale_blocks WHERE height >= %s AND reorged_in_at IS NULL"
+            " ORDER BY height", (min_height,)).fetchall())
+        return [{"block_hash": h, "height": height} for h, height in rows]
+
+    def mark_stale_block_reactivated(self, block_hash: str) -> None:
+        self._run(lambda c: c.execute(
+            "UPDATE stale_blocks SET reorged_in_at = now(), last_status = 'active' WHERE block_hash = %s"
+            " AND reorged_in_at IS NULL", (_to_bytes(block_hash),)))
+
+    _STALE_UPSERT = """
+        INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
+            chaintip_status, last_status, tip_hash, fork_height, first_seen, was_active, reorg_id, full_block,
+            block_fetched_at, coinbase_script_sig, coinbase_outputs, tx_count, size, weight, pool_id, mining_pool)
+        VALUES (%(block_hash)s, %(height)s, %(prev_hash)s, %(version)s, %(block_time)s, %(bits)s, %(nonce)s,
+            %(merkle_root)s, %(status)s, %(status)s, %(tip_hash)s, %(fork_height)s, %(first_seen)s, %(was_active)s,
+            %(reorg_id)s, %(full_block)s, %(block_fetched_at)s, %(coinbase_script_sig)s, %(coinbase_outputs)s,
+            %(tx_count)s, %(size)s, %(weight)s, %(pool_id)s, %(mining_pool)s)
+        ON CONFLICT (block_hash) DO UPDATE SET
+            last_status = EXCLUDED.last_status,
+            was_active = stale_blocks.was_active OR EXCLUDED.was_active,
+            reorg_id = COALESCE(EXCLUDED.reorg_id, stale_blocks.reorg_id),
+            reorged_in_at = NULL,   -- recorded as stale again
+            full_block = stale_blocks.full_block OR EXCLUDED.full_block,
+            block_fetched_at = COALESCE(stale_blocks.block_fetched_at, EXCLUDED.block_fetched_at),
+            coinbase_script_sig = COALESCE(stale_blocks.coinbase_script_sig, EXCLUDED.coinbase_script_sig),
+            coinbase_outputs = COALESCE(stale_blocks.coinbase_outputs, EXCLUDED.coinbase_outputs),
+            tx_count = COALESCE(stale_blocks.tx_count, EXCLUDED.tx_count),
+            size = COALESCE(stale_blocks.size, EXCLUDED.size),
+            weight = COALESCE(stale_blocks.weight, EXCLUDED.weight),
+            pool_id = COALESCE(stale_blocks.pool_id, EXCLUDED.pool_id),
+            mining_pool = COALESCE(stale_blocks.mining_pool, EXCLUDED.mining_pool)"""
+
+    def save_stale_branch(self, rows: List[Dict[str, Any]], reorg: Optional[Dict[str, Any]] = None) -> Optional[int]:
+        """One branch in one transaction: the reorg (if any) first, then its blocks, fork point first."""
+        def tx(c):
+            reorg_id = None
+            if reorg:
+                reorg_id = c.execute(
+                    "INSERT INTO chain_reorgs (detected_at, fork_height, depth, old_tip_hash, old_tip_height,"
+                    " new_tip_hash, new_tip_height) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (reorg["detected_at"], reorg["fork_height"], reorg["depth"], _to_bytes(reorg["old_tip_hash"]),
+                     reorg["old_tip_height"], _to_bytes(reorg["new_tip_hash"]), reorg["new_tip_height"])).fetchone()[0]
+            for r in rows:
+                full = r.get("full_block", False)
+                c.execute(self._STALE_UPSERT, dict(
+                    block_hash=_to_bytes(r["block_hash"]), height=r["height"], prev_hash=_to_bytes(r["prev_hash"]),
+                    version=r["version"], block_time=r["block_time"], bits=r["bits"], nonce=r["nonce"],
+                    merkle_root=_to_bytes(r["merkle_root"]), status=r["status"], tip_hash=_to_bytes(r["tip_hash"]),
+                    fork_height=r["fork_height"], first_seen=r["first_seen"], was_active=r["was_active"],
+                    reorg_id=reorg_id if r["was_active"] and r.get("newly_stale", True) else None, full_block=full,
+                    block_fetched_at=r.get("block_fetched_at"),
+                    coinbase_script_sig=_to_bytes(r["coinbase_script_sig"]) if full else None,
+                    coinbase_outputs=json.dumps(r["coinbase_outputs"]) if full else None,
+                    tx_count=r.get("tx_count"), size=r.get("size"), weight=r.get("weight"),
+                    pool_id=_pool_id(r.get("mining_pool")) if full else None,
+                    mining_pool=json.dumps(r.get("mining_pool") or {}, default=str) if full else None))
+            return reorg_id
+        return self._run(tx)
+
 
 def make_store() -> Any:
     """Pick the store from DB_BACKEND (mongodb | postgres). MongoDB is the default until the cutover (#90)."""

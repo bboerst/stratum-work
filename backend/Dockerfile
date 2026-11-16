@@ -16,5 +16,6 @@ COPY main.py .
 COPY analytics ./analytics
 COPY integrations ./integrations
 COPY bitcoin_utils.py .
+COPY stale_blocks.py .
 
 CMD ["python", "main.py"] 

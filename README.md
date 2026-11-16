@@ -319,6 +319,7 @@ This adds:
 ```bash
 psql postgres://web:web@localhost:5432/stratum -c '\dt'   # read-only user
 db/test-migrations.sh                                       # migrations up/down/up + role privileges (needs Docker)
+backend/test-stale-blocks-e2e.sh                            # stale blocks: two regtest nodes, a fork and a reorg (needs Docker)
 ```
 
 Add a migration: `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then edit the `-- migrate:up` / `-- migrate:down` sections. Use `-- migrate:up transaction:false` for TimescaleDB procedures such as `add_columnstore_policy`.
@@ -332,6 +333,8 @@ COLLECTOR_PG_PASSWORD=collector
 Templates are routed to `templates` (Bitcoin) or `templates_other` (other chains, unparseable or implausible heights).
 
 **The backend can use Postgres instead of MongoDB** for blocks, pools and the templates its analytics read (`backend/integrations/store.py`). Set `BACKEND_DB_BACKEND=postgres` in `.env`; it connects as the local `backend` user.
+
+**Stale blocks (Postgres mode only).** The backend also records the stale (orphaned) blocks its node knows about (`backend/stale_blocks.py`): on every new block and every `STALE_POLL_INTERVAL_S` (60) seconds it calls `getchaintips`, walks each non-active branch back to the fork point and stores each block in `stale_blocks` (the header always, the coinbase, size and pool when the node has the full block). Reorgs of our active chain are recorded in `chain_reorgs`. `stale_tip_templates(from_height, to_height)` lists templates built on a tip other than the best chain's (linked to the stale block when it is known), and `GET /api/stale-blocks?n=20` serves recent stale blocks with the pools that mined on them. `STALE_BLOCKS_ENABLED=false` turns the tracking off. RPC methods it uses: `getchaintips`, `getblockheader`, `getblock`, `getblockhash`. End to end test with two regtest nodes: `backend/test-stale-blocks-e2e.sh`.
 
 **The web app can read from Postgres instead of MongoDB** (`web/lib/db/postgres.ts`), with the same API responses. Set `WEB_DB_BACKEND=postgres` in `.env` and recreate the web service; it connects as the local read-only `web` user. Outside Compose the settings are `DB_BACKEND=postgres` plus `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_PASSWORD`, `PG_SSLMODE` (`disable` (default), `require`, `verify-ca`, `verify-full`) and optionally `PG_SSLROOTCERT` (a CA file). They're separate fields rather than a URL, so errors can't print the password. Responses differ from MongoDB's only where Postgres has no equivalent: template, block and pool `id`s (documented in `web/lib/db/pg-mapping.ts`), and template timestamps, which Postgres stores in µs (the last three digits of the nanoseconds are zero).
 

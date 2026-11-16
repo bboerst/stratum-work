@@ -227,6 +227,43 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                           (name, "b8", "b2", "00000069"), (name, "a2", "a2", "00000082")])
         self.assertEqual(int(got[0]["timestamp"], 16) // 1000, 1_794_437_000_010_000)   # first seen: the copy's time
 
+    def test_stale_blocks_upsert_merge_and_reorg(self):
+        """#180: a header-only row gains its block data later; first status/first_seen are kept; reorg linked."""
+        from datetime import datetime, timezone
+        h = self.h + 40
+        sh, ah = f"{h:08x}" + "d4" * 28, f"{h:08x}" + "d5" * 28
+        t0 = datetime(2026, 11, 16, tzinfo=timezone.utc)
+        row = {"block_hash": sh, "height": h, "prev_hash": "d3" * 32, "version": 536870912, "block_time": t0,
+               "bits": 0x207fffff, "nonce": 7, "merkle_root": "11" * 32, "status": "headers-only", "tip_hash": sh,
+               "fork_height": h - 1, "first_seen": t0, "was_active": False, "newly_stale": True, "full_block": False}
+        self.assertEqual(self.store.stale_block_states([sh]), {})
+        self.store.save_stale_branch([row])
+        full = dict(row, status="valid-fork", first_seen=datetime(2027, 1, 1, tzinfo=timezone.utc), full_block=True,
+                    block_fetched_at=t0, coinbase_script_sig="03aabb",
+                    coinbase_outputs=[{"value_sat": 1, "script_pubkey": "51", "address": None}], tx_count=2, size=300,
+                    weight=1200, mining_pool={"id": 9, "name": "Synthetic"})
+        self.store.save_stale_branch([full])
+        st = self.store.stale_block_states([sh])[sh]
+        self.assertEqual((st["last_status"], st["full_block"], st["reorged_in_at"]), ("valid-fork", True, None))
+        self.assertEqual(self.store.current_stale_blocks(h)[0], {"block_hash": sh, "height": h})
+        reorged = dict(row, block_hash=ah, tip_hash=ah, status="valid-fork", was_active=True)
+        rid = self.store.save_stale_branch([reorged], {"fork_height": h - 1, "depth": 1, "old_tip_hash": ah,
+                                                      "old_tip_height": h, "new_tip_hash": sh, "new_tip_height": h,
+                                                      "detected_at": t0})
+        self.assertIsInstance(rid, int)
+        self.store.mark_stale_block_reactivated(sh)
+        self.assertNotIn(sh, {r["block_hash"] for r in self.store.current_stale_blocks(h)})
+        blk = dict(self._block(h), block_hash=ah)
+        self.store.save_block(blk, is_new_block=True)
+        self.assertEqual(self.store.known_block_hashes([ah, sh]), {ah})
+        with self.psycopg.connect(self.admin) as c:
+            got = c.execute("SELECT chaintip_status, first_seen, tx_count, pool_id, mining_pool->>'name', coinbase_outputs"
+                            " FROM stale_blocks WHERE block_hash = %s", (bytes.fromhex(sh),)).fetchone()
+            self.assertEqual(got[:5], ("headers-only", t0, 2, 9, "Synthetic"))
+            self.assertEqual(got[5][0]["value_sat"], 1)
+            self.assertEqual(c.execute("SELECT reorg_id FROM stale_blocks WHERE block_hash = %s",
+                                       (bytes.fromhex(ah),)).fetchone()[0], rid)
+
 
 if __name__ == "__main__":
     unittest.main()

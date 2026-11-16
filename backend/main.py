@@ -691,6 +691,8 @@ def zmq_listener():
                         logger.info("ZMQ received new block hash: %s", bhash)
                         # Submit new block to the block processor
                         block_processor.submit(process_block, bhash, True)
+                        if stale_tracker is not None:
+                            stale_tracker.request_poll()   # a new tip may have made another branch stale
                         
                 except Exception as inner_e:
                     logger.error("Error processing ZMQ message: %s", inner_e)
@@ -705,10 +707,48 @@ def rabbitmq_heartbeat_task():
     from integrations.rabbitmq import heartbeat_task
     return heartbeat_task()
 
+# --- Stale blocks (#180) ---
+# Postgres mode only (stale_blocks table); STALE_BLOCKS_ENABLED=false turns it off. See stale_blocks.py.
+STALE_BLOCKS_ENABLED = os.getenv("STALE_BLOCKS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
+STALE_POLL_INTERVAL_S = float(os.getenv("STALE_POLL_INTERVAL_S", "60"))   # timer between polls (new blocks poll at once)
+stale_tracker = None
+
+
+def node_rpc(method, *args):
+    """One RPC call, no retries (the stale-block poll runs again on the next block or timer tick)."""
+    with rpc_pool.get_connection() as conn:
+        return getattr(conn, method)(*args)
+
+
+def store_reorged_in_blocks(fork_height: int, tip_height: int, tip_hash: str):
+    """After a reorg: store the newly active blocks. ZMQ announces only the new tip, and sync skips heights that
+    already have a (now stale) block."""
+    for height in range(fork_height + 1, tip_height + 1):
+        block_hash = tip_hash if height == tip_height else node_rpc("getblockhash", height)
+        if not store.known_block_hashes([block_hash]):
+            logger.info("Reorg: storing newly active block %d (%s)", height, block_hash)
+            block_processor.submit(process_block, block_hash, False)
+
+
+def start_stale_block_tracker():
+    global stale_tracker
+    if not (STALE_BLOCKS_ENABLED and store.enabled and getattr(store, "supports_stale_blocks", False)):
+        logger.info("Stale block tracking off (needs DB_BACKEND=postgres; STALE_BLOCKS_ENABLED=%s)", STALE_BLOCKS_ENABLED)
+        return
+    from stale_blocks import StaleBlockTracker
+    stale_tracker = StaleBlockTracker(
+        node_rpc, store, identify_pool=lambda script, addresses: identify_pool_from_data(pools_cache, script, addresses),
+        on_reorg=store_reorged_in_blocks)
+    threading.Thread(target=stale_tracker.run_forever, args=(STALE_POLL_INTERVAL_S,), daemon=True,
+                     name="stale_blocks").start()
+    logger.info("Stale block tracking started")
+
+
 def start_background_workers():
     """Initialize background tasks when running as a worker-only service."""
     logger.info("Starting background workers for Bitcoin Mining Pool Identification Service")
     load_pools_once()
+    start_stale_block_tracker()
     threading.Thread(target=sync_blocks, daemon=True).start()
     threading.Thread(target=zmq_listener, daemon=True).start()
     threading.Thread(target=pool_updater_task, daemon=True).start()

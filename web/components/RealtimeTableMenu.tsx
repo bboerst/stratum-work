@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useStreamStatus } from "@/lib/DataStreamContext";
 import VisualizationToggle from "./VisualizationToggle";
 import PauseButton from "./PauseButton";
 import SettingsButton from "./SettingsButton";
@@ -22,7 +22,7 @@ export default function RealtimeTableMenu({
   selectedBlockHeight = null,
 }: RealtimeTableMenuProps) {
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
-  const { paused, setPaused } = useGlobalDataStream();
+  const { paused, setPaused } = useStreamStatus();
 
   // Use props values if provided, otherwise use global values
   const effectivePaused = propsPaused !== undefined ? propsPaused : paused;

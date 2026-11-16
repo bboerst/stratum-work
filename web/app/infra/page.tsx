@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import InfraLatencyChart from "@/components/InfraLatencyChart";
 import InfraPageControls from "@/components/InfraPageControls";
 import { DEFAULT_INFRA_LATENCY_WINDOW_SECONDS } from "@/components/infraMetricsConfig";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useStreamStatus } from "@/lib/DataStreamContext";
 import { useGlobalMenu } from "@/components/GlobalMenuContext";
 
 export default function InfraPage() {
-  const { paused, setPaused } = useGlobalDataStream();
+  const { paused, setPaused } = useStreamStatus();
   const { setMenuContent } = useGlobalMenu();
   const [timeWindow, setTimeWindow] = useState(DEFAULT_INFRA_LATENCY_WINDOW_SECONDS);
   const [showLabels, setShowLabels] = useState(true);

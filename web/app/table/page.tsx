@@ -1,6 +1,6 @@
 "use client";
 
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useStreamStatus } from "@/lib/DataStreamContext";
 import RealtimeTable from "@/components/RealtimeTable";
 import PauseButton from "@/components/ui/PauseButton";
 import { useState } from "react";
@@ -8,7 +8,7 @@ import { Settings2 } from "lucide-react";
 
 export default function TablePage() {
   const [showSettings, setShowSettings] = useState(false);
-  const { paused, setPaused } = useGlobalDataStream();
+  const { paused, setPaused } = useStreamStatus();
 
   return (
     <main className="flex min-h-screen flex-col p-4">

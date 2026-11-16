@@ -307,3 +307,19 @@ export function liveSinceMs(entries: BufferedTemplate[]): number | null {
 export function withOrigin(entry: BufferedTemplate): StratumV1Data {
   return { ...entry.data, origin: entry.origin };
 }
+
+/**
+ * withOrigin(), returning the same object for an entry until its origin changes (a pre-filled template seen live).
+ * The table keys its row cache on these objects, so a fresh copy on every buffer update would rebuild (and re-render)
+ * every row, not just the pools with a new template. One cache per consumer; entries are held weakly.
+ */
+export function cachedWithOrigin(): (entry: BufferedTemplate) => StratumV1Data {
+  const cache = new WeakMap<BufferedTemplate, StratumV1Data>();
+  return (entry) => {
+    const hit = cache.get(entry);
+    if (hit && hit.origin === entry.origin) return hit;
+    const value = withOrigin(entry);
+    cache.set(entry, value);
+    return value;
+  };
+}

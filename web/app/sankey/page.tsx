@@ -1,6 +1,6 @@
 "use client";
 
-import { useGlobalDataStream, useTemplateBuffer } from "@/lib/DataStreamContext";
+import { useStreamStatus, useTemplateBuffer } from "@/lib/DataStreamContext";
 import { StreamData, StreamDataType } from '@/lib/types';
 import { latestPerPool, withOrigin } from "@/lib/templateBuffer";
 import { useMemo, useState, useEffect, useCallback } from "react";
@@ -28,7 +28,7 @@ export default function SankeyPage() {
   });
   
   // Global state
-  const { paused, setPaused } = useGlobalDataStream();
+  const { paused, setPaused } = useStreamStatus();
   const { entries: bufferedTemplates, currentHeight, prefill } = useTemplateBuffer();
   const { setMenuContent } = useGlobalMenu();
   const { isPoolVisible } = usePoolFilter();

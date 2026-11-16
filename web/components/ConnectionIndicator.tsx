@@ -1,11 +1,11 @@
 "use client";
 
 import React from "react";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useStreamStatus } from "@/lib/DataStreamContext";
 
 export function ConnectionIndicator() {
   // Use the global data stream
-  const { isConnected } = useGlobalDataStream();
+  const { isConnected } = useStreamStatus();
   
   // Only show the indicator when disconnected
   if (isConnected) {

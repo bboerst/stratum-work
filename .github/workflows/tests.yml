@@ -1,0 +1,67 @@
+# Unit tests and static checks that no other workflow runs:
+#   web           vitest, tsc --noEmit, eslint (Postgres-backed web tests skip without PG_TEST_*; db.yml covers the DB)
+#   collector     Python collector unit tests (pytest; the Postgres sink test runs in db.yml)
+#   collector-go  gofmt, go vet, go test (golden parity with the Python collector included)
+#   backend       backend unit tests (pytest; Postgres-backed tests skip without PG_TEST_*, db.yml runs them)
+# Each job runs in the same pinned image as the component's Dockerfile, so CI matches what ships.
+name: tests
+
+on:
+  pull_request:
+    paths: ["web/**", "collector/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+  push:
+    branches: [main]
+    paths: ["web/**", "collector/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    container:
+      image: node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: npm ci --no-audit --no-fund
+      - run: npx vitest run
+      - run: npx tsc --noEmit
+      - run: npm run lint
+
+  collector:
+    runs-on: ubuntu-24.04
+    container:
+      image: python:3.13.18-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: pip install -q --no-cache-dir -r collector/requirements.txt pytest
+      - run: python -m pytest -q collector/tests
+
+  collector-go:
+    runs-on: ubuntu-24.04
+    container:
+      image: golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8
+    defaults:
+      run:
+        working-directory: collector-go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+
+  backend:
+    runs-on: ubuntu-24.04
+    container:
+      image: python:3.13.18-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: pip install -q --no-cache-dir -r requirements.txt pytest
+      - run: python -m pytest -q tests

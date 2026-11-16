@@ -1,0 +1,13 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      # Closing a connection/body/socket on the way out, and writing a probe response: nothing useful to do on error.
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*net.TCPConn).Close
+        - (io.ReadCloser).Close
+        - (github.com/go-zeromq/zmq4.Socket).Close
+        - fmt.Fprintln

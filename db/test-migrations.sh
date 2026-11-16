@@ -34,10 +34,11 @@ as_user() { docker exec "$PG" psql -h localhost -U "$1" -d postgres -v ON_ERROR_
 echo "== image: $IMAGE"
 check "migrate up (all)"                 'dbmate up'
 check "timescaledb loaded"               '[ -n "$(psql_ "SELECT extversion FROM pg_extension WHERE extname = '"'"'timescaledb'"'"'")" ]'
-check "templates + templates_other are hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 2 ]'
+check "templates(_other), mempool_txs, _tx_inputs, _tx_raw: hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 5 ]'
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
-check "2 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 2 ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 9 ]'
+check "5 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 5 ]'
+check "retention: inputs 30 days, raw 14 days" '[ "$(psql_ "SELECT string_agg(hypertable_name || '"'"'='"'"'|| (config->>'"'"'drop_after'"'"'), '"'"','"'"' ORDER BY hypertable_name) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_retention'"'"'")" = "mempool_tx_inputs=30 days,mempool_tx_raw=14 days" ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 11 ]'
 
 # role privileges: create login users the way an environment would
 psql_ "CREATE USER t_collector LOGIN PASSWORD 'x' IN ROLE stratum_collector; CREATE USER t_backend LOGIN PASSWORD 'x' IN ROLE stratum_backend; CREATE USER t_web LOGIN PASSWORD 'x' IN ROLE stratum_web;" >/dev/null
@@ -76,9 +77,38 @@ check "web + backend: run the dedup report" 'as_user t_web "SELECT * FROM templa
 check "collector: cannot read the views"  '! as_user t_collector "SELECT 1 FROM templates_dedup WHERE height = 975500"'
 check "collector: cannot run the report"  '! as_user t_collector "SELECT * FROM template_dedup_report(now() - interval '"'"'1 day'"'"', now())"'
 check "dedup: synthetic replicas, sites and report" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-templates-dedup.sql'
-psql_ "DROP OWNED BY t_collector, t_backend, t_web; DROP USER t_collector, t_backend, t_web;" >/dev/null
+# mempool recorder (mempool-recorder/): its own tables only; backend and web read them
+psql_ "CREATE USER t_mempool LOGIN PASSWORD 'x' IN ROLE stratum_mempool" >/dev/null
+G=4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b  # genesis coinbase txid, display order
+check "txid byte order: internal bytes are the reversed display hex" '[ "$(psql_ "SELECT encode(hash_from_display('"'"'$G'"'"'), '"'"'hex'"'"')")" = 3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a ] && [ "$(psql_ "SELECT hash_display(hash_from_display('"'"'$G'"'"'))")" = $G ]'
+MTX="INSERT INTO mempool_txs (first_seen, first_seen_src, txid, input_count) VALUES (now() - interval '1 minute', 'zmq', hash_from_display('$G'), 1)"
+MIN="INSERT INTO mempool_tx_inputs (first_seen, txid, n, prevout_txid, prevout_vout) SELECT first_seen, txid, 0, decode(repeat('22', 32), 'hex'), 4294967296 FROM mempool_txs"
+check "mempool: insert a tx"             'as_user t_mempool "$MTX"'
+check "mempool: same txid + first_seen is unique" '! as_user t_mempool "INSERT INTO mempool_txs (first_seen, first_seen_src, txid) SELECT first_seen, '"'"'zmq'"'"', txid FROM mempool_txs"'
+check "mempool: prevout_vout is a u32" '! as_user t_mempool "$MIN"'
+check "mempool: insert + read back an input" 'as_user t_mempool "${MIN/4294967296/3}" && [ "$(as_user t_mempool "SELECT prevout_vout FROM mempool_tx_inputs i JOIN mempool_txs t USING (txid, first_seen) WHERE t.removed_at IS NULL")" = 3 ]'
+check "mempool: (txid, first_seen, n) is unique" '! as_user t_mempool "${MIN/4294967296/3}"'
+check "mempool: cannot delete inputs"    '! as_user t_mempool "DELETE FROM mempool_tx_inputs"'
+check "mempool: close it (update)"       'as_user t_mempool "UPDATE mempool_txs SET removed_at = now(), removal = '"'"'mined'"'"', removed_src = '"'"'zmq'"'"' WHERE txid = hash_from_display('"'"'$G'"'"')"'
+check "mempool: removal needs all three columns" '! psql_ "UPDATE mempool_txs SET removal = NULL"'
+check "mempool: removed before first_seen rejected" '! psql_ "UPDATE mempool_txs SET removed_at = first_seen - interval '"'"'1 s'"'"'"'
+check "mempool: snapshot query (alive at t)" '[ "$(as_user t_web "SELECT count(*) FROM mempool_txs WHERE tstzrange(first_seen, removed_at, '"'"'[)'"'"') @> now() - interval '"'"'30 s'"'"'")" = 1 ]'
+check "mempool: txid lookup from merkle_branches[0] bytes" '[ "$(as_user t_backend "SELECT removal FROM mempool_txs WHERE txid = substring(decode('"'"'3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a'"'"' || repeat('"'"'00'"'"', 32), '"'"'hex'"'"') from 1 for 32)")" = mined ]'
+check "mempool: blocks and off-mempool rows" 'as_user t_mempool "INSERT INTO mempool_blocks (seen_at, block_hash, height, event) VALUES (now(), decode(repeat('"'"'00'"'"', 32), '"'"'hex'"'"'), 1, '"'"'connect'"'"'); INSERT INTO mempool_offmempool (block_hash, seen_at, txid, position) VALUES (decode(repeat('"'"'00'"'"', 32), '"'"'hex'"'"'), now(), decode(repeat('"'"'11'"'"', 32), '"'"'hex'"'"'), 1); INSERT INTO mempool_tx_raw (first_seen, txid, raw) VALUES (now(), decode(repeat('"'"'11'"'"', 32), '"'"'hex'"'"'), '"'"'\\x00'"'"'); SELECT block_hash FROM mempool_blocks"'
+check "mempool: cannot delete its rows"  '! as_user t_mempool "DELETE FROM mempool_txs"'
+check "mempool: cannot read templates"   '! as_user t_mempool "SELECT 1 FROM templates"'
+check "mempool: cannot write blocks"     '! as_user t_mempool "INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig) VALUES ('"'"'\\x02'"'"', 1, now(), '"'"'\\x00'"'"')"'
+check "mempool: cannot read raw / off-mempool back" '! as_user t_mempool "SELECT 1 FROM mempool_tx_raw" && ! as_user t_mempool "SELECT 1 FROM mempool_offmempool"'
+check "web + backend: read the mempool tables" 'as_user t_web "SELECT count(*) FROM mempool_txs, mempool_tx_inputs, mempool_blocks, mempool_offmempool, mempool_tx_raw" && as_user t_backend "SELECT count(*) FROM mempool_txs, mempool_tx_inputs, mempool_blocks, mempool_offmempool, mempool_tx_raw"'
+check "web: cannot write inputs"         '! as_user t_web "${MIN/4294967296/5}"'
+check "web: cannot write the mempool tables" '! as_user t_web "$MTX"'
+check "collector: no mempool access"     '! as_user t_collector "SELECT 1 FROM mempool_txs" && ! as_user t_collector "$MTX" && ! as_user t_collector "SELECT 1 FROM mempool_tx_inputs"'
+check "mempool: bloom sparse index after compression" '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'mempool_txs'"'"') c")" -ge 1 ] && [ "$(as_user t_backend "SELECT removal FROM mempool_txs WHERE txid = hash_from_display('"'"'$G'"'"')")" = mined ] && psql_ "EXPLAIN SELECT 1 FROM mempool_txs WHERE txid = hash_from_display('"'"'$G'"'"')" | grep -q bloom'
+psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool; DROP USER t_collector, t_backend, t_web, t_mempool;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
+check "down drops the mempool policies"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name LIKE '"'"'mempool%'"'"'")" = 0 ]'
+check "down drops the mempool tables + role" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename LIKE '"'"'mempool%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_mempool'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname LIKE '"'"'hash_%display'"'"'")" = 0 ]'
 check "down drops the dedup views + report" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_views WHERE viewname LIKE '"'"'templates%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname = '"'"'template_dedup_report'"'"'")" = 0 ]'
 check "down drops ingest_events"        'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'ingest_events'"'"'")" = 0 ]'
 check "down drops the quarantine table"  'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'templates_rejected'"'"'")" = 0 ]'
@@ -87,7 +117,7 @@ psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 9 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 11 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

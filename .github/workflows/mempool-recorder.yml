@@ -1,0 +1,56 @@
+# Mempool recorder (mempool-recorder/, #180):
+#   unit   gofmt check, go vet, go test ./... (tx parsing vectors, sequence state machine, pipeline, config)
+#   e2e    mempool-recorder/test-e2e.sh: Bitcoin Core 32.1 regtest + TimescaleDB with all migrations + the recorder image
+#          built from mempool-recorder/Dockerfile (throwaway containers; ~5 min)
+# Migrations are in the trigger paths because the recorder writes the mempool tables they define.
+name: mempool-recorder
+
+on:
+  pull_request:
+    paths: ["mempool-recorder/**", "db/migrations/**", ".github/workflows/mempool-recorder.yml"]
+  push:
+    branches: [main]
+    paths: ["mempool-recorder/**", "db/migrations/**", ".github/workflows/mempool-recorder.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: mempool-recorder-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8
+    defaults:
+      run:
+        working-directory: mempool-recorder
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt-formatted:"; echo "$unformatted"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: End to end (regtest node + TimescaleDB + recorder image)
+        run: mempool-recorder/test-e2e.sh

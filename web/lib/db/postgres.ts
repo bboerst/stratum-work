@@ -20,8 +20,19 @@
  *                              connection's own job (hidden as 'secondary_stream') arrived first: the pool told us
  *                              then. Latency comes from the connection that saw it first.
  *   R4b  poolNamesAtHeight     raw rows: a set of names, copies can't change it
- *   R3, R5–R7                  blocks / pools: not affected
+ *   R3, R5–R7                  blocks / pools: not affected by de-duplication (blocks: see Reorgs below)
  * MongoDB mode is unchanged (one collector per pool there).
+ *
+ * Reorgs (#194): `blocks` keeps blocks a reorg disconnected (keyed by hash, so the losing and the winning block at a
+ * height coexist). Reads that mean "the block at height h", "recent blocks" or "the tip" read the view `blocks_best`
+ * (db/migrations/20261116300001_blocks_best.sql): blocks without those recorded in `stale_blocks` as currently stale
+ * (reorged_in_at IS NULL; a block that went stale and became active again is shown). Per read:
+ *   R3   getInterestingBlocks              best chain
+ *   R5   getBlocks (all three modes)       best chain
+ *   R6   getBlockByHeight                  best chain
+ *   R6   getBlockByHash                    blocks: a stale block is still found by its hash, flagged `stale: true`
+ *        getHighestBlock / getLowestBlock  best chain (the tip, also used by the realtime pre-fill and analysis)
+ * With no stale_blocks rows the view is exactly `blocks`, so behavior is unchanged.
  */
 import type { MiningNotify } from '@prisma/client';
 import { getPgPool } from './pg';
@@ -119,25 +130,38 @@ export async function poolNamesAtHeight(height: number): Promise<string[]> {
 const BLOCK_COLUMNS = `block_hash, height, extract(epoch FROM block_time)::bigint AS block_time_s, coinbase_script_sig,
   mining_pool, analysis, tx_count, size, weight, version, merkle_root, bits, nonce, difficulty`;
 
+/** Best-chain blocks (`blocks_best`, see the header): every read here except the lookup by hash. */
 async function blocksWhere(where: string, order: string, limit: number, values: unknown[]): Promise<PgBlock[]> {
   const rows = await query<BlockRow>(
-    `SELECT ${BLOCK_COLUMNS} FROM blocks WHERE ${where} ORDER BY ${order} LIMIT ${Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0}`,
+    `SELECT ${BLOCK_COLUMNS} FROM blocks_best WHERE ${where} ORDER BY ${order} LIMIT ${Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0}`,
     values,
   );
   return rows.map(blockRowToBlock);
 }
 
-/** R6. If two blocks share a height (a fork), the one we saw first wins. */
+/**
+ * R6: the best-chain block at a height (blocks recorded as stale are skipped). If two non-stale blocks share a height
+ * (a fork the stale-block tracker hasn't recorded yet, or MongoDB-era data), the one we saw first wins.
+ */
 export async function getBlockByHeight(height: number): Promise<PgBlock | null> {
   const [block] = await blocksWhere('height = $1', 'seen_at ASC NULLS LAST, block_time, block_hash', 1, [height]);
   return block ?? null;
 }
 
-/** R6. Hashes are matched as stored (lower-case hex), like the MongoDB string match. */
+/**
+ * R6. Hashes are matched as stored (lower-case hex), like the MongoDB string match. Reads `blocks`, not the best
+ * chain: a block a reorg disconnected is still found by its hash, with `stale: true` (the field is absent otherwise,
+ * so the response is unchanged for best-chain blocks and in MongoDB mode).
+ */
 export async function getBlockByHash(blockHash: string): Promise<PgBlock | null> {
   if (!/^(?:[0-9a-f]{2})+$/.test(blockHash)) return null;
-  const [block] = await blocksWhere("block_hash = decode($1, 'hex')", 'height', 1, [blockHash]);
-  return block ?? null;
+  const [row] = await query<BlockRow>(
+    `SELECT ${BLOCK_COLUMNS},
+            EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = b.block_hash AND s.reorged_in_at IS NULL) AS stale
+       FROM blocks b WHERE b.block_hash = decode($1, 'hex') LIMIT 1`,
+    [blockHash],
+  );
+  return row ? blockRowToBlock(row) : null;
 }
 
 /** R5: the same three modes and pagination fields as the MongoDB getBlocks. */
@@ -175,6 +199,7 @@ export async function getBlocks(n: number, before?: number, height?: number, aft
   return { blocks: result, has_more: hasMore, next_height: result.length > 0 ? result[result.length - 1].height : null };
 }
 
+/** The best-chain tip (a reorged-out block at a greater height than the new tip is not the tip). */
 export async function getHighestBlock(): Promise<PgBlock | null> {
   const [block] = await blocksWhere('true', 'height DESC, block_hash', 1, []);
   return block ?? null;
@@ -185,10 +210,13 @@ export async function getLowestBlock(): Promise<PgBlock | null> {
   return block ?? null;
 }
 
-/** R3: newest 200 blocks with any analysis besides pool identification (served by the blocks_interesting index). */
+/**
+ * R3: newest 200 best-chain blocks with any analysis besides pool identification (served by the blocks_interesting
+ * index; blocks recorded as stale are skipped).
+ */
 export async function getInterestingBlocks() {
   const rows = await query<Pick<BlockRow, 'block_hash' | 'height' | 'analysis' | 'mining_pool'>>(
-    `SELECT block_hash, height, analysis, mining_pool FROM blocks
+    `SELECT block_hash, height, analysis, mining_pool FROM blocks_best
       WHERE (analysis - 'pool_identification') <> '{}'::jsonb
       ORDER BY height DESC, block_hash
       LIMIT 200`,

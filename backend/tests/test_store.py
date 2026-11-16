@@ -148,6 +148,39 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         hashes = [b["block_hash"] for b in self.store.block_hashes_by_height_desc() if b["height"] in (h, h + 1)]
         self.assertEqual(hashes, ["a2" * 32, "a1" * 32])
 
+    def _stale(self, c, hash_byte, h, reorged_in=False):
+        c.execute("""INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
+                     chaintip_status, last_status, tip_hash, fork_height, was_active, reorged_in_at)
+                     VALUES (%(b)s, %(h)s, '\\x00', 1, now(), 1, 1, '\\x00', 'valid-fork', %(st)s, %(b)s, %(h)s - 1, true,
+                             CASE WHEN %(r)s THEN now() END)""",
+                  dict(b=bytes.fromhex(hash_byte * 32), h=h, st="active" if reorged_in else "valid-fork", r=reorged_in))
+
+    def test_height_reads_skip_blocks_recorded_as_stale(self):
+        # #194: h: only a reorged-out block; h + 1: a stale block that became active again; h + 2: a reorged-out block
+        # and its replacement. A top height above anything else checks the tip.
+        h, top = self.h + 30, 8_000_000 + int(time.time()) % 50_000
+        for height, hb in ((h, "d1"), (h + 1, "d2"), (h + 2, "d3"), (h + 2, "d4"), (top, "d5")):
+            self.store.save_block(self._block(height, hb), is_new_block=False)
+        try:
+            with self.psycopg.connect(self.admin) as c:
+                self._stale(c, "d1", h)
+                self._stale(c, "d2", h + 1, reorged_in=True)
+                self._stale(c, "d3", h + 2)
+                self._stale(c, "d5", top)
+            self.assertFalse(self.store.has_block_at_height(h))         # sync will store the active block here
+            self.assertTrue(self.store.has_block_at_height(h + 1))
+            self.assertTrue(self.store.has_block_at_height(h + 2))
+            self.assertEqual(self.store.block_heights_between(h, h + 3), {h + 1, h + 2})
+            self.assertLess(self.store.highest_block_height(), top)     # a reorged-out block isn't the tip
+            # by-hash maintenance still sees every stored block
+            self.assertEqual(self.store.known_block_hashes(["d1" * 32, "d5" * 32]), {"d1" * 32, "d5" * 32})
+            self.assertIn("d1" * 32, {b["block_hash"] for b in self.store.blocks_for_reidentify()})
+            self.assertIn("d3" * 32, {b["block_hash"] for b in self.store.block_hashes_by_height_desc()})
+        finally:
+            with self.psycopg.connect(self.admin) as c:
+                c.execute("DELETE FROM stale_blocks WHERE height = %s", (top,))
+                c.execute("DELETE FROM blocks WHERE height = %s", (top,))
+
     def test_reidentify_reads_and_updates_only_pool_fields(self):
         h = self.h + 20
         hx = "c3" * 32

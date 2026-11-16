@@ -52,6 +52,12 @@ LOCAL_POOL_FILE = os.getenv("LOCAL_POOL_FILE", "pool_definitions.json")  # Local
 # Controls whether to start a full background reindex on startup
 START_FULL_REINDEX_ON_BOOT = False
 
+# Gap filling: after each sync and each new block, the last BLOCK_GAP_WINDOW heights below the tip are checked for
+# missing blocks (a block whose processing failed, e.g. the database was unreachable when it arrived), which are then
+# fetched from the node. The startup sync only fills below the lowest and above the highest stored block, never inside.
+# 0 turns it off.
+BLOCK_GAP_WINDOW = int(os.getenv("BLOCK_GAP_WINDOW", "144"))
+
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
     """AuthServiceProxy that verifies https endpoints against RPC_CA_FILE when one is configured."""
@@ -504,6 +510,9 @@ def sync_blocks():
             sync_range(best_height, MIN_BLOCK_HEIGHT)
         else:
             logger.info(f"Already synced to tip at height {best_height}")
+
+        # Interior gaps in the recent window (the checks above only extend the stored range at both ends)
+        fill_recent_gaps(best_height)
         
         # Check if we need to sync any missing blocks between MIN_BLOCK_HEIGHT and the lowest processed block
         if lowest_processed_height is not None and lowest_processed_height > MIN_BLOCK_HEIGHT:
@@ -592,6 +601,42 @@ def sync_blocks():
         
     except Exception as e:
         logger.error(f"Error during block sync: {e}")
+
+
+def missing_heights(low: int, high: int, present) -> list:
+    """Heights in [low, high] (inclusive) not in `present`, highest first."""
+    if high < low:
+        return []
+    have = set(present)
+    return [h for h in range(high, low - 1, -1) if h not in have]
+
+
+def fill_recent_gaps(tip_height=None):
+    """Fetch blocks missing within the last BLOCK_GAP_WINDOW heights up to tip_height (default: the highest stored
+    block). Each one goes through process_block like a sync; a failure is logged and retried on the next call."""
+    if BLOCK_GAP_WINDOW <= 0 or not store.enabled:
+        return 0
+    try:
+        tip = tip_height if tip_height is not None else store.highest_block_height()
+        if tip is None:
+            return 0
+        low = max(MIN_BLOCK_HEIGHT, tip - BLOCK_GAP_WINDOW + 1)
+        gaps = missing_heights(low, tip, store.block_heights_between(low, tip + 1))
+        if not gaps:
+            return 0
+        logger.info("Gap fill: %d missing block(s) in %d..%d: %s", len(gaps), low, tip, gaps[:20])
+        filled = 0
+        for height in gaps:
+            try:
+                block_hash = retry_rpc(get_block_hash, f"getblockhash({height})", height)
+                process_block(block_hash, is_new_block=False)
+                filled += 1
+            except Exception as e:
+                logger.error("Gap fill: block at height %d failed (retried next time): %s", height, e)
+        return filled
+    except Exception as e:
+        logger.error("Gap fill failed: %s", e)
+        return 0
 
 
 def sync_range(start_height, end_height):
@@ -691,6 +736,8 @@ def zmq_listener():
                         logger.info("ZMQ received new block hash: %s", bhash)
                         # Submit new block to the block processor
                         block_processor.submit(process_block, bhash, True)
+                        # Then any block that failed earlier in the recent window (e.g. the DB was down when it came)
+                        block_processor.submit(fill_recent_gaps)
                         if stale_tracker is not None:
                             stale_tracker.request_poll()   # a new tip may have made another branch stale
                         

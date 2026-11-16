@@ -4,14 +4,15 @@
 #   collector-sink collector/pgsink.py against a real migrated database, connected as the least-privilege collector role
 #   backend-store  backend/integrations/store.py (PostgresStore) against a real migrated database, as the backend role
 #   backfill-tool  tools/mongo-to-postgres: unit tests, then the end-to-end fixture (throwaway MongoDB + TimescaleDB)
+#   stale-blocks   backend stale-block tracking end to end: two regtest nodes, a fork and a reorg (throwaway containers)
 name: db
 
 on:
   pull_request:
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
   push:
     branches: [main]
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
 
 permissions:
   contents: read
@@ -88,3 +89,11 @@ jobs:
 
       - name: Backfill tool end to end (unit tests + synthetic fixture, in throwaway containers)
         run: tools/mongo-to-postgres/test-e2e.sh
+
+  stale-blocks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Stale blocks end to end (regtest fork + reorg, backend in Postgres mode)
+        run: backend/test-stale-blocks-e2e.sh

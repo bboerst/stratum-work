@@ -55,6 +55,11 @@ env:
   # PG_SSLMODE: "verify-full"          # libpq sslmode; production uses verify-full with the cluster CA
   # PG_SSLROOTCERT: "/etc/postgres-ca/ca.crt"
   # PG_PASSWORD: take it from a Secret with envValueFrom instead of putting it here
+  #
+  # Stale blocks (#180, Postgres mode only): getchaintips on every new block and on this timer. The node's RPC user
+  # needs getchaintips, getblockheader, getblock and getblockhash.
+  # STALE_BLOCKS_ENABLED: "true"
+  # STALE_POLL_INTERVAL_S: "60"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

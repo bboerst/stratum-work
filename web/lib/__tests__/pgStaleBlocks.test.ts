@@ -42,12 +42,19 @@ describe.skipIf(!enabled)('Postgres stale-block read', () => {
        VALUES (decode($1, 'hex'), $2, decode($3, 'hex'), 536870912, to_timestamp($4), 386000000, 1, '\\x00',
                'valid-fork', 'valid-fork', decode($1, 'hex'), $2 - 1, true, '{"name": "Synthetic"}')`,
       [stale, h, parent, T0 + 1]);
-    for (const [s, prev] of [[2, stale], [14, stale], [12, best]] as const) {
+    // a second connection of the same pool with its own jobs (other merkle branches): one exact copy of the first
+    // connection's template (counted once) and one job of its own, the pool's last on the stale tip (counted, although
+    // the first connection was up the whole time)
+    const sidB = (await admin.query(
+      `INSERT INTO sources (name, site, replica) VALUES ($1, 'ci', 'b')
+       ON CONFLICT (name, site, replica) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [`wstale-${h}`])).rows[0].id;
+    for (const [s, prev, src, mb, ntime] of [[2, stale, sid, '', 2], [14, stale, sid, '', 14], [12, best, sid, '', 12],
+                                             [3, stale, sidB, '', 2], [16, stale, sidB, 'bb'.repeat(32), 16]] as const) {
       await admin.query(
         `INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
                                 version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
-         VALUES (to_timestamp($1::float8), $2, $3, $4, decode($5, 'hex'), '\\x01', '\\x02', '', 536870912, 386000000,
-                 $6, true, '\\x03', 8)`, [T0 + s, sid, h + 1, `j${s}`, toStratum(prev), s]);
+         VALUES (to_timestamp($1::float8), $2, $3, $4, decode($5, 'hex'), '\\x01', '\\x02', decode($7, 'hex'),
+                 536870912, 386000000, $6, true, '\\x03', 8)`, [T0 + s, src, h + 1, `j${s}`, toStratum(prev), ntime, mb]);
     }
   });
 
@@ -65,7 +72,7 @@ describe.skipIf(!enabled)('Postgres stale-block read', () => {
     expect(b).toBeDefined();
     expect(b!.prev_hash).toBe(parent);
     expect(b!.mining_pool).toEqual({ name: 'Synthetic' });
-    expect(b!.templates).toEqual([{ pool: `wstale-${h}`, height: h + 1, templates: 2, first_template_at: (T0 + 2) * 1000,
-      last_template_at: (T0 + 14) * 1000, node_switch_at: (T0 + 10) * 1000, mined_after_switch_ms: 4000 }]);
+    expect(b!.templates).toEqual([{ pool: `wstale-${h}`, height: h + 1, templates: 3, first_template_at: (T0 + 2) * 1000,
+      last_template_at: (T0 + 16) * 1000, node_switch_at: (T0 + 10) * 1000, mined_after_switch_ms: 6000 }]);
   });
 });

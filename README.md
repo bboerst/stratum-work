@@ -111,6 +111,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BITCOIN_RPC_SCHEME` / `_CA_FILE` | `http` / *(empty)* | `https` and a CA file for nodes behind a TLS proxy |
 | `BITCOIN_ZMQ_BLOCK` | `tcp://host.docker.internal:28332` | ZMQ block notifications |
 | `MIN_BLOCK_HEIGHT` | `863998` | Lowest height the backend backfills on first start |
+| `BLOCK_GAP_WINDOW` | `144` | Heights below the tip the backend re-checks for missing blocks after each sync and new block (0 = off) |
 | `POSTGRES_PORT` | `5432` | Host port of the Postgres profile |
 | `COLLECTOR_PG_HOST` (+ `_USER`, `_PASSWORD`) | *(empty: off)* | Collectors also write to Postgres |
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |

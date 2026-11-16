@@ -3,6 +3,7 @@
  * timing chart and Sankey are populated before the first stream message. Pure functions, unit-tested in
  * lib/__tests__/prefill.test.ts; the route is app/api/realtime-prefill/route.ts.
  */
+import { fetchWithRetry } from './fetchRetry';
 import { timestampMicros } from './templateBuffer';
 import type { StratumV1Data } from './types';
 
@@ -76,11 +77,12 @@ export interface PrefillTarget {
 
 /**
  * Browser side: seed the shared template buffer from /api/realtime-prefill. With historical data disabled, nothing
- * is requested and the visuals fill from the stream only, as before #130. Throws on a failed request.
+ * is requested and the visuals fill from the stream only, as before #130. Transient failures (a rate-limited 429
+ * during the page-load burst, 502–504, a dropped connection) are retried (lib/fetchRetry.ts); throws on a failed request.
  */
 export async function prefillTemplateBuffer(
   buffer: PrefillTarget,
-  { historicalDataEnabled, fetchFn = (input, init) => fetch(input, init) }: {
+  { historicalDataEnabled, fetchFn = (input, init) => fetchWithRetry(String(input), init) }: {
     historicalDataEnabled: boolean;
     fetchFn?: typeof fetch;
   },

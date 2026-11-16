@@ -6,6 +6,10 @@ import { StreamDataType } from "@/lib/types";
 import { useBlocks } from "@/lib/BlocksContext";
 import { Block } from '../types/blockTypes';
 import { BlockItem } from '@/components/BlockItem'; // Use named import
+import { fetchWithRetry } from '@/lib/fetchRetry';
+
+/** After a fetch failed even with retries, try again this long later (or sooner, when the tab is shown again). */
+const ERROR_RECOVERY_MS = 30_000;
 
 interface BlocksProps {
   onBlockClick?: (height: number) => void;
@@ -152,7 +156,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
           endpoint = '/api/blocks?n=20';
         }
 
-        fetch(endpoint, {
+        fetchWithRetry(endpoint, {
           headers: {
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache'
@@ -327,7 +331,7 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     }
 
     // Fetch blocks after our highest historical block
-    fetch(`/api/blocks?n=10&after=${highestHistoricalBlock}`, {
+    fetchWithRetry(`/api/blocks?n=10&after=${highestHistoricalBlock}`, {
       headers: {
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
@@ -585,6 +589,27 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
     };
   }, [isLoadingNewer, fetchNewerBlocks, containerRef]);
 
+  // Recover from a failed fetch without a page refresh: fetchWithRetry already retried it briefly, so try again when
+  // the tab is shown again, the browser comes back online, or after a pause. The older-blocks observer resumes once
+  // hasMore is true again; an empty list is refetched from the top.
+  useEffect(() => {
+    if (!error) return;
+    const recover = () => {
+      if (document.visibilityState !== 'visible' || isRequestingRef.current) return;
+      setError(null);
+      setHasMore(true);
+      if (blocksRef.current.length === 0) fetchBlocksWithPromise();
+    };
+    const timer = setTimeout(recover, ERROR_RECOVERY_MS);
+    document.addEventListener('visibilitychange', recover);
+    window.addEventListener('online', recover);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', recover);
+      window.removeEventListener('online', recover);
+    };
+  }, [error, fetchBlocksWithPromise, setHasMore]);
+
   // Initial fetch of blocks
   useEffect(() => {
     // Only fetch blocks if we don't have any yet
@@ -765,8 +790,11 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       const targetHeight = selectedBlockHeight;
 
       // Then fetch the block and surrounding blocks using the API endpoint
-      fetch(`/api/blocks?height=${targetHeight}&n=40`)
-        .then(res => res.json())
+      fetchWithRetry(`/api/blocks?height=${targetHeight}&n=40`)
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return res.json();
+        })
         .then(data => {
           // Check if the selectedBlockHeight has changed since we started the fetch
           if (selectedBlockHeight !== targetHeight) {
@@ -850,8 +878,11 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
       lastLoadedHeight.current = null;
 
       // Fetch the latest blocks to start fresh
-      fetch('/api/blocks?n=20')
-        .then(res => res.json())
+      fetchWithRetry('/api/blocks?n=20')
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return res.json();
+        })
         .then(data => {
           if (data.blocks && Array.isArray(data.blocks)) {
             // Mark these as historical blocks

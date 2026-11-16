@@ -8,6 +8,7 @@ import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";
 import { BufferedTemplate, TemplateBuffer, liveSinceMs } from "./templateBuffer";
 import { prefillTemplateBuffer } from "./prefill";
+import { fetchWithRetry } from "./fetchRetry";
 
 interface DataStreamContextType {
   data: StreamData[];
@@ -109,7 +110,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
 
     const loadRuntimeConfig = async () => {
       try {
-        const response = await fetch("/api/runtime-config", { cache: "no-store" });
+        const response = await fetchWithRetry("/api/runtime-config", { cache: "no-store" });
         if (!response.ok) throw new Error(`Runtime config request failed: ${response.status}`);
 
         const config = await response.json() as RuntimeConfig;

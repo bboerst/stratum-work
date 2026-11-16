@@ -122,17 +122,36 @@ const INIT = `
   requestAnimationFrame(tick);
 `;
 
+// /api/tx answers for any txid: in the mempool, with a fee rate derived from the txid (deterministic, synthetic)
+function syntheticTxs(txids: string) {
+  return txids.split(",").filter(Boolean).map((txid) => {
+    const rate = 1 + (parseInt(txid.slice(0, 6), 16) % 2000) / 10;
+    return { txid, found: true, status: "in_mempool", fee: Math.round(rate * 141), vsize: 141, weight: 564,
+      fee_rate: rate, ancestor_fee_rate: rate, effective_fee_rate: rate, ancestor_count: 1, descendant_count: 1,
+      first_seen: Date.now() - 60_000, first_seen_src: "zmq", removal: null, offmempool: null };
+  });
+}
+
+// Requests to /api/tx and to mempool.space (base builds look fee rates up there), per measured page load
+let txRequests = 0;
+let mempoolSpaceRequests = 0;
+
 async function measure(browser: Browser, o: Options, fixture: Fixture, streamUrl: string, path: string): Promise<PageMetrics> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await ctx.newPage();
   await page.addInitScript(INIT);
   await page.route("**/api/**", (route) => {
     const url = new URL(route.request().url());
+    if (url.hostname === "mempool.space") mempoolSpaceRequests++;
     const nowS = Date.now() / 1000;
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     switch (url.pathname) {
       case "/api/runtime-config":
-        return json({ streamEndpoint: streamUrl, historicalDataEnabled: true });
+        // Fee rates from this deployment's /api/tx (#198), as a Postgres deployment serves them
+        return json({ streamEndpoint: streamUrl, historicalDataEnabled: true, txApi: { source: "local", mempoolSpaceFallback: false } });
+      case "/api/tx":
+        txRequests++;
+        return json({ enabled: true, supported: true, txs: syntheticTxs(url.searchParams.get("txids") ?? "") });
       case "/api/realtime-prefill":
         return json(fixture.prefill(nowS));
       case "/api/blocks":
@@ -217,7 +236,12 @@ async function main() {
   try {
     for (const path of o.pages) {
       const runs: PageMetrics[] = [];
+      txRequests = mempoolSpaceRequests = 0;
       for (let i = 0; i < o.runs; i++) runs.push(await measure(browser, o, fixture, replay.url, path));
+      // Fee-rate lookups the page made (not a metric: base and branch builds may use different sources)
+      if (txRequests || mempoolSpaceRequests) {
+        console.error(`${path}: fee-rate requests per run: /api/tx ${txRequests / o.runs}, mempool.space ${mempoolSpaceRequests / o.runs}`);
+      }
       pages[path] = Object.fromEntries(
         (Object.keys(runs[0]) as (keyof PageMetrics)[]).map((k) => [k, median(runs.map((r) => r[k]))])
       ) as unknown as PageMetrics;

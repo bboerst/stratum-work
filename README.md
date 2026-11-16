@@ -387,4 +387,4 @@ Guidelines: keep findings small (what the UI needs to render); keep the logic de
 - Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [mongo-to-postgres](tools/mongo-to-postgres/README.md), [replica-compare](tools/replica-compare/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 
-**License:** the repository has no license file yet.
+**License:** [MIT](LICENSE), © the stratum.work contributors.

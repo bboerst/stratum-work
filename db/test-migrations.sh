@@ -104,11 +104,6 @@ check "web: cannot write inputs"         '! as_user t_web "${MIN/4294967296/5}"'
 check "web: cannot write the mempool tables" '! as_user t_web "$MTX"'
 check "collector: no mempool access"     '! as_user t_collector "SELECT 1 FROM mempool_txs" && ! as_user t_collector "$MTX" && ! as_user t_collector "SELECT 1 FROM mempool_tx_inputs"'
 check "mempool: bloom sparse index after compression" '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'mempool_txs'"'"') c")" -ge 1 ] && [ "$(as_user t_backend "SELECT removal FROM mempool_txs WHERE txid = hash_from_display('"'"'$G'"'"')")" = mined ] && psql_ "EXPLAIN SELECT 1 FROM mempool_txs WHERE txid = hash_from_display('"'"'$G'"'"')" | grep -q bloom'
-psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool; DROP USER t_collector, t_backend, t_web, t_mempool;" >/dev/null
-
-check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
-check "down drops the mempool policies"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name LIKE '"'"'mempool%'"'"'")" = 0 ]'
-check "down drops the mempool tables + role" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename LIKE '"'"'mempool%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_mempool'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname LIKE '"'"'hash_%display'"'"'")" = 0 ]'
 check "backend: write stale blocks + reorgs" 'as_user t_backend "INSERT INTO chain_reorgs (fork_height, depth, old_tip_hash, old_tip_height, new_tip_hash, new_tip_height) VALUES (1, 1, '"'"'\\x01'"'"', 2, '"'"'\\x02'"'"', 2); INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root, chaintip_status, last_status, tip_hash, fork_height) VALUES ('"'"'\\x0a'"'"', 2, '"'"'\\x01'"'"', 1, now(), 1, 1, '"'"'\\x00'"'"', '"'"'valid-fork'"'"', '"'"'valid-fork'"'"', '"'"'\\x0a'"'"', 1); UPDATE stale_blocks SET last_status = '"'"'active'"'"' WHERE height = 2"'
 check "web: read stale blocks + stale-tip read" '[ "$(as_user t_web "SELECT count(*) FROM stale_blocks")" = 1 ] && as_user t_web "SELECT count(*) FROM stale_tip_templates(975500, 975501)"'
 check "web: cannot write stale blocks"   '! as_user t_web "DELETE FROM stale_blocks"'
@@ -116,10 +111,12 @@ check "collector: no stale-block access" '! as_user t_collector "SELECT 1 FROM s
 check "stale: unknown chaintip status rejected" '! psql_ "UPDATE stale_blocks SET last_status = '"'"'other'"'"'"'
 psql_ "DELETE FROM stale_blocks; DELETE FROM chain_reorgs" >/dev/null
 check "stale blocks: synthetic best / stale / unknown tips" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-stale-blocks.sql'
-psql_ "DROP OWNED BY t_collector, t_backend, t_web; DROP USER t_collector, t_backend, t_web;" >/dev/null
+psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool; DROP USER t_collector, t_backend, t_web, t_mempool;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
 check "down drops the stale-block tables + functions" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename IN ('"'"'stale_blocks'"'"', '"'"'chain_reorgs'"'"')")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname IN ('"'"'stale_tip_templates'"'"', '"'"'stratum_prev_hash_to_block_hash'"'"')")" = 0 ]'
+check "down drops the mempool policies"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name LIKE '"'"'mempool%'"'"'")" = 0 ]'
+check "down drops the mempool tables + role" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename LIKE '"'"'mempool%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_mempool'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname LIKE '"'"'hash_%display'"'"'")" = 0 ]'
 check "down drops the dedup views + report" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_views WHERE viewname LIKE '"'"'templates%'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname = '"'"'template_dedup_report'"'"'")" = 0 ]'
 check "down drops ingest_events"        'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'ingest_events'"'"'")" = 0 ]'
 check "down drops the quarantine table"  'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'templates_rejected'"'"'")" = 0 ]'

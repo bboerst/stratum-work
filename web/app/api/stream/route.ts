@@ -25,8 +25,9 @@ export async function GET(request: NextRequest) {
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
-      // Several collectors per pool (#178): forward each exact template once, whichever collector's copy arrives
-      // first. Templates without site/replica (one collector per pool, MongoDB mode) are never filtered.
+      // Several collectors per pool: one stream per pool (lib/streamDedup.ts). Only the lowest-ranked (site, replica)
+      // source that sent something in the last 90 s is forwarded, and exact copies once. Templates without
+      // site/replica (one collector per pool, MongoDB mode) are never filtered.
       const dedup = new StreamTemplateDedup();
 
       // Helper function to safely enqueue data to the controller
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest) {
               }
               // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
               if (typeof parsed.pool_name === 'string' && parsed.type === undefined) {
-                // Before the throttle, so another collector's exact copy doesn't use up the pool's rate.
+                // Before the throttle, so another collector's stream or copy doesn't use up the pool's rate.
                 if (!dedup.accept(parsed)) {
                   channel?.ack(msg);
                   return;

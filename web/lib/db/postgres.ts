@@ -8,15 +8,17 @@
  *
  * Redundant collection (several collectors per pool, `sources.replica`, possibly at several sites): reads that mean
  * "the templates" read the views `templates_dedup` / `templates_other_dedup`
- * (db/migrations/20261115000001_templates_dedup.sql). Per pool and height, every row of the primary source (first by
- * site, replica) is shown exactly as stored; a secondary's row is hidden only when it is an exact copy of a primary
- * row (same prev_hash, merkle_branches, version, nbits and ntime), and shown otherwise (gap fills, near misses). With
- * one collector per pool the result is the raw rows. Per read:
+ * (db/migrations/20261116100001_one_stream_per_pool.sql): one stream per pool. Per pool and height, every row of the
+ * primary source (first by site, replica) is shown exactly as stored; another source's row is shown only as a gap
+ * fill, while every lower-ranked source of the pool was silent (no row from 90 s before to 10 s after it). Exact
+ * copies hidden this way give the primary row its first-seen time. With one collector per pool the result is the
+ * raw rows. Per read:
  *   R1   templatesAtHeight     de-duplicated (realtime table history, realtime pre-fill)
  *   R2   allTemplatesAtHeight  de-duplicated, both tables (template details page)
- *   R4   firstSeenByPool       raw rows: a pool's earliest row is either shown or a hidden copy whose time became
- *                              its primary's first_seen, so the earliest time is the same. Latency comes from the
- *                              connection that saw it first.
+ *   R4   firstSeenByPool       raw rows: the earliest moment any of our connections to the pool got work for the
+ *                              height. That's the shown rows' earliest first_seen, or earlier when another
+ *                              connection's own job (hidden as 'secondary_stream') arrived first: the pool told us
+ *                              then. Latency comes from the connection that saw it first.
  *   R4b  poolNamesAtHeight     raw rows: a set of names, copies can't change it
  *   R3, R5–R7                  blocks / pools: not affected
  * MongoDB mode is unchanged (one collector per pool there).
@@ -47,7 +49,7 @@ const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${OWN_RECEIVED_US} AS
   ${FIRST_SEEN_US} AS first_seen_us, j.height, j.job_id, j.prev_hash, j.coinbase1, j.coinbase2, j.merkle_branches,
   j.version, j.nbits, j.ntime, j.clean_jobs, j.extranonce1, j.extranonce2_length`;
 
-/** R1: Bitcoin templates at a height (exact copies from secondary replicas hidden), earliest first. */
+/** R1: Bitcoin templates at a height (one stream per pool across replicas), earliest first. */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
   const rows = await query<TemplateRow>(
     `SELECT ${DEDUP_COLUMNS}, j.latency_ms, j.latency_method::text AS latency_method
@@ -60,8 +62,8 @@ export async function templatesAtHeight(height: number): Promise<MiningNotify[]>
 }
 
 /**
- * R2: every template at a height, Bitcoin or not (the template details page has always shown all of them), with
- * exact copies from secondary replicas hidden. Rows from templates_other carry their chain as chain_family. Latency
+ * R2: every template at a height, Bitcoin or not (the template details page has always shown all of them), one
+ * stream per pool across replicas. Rows from templates_other carry their chain as chain_family. Latency
  * isn't part of the R2 response, so it's not read.
  */
 export async function allTemplatesAtHeight(height: number): Promise<MiningNotify[]> {
@@ -84,7 +86,7 @@ export async function allTemplatesAtHeight(height: number): Promise<MiningNotify
 /**
  * R4: each pool's first Bitcoin template at a height, ordered by time. Grouped by source name, like MongoDB's
  * pool_name, so all replicas and sites of a pool count as one (see the report for #113). Reads the table, not
- * templates_dedup: the earliest time is the same (see the header), and this skips the view's sorts.
+ * templates_dedup: the earliest notification on any connection (see the header), and this skips the view's sorts.
  * Note: across sites the receive times come from different clocks and network paths (design doc section 5).
  */
 export async function firstSeenByPool(height: number) {

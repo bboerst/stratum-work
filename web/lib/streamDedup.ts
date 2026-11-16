@@ -3,7 +3,7 @@
  * publishes every template it receives, and some pools give each connection its own jobs (other merkle branches,
  * or the same job with another ntime), so forwarding everything would show such a pool about twice. The rule is the
  * one the history reads follow (templates_copies / templates_dedup,
- * db/migrations/20261116100001_one_stream_per_pool.sql), applied as messages arrive:
+ * db/migrations/20261116200001_one_stream_per_pool.sql), applied as messages arrive:
  *
  * * Sources (site + replica) of a pool are ranked by (site, replica), compared by UTF-16 code units (the views
  *   compare with COLLATE "C"; the same order for ASCII names).

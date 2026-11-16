@@ -55,7 +55,7 @@ DEDUP_COLUMNS = ("day", "pool", "site", "rows", "primary_rows", "secondary_rows"
                  "secondary_shown", "extra_copies", "near_misses", "near_miss_ntime_1s", "near_miss_ntime_2s",
                  "near_miss_ntime_3s", "near_miss_ntime_4_10s", "near_miss_ntime_over_10s", "gap_fills",
                  "first_seen_gains", "gain_ms_p50", "gain_ms_p95", "gain_ms_max")
-# One stream per pool (20261116100001_one_stream_per_pool.sql): read when the database has them, None otherwise.
+# One stream per pool (20261116200001_one_stream_per_pool.sql): read when the database has them, None otherwise.
 DEDUP_COLUMNS_OPTIONAL = ("exact_copies", "secondary_stream")
 
 

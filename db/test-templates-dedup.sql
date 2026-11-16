@@ -1,5 +1,5 @@
 -- De-duplicated reads (templates_copies / templates_dedup / template_dedup_report) on synthetic data: exact copies
--- (20261115000001_templates_dedup.sql) and one stream per pool (20261116100001_one_stream_per_pool.sql). Run by
+-- (20261115000001_templates_dedup.sql) and one stream per pool (20261116200001_one_stream_per_pool.sql). Run by
 -- db/test-migrations.sh as the superuser, in a transaction that is rolled back: inserts as the superuser, reads as
 -- the web and backend roles. Any failed ASSERT aborts with an error.
 --

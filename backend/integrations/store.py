@@ -242,7 +242,7 @@ class PostgresStore:
 
     # templates (Bitcoin only by construction: other chains live in templates_other).
     # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read
-    # the templates_dedup view (db/migrations/20261116100001_one_stream_per_pool.sql): one stream per pool. Every row
+    # the templates_dedup view (db/migrations/20261116200001_one_stream_per_pool.sql): one stream per pool. Every row
     # of the pool's primary source is kept as stored (re-sends included); another source's row only as a gap fill,
     # while every lower-ranked source was silent (no row from 90 s before to 10 s after it). With one collector per
     # pool that's the raw rows. timestamp = first seen over the row and its exact copies; pool_name is sources.name.

@@ -8,7 +8,7 @@
  *
  * Redundant collection (several collectors per pool, `sources.replica`, possibly at several sites): reads that mean
  * "the templates" read the views `templates_dedup` / `templates_other_dedup`
- * (db/migrations/20261116100001_one_stream_per_pool.sql): one stream per pool. Per pool and height, every row of the
+ * (db/migrations/20261116200001_one_stream_per_pool.sql): one stream per pool. Per pool and height, every row of the
  * primary source (first by site, replica) is shown exactly as stored; another source's row is shown only as a gap
  * fill, while every lower-ranked source of the pool was silent (no row from 90 s before to 10 s after it). Exact
  * copies hidden this way give the primary row its first-seen time. With one collector per pool the result is the

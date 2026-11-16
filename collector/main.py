@@ -82,7 +82,7 @@ bch_confirmer = BCHConfirmer(
 )
 chain_classifier = ChainClassifier(
     tip_state=tip_state,
-    divergence_threshold=5,
+    divergence_threshold=6,  # = the Postgres routing window (pgsink.TIP_AHEAD / TIP_BEHIND)
     confirmer=bch_confirmer,
 )
 tip_state_lock = threading.Lock()
@@ -826,8 +826,8 @@ def build_parser():
     parser.add_argument(
         "--btc-chain-divergence-threshold",
         type=int,
-        default=5,
-        help="Height divergence threshold before non-BTC confirmation (default: 5)",
+        default=6,
+        help="Height divergence threshold before non-BTC confirmation (default: 6, the routing window tip ±6)",
     )
     parser.add_argument(
         "--btc-tip-stale-seconds",

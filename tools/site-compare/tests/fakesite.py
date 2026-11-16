@@ -10,6 +10,8 @@ What is planted (heights 1000–1005 on A, B's blocks from 1001, B's tip 1004; j
                 are missing (connected late: before_other_first with --gap-s 25).
   - pool-three: only on A (hidden on B): pool_one_side_only.
   - pool-four:  only on B.
+  - pool-five:  B has two sources: 5 mirrors A, 6 gets its own jobs 5 s later (multi_source on B). At 1003 source 5
+                is missing (other_source_missing on A; B's source-6 jobs there are unexplained, no second source).
   - blocks:     at 1002 B identifies another pool; at 1004 B's analysis has an extra key.
   - pools list: B lacks "pool-three" and has an extra address for "pool-one".
   - B answers its first request for mining-notify at 1002 with 429 + Retry-After: 1.
@@ -29,8 +31,8 @@ LOWEST_BLOCK = {"a": 1000, "b": 1001}
 T_BASE = 1_893_456_000      # 2030-01-01, seconds
 JOBS = 6
 STEP_S = 30
-SHIFT_MS = {"pool-one": 15.0, "pool-two": -5.0, "pool-three": 0.0, "pool-four": 0.0}   # B minus A
-POOL_MS = {"pool-one": 0, "pool-two": 100, "pool-three": 200, "pool-four": 300}        # each pool's own lag
+SHIFT_MS = {"pool-one": 15.0, "pool-two": -5.0, "pool-three": 0.0, "pool-four": 0.0, "pool-five": 0.0}  # B - A
+POOL_MS = {"pool-one": 0, "pool-two": 100, "pool-three": 200, "pool-four": 300, "pool-five": 400}  # own lag
 
 
 def sha(s: str) -> str:
@@ -41,13 +43,22 @@ def block_hash(h: int) -> str:
     return "0000" + sha(f"block {h}")[4:]
 
 
-def template(side: str, pool: str, h: int, i: int, ntime_shift: int = 0, extra_ms: float = 0.0) -> dict:
+SOURCE = {"pool-one": 1, "pool-two": 2, "pool-four": 4, "pool-five": 5}
+
+
+def template(side: str, pool: str, h: int, i: int, ntime_shift: int = 0, extra_ms: float = 0.0,
+             stream: str = "") -> dict:
+    """stream: a second connection's own job stream (other merkle branches, 5 s later); B's id names source 6."""
     start_s = T_BASE + (h - 1000) * 600
-    t_ns = int((start_s + i * STEP_S) * 1e9 + (POOL_MS[pool] + (SHIFT_MS[pool] if side == "b" else 0)) * 1e6 + extra_ms * 1e6)
-    en1 = sha(f"{side}{pool}")[:8]
-    return {"id": f"{side}-{pool}-{h}-{i}-{extra_ms}", "height": h, "pool_name": pool, "chain_family": None,
+    t_ns = int((start_s + i * STEP_S) * 1e9 + (POOL_MS[pool] + (SHIFT_MS[pool] if side == "b" else 0)) * 1e6
+               + extra_ms * 1e6 + (5e9 if stream else 0))
+    en1 = sha(f"{side}{pool}{stream}")[:8]
+    # A's ids are opaque (like MongoDB UUIDs); B's name the source like Postgres's `<source_id>-<µs>-<job_id>`.
+    tid = (sha(f"{pool}{h}{i}{extra_ms}")[:32] if side == "a"
+           else f"{6 if stream else SOURCE[pool]}-{t_ns // 1000}-j{i}")
+    return {"id": tid, "height": h, "pool_name": pool, "chain_family": None,
             "coinbase1": "01000000" + sha(f"cb1 {pool} {h}")[:40], "coinbase2": sha(f"cb2 {pool}")[:32],
-            "merkle_branches": [sha(f"m {pool} {h} {i} {k}") for k in range(3)],
+            "merkle_branches": [sha(f"m {pool} {h} {i} {k} {stream}") for k in range(3)],
             "version": "20000000", "prev_hash": sha(f"prev {h}"), "timestamp": format(t_ns, "x"),
             "nbits": "17031abc", "ntime": format(start_s + i * STEP_S + ntime_shift, "08x"),
             "clean_jobs": i == 0, "extranonce1": en1, "extranonce2_length": 8, "lat_ms": 1.5, "lat_m": "x"}
@@ -68,6 +79,11 @@ def templates(side: str, h: int) -> list[dict]:
             out.append(template(side, pool, h, i, ntime_shift=shift))
             if side == "a" and pool == "pool-one" and h == 1001 and i == 4:
                 out.append(template(side, pool, h, i, extra_ms=500))
+    for i in range(JOBS):
+        if side == "a" or h != 1003:
+            out.append(template(side, "pool-five", h, i))
+        if side == "b":
+            out.append(template(side, "pool-five", h, i, stream="second"))
     return sorted(out, key=lambda t: int(t["timestamp"], 16))
 
 
@@ -208,7 +224,12 @@ def check(path: str) -> int:
         ("pool-three only on A", r["templates"]["pools_only_on_a"] == ["pool-three"]
          and pools["pool-three"]["only_a"].get("pool_one_side_only") == 5 * JOBS),
         ("pool-four only on B", r["templates"]["pools_only_on_b"] == ["pool-four"]),
-        ("nothing unexplained", not r["templates"]["unexplained_examples"]),
+        ("pool-five: B's second source", pools["pool-five"]["sources_b"] == 2
+         and pools["pool-five"]["only_b"].get("multi_source") == 4 * JOBS),
+        ("pool-five: B's source missing at 1003", pools["pool-five"]["only_a"].get("other_source_missing") == JOBS),
+        ("unexplained: only pool-five's second-source jobs at 1003",
+         {(e["height"], e["side"], e["pool"]) for e in r["templates"]["unexplained_examples"]} == {(1003, "b", "pool-five")}
+         and pools["pool-five"]["only_b"].get("unexplained") == JOBS),
         ("block 1002: pool identification differs", (1002, "fields differ (pool_identification)") in blocks),
         ("block 1004: analysis differs", (1004, "fields differ (analysis)") in blocks),
         ("block 1000: only on A", (1000, "block only on A") in blocks),
@@ -217,8 +238,8 @@ def check(path: str) -> int:
         ("pools list: pool-one addresses differ",
          [d["name"] for d in r["pools_list"]["field_differences"]] == ["pool-one"]),
         ("R4: pool sets differ on every height", r["first_seen"]["same_pool_set"] == 0),
-        ("R4: the common pools' order is the same everywhere",
-         r["first_seen"]["same_order_of_common_pools"] == r["first_seen"]["n"]),
+        ("R4: the common pools' order differs only at 1003 (pool-five first seen 5 s late on B)",
+         [x["height"] for x in r["first_seen"]["heights"] if not x["same_order"]] == [1003]),
         ("R4: pool-two's first seen is -5 ms", pools["pool-two"]["r4_first_seen_delta_ms"]["p50"] == -5.0),
         ("the 429 was retried", r["meta"]["requests"]["retries"] >= 1),
     ]

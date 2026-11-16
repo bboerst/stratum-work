@@ -8,16 +8,22 @@ CLASS_HELP = {
     "near_miss": "same job on the other side, differs only in the named fields",
     "pool_one_side_only": "the other side has no template from this pool in the whole range",
     "pool_missing_at_height": "the other side has the pool elsewhere, but nothing at this height",
+    "before_other_started": "before the other side's first template of the pool in the whole range (collection "
+                            "started later there)",
     "other_prev_hash": "the other side has the pool at this height, never with this prev_hash",
+    "other_source_missing": "the other side's source that usually matches this side shows nothing at this height "
+                            "(its rows here come from another connection)",
     "before_other_first": "earlier than the other side's first template of the pool at this height (beyond the gap)",
     "after_other_last": "later than the other side's last template of the pool at this height (beyond the gap)",
     "other_side_gap": "inside the other side's span, but nothing from the pool there within the gap",
+    "multi_source": "this side shows several sources of the pool at this height: a second connection's own jobs",
     "unexplained": "none of the above",
 }
 
 
 def pool_json(name: str, pt) -> dict:
     return {"pool": name, "templates_a": pt.templates["a"], "templates_b": pt.templates["b"],
+            "sources_a": pt.sources["a"], "sources_b": pt.sources["b"],
             "heights_a": len(pt.heights["a"]), "heights_b": len(pt.heights["b"]), "matched": pt.matched,
             "only_a": dict(sorted(pt.only["a"].items())), "only_b": dict(sorted(pt.only["b"].items())),
             "first_seen_delta_ms": delta_stats(pt.deltas_ms),
@@ -99,15 +105,18 @@ def render(result: dict) -> str:
 
     L += ["## Per pool", "",
           "Templates matched by job key. Δ = first-seen B minus A of matched templates (ms); R4 Δ = the pool's "
-          "first template per height (ms).", "",
-          "| Pool | Heights A/B | Templates A/B | Matched | Only A | Only B | Δ p50 | Δ p95 | Δ min / max | "
+          "first template per height (ms). Sources: distinct collector connections with shown rows, named by the "
+          "template ids (? when a site's ids don't name them; a second collector's exact copies are hidden by the "
+          "read path, so a pool whose connections get identical jobs shows one).", "",
+          "| Pool | Sources A/B | Heights A/B | Templates A/B | Matched | Only A | Only B | Δ p50 | Δ p95 | Δ min / max | "
           "B first | R4 Δ p50 | Coinbase identical |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for p in pools:
         d, r4 = p["first_seen_delta_ms"], p["r4_first_seen_delta_ms"]
         share = f"{100 * d['b_earlier_share']:.0f} %" if d["n"] else "–"
         cb = f"{100 * p['matched_coinbase_identical'] / p['matched']:.0f} %" if p["matched"] else "–"
-        L.append(f"| {p['pool']} | {p['heights_a']}/{p['heights_b']} | {p['templates_a']}/{p['templates_b']} | "
+        src = "/".join(str(p[f"sources_{x}"] or "?") for x in "ab")
+        L.append(f"| {p['pool']} | {src} | {p['heights_a']}/{p['heights_b']} | {p['templates_a']}/{p['templates_b']} | "
                  f"{p['matched']} | {_classes(p['only_a'])} | {_classes(p['only_b'])} | {_f(d.get('p50'))} | "
                  f"{_f(d.get('p95'))} | {_f(d.get('min'))} / {_f(d.get('max'))} | {share} | {_f(r4.get('p50'))} | {cb} |")
     odd = [p for p in pools if p["matched_clean_jobs_differ"] or p["matched_extranonce2_length_differ"]

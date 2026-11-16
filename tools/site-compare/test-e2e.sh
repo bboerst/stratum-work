@@ -29,8 +29,8 @@ for i in $(seq 30); do py python -c "import urllib.request as u; u.urlopen('http
 echo "== compare"
 check "runs"                                    'sc --out /tmp/r.md --json /tmp/r.json'
 py python tests/fakesite.py check /tmp/r.json; [ $? = 0 ] && ok=$((ok+1)) || bad=$((bad+1))
-check "markdown has the summary table"          'py grep -q "^| Templates | A 91, B 81, matched 50" /tmp/r.md'
-check "markdown has the per-pool table"         'py grep -q "^| pool-one | 5/5 | 31/30 | 29 | extra_copy 1, near_miss:ntime 1 | near_miss:ntime 1 | 15.0 |" /tmp/r.md'
+check "markdown has the summary table"          'py grep -q "^| Templates | A 121, B 135, matched 74" /tmp/r.md'
+check "markdown has the per-pool table"         'py grep -q "^| pool-one | ?/1 | 5/5 | 31/30 | 29 | extra_copy 1, near_miss:ntime 1 | near_miss:ntime 1 | 15.0 |" /tmp/r.md'
 check "markdown lists the block differences"    'py grep -q "^- \*\*1004\*\* fields differ (analysis)" /tmp/r.md'
 check "rerun is served from the cache"          'sc --json /tmp/r2.json >/dev/null && py python -c "import json,sys; r=json.load(open(\"/tmp/r2.json\"))[\"meta\"][\"requests\"]; sys.exit(not (r[\"cache_hits\"] >= 20 and r[\"network_requests\"] < 15))"'
 check "same result from the cache"              'py python -c "import json,sys; a,b=(json.load(open(p)) for p in (\"/tmp/r.json\",\"/tmp/r2.json\")); sys.exit(a[\"templates\"]!=b[\"templates\"] or a[\"blocks\"]!=b[\"blocks\"])"'

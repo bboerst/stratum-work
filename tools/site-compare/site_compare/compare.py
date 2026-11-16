@@ -5,9 +5,9 @@ by design. A template is identified by its job key:
 
     (pool, height, prev_hash, merkle_branches, version, nbits, ntime)
 
-Per key, each side's templates are taken in receive order and paired one to one (the n-th on A with the n-th on B),
-like the read path's de-duplication numbers copies (docs/design/postgres-timescale.md, "Redundant collection"). A
-matched pair's first-seen difference is B minus A. Templates left over are classified, first rule that applies:
+Per key, each side's templates are paired one to one, closest in time first (a pool may send the same key several
+times). A matched pair's first-seen difference is B minus A. Templates left over are classified, first rule that
+applies:
 
     extra_copy           the other side has the same job key, fewer times
     near_miss:<fields>   the other side has the same job (pool, height, prev_hash, merkle_branches) with other
@@ -15,10 +15,17 @@ matched pair's first-seen difference is B minus A. Templates left over are class
     pool_one_side_only   the other side has no template from this pool anywhere in the compared range
     pool_missing_at_height  the other side has the pool elsewhere in the range, but nothing at this height
     other_prev_hash      the other side has the pool at this height, but never with this prev_hash
+    other_source_missing the other side's template ids name its sources (collector connections), and the source
+                         whose templates match this side most often in the range shows nothing at this height (that
+                         collector was down, or reconnected to another job stream); the other side's rows here come
+                         from another connection
     before_other_first   received more than gap_s before the other side's first template of the pool at this height
                          (the other side's collector wasn't connected yet, or got the height later)
     after_other_last     more than gap_s after the other side's last one (disconnected, or a stale cached response)
     other_side_gap       inside the other side's span, but the other side has nothing from the pool within gap_s
+    multi_source         this side shows rows from several sources of the pool at this height: a second
+                         connection's own job stream (some pools hand different connections different jobs), shown
+                         because it isn't a copy of the primary's
     unexplained          none of the above
 
 Nothing is merged by tolerance: a template is matched only on an identical job key.
@@ -27,14 +34,17 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 SIDES = ("a", "b")
 OTHER = {"a": "b", "b": "a"}
-CLASS_ORDER = ("extra_copy", "near_miss", "pool_one_side_only", "pool_missing_at_height", "other_prev_hash",
-               "before_other_first", "after_other_last", "other_side_gap", "unexplained")
+CLASS_ORDER = ("extra_copy", "near_miss", "pool_one_side_only", "pool_missing_at_height", "before_other_started",
+               "other_prev_hash",
+               "other_source_missing", "before_other_first", "after_other_last", "other_side_gap", "multi_source",
+               "unexplained")
 
 
 # ── templates ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -67,6 +77,16 @@ def ts_ns(t: dict) -> int:
         return int(dt.timestamp() * 1_000_000) * 1000
 
 
+_SOURCE_ID = re.compile(r"^(\d+)-(\d{13,17})-")   # µs since the epoch: 16 digits; a UUID has 4 there
+
+
+def source_of(t: dict) -> str | None:
+    """The collector connection a template came from, when the site's template id names it (Postgres ids are
+    `<source_id>-<µs>-<job_id>`, see web/lib/db/pg-mapping.ts). None for opaque ids (MongoDB UUIDs)."""
+    m = _SOURCE_ID.match(str(t.get("id") or ""))
+    return m.group(1) if m else None
+
+
 @dataclass
 class Unmatched:
     side: str
@@ -83,8 +103,25 @@ class HeightMatch:
     unmatched: list = field(default_factory=list)
 
 
+def pair_closest(la: list[dict], lb: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
+    """One-to-one pairs of templates with the same job key, closest in time first. Returns (pairs, A's rest, B's
+    rest). A key a pool re-sends (same ntime) can appear several times on a side; pairing by order instead would
+    pair a re-send on one side with the original on the other."""
+    if len(la) == 1 and len(lb) == 1:
+        return [(la[0], lb[0])], [], []
+    cand = sorted(((abs(ts_ns(b) - ts_ns(a)), i, j) for i, a in enumerate(la) for j, b in enumerate(lb)))
+    used_a, used_b, pairs = set(), set(), []
+    for _, i, j in cand:
+        if i not in used_a and j not in used_b:
+            used_a.add(i)
+            used_b.add(j)
+            pairs.append((la[i], lb[j]))
+    return (sorted(pairs, key=lambda p: ts_ns(p[0])), [a for i, a in enumerate(la) if i not in used_a],
+            [b for j, b in enumerate(lb) if j not in used_b])
+
+
 def match_height(height: int, a: list[dict], b: list[dict]) -> HeightMatch:
-    """Pair A's and B's templates at one height by job key (one to one, in receive order per key)."""
+    """Pair A's and B's templates at one height by job key (one to one, closest in time first per key)."""
     groups: dict[tuple, dict[str, list]] = defaultdict(lambda: {"a": [], "b": []})
     for side, ts in (("a", a), ("b", b)):
         for t in ts:
@@ -93,28 +130,36 @@ def match_height(height: int, a: list[dict], b: list[dict]) -> HeightMatch:
     for key in sorted(groups, key=lambda k: (k[0], min(ts_ns(t) for s in SIDES for t in groups[k][s]))):
         g = groups[key]
         la, lb = sorted(g["a"], key=ts_ns), sorted(g["b"], key=ts_ns)
-        for ta, tb in zip(la, lb):
-            hm.pairs.setdefault(key[0], []).append((ta, tb))
+        pairs, rest_a, rest_b = pair_closest(la, lb) if la and lb else ([], la, lb)
+        hm.pairs.setdefault(key[0], []).extend(pairs)
         both = bool(la) and bool(lb)
-        for side, rest in (("a", la[len(lb):]), ("b", lb[len(la):])):
+        for side, rest in (("a", rest_a), ("b", rest_b)):
             for t in rest:
                 hm.unmatched.append(Unmatched(side, t, "extra_copy" if both else ""))
     return hm
 
 
-def classify(hm: HeightMatch, by_side_pool: dict, pools_anywhere: dict, gap_s: float) -> None:
+def classify(hm: HeightMatch, by_side_pool: dict, pools_anywhere: dict, gap_s: float,
+             main_source: dict | None = None, first_ns: dict | None = None) -> None:
     """Fill in the class of every unmatched template of a height (see the module docstring).
     by_side_pool[side][pool] = that side's templates of the pool at this height; pools_anywhere[side] = pools seen
-    on that side anywhere in the range."""
+    on that side anywhere in the range; main_source[side][pool] = that side's source (source_of) whose templates
+    matched the other side most often in the range (absent when the side's ids don't name sources);
+    first_ns[side][pool] = that side's earliest template of the pool in the range."""
     gap_ns = gap_s * 1e9
+    main_source = main_source or {"a": {}, "b": {}}
     for u in hm.unmatched:
         if u.cls:
             continue
-        t, other = u.template, OTHER[u.side]
+        t, side, other = u.template, u.side, OTHER[u.side]
         pool = t["pool_name"]
         theirs = by_side_pool[other].get(pool, [])
+        mine = by_side_pool[side].get(pool, [])
         tns = ts_ns(t)
         same_job = [o for o in theirs if job(o) == job(t)]
+        their_main = main_source[other].get(pool)
+        their_sources_here = {source_of(o) for o in theirs} - {None}
+        my_sources_here = {source_of(o) for o in mine} - {None}
         if same_job:
             closest = min(same_job, key=lambda o: abs(ts_ns(o) - tns))
             fields = [f for f in ("version", "nbits", "ntime") if _h(closest[f]) != _h(t[f])]
@@ -124,24 +169,37 @@ def classify(hm: HeightMatch, by_side_pool: dict, pools_anywhere: dict, gap_s: f
                     u.detail = f"ntime {int(t['ntime'], 16) - int(closest['ntime'], 16):+d} s"
                 except ValueError:
                     pass
-        elif pool not in pools_anywhere[other]:
+            continue
+        if pool not in pools_anywhere[other]:
             u.cls = "pool_one_side_only"
-        elif not theirs:
+            continue
+        if not theirs:
             u.cls = "pool_missing_at_height"
-        elif all(_h(o["prev_hash"]) != _h(t["prev_hash"]) for o in theirs):
+            continue
+        if first_ns and tns < first_ns[other].get(pool, -1):
+            u.cls = "before_other_started"
+            continue
+        if all(_h(o["prev_hash"]) != _h(t["prev_hash"]) for o in theirs):
             u.cls = "other_prev_hash"
+            continue
+        if their_main is not None and their_sources_here and their_main not in their_sources_here:
+            u.cls = "other_source_missing"
+            u.detail = f"{other}'s source {their_main} shows nothing here; it shows {sorted(their_sources_here)}"
+            continue
+        times = sorted(ts_ns(o) for o in theirs)
+        nearest = min(abs(x - tns) for x in times)
+        u.detail = f"nearest on {other}: {nearest / 1e9:.1f} s"
+        if tns < times[0] - gap_ns:
+            u.cls = "before_other_first"
+        elif tns > times[-1] + gap_ns:
+            u.cls = "after_other_last"
+        elif nearest > gap_ns:
+            u.cls = "other_side_gap"
+        elif len(my_sources_here) > 1:
+            u.cls = "multi_source"
+            u.detail += f"; {side} shows {len(my_sources_here)} sources here"
         else:
-            times = sorted(ts_ns(o) for o in theirs)
-            nearest = min(abs(x - tns) for x in times)
-            if tns < times[0] - gap_ns:
-                u.cls = "before_other_first"
-            elif tns > times[-1] + gap_ns:
-                u.cls = "after_other_last"
-            elif nearest > gap_ns:
-                u.cls = "other_side_gap"
-            else:
-                u.cls = "unexplained"
-            u.detail = f"nearest on {other}: {nearest / 1e9:.1f} s"
+            u.cls = "unexplained"
 
 
 def class_family(cls: str) -> str:
@@ -178,6 +236,7 @@ class PoolTotals:
     en1_len_differ: int = 0
     coinbase_identical: int = 0
     first_seen_deltas_ms: list = field(default_factory=list)
+    sources: dict = field(default_factory=lambda: {"a": 0, "b": 0})   # 0: the side's ids don't name sources
 
 
 def _coinbase(t: dict) -> tuple:
@@ -187,21 +246,39 @@ def _coinbase(t: dict) -> tuple:
 def compare_templates(per_height: dict[int, tuple[list, list]], gap_s: float = 60.0) -> dict:
     """per_height: {height: (A's templates, B's templates)}. Returns per-pool totals, per-height rows and examples."""
     pools_anywhere = {s: set() for s in SIDES}
+    sources_anywhere = {s: defaultdict(set) for s in SIDES}
+    first_ns: dict = {s: {} for s in SIDES}
     for a, b in per_height.values():
-        pools_anywhere["a"].update(t["pool_name"] for t in a)
-        pools_anywhere["b"].update(t["pool_name"] for t in b)
+        for side, ts in (("a", a), ("b", b)):
+            for t in ts:
+                pools_anywhere[side].add(t["pool_name"])
+                p, n = t["pool_name"], ts_ns(t)
+                if n < first_ns[side].get(p, n + 1):
+                    first_ns[side][p] = n
+                src = source_of(t)
+                if src is not None:
+                    sources_anywhere[side][t["pool_name"]].add(src)
     totals: dict[str, PoolTotals] = defaultdict(PoolTotals)
     rows, examples = [], []
+    matches = {h: match_height(h, *per_height[h]) for h in sorted(per_height)}
+    pair_sources = {s: defaultdict(Counter) for s in SIDES}
+    for hm in matches.values():
+        for pool, pairs in hm.pairs.items():
+            for ta, tb in pairs:
+                for side, t in (("a", ta), ("b", tb)):
+                    if (src := source_of(t)) is not None:
+                        pair_sources[side][pool][src] += 1
+    main_source = {s: {pool: c.most_common(1)[0][0] for pool, c in pair_sources[s].items()} for s in SIDES}
     for h in sorted(per_height):
         a, b = per_height[h]
-        hm = match_height(h, a, b)
+        hm = matches[h]
         by_side_pool = {s: defaultdict(list) for s in SIDES}
         for side, ts in (("a", a), ("b", b)):
             for t in ts:
                 by_side_pool[side][t["pool_name"]].append(t)
                 totals[t["pool_name"]].templates[side] += 1
                 totals[t["pool_name"]].heights[side].add(h)
-        classify(hm, by_side_pool, pools_anywhere, gap_s)
+        classify(hm, by_side_pool, pools_anywhere, gap_s, main_source, first_ns)
         matched = 0
         for pool, pairs in hm.pairs.items():
             pt = totals[pool]
@@ -224,6 +301,9 @@ def compare_templates(per_height: dict[int, tuple[list, list]], gap_s: float = 6
                      "only_a": sum(only["a"].values()), "only_b": sum(only["b"].values()),
                      "only_a_classes": dict(only["a"]), "only_b_classes": dict(only["b"]),
                      "pools_a": len(hm.counts["a"]), "pools_b": len(hm.counts["b"])})
+    for side in SIDES:
+        for pool, srcs in sources_anywhere[side].items():
+            totals[pool].sources[side] = len(srcs)
     return {"pools": totals, "heights": rows, "unexplained_examples": examples, "pools_anywhere": pools_anywhere}
 
 

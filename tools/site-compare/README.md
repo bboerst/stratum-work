@@ -22,12 +22,19 @@ one side only" (in the templates, R4 and the pools list) if the configuration di
 ### Template matching
 The two sites' collectors are different processes at different locations, so template ids and receive times differ
 by design. A template is identified by its **job key**: `(pool, height, prev_hash, merkle_branches, version, nbits,
-ntime)`. Per key, each side's templates are taken in receive order and paired one to one. Nothing is matched by time
+ntime)`. Per key, each side's templates are paired one to one, closest in time first (a pool may send one key several
+times). Nothing is matched by time
 or with tolerances. For matched templates the tool reports the **first-seen difference, B minus A** (p50 / p95 / min
 / max per pool, and how often B saw it first): the network-location difference between the two collectors. Matched
 templates are also checked for `clean_jobs`, `extranonce2_length` and the extranonce1 length (its value is masked per
 site, so it isn't compared), and the share with an identical coinbase is shown (per-connection coinbase bytes make
-that < 100 % for some pools).
+that < 100 % for some pools). The per-pool table also counts each side's **sources**: the collector connections
+named by the template ids, when a site's ids name them (`?` otherwise). Only sources with shown rows count: the read
+path hides a second collector's exact copies.
+
+Two first-seen measures are reported, and they mean different things: **R4 Δ** (each pool's first template per
+height, usually the `clean_jobs` broadcast after a block) is the network-location difference; the **matched
+template Δ** also includes how a pool schedules job updates per connection, which can be seconds apart.
 
 Templates left over are classified, first rule that applies:
 
@@ -37,10 +44,13 @@ Templates left over are classified, first rule that applies:
 | `near_miss:<fields>` | the other side has the same job (pool, height, `prev_hash`, `merkle_branches`) with another `ntime` / `version` / `nbits` only (e.g. a re-send seen with a different `ntime`) |
 | `pool_one_side_only` | the other side has no template from this pool anywhere in the range (hidden, or not collected) |
 | `pool_missing_at_height` | the other side has the pool elsewhere, but nothing at this height (collector down) |
+| `before_other_started` | received before the other side's first template of the pool in the range (its collection started later, e.g. during the first height) |
 | `other_prev_hash` | the other side has the pool at this height, never with this `prev_hash` |
+| `other_source_missing` | the other side's ids name its sources (collector connections; Postgres ids are `<source_id>-<µs>-<job_id>`), and the source whose templates usually match this side shows nothing at this height (that collector was down or on another job stream) |
 | `before_other_first` | more than `--gap-s` before the other side's first template of the pool at this height (connected late) |
 | `after_other_last` | more than `--gap-s` after the other side's last one (disconnected, or a response cached before the height was complete) |
 | `other_side_gap` | inside the other side's span, but nothing from the pool within `--gap-s` |
+| `multi_source` | this side shows rows from several sources of the pool at this height: a second connection's own job stream (some pools give each connection different jobs), shown by the read path because it isn't a copy |
 | `unexplained` | none of the above (examples are listed) |
 
 ## Run it

@@ -32,7 +32,7 @@ def test_end_to_end_finds_what_was_planted(sites, tmp_path):
     assert main(args(a, b, tmp_path)) == 0
     assert fakesite.check(str(tmp_path / "r.json")) == 0
     md = (tmp_path / "r.md").read_text()
-    assert "| pool-two | 5/4 | 30/21 | 21 |" in md
+    assert "| pool-two | ?/1 | 5/4 | 30/21 | 21 |" in md
     assert "**1002** fields differ (pool_identification)" in md
 
 

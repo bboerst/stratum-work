@@ -216,7 +216,7 @@ psql postgres://web:web@localhost:5432/stratum                           # from 
 
 **Migrations:** `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then fill `-- migrate:up` and a working `-- migrate:down`. TimescaleDB procedures such as `add_columnstore_policy` need `-- migrate:up transaction:false`. `db/test-migrations.sh` runs them up/down/up and checks the role privileges.
 
-**Not in compose:** collector-go and the mempool recorder. Run them from their directories (`go run . -h` lists flags and env fallbacks) against the profile's Postgres; the recorder needs a login granted `stratum_mempool` (not created by `dev-users.sql`) and a node with `-zmqpubsequence` / `-zmqpubrawtx` ([README](mempool-recorder/README.md)).
+**Not in compose:** collector-go and the mempool recorder. Run them from their directories (`go run . -h` lists flags and env fallbacks) against the profile's Postgres; the recorder logs in as the local user `mempool` / `mempool` (`db/dev-users.sql`, role `stratum_mempool`) and needs a node with `-zmqpubsequence` / `-zmqpubrawtx` ([README](mempool-recorder/README.md)).
 
 ## Running it for data analysis
 

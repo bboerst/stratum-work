@@ -117,6 +117,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BACKEND_DB_BACKEND` / `WEB_DB_BACKEND` | `mongodb` | `postgres` switches the backend / web to Postgres |
 | `STREAM_POOL_RATE` / `STREAM_POOL_BURST` | `5` / `20` | Per-pool live display limit (every template is still stored) |
 | `EXTRANONCE1_MASK_KEY` | *(random per start)* | Key for masking extranonce1 in everything the web serves |
+| `TX_API_SOURCE` / `TX_API_MEMPOOL_SPACE_FALLBACK` | `auto` / `false` | Where the table's first-transaction fee rates come from: `auto` = this deployment's `/api/tx` in Postgres mode, mempool.space otherwise; `local` / `mempool.space` force one. The fallback asks mempool.space when `/api/tx` fails |
 
 ### Connecting a Bitcoin node
 The backend and the collectors share the node settings. The node needs:
@@ -305,6 +306,7 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them (Postgres deployments) |
+| `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md); Postgres deployments) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 
 ## Testing and CI

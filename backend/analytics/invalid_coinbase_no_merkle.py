@@ -38,9 +38,21 @@ def get_block_subsidy_sats(height: int) -> int:
     return base >> halvings
 
 
+def _template_key(t: Dict[str, Any]):
+    """The exact-template key of the history views (templates_copies): same pool, prev_hash, merkle_branches, version,
+    nbits and ntime. Per-connection fields (job_id, extranonce1, coinbase) may differ between collectors."""
+    return (t.get("pool_name"), str(t.get("prev_hash", "")).lower(), tuple(t.get("merkle_branches") or []),
+            t.get("version"), t.get("nbits"), t.get("ntime"))
+
+
 def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], height: int, logger) -> Optional[Dict[str, Any]]:
+    """One offender per offending template the pool sent. The input has every collector's rows (several collectors
+    per pool see the same template), so exact copies are paired one-to-one per collector (site, replica) like the
+    history views: a key counts as many times as the collector that saw it most often, so a pool's own identical
+    re-sends still count, a copy from another collector doesn't, and a template only one collector got is kept."""
     subsidy = get_block_subsidy_sats(height)
-    offenders: List[Dict[str, Any]] = []
+    # key -> {collector: [offender, ...]} in input order
+    by_key: Dict[Any, Dict[Any, List[Dict[str, Any]]]] = {}
     for t in templates:
         merkle_branches = t.get("merkle_branches") or []
         if isinstance(merkle_branches, list) and len(merkle_branches) == 0:
@@ -51,13 +63,17 @@ def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], hei
             raw = reconstruct_coinbase_raw(coinbase1, extranonce1, extranonce2_length, coinbase2)
             total = parse_tx_total_output_value_sats(raw)
             if total > subsidy:
-                offenders.append(
+                collector = (t.get("site"), t.get("replica"))
+                by_key.setdefault(_template_key(t), {}).setdefault(collector, []).append(
                     {
                         "pool_name": t.get("pool_name", "unknown"),
                         "total_sats": total,
                         "subsidy_sats": subsidy,
                     }
                 )
+    offenders: List[Dict[str, Any]] = []
+    for per_collector in by_key.values():
+        offenders.extend(max(per_collector.values(), key=len))
     if not offenders:
         return None
     logger.warning(
@@ -67,5 +83,3 @@ def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], hei
         subsidy,
     )
     return {"key": "invalid_coinbase_no_merkle", "icon": "error", "details": {"offenders": offenders}}
-
-

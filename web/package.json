@@ -62,6 +62,8 @@
     "vitest": "^5.0.5"
   },
   "overrides": {
-    "deepmerge-ts": "8.0.2"
+    "deepmerge-ts": "8.0.2",
+    "minimatch@>=7.0.0 <11.0.1": "11.0.1",
+    "@isaacs/nonrecursive-glob-match": "1.0.3"
   }
 }

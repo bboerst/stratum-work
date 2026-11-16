@@ -96,10 +96,9 @@ envValueFrom:
 The chart fails if a key exists in both maps. There is no default database
 credential; releases must supply an explicit value or Secret reference.
 
-The infrastructure repository's `scripts/validate-cluster-stability.py` renders
-public/dev/hidden releases, compares existing routing behavior and checks these
-settings against the actual manifests. Public uses Flux Revision reconciliation
-so these changes do not require a chart version bump affecting other releases.
+The deployment repository renders each release with its own values and checks
+these settings against its manifests. Releases built from a Git source with Flux
+Revision reconciliation pick up chart changes without a chart version bump.
 
 ## Autoscaling
 

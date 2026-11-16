@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBlockByHeight, getHighestBlock, getInterestingBlocks } from "@/lib/db/blocks";
+import { getBlockByHeight, getHighestBlock, getInterestingBlocks, knownBlockHashes } from "@/lib/db/blocks";
+import { classifyPrevHashes } from "@/lib/forkStatus";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
 import { maskTemplates } from "@/lib/connectionMask";
 import { filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
@@ -139,10 +140,18 @@ export async function GET(request: NextRequest) {
         };
       });
       
+      // Fork visual (#212): what each prev hash is relative to the best chain as stored now. Only when the
+      // templates disagree on the parent, so the usual single-parent height costs no extra query.
+      const prevHashes = [...new Set(processedData.map(n => n.prev_hash).filter(Boolean))];
+      const prevHashStatus = prevHashes.length > 1
+        ? classifyPrevHashes(prevHashes, previousBlock?.block_hash, await knownBlockHashes(prevHashes))
+        : null;
+
       // Return the result for this height
       return {
         height,
         mining_notifications: processedData,
+        prev_hash_status: prevHashStatus,
         block_details: currentBlock ? {
           height: currentBlock.height,
           hash: currentBlock.block_hash,

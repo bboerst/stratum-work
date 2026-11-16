@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { formatPrevBlockHash, reverseHex } from "@/utils/formatters";
+import type { PrevHashStatus } from "@/lib/forkStatus";
 
 interface MiningNotification {
   pool_name?: string | null;
@@ -12,6 +13,8 @@ interface MiningNotification {
 interface ForkTimelineProps {
   notifications: MiningNotification[];
   canonicalBlockHash?: string;
+  /** Per prev hash (block hash, display order), from /api/analysis-data's prev_hash_status (#212). */
+  prevHashStatus?: Record<string, PrevHashStatus> | null;
 }
 
 const PREV_HASH_COLORS = [
@@ -24,6 +27,30 @@ const PREV_HASH_COLORS = [
 ];
 const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
 const STALE_HASH_COLOR = "#1550a4"; // slate-500 (muted/disabled look)
+const UNKNOWN_HASH_COLOR = "#6b7280"; // gray-500: a parent we have no block for
+
+/**
+ * Status of each prev hash for the legend, colors and tooltips. `hash` and `canonicalRaw` are in the timeline's
+ * internal (template) order; the server's statuses are keyed by block hash (display order), hence reverseHex.
+ * With server statuses, "stale" means a block we know that isn't the best parent, and anything else that isn't
+ * canonical is "unknown". Without them (older API), a non-canonical parent is "unknown": we can't tell it's a block.
+ */
+export function prevHashStatusOf(
+  hash: string,
+  canonicalRaw: string | null,
+  serverStatus?: Record<string, PrevHashStatus> | null,
+): PrevHashStatus | null {
+  if (canonicalRaw === null) return null;
+  if (hash === canonicalRaw) return "canonical";
+  const s = serverStatus?.[reverseHex(hash).toLowerCase()];
+  return s === "stale" ? "stale" : "unknown";
+}
+
+const STATUS_LABEL: Record<PrevHashStatus, string> = {
+  canonical: "canonical",
+  stale: "stale",
+  unknown: "unknown tip",
+};
 
 function parseTimestampToNs(ts: string): number {
   if (!ts) return 0;
@@ -200,7 +227,7 @@ function splitSegmentAtGaps(
   return result;
 }
 
-export default function ForkTimeline({ notifications, canonicalBlockHash }: ForkTimelineProps) {
+export default function ForkTimeline({ notifications, canonicalBlockHash, prevHashStatus }: ForkTimelineProps) {
   const computed = useMemo(() => {
     // Convert big-endian block_hash to raw stratum format for comparison
     const canonicalRaw = canonicalBlockHash
@@ -315,8 +342,9 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
           const widthPct = Math.max(rightPct - leftPct, 0.3);
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
-          const isStale = canonicalRaw !== null && seg.prevHash !== canonicalRaw;
-          const staleLabel = canonicalRaw !== null ? (isStale ? " (stale)" : " (canonical)") : "";
+          const status = prevHashStatusOf(seg.prevHash, canonicalRaw, prevHashStatus);
+          const isStale = status !== null && status !== "canonical"; // hatched: not the best parent
+          const staleLabel = status !== null ? ` (${STATUS_LABEL[status]})` : "";
           visualSegments.push({
             leftPct,
             widthPct,
@@ -419,14 +447,8 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
     }
 
     // Build a map of hash → canonical/stale status
-    const hashStatus = new Map<string, "canonical" | "stale" | null>();
-    sortedHashes.forEach((h) => {
-      if (canonicalRaw === null) {
-        hashStatus.set(h, null);
-      } else {
-        hashStatus.set(h, h === canonicalRaw ? "canonical" : "stale");
-      }
-    });
+    const hashStatus = new Map<string, PrevHashStatus | null>();
+    sortedHashes.forEach((h) => hashStatus.set(h, prevHashStatusOf(h, canonicalRaw, prevHashStatus)));
 
     // Force semantic colors when canonical side is known.
     if (canonicalRaw !== null) {
@@ -434,6 +456,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
         const status = hashStatus.get(h);
         if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
         else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
+        else if (status === "unknown") colorMap.set(h, UNKNOWN_HASH_COLOR);
       });
     }
 
@@ -448,7 +471,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
       duration,
       compressed,
     };
-  }, [notifications, canonicalBlockHash]);
+  }, [notifications, canonicalBlockHash, prevHashStatus]);
 
   const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
 
@@ -516,7 +539,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
                 className="w-3 h-3 rounded-xs shrink-0 relative"
                 style={{ backgroundColor: colorMap.get(hash) }}
               >
-                {status === "stale" && (
+                {(status === "stale" || status === "unknown") && (
                   <div
                     className="absolute inset-0 rounded-xs"
                     style={{
@@ -534,6 +557,14 @@ export default function ForkTimeline({ notifications, canonicalBlockHash }: Fork
               {status === "stale" && (
                 <span className="text-[9px] font-semibold text-red-400 shrink-0">
                   Stale
+                </span>
+              )}
+              {status === "unknown" && (
+                <span
+                  className="text-[9px] font-semibold text-muted-foreground shrink-0"
+                  title="Not a block we have: a competing tip our node never received, or not a block at all"
+                >
+                  Unknown tip
                 </span>
               )}
               <span className="text-[10px] opacity-75 font-mono break-all">

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  TemplateBuffer, chartWindow, latestPerPool, liveSinceMs, templateKey, timestampMicros, withOrigin,
+  TemplateBuffer, cachedWithOrigin, chartWindow, latestPerPool, liveSinceMs, templateKey, timestampMicros, withOrigin,
 } from '../templateBuffer';
 import type { StratumV1Data } from '../types';
 
@@ -225,5 +225,37 @@ describe('per-visual selectors', () => {
   it('withOrigin carries the origin onto the template', () => {
     expect(withOrigin(entries[0]).origin).toBe('prefill');
     expect(withOrigin(entries[entries.length - 1]).origin).toBe('live');
+  });
+});
+
+describe('cachedWithOrigin', () => {
+  it('returns the same object per entry across snapshots, equal to withOrigin', () => {
+    const buffer = new TemplateBuffer();
+    buffer.setTip(99);
+    buffer.add([tpl('A', 100, 1), tpl('B', 100, 2)], 'live');
+    const toTemplate = cachedWithOrigin();
+    const first = buffer.entries().map(toTemplate);
+    expect(first).toEqual(buffer.entries().map(withOrigin));
+
+    buffer.add([tpl('C', 100, 3)], 'live');
+    const second = buffer.entries().map(toTemplate);
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+    expect(second[2]).toEqual(withOrigin(buffer.entries()[2]));
+  });
+
+  it('gives a new object when a pre-filled template is seen live', () => {
+    const buffer = new TemplateBuffer();
+    buffer.setTip(99);
+    const t = tpl('A', 100, 1);
+    buffer.add([t], 'prefill');
+    const toTemplate = cachedWithOrigin();
+    const before = toTemplate(buffer.entries()[0]);
+    expect(before.origin).toBe('prefill');
+    buffer.add([t], 'live');
+    const after = toTemplate(buffer.entries()[0]);
+    expect(after).not.toBe(before);
+    expect(after.origin).toBe('live');
+    expect(toTemplate(buffer.entries()[0])).toBe(after);
   });
 });

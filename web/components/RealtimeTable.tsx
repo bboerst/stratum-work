@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useCallback } from "react";
+import React, { useEffect, useMemo, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Table, TableBody } from "@/components/ui/table";
-import { StratumV1Data, StreamDataType } from "@/lib/types";
-import { useGlobalDataStream, useTemplateBuffer } from "@/lib/DataStreamContext";
-import { latestPerPool, withOrigin } from "@/lib/templateBuffer";
+import { StratumV1Data } from "@/lib/types";
+import { useStreamStatus, useTemplateBuffer } from "@/lib/DataStreamContext";
+import { latestPerPool, cachedWithOrigin } from "@/lib/templateBuffer";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
@@ -27,9 +27,9 @@ export default function RealtimeTable({
   const router = useRouter();
   const effectiveLatencySettingKey = latencySettingKey ?? tableLatencySettingKey(filterBlockHeight);
   
-  // Get data from the global data stream
   // Pools that recently sent templates faster than the live display shows them (#105); expired by the stream hook.
-  const { filterByType, burstsByPool } = useGlobalDataStream();
+  // Read from the status context, which doesn't change on every stream flush.
+  const { burstsByPool } = useStreamStatus();
 
   // Shared template buffer: pre-filled from history, then fed by the stream; survives switching views (#130)
   const { entries: bufferedTemplates } = useTemplateBuffer();
@@ -50,9 +50,11 @@ export default function RealtimeTable({
   const { isPoolVisible, allPools, hiddenPools } = usePoolFilter();
   
   // The latest template per pool, respecting pool visibility. useTableData keeps the rows at the current height.
+  // The same object per template across buffer updates, so only pools with a new template get a new row.
+  const [toTemplate] = useState(cachedWithOrigin);
   const stratumV1Data = useMemo(
-    () => latestPerPool(bufferedTemplates, { isPoolVisible }).map(withOrigin),
-    [bufferedTemplates, isPoolVisible]
+    () => latestPerPool(bufferedTemplates, { isPoolVisible }).map((entry) => toTemplate(entry)),
+    [bufferedTemplates, isPoolVisible, toTemplate]
   );
   
   // Use hooks for table state management
@@ -180,16 +182,18 @@ export default function RealtimeTable({
       : sortData(rows);
     return base.filter(row => isPoolVisible(row.pool_name));
   }, [isFiltering, visibleRows, rows, sortData, isPoolVisible]);
-  // Stable keys by template (a duplicate gets a suffix), so a re-sort moves rows instead of re-rendering them all.
+  // Stable keys (a duplicate gets a suffix), so a re-sort moves rows instead of re-rendering them all. Realtime shows
+  // one row per pool, keyed by pool: a pool's new template updates its row in place instead of unmounting it and
+  // mounting a new one. A historical block lists many templates per pool, keyed by template.
   const rowKeys = useMemo(() => {
     const seen = new Map<string, number>();
     return displayedRows.map((r) => {
-      const k = `${r.pool_name}|${r.height}|${r.job_id}|${r.raw_timestamp ?? r.timestamp}`;
+      const k = isFiltering ? `${r.pool_name}|${r.height}|${r.job_id}|${r.raw_timestamp ?? r.timestamp}` : r.pool_name;
       const n = seen.get(k) ?? 0;
       seen.set(k, n + 1);
       return n ? `${k}#${n}` : k;
     });
-  }, [displayedRows]);
+  }, [displayedRows, isFiltering]);
   
 
   // Handle template selection for BlockTemplateCard
@@ -232,18 +236,6 @@ export default function RealtimeTable({
     
     setSelectedTemplate(stratumData);
   }, [setSelectedTemplate, isFiltering, router]);
-
-  // Add an effect to handle block changes
-  useEffect(() => {
-    // This effect detects when a new block is found
-    // Listen for block data in the stream
-    const blockData = filterByType(StreamDataType.BLOCK);
-    
-    if (blockData.length > 0 && !paused) {
-      // We intentionally don't do anything special here
-      // The useTableData hook handles updating the current height
-    }
-  }, [filterByType, paused]);
 
   // Set up the intersection observer for infinite scrolling
   useEffect(() => {
@@ -306,7 +298,7 @@ export default function RealtimeTable({
         <TableBody>
           {displayedRows.map((row, idx) => (
             <RealtimeTableRowComponent
-              // Keyed by template, not position, so a re-sort moves rows instead of re-rendering them all.
+              // Keyed by pool (realtime) or template (historical), not position: see rowKeys.
               key={rowKeys[idx]}
               row={row}
               burst={burstsByPool?.[row.pool_name]}

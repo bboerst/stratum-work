@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useCallback, useState } from "react";
+import React, { useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Table, TableBody } from "@/components/ui/table";
 import { StratumV1Data } from "@/lib/types";
 import { useStreamStatus, useTemplateBuffer } from "@/lib/DataStreamContext";
-import { latestPerPool, cachedWithOrigin } from "@/lib/templateBuffer";
+import { latestPerPool } from "@/lib/templateBuffer";
 import { useHistoricalData } from "@/lib/HistoricalDataContext";
 import { useSelectedTemplate } from "@/lib/SelectedTemplateContext";
 import { usePoolFilter } from "@/components/PoolFilterContext";
@@ -50,11 +50,11 @@ export default function RealtimeTable({
   const { isPoolVisible, allPools, hiddenPools } = usePoolFilter();
   
   // The latest template per pool, respecting pool visibility. useTableData keeps the rows at the current height.
-  // The same object per template across buffer updates, so only pools with a new template get a new row.
-  const [toTemplate] = useState(cachedWithOrigin);
+  // The buffered template objects themselves (the same object per template across buffer updates), so only pools
+  // with a new template get a new row.
   const stratumV1Data = useMemo(
-    () => latestPerPool(bufferedTemplates, { isPoolVisible }).map((entry) => toTemplate(entry)),
-    [bufferedTemplates, isPoolVisible, toTemplate]
+    () => latestPerPool(bufferedTemplates, { isPoolVisible }).map((entry) => entry.data),
+    [bufferedTemplates, isPoolVisible]
   );
   
   // Use hooks for table state management

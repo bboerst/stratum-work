@@ -107,7 +107,7 @@ export default defineVisual({
 import { ${camel}Rows } from "../selectors";
 import type { BufferedTemplate } from "@/lib/templateBuffer";
 
-const t = (pool: string, i: number) => ({ key: \`\${pool}-\${i}\`, seq: i, origin: "live", timeMs: i, data: { pool_name: pool } }) as unknown as BufferedTemplate;
+const t = (pool: string, i: number) => ({ key: \`\${pool}-\${i}\`, seq: i, timeMs: i, data: { pool_name: pool } }) as unknown as BufferedTemplate;
 
 describe("${id}", () => {
   it("counts templates per pool", () => {

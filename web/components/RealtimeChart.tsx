@@ -284,8 +284,6 @@ function RealtimeChartBase({
   const {
     entries: bufferedTemplates,
     epoch: bufferEpoch,
-    liveSinceMs,
-    prefill,
   } = useTemplateBuffer();
   
   // Get historical data from context
@@ -1530,17 +1528,6 @@ function RealtimeChartBase({
     });
   }, [bufferedTemplates, bufferEpoch, paused, isHistoricalBlock, processData, timeWindow, localTimeWindow]);
 
-  // History/live boundary: where on the time axis the stream took over from the pre-fill (#130).
-  const liveBoundary = useMemo(() => {
-    if (isHistoricalBlock || prefill.status !== 'loaded' || prefill.count === 0) return null;
-    const [start, end] = timeDomain;
-    if (end <= start || dimensions.width === 0) return null;
-    const availableWidth = dimensions.width - chartMargin.left - chartMargin.right;
-    if (liveSinceMs === null) return { allHistory: true as const, left: chartMargin.left };
-    if (liveSinceMs <= start || liveSinceMs > end) return null;
-    const left = chartMargin.left + ((liveSinceMs - start) / (end - start)) * availableWidth;
-    return { allHistory: false as const, left };
-  }, [isHistoricalBlock, prefill, timeDomain, dimensions.width, chartMargin, liveSinceMs]);
   
   return (
     <div 
@@ -1636,29 +1623,6 @@ function RealtimeChartBase({
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         />
-        {liveBoundary && (
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 text-muted-foreground"
-            style={{ left: `${liveBoundary.left}px`, fontSize: `${Math.max(7, Math.round(9 * uiFontScale))}px` }}
-            data-live-boundary
-          >
-            {liveBoundary.allHistory ? (
-              <span className="absolute top-0 left-1 whitespace-nowrap opacity-70" title="Loaded from history when the page opened; live messages will follow">
-                history
-              </span>
-            ) : (
-              <>
-                <div className="absolute top-0 bottom-0 border-l border-dashed border-current opacity-40" />
-                <span className="absolute top-0 right-1 whitespace-nowrap opacity-70" title="Left of this line: loaded from history when the page opened">
-                  history
-                </span>
-                <span className="absolute top-0 left-1 whitespace-nowrap opacity-70" title="Right of this line: received live">
-                  live
-                </span>
-              </>
-            )}
-          </div>
-        )}
       </div>
       
       {/* Fixed tooltip at the bottom of the chart */}

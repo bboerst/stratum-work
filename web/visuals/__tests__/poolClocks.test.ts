@@ -19,7 +19,7 @@ function template(pool: string, ntime: number, receivedMs: number, poolTime?: nu
     coinbase1, coinbase2, extranonce1: en1, extranonce2_length: 8, clean_jobs: false, first_transaction: "",
     fee_rate: "", merkle_branches: [], ntime: ntime.toString(16),
   } as StratumV1Data;
-  return { key: `${pool}-${receivedMs}`, seq: receivedMs, origin: "live", timeMs: receivedMs, data };
+  return { key: `${pool}-${receivedMs}`, seq: receivedMs, timeMs: receivedMs, data };
 }
 
 const T = 1_789_000_000;

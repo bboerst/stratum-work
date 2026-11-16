@@ -5,7 +5,7 @@ import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
 import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
-import { History, Zap } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import type { PoolBurst } from '@/lib/useDataStream';
 
 interface RealtimeTableRowProps {
@@ -47,16 +47,6 @@ function RealtimeTableRowComponent({
                 data-burst={burst.suppressed}
               >
                 <Zap className="h-3 w-3" aria-hidden="true" />
-              </span>
-            )}
-            {row.origin === 'prefill' && (
-              <span
-                className="ml-1 shrink-0 text-muted-foreground opacity-60"
-                title="Loaded from history when the page opened; replaced as live messages arrive"
-                aria-label="Loaded from history"
-                data-origin="prefill"
-              >
-                <History className="h-3 w-3" aria-hidden="true" />
               </span>
             )}
           </div>

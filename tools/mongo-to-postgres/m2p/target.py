@@ -11,11 +11,13 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
 import psycopg
 
+from .cuts import Cuts
 from .shared import COLUMNS, store
 
 LOG = logging.getLogger("m2p.target")
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.duplicates (
     site text NOT NULL, day date NOT NULL, kept_id text NOT NULL, dropped_id text NOT NULL, identical boolean NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rejected_day ON {SCHEMA}.rejected (site, day);
+-- per-source cuts (--pool-until): name -> instant, or null for the whole day; sources not listed are cut at days.until.
+-- Added after the first release, hence ALTER (a bookkeeping schema from an earlier run gets it with '{{}}').
+ALTER TABLE {SCHEMA}.days ADD COLUMN IF NOT EXISTS pool_until jsonb NOT NULL DEFAULT '{{}}';
 """
 
 
@@ -122,9 +127,10 @@ class Target:
                     raise SystemExit(f"table {t} is missing: run the dbmate migrations (db/migrations) first")
 
     # ── progress ────────────────────────────────────────────────────────────────────────────────────────
-    def done_days(self) -> dict[date, Optional[datetime]]:
-        rows = self._meta.execute(f"SELECT day, until FROM {SCHEMA}.days WHERE site = %s", (self.site,)).fetchall()
-        return {d: u for d, u in rows}
+    def done_days(self) -> dict[date, Cuts]:
+        rows = self._meta.execute(f"SELECT day, until, pool_until FROM {SCHEMA}.days WHERE site = %s",
+                                  (self.site,)).fetchall()
+        return {d: Cuts.from_record(d, u, p) for d, u, p in rows}
 
     # ── sources ─────────────────────────────────────────────────────────────────────────────────────────
     def source_ids(self, names_first_seen: dict[str, datetime]) -> dict[str, int]:
@@ -140,13 +146,36 @@ class Target:
         return {n: self._source_ids[n] for n in names_first_seen}
 
     # ── one day ─────────────────────────────────────────────────────────────────────────────────────────
-    def write_day(self, d: date, until: Optional[datetime], btc_rows: list, other_rows: list, rejected: list,
-                  duplicates: list, findings: list, per_source: dict, summary: dict, started: float, redo: bool) -> float:
-        """Load one day and record it, atomically. Returns the day's total seconds (since `started`, monotonic)."""
+    def write_day(self, cuts: Cuts, mode: str, sources: frozenset, btc_rows: list, other_rows: list, rejected: list,
+                  duplicates: list, findings: list, per_source: dict, summary: dict, started: float,
+                  names: dict[int, str], check_rows: Optional[Counter] = None) -> tuple[float, str]:
+        """Load one day and record it, atomically. Returns (the day's total seconds since `started`, the mode used).
+
+        The rows (`btc_rows`, `other_rows`) and the bookkeeping are always those of the whole day, built from every
+        source's documents up to its cut, so the result never depends on how the day was split over runs.
+        mode "new": nothing of the day is loaded yet. "day": delete everything of the day, reload. "sources": delete
+        and reload only `sources`' rows; every other source's rows stay untouched, which is only right if the
+        rebuilt day gives exactly the rows they already have. `check_rows` (a Counter of row_key()s of the other
+        sources, from the rebuild) is compared with what Postgres holds; on any difference the day falls back to
+        "day" (logged and recorded in stats.redo)."""
+        d = cuts.day
         t_copy = time.monotonic()
         with self.conn.transaction(), self.conn.cursor() as cur:
-            if redo:
+            if mode == "sources":
+                stored = self._stored_row_keys(cur, d, sources)
+                if stored != (check_rows or Counter()):
+                    LOG.warning("%s: rows of sources other than %s would change (%d stored, %d rebuilt): reloading "
+                                "the whole day", d, sorted(sources), sum(stored.values()),
+                                sum((check_rows or Counter()).values()))
+                    mode = "day"
+            summary["redo"] = dict(mode=mode, sources=sorted(sources) if mode == "sources" else None)
+            if mode == "day":
                 self._delete_day(cur, d)
+            elif mode == "sources":
+                self._delete_day(cur, d, sources)
+                keep = {i for i, n in names.items() if n in sources}
+                btc_rows = [r for r in btc_rows if r[2] in keep]
+                other_rows = [r for r in other_rows if r[2] in keep]
             with cur.copy(f"COPY templates ({', '.join(TEMPLATE_COLS)}) FROM STDIN (FORMAT BINARY)") as cp:
                 cp.set_types(TEMPLATE_TYPES)
                 for r in btc_rows:
@@ -173,19 +202,33 @@ class Target:
                              s["duplicates"], s["rejected"]))
             summary["seconds_copy"] = round(time.monotonic() - t_copy, 3)
             seconds = time.monotonic() - started
-            cur.execute(f"""INSERT INTO {SCHEMA}.days (site, day, until, mongo_docs, templates, templates_other, duplicates,
-                                                       rejected, seconds, stats)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                        (self.site, d, until, summary["mongo_docs"], len(btc_rows), len(other_rows),
-                         summary["duplicates"], len(rejected), seconds, json.dumps(summary, default=str)))
-        return seconds
+            cur.execute(f"""INSERT INTO {SCHEMA}.days (site, day, until, pool_until, mongo_docs, templates, templates_other,
+                                                       duplicates, rejected, seconds, stats)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (self.site, d, cuts.default, json.dumps(cuts.pool_until_json()), summary["mongo_docs"],
+                         summary["templates"], summary["templates_other"], summary["duplicates"], len(rejected),
+                         seconds, json.dumps(summary, default=str)))
+        return seconds, mode
 
-    def _delete_day(self, cur, d: date) -> None:
-        """Remove everything a previous run loaded for day d (same site), inside the caller's transaction."""
-        p = dict(site=self.site, lo=d, hi=d)
+    def _stored_row_keys(self, cur, d: date, exclude: frozenset) -> Counter:
+        """row_key()s of the loaded rows of day d for every source of this site except `exclude`."""
+        p = dict(site=self.site, lo=d, hi=d, ex=sorted(exclude))
+        out = Counter()
+        for table, extra in (("templates", "NULL::text"), ("templates_other", "t.reason::text")):
+            cur.execute(f"""SELECT s.name, t.received_at, t.received_at_offset_s, t.job_id, t.height, {extra}
+                            FROM {table} t JOIN sources s ON s.id = t.source_id
+                            WHERE s.site = %(site)s AND s.name <> ALL(%(ex)s) AND {RAW_DAY_FILTER}""", p)
+            out.update((table,) + tuple(r) for r in cur.fetchall())
+        return out
+
+    def _delete_day(self, cur, d: date, sources: Optional[frozenset] = None) -> None:
+        """Remove what a previous run loaded for day d (same site), inside the caller's transaction: every source's
+        rows, or only `sources`' rows. The day's bookkeeping is always removed whole (the caller rewrites it)."""
+        p = dict(site=self.site, lo=d, hi=d, only=sorted(sources or ()))
+        only = "AND s.name = ANY(%(only)s)" if sources is not None else ""
         for table in ("templates", "templates_other"):
             cur.execute(f"""DELETE FROM {table} t USING sources s
-                            WHERE t.source_id = s.id AND s.site = %(site)s AND {RAW_DAY_FILTER}""", p)
+                            WHERE t.source_id = s.id AND s.site = %(site)s {only} AND {RAW_DAY_FILTER}""", p)
         for table in ("days", "day_sources", "tz_findings", "rejected", "duplicates"):
             cur.execute(f"DELETE FROM {SCHEMA}.{table} WHERE site = %s AND day = %s", (self.site, d))
 

@@ -19,6 +19,7 @@ import psycopg
 
 from .convert import FMT_HEX, FMT_ISO_NAIVE, Reject, epoch_us, parse_timestamp, utc_day
 from .shared import parse_bip34_height
+from .cuts import Cuts, source_name
 from .source import Source
 from .target import RAW_DAY_FILTER, SCHEMA
 
@@ -54,8 +55,8 @@ class Verifier:
         self.src, self.site, self.sample, self.seed = src, site, sample, seed
         self.known_gaps, self.max_listed = known_gaps, max_listed
         self.pg = psycopg.connect(**pg_kw, autocommit=True)
-        self.days = dict(self.pg.execute(f"SELECT day, until FROM {SCHEMA}.days WHERE site = %s ORDER BY day",
-                                         (site,)).fetchall())
+        self.days = {d: Cuts.from_record(d, u, p) for d, u, p in self.pg.execute(
+            f"SELECT day, until, pool_until FROM {SCHEMA}.days WHERE site = %s ORDER BY day", (site,)).fetchall()}
         self.checks: list[Check] = []
 
     def run(self, from_day: Optional[date] = None, to_day: Optional[date] = None) -> list[Check]:
@@ -81,7 +82,7 @@ class Verifier:
         rng = self.src.day_range()
         c.details["mongo_day_range"] = [str(rng[0] + timedelta(days=1)), str(rng[1] - timedelta(days=1))] if rng else None
         c.details["migrated_days"] = [str(days[0]), str(days[-1]), len(days)]
-        partial = {str(d): self.days[d].isoformat() for d in days if self.days[d] is not None}
+        partial = {str(d): self.days[d].describe() for d in days if self.days[d].describe()}
         if partial:
             c.details["partial_days_until"] = partial
         if rng:
@@ -96,10 +97,18 @@ class Verifier:
     def check_counts(self, days: list[date]) -> Check:
         c = Check("counts per (day, source): mongo = templates + templates_other + duplicates + rejected")
         mismatches, totals = [], Counter()
+        windows: dict = {}   # sources with their own cut (--pool-until): what was checked, per source
         for d in days:
-            until = self.days[d]
-            mongo = Counter(doc.get("pool_name") if isinstance(doc.get("pool_name"), str) else str(doc.get("pool_name") or "")
-                            for doc in self.src.iter_day(d, until, {"timestamp": 1, "pool_name": 1}))
+            cuts = self.days[d]
+            mongo, beyond = Counter(), Counter()
+            for doc in self.src.iter_day(d, None, {"timestamp": 1, "pool_name": 1}, cuts=cuts):
+                name = source_name(doc)
+                mongo[name] += 1
+                if name in cuts.per_source and cuts.default is not None:
+                    try:
+                        beyond[name] += parse_timestamp(doc.get("timestamp"))[0] >= cuts.default
+                    except Reject:
+                        pass
             pg = defaultdict(Counter)
             for table in ("templates", "templates_other"):
                 for name, n in self.pg.execute(
@@ -114,11 +123,26 @@ class Verifier:
                 t, o = pg[name]["templates"], pg[name]["templates_other"]
                 dups, rej = book.get(name, (0, 0))
                 totals.update(mongo=mongo[name], templates=t, templates_other=o, duplicates=dups, rejected=rej)
+                if name in cuts.per_source:
+                    u = cuts.per_source[name]
+                    w = windows.setdefault(name, dict(days=[], cut=[], counts=Counter()))
+                    w["days"].append(str(d))
+                    w["cut"].append(dict(day=str(d), default=None if cuts.default is None else cuts.default.isoformat(),
+                                         source=None if u is None else u.isoformat()))
+                    w["counts"].update(mongo=mongo[name], beyond_default_cut=beyond[name], templates=t,
+                                       templates_other=o, duplicates=dups, rejected=rej)
                 if mongo[name] != t + o + dups + rej:
                     mismatches.append(dict(day=str(d), source=name, mongo=mongo[name], templates=t,
                                            templates_other=o, duplicates=dups, rejected=rej))
         c.details["totals"] = dict(totals)
         c.details["days"] = len(days)
+        if windows:
+            # A source's window: its days with an own cut, the cut (None = whole day) against the day's default, and
+            # the counts checked up to it (beyond_default_cut: documents the default cut alone would have left out).
+            c.details["pool_windows"] = {n: dict(days=[w["days"][0], w["days"][-1], len(w["days"])], cuts=w["cut"],
+                                                 counts=dict(w["counts"]),
+                                                 ok=not any(m["source"] == n for m in mismatches))
+                                         for n, w in sorted(windows.items())}
         if mismatches:
             c.fail()
             c.details["mismatches"] = mismatches[: self.max_listed]
@@ -142,13 +166,13 @@ class Verifier:
         except Reject:
             return False
         d = utc_day(raw)
-        return d in days and (self.days[d] is None or raw < self.days[d])
+        return d in days and self.days[d].admits(source_name(doc), raw)
 
     def _sample_docs(self, days: list[date]) -> list[dict]:
         dayset, coll = set(days), self.src.db.mining_notify
         total = coll.estimated_document_count()
         if total <= self.sample * 2:
-            docs = [d for day in days for d in self.src.iter_day(day, self.days[day])]
+            docs = [d for day in days for d in self.src.iter_day(day, cuts=self.days[day])]
             return random.Random(self.seed).sample(docs, min(self.sample, len(docs)))
         out, seen = [], set()
         for _ in range(20):   # $sample is random (a seed can't make it repeatable); filter to migrated days

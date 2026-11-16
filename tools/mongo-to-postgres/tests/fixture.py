@@ -2,6 +2,7 @@
 
     python tests/fixture.py load     # MONGO_URI, MONGO_DB: write the fixture into an EMPTY throwaway database
     python tests/fixture.py check verify.json   # PG* env: assert the migration handled every case
+    python tests/fixture.py check-pool-until verify.json   # after migrate --until POOL_T0 --pool-until PoolB=POOL_TL
 
 Two UTC days (2024-11-11/12), three sources, blocks 870,000-870,048 every 10 minutes from 2024-11-11 20:00, and:
   * naive-ISO timestamps (< 870,020), ISO with a -06:00 offset incl. one whose UTC day differs from its date prefix
@@ -215,8 +216,71 @@ def check(verify_path: str):
     return 1 if bad else 0
 
 
+# Per-pool cut-off case (test-e2e.sh): global cut POOL_T0, PoolB still collected by the old deployment until POOL_TL.
+# Crosses midnight, and PoolB's window holds its duplicates (870,035), its upper-case reject and its parse failure.
+POOL_T0 = datetime(2024, 11, 11, 22, 0, tzinfo=UTC)
+POOL_TL = datetime(2024, 11, 12, 2, 0, tzinfo=UTC)
+POOL = "PoolB"
+
+
+def check_pool_until(verify_path: str):
+    import psycopg
+    from m2p.convert import parse_timestamp
+    counts = next(c for c in json.load(open(verify_path))["checks"] if c["name"].startswith("counts per"))
+    pg = psycopg.connect(options="-c TimeZone=UTC")
+    q = lambda sql, *a: pg.execute(sql, a).fetchall()
+    docs, _, _ = build()
+    cut = lambda src: POOL_TL if src == POOL else POOL_T0
+    want_rows, window_docs = {}, 0
+    keys = set()
+    for d in docs:
+        raw = parse_timestamp(d["timestamp"])[0]
+        if raw >= cut(d["pool_name"]):
+            continue
+        window_docs += d["pool_name"] == POOL and raw >= POOL_T0
+        key = (d["pool_name"], raw, d["job_id"])
+        if d["job_id"] == "upper-1" or key in keys:   # the reject, and the duplicates
+            continue
+        keys.add(key)
+        want_rows[d["pool_name"]] = want_rows.get(d["pool_name"], 0) + 1
+    ok = bad = 0
+
+    def expect(name, cond, detail=""):
+        nonlocal ok, bad
+        print(f"  {'PASS' if cond else 'FAIL'}  {name}{'' if cond else '  ' + str(detail)}")
+        ok, bad = ok + bool(cond), bad + (not cond)
+
+    rows = """(SELECT received_at, received_at_offset_s, source_id FROM templates UNION ALL
+               SELECT received_at, received_at_offset_s, source_id FROM templates_other) t JOIN sources s ON s.id = t.source_id"""
+    raw_t = "t.received_at + make_interval(secs => t.received_at_offset_s)"   # as recorded: what the cuts apply to
+    got = dict(q(f"SELECT s.name, count(*) FROM {rows} GROUP BY 1"))
+    expect(f"rows per source: each up to its own cut {want_rows}", got == want_rows, got)
+    win = q(f"SELECT count(*) FROM {rows} WHERE s.name = %s AND {raw_t} >= %s AND {raw_t} < %s", POOL, POOL_T0, POOL_TL)[0][0]
+    want_win = sum(1 for k in keys if k[0] == POOL and POOL_T0 <= k[1] < POOL_TL)
+    expect(f"{POOL}: its {want_win} rows in [T0, T_L) copied", win > 0 and win == want_win, win)
+    late = q(f"SELECT s.name, max({raw_t}) FROM {rows} WHERE s.name <> %s GROUP BY 1", POOL)
+    expect("other pools: nothing at or after T0", late and all(m < POOL_T0 for _, m in late), late)
+    expect(f"{POOL}: nothing at or after T_L", q(f"SELECT count(*) FROM {rows} WHERE s.name = %s AND {raw_t} >= %s",
+                                                 POOL, POOL_TL)[0][0] == 0)
+    rec = q("SELECT day, until, pool_until FROM mongo_to_postgres.days WHERE mongo_docs > 0 ORDER BY day")
+    expect("recorded cuts: day 1 until T0 with PoolB whole day; day 2 nothing but PoolB until T_L",
+           [(str(d), u, p) for d, u, p in rec] == [
+               ("2024-11-11", POOL_T0, {POOL: None}),
+               ("2024-11-12", datetime(2024, 11, 12, tzinfo=UTC), {POOL: POOL_TL.isoformat()})], rec)
+    w = (counts.get("pool_windows") or {}).get(POOL)
+    expect("verify: counts exact, no mismatch", counts["status"] != "FAIL" and "mismatches" not in counts, counts)
+    expect(f"verify: reports {POOL}'s window (2 days, {window_docs} documents beyond the default cut)",
+           w is not None and w["ok"] and w["days"] == ["2024-11-11", "2024-11-12", 2]
+           and w["counts"]["beyond_default_cut"] == window_docs and w["cuts"][-1]["source"] == POOL_TL.isoformat(), w)
+    expect("verify: only PoolB has a window", sorted(counts.get("pool_windows") or {}) == [POOL])
+    print(f"pool-until checks: {ok} passed, {bad} failed")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "load":
         load()
+    elif sys.argv[1] == "check-pool-until":
+        sys.exit(check_pool_until(sys.argv[2]))
     else:
         sys.exit(check(sys.argv[2]))

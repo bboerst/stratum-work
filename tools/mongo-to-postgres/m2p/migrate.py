@@ -8,9 +8,10 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Iterable, NamedTuple, Optional
 
 from . import tzshift
+from .cuts import Cuts, bounds, source_name
 from .convert import Converted, DayTips, Reject, TipIndex, convert, is_btc, route_converted
 from .target import Target
 
@@ -40,7 +41,7 @@ def build_day(docs: Iterable[dict], tips: TipIndex) -> DayResult:
     converted: list[Converted] = []
     for doc in docs:
         n_docs += 1
-        src = doc.get("pool_name") if isinstance(doc.get("pool_name"), str) else str(doc.get("pool_name") or "")
+        src = source_name(doc)
         res.per_source[src]["mongo_docs"] += 1
         try:
             c = convert(doc)
@@ -117,28 +118,46 @@ def rows_for_copy(res: DayResult, ids: dict[str, int]) -> tuple[list, list]:
 
 
 # ── orchestration ─────────────────────────────────────────────────────────────────────────────────────────────
-def day_end(d: date, until: Optional[datetime]) -> datetime:
-    end = datetime(d.year, d.month, d.day, tzinfo=timezone.utc) + timedelta(days=1)
-    return min(end, until) if until else end
+class Task(NamedTuple):
+    day: date
+    cuts: Cuts                    # what the day will hold afterwards (recorded with it)
+    mode: str                     # "new" (nothing loaded yet), "day" (delete + reload the day), "sources" (only these)
+    sources: frozenset = frozenset()
 
 
-def plan(days: list[date], done: dict, until: Optional[datetime], now: datetime) -> list[tuple[date, Optional[datetime], bool]]:
-    """(day, until to record, redo?) for every day that needs work. A day is skipped when a previous run already
-    covered at least as much of it; it is redone (delete + reload, one transaction) when this run covers more."""
+def plan(days: list[date], done: dict, until: Optional[datetime], now: datetime,
+         pool_until: Optional[dict] = None, only_pools: Optional[set] = None) -> list[Task]:
+    """A Task for every day that needs work. `done` maps day -> recorded Cuts.
+
+    Per day and source, the requested cut is `pool_until[source]` if given, else `until`; a day still being written is
+    cut LIVE_SAFETY behind now whatever was asked. With `only_pools`, every other source keeps what it has (nothing,
+    on a day not loaded yet). Coverage never shrinks: the day's new cut is the per-source maximum of what is recorded
+    and what is requested. Then:
+      * same coverage as recorded                -> skipped
+      * not loaded yet                           -> "new"
+      * the default cut grew (most sources)      -> "day": delete and reload the whole day
+      * only some sources' own cuts grew         -> "sources": reload just those sources' rows of the day"""
+    pool_until = pool_until or {}
     out = []
+    live = now - LIVE_SAFETY
     for d in days:
-        eff = until
-        if day_end(d, eff) > now - LIVE_SAFETY:          # still being written: cut behind now, record the cut
-            eff = min(eff, now - LIVE_SAFETY) if eff else now - LIVE_SAFETY
-        if day_end(d, eff) <= datetime(d.year, d.month, d.day, tzinfo=timezone.utc):
-            continue                                       # nothing of this day is in range yet
-        rec_until = eff if day_end(d, eff) < day_end(d, None) else None
-        if d in done:
-            if day_end(d, done[d]) >= day_end(d, rec_until):
-                continue
-            out.append((d, rec_until, True))
+        start, end = bounds(d)
+        cap = lambda u: (live if u is None or u > live else u) if end > live else u
+        have = done.get(d) or Cuts.empty(d)
+        if only_pools is not None:
+            want = Cuts.make(d, have.default, {**have.per_source,
+                                               **{n: cap(pool_until.get(n, until)) for n in only_pools}})
         else:
-            out.append((d, rec_until, False))
+            want = Cuts.make(d, cap(until), {n: cap(u) for n, u in pool_until.items()})
+        new = have.merge(want)
+        if d not in done:
+            if new.any_coverage():
+                out.append(Task(d, new, "new"))
+            continue
+        if new.same_coverage(have):
+            continue
+        default_grew, sources = new.grown(have)
+        out.append(Task(d, new, "day") if default_grew else Task(d, new, "sources", frozenset(sources)))
     return out
 
 
@@ -153,11 +172,24 @@ def _worker_init(mongo_uri, mongo_db, pg_kw, site, block_pairs, batch_size):
     _W["tips"] = TipIndex(block_pairs)
 
 
-def process_day(task) -> dict:
-    d, until, redo = task
+def row_keys(res: DayResult, exclude: frozenset) -> Counter:
+    """What identifies a loaded row and everything about it that can depend on other sources' documents (timezone
+    correction, routing), for every source but `exclude`: compared with Postgres before a "sources" reload."""
+    out = Counter()
+    for c, _ in res.btc:
+        if c.source not in exclude:
+            out[("templates", c.source, c.received_at, c.offset_s, c.values[0], c.height, None)] += 1
+    for c, r in res.other:
+        if c.source not in exclude:
+            out[("templates_other", c.source, c.received_at, c.offset_s, c.values[0], c.height, r.reason)] += 1
+    return out
+
+
+def process_day(task: Task) -> dict:
+    d, cuts = task.day, task.cuts
     src, tgt, tips = _W["source"], _W["target"], _W["tips"]
     t0 = time.monotonic()
-    res = build_day(src.iter_day(d, until), tips)
+    res = build_day(src.iter_day(d, cuts=cuts), tips)
     t_read = time.monotonic() - t0
     first_seen = {}
     for c, _ in res.btc + res.other:
@@ -166,15 +198,20 @@ def process_day(task) -> dict:
     ids = tgt.source_ids(first_seen)
     btc, other = rows_for_copy(res, ids)
     res.summary["seconds_read_convert"] = round(t_read, 3)
-    seconds = tgt.write_day(d, until, btc, other, res.rejected, res.duplicates, res.findings, res.per_source, res.summary, t0, redo)
+    res.summary["cuts"] = dict(until=cuts.default, pool_until=cuts.pool_until_json())
+    check = row_keys(res, task.sources) if task.mode == "sources" else None
+    seconds, mode = tgt.write_day(cuts, task.mode, task.sources, btc, other, res.rejected, res.duplicates,
+                                  res.findings, res.per_source, res.summary, t0, {i: n for n, i in ids.items()}, check)
     s = res.summary
-    LOG.info("%s%s: %d docs -> %d templates, %d other, %d duplicates, %d rejected%s in %.1fs (%.0f docs/s)",
-             d, f" (until {until.isoformat()})" if until else "", s["mongo_docs"], s["templates"], s["templates_other"],
-             s["duplicates"], s["rejected"],
+    what = {"new": "", "day": " (reloaded)", "sources": f" (reloaded {', '.join(sorted(task.sources))} only)"}[mode]
+    LOG.info("%s%s%s: %d docs -> %d templates, %d other, %d duplicates, %d rejected%s in %.1fs (%.0f docs/s)",
+             d, f" ({cuts.describe()})" if cuts.describe() else "", what, s["mongo_docs"], s["templates"],
+             s["templates_other"], s["duplicates"], s["rejected"],
              f", {sum(1 for f in res.findings if f.corrected)} tz-corrected heights" if res.findings else "",
              seconds, s["mongo_docs"] / seconds if seconds else 0)
-    return dict(day=d.isoformat(), seconds=seconds, **{k: s[k] for k in ("mongo_docs", "templates", "templates_other",
-                                                                         "duplicates", "rejected")})
+    return dict(day=d.isoformat(), seconds=seconds, mode=mode, **{k: s[k] for k in ("mongo_docs", "templates",
+                                                                                    "templates_other", "duplicates",
+                                                                                    "rejected")})
 
 
 def run(args, pg_kw: dict, mongo_uri: str) -> int:
@@ -210,8 +247,15 @@ def run(args, pg_kw: dict, mongo_uri: str) -> int:
     lo = args.from_day or rng[0]
     hi = args.to_day or rng[1]
     days = [lo + timedelta(days=i) for i in range((hi - lo).days + 1)]
-    tasks = plan(days, tgt.done_days(), args.until, datetime.now(timezone.utc))
-    LOG.info("days %s .. %s: %d to do, %d skipped (already done, or after the cut-off)", lo, hi, len(tasks),
+    pool_until = getattr(args, "pool_until", None) or {}
+    only = set(args.only_pools) if getattr(args, "only_pools", None) else None
+    if pool_until:
+        LOG.info("per-pool cut-offs: %s", ", ".join(f"{n!r} < {u.isoformat()}" for n, u in sorted(pool_until.items())))
+    if only is not None:
+        LOG.info("only pools: %s (every other source keeps what it has)", ", ".join(repr(n) for n in sorted(only)))
+    tasks = plan(days, tgt.done_days(), args.until, datetime.now(timezone.utc), pool_until, only)
+    LOG.info("days %s .. %s: %d to do (%s), %d skipped (already done, or after the cut-off)", lo, hi, len(tasks),
+             ", ".join(f"{m} {n}" for m, n in sorted(Counter(t.mode for t in tasks).items())) or "none",
              len(days) - len(tasks))
     src.close()
     tgt.close()
@@ -229,4 +273,13 @@ def run(args, pg_kw: dict, mongo_uri: str) -> int:
     docs = sum(r["mongo_docs"] for r in results)
     LOG.info("done: %d days, %d docs in %.1fs wall (%.0f docs/s, %d worker(s))", len(results), docs, wall,
              docs / wall if wall else 0, args.workers)
+    named = set(pool_until) | (only or set())
+    if named:
+        tgt = Target(pg_kw, args.site)
+        known = {n for (n,) in tgt._meta.execute("SELECT name FROM sources WHERE site = %s AND name = ANY(%s)",
+                                                 (args.site, sorted(named))).fetchall()}
+        tgt.close()
+        for n in sorted(named - known):   # matched exactly as stored: a typo silently loads nothing
+            LOG.warning("pool %r has no rows for site %r: check the name (matched exactly as pool_name is stored)",
+                        n, args.site)
     return 0

@@ -1,6 +1,7 @@
 """m2p: MongoDB -> Postgres + TimescaleDB backfill and verification.
 
-    python -m m2p migrate [--from-day D] [--to-day D] [--until TS] [--workers N] [--create-index]
+    python -m m2p migrate [--from-day D] [--to-day D] [--until TS] [--pool-until NAME=TS ...] [--only-pools N,..]
+                          [--workers N] [--create-index]
     python -m m2p verify  [--sample 10000] [--out verify.json]
     python -m m2p report  [--verify-json verify.json] [--out report.md]
     python -m m2p cleanup --yes        # drop the tool's bookkeeping schema after sign-off
@@ -27,8 +28,22 @@ def _day(s: str) -> date:
 
 
 def _instant(s: str) -> datetime:
-    dt = datetime.fromisoformat(s)
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    from .cuts import instant
+    return instant(s)
+
+
+def _pool_until(s: str) -> tuple[str, datetime]:
+    name, sep, ts = s.rpartition("=")
+    if not sep or not name:
+        raise argparse.ArgumentTypeError(f"want NAME=INSTANT, got {s!r}")
+    try:
+        return name, _instant(ts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{ts!r}: {exc}") from None
+
+
+def _names(s: str) -> list[str]:
+    return [n for n in s.split(",") if n]
 
 
 def _gap(s: str) -> tuple[int, int]:
@@ -57,6 +72,11 @@ def parser() -> argparse.ArgumentParser:
     m.add_argument("--until", type=_instant,
                    help="exclusive cut-off for receive times, e.g. T0 (naive = UTC). Days still being written are "
                         "always cut 2 minutes behind now")
+    m.add_argument("--pool-until", type=_pool_until, action="append", metavar="NAME=INSTANT",
+                   help="for the source NAME (pool_name exactly as stored), cut at INSTANT instead of --until "
+                        "(repeatable). Recorded per day; a later run with a later cut reloads just that source")
+    m.add_argument("--only-pools", type=_names, action="extend", metavar="NAME[,NAME]",
+                   help="load only these sources (repeatable); every other source keeps what it has")
     m.add_argument("--workers", type=int, default=1, help="days processed in parallel (processes)")
     m.add_argument("--create-index", action="store_true",
                    help="create an index on mining_notify.timestamp (throwaway restore only)")
@@ -94,6 +114,11 @@ def main(argv=None) -> int:
 
     if args.cmd == "migrate":
         from .migrate import run
+        pairs = args.pool_until or []
+        dup = sorted({n for n, _ in pairs if sum(1 for m, _ in pairs if m == n) > 1})
+        if dup:
+            raise SystemExit(f"--pool-until given more than once for {dup}")
+        args.pool_until = dict(pairs)
         return run(args, pg_kw, mongo_uri)
 
     if args.cmd == "verify":
@@ -107,6 +132,11 @@ def main(argv=None) -> int:
         for c in checks:
             print(f"{c.status:4}  {c.name}")
             print("      " + json.dumps(c.details, default=str)[:2000])
+            for n, w in (c.details.get("pool_windows") or {}).items():
+                print(f"      pool window {n!r}: days {w['days'][0]} .. {w['days'][1]}, own cut "
+                      f"{w['cuts'][-1]['source'] or 'whole day'} (default {w['cuts'][-1]['default'] or 'whole day'}); "
+                      f"{w['counts'].get('mongo', 0)} documents, {w['counts'].get('beyond_default_cut', 0)} beyond "
+                      f"the default cut: {'exact' if w['ok'] else 'MISMATCH'}")
         status = "FAIL" if any(c.status == "FAIL" for c in checks) else (
             "WARN" if any(c.status == "WARN" for c in checks) else "PASS")
         result["status"] = status

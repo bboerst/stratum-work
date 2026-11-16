@@ -26,14 +26,65 @@ import collector.main as collector_main
 from collector.main import create_notification_document
 
 
+# (block hash as explorers show it, the prev_hash a Stratum mining.notify carries for the next block). Public chain
+# data: the Stratum form is the block header's prev-hash field with each 4-byte word byte-swapped, as pools send it.
+PREV_HASH_VECTORS = [
+    # Bitcoin 976051, and the prev_hash of a template for 976052
+    ("00000000000000000001a8d326d8c59ccb89fde87a9fec130ac332c99c4ac17e",
+     "9c4ac17e0ac332c97a9fec13cb89fde826d8c59c0001a8d30000000000000000"),
+    # Bitcoin 99999 (pre-segwit; from block 100000's header)
+    ("000000000002d01c1fccc21636b607dfd930d31d01c3a62104612a1719011250",
+     "1901125004612a1701c3a621d930d31d36b607df1fccc2160002d01c00000000"),
+    # Bitcoin genesis (from block 1's header)
+    ("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+     "0a8ce26f72b3f1b646a2a6c14ff763ae65831e939c085ae10019d66800000000"),
+    # Bitcoin Cash 945963, and the prev_hash of a template for 945964
+    ("000000000000000000fc282d25e41768e0f713e20fcddd208de1ca4140d9f208",
+     "40d9f2088de1ca410fcddd20e0f713e225e4176800fc282d0000000000000000"),
+    # Bitcoin Cash 945962 (from 945963's header)
+    ("000000000000000000cd65f3dca7fb2bb3a909339a66bb3d7535c1dec40ddb41",
+     "c40ddb417535c1de9a66bb3db3a90933dca7fb2b00cd65f30000000000000000"),
+    # Synthetic: every word distinct and none zero, so any byte or word mix-up shows
+    ("1c1d1e1f18191a1b14151617101112130c0d0e0f08090a0b0405060700010203",
+     "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
+]
+PREV_BCH = PREV_HASH_VECTORS[3][1]
+BLOCK_BCH = PREV_HASH_VECTORS[3][0]
+
+
 class ChainDetectionTests(unittest.TestCase):
-    def test_reverse_prev_hash_converts_stratum_little_endian_to_rpc_big_endian(self):
-        self.assertEqual(
-            reverse_prev_hash(
-                "40d9f2088de1ca410fcddd20e0f713e225e4176800fc282d0000000000000000"
-            ),
-            "00000000000000002d28fc006817e425e213f7e020ddcd0f41cae18d08f2d940",
-        )
+    def test_reverse_prev_hash_reverses_word_order_to_the_block_hash(self):
+        for block_hash, prev_hash in PREV_HASH_VECTORS:
+            with self.subTest(block_hash=block_hash):
+                self.assertEqual(reverse_prev_hash(prev_hash), block_hash)
+                self.assertEqual(reverse_prev_hash(prev_hash.upper()), block_hash)
+                # Not the byte reversal (#192)
+                self.assertNotEqual(bytes.fromhex(prev_hash)[::-1].hex(), block_hash)
+
+    def test_reverse_prev_hash_rejects_anything_but_32_bytes(self):
+        for bad in ("", "ab", "00" * 31, "00" * 33, "zz" * 32, "0" * 63):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                reverse_prev_hash(bad)
+
+    def test_confirm_bch_asks_the_api_for_the_block_hash(self):
+        confirmer = BCHConfirmer("https://example.invalid/block/", timeout_seconds=1.5, cache=BCHConfirmationCache())
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {"data": {BLOCK_BCH: {}}}
+
+        with patch("collector.chain_detection.requests.get", return_value=response) as get_mock:
+            self.assertTrue(confirmer.confirm_bch(PREV_BCH))
+        get_mock.assert_called_once_with(f"https://example.invalid/block/{BLOCK_BCH}", timeout=1.5)
+
+    def test_confirm_bch_is_false_for_an_empty_data_list(self):
+        # The default API answers an unknown hash with 200 and "data": []
+        confirmer = BCHConfirmer("https://example.invalid", timeout_seconds=1.5, cache=BCHConfirmationCache())
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {"data": []}
+
+        with patch("collector.chain_detection.requests.get", return_value=response):
+            self.assertFalse(confirmer.confirm_bch(PREV_BCH))
 
     def test_classifier_skips_detection_when_tip_state_is_unavailable(self):
         classifier = ChainClassifier(

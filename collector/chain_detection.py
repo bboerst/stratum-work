@@ -8,7 +8,16 @@ import requests
 
 
 def reverse_prev_hash(prev_hash: str) -> str:
-    return bytes.fromhex(prev_hash)[::-1].hex()
+    """Convert a Stratum mining.notify prev_hash to the block hash as explorers and RPC show it.
+
+    Stratum sends the previous block hash as eight 4-byte words in reverse order, each word's bytes left as they
+    are. Reversing the word order (not the byte order) gives the block hash. Anything that isn't 32 bytes of hex
+    raises ValueError.
+    """
+    raw = bytes.fromhex(prev_hash)
+    if len(raw) != 32:
+        raise ValueError(f"prev_hash must be 32 bytes, got {len(raw)}")
+    return b"".join(raw[i:i + 4] for i in range(28, -4, -4)).hex()
 
 
 @dataclass

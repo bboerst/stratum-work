@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,14 +49,23 @@ func (t *TipState) Set(h int64) {
 	t.mu.Unlock()
 }
 
-// reversePrevHash converts stratum's prev_hash to the RPC/explorer byte order (bytes.fromhex(x)[::-1].hex()).
+// reversePrevHash converts a Stratum mining.notify prev_hash to the block hash as explorers and RPC show it
+// (chain_detection.reverse_prev_hash). Stratum sends the previous block hash as eight 4-byte words in reverse order,
+// each word's bytes left as they are, so reversing the word order (not the byte order) gives the block hash.
+// Anything that isn't 32 bytes of hex is an error.
 func reversePrevHash(prev pyValue) (string, error) {
 	b, err := pyFromHex(prev)
 	if err != nil {
 		return "", err
 	}
-	slices.Reverse(b)
-	return hexLower(b), nil
+	if len(b) != 32 {
+		return "", fmt.Errorf("prev_hash must be 32 bytes, got %d", len(b))
+	}
+	out := make([]byte, 0, 32)
+	for i := 28; i >= 0; i -= 4 {
+		out = append(out, b[i:i+4]...)
+	}
+	return hexLower(out), nil
 }
 
 func hexLower(b []byte) string {

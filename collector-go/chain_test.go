@@ -14,13 +14,40 @@ import (
 
 const (
 	prevBCH   = "40d9f2088de1ca410fcddd20e0f713e225e4176800fc282d0000000000000000"
+	blockBCH  = "000000000000000000fc282d25e41768e0f713e20fcddd208de1ca4140d9f208" // Bitcoin Cash 945963
 	prevOther = "58dcd5b64e522d28de60983366c6788b1a74584a69845173d6faa16b2718c906"
 )
 
+// prevHashVectors: (block hash as explorers show it, the prev_hash a Stratum mining.notify carries for the next
+// block). The same public chain data as collector/tests/test_chain_detection.py PREV_HASH_VECTORS.
+var prevHashVectors = [][2]string{
+	{"00000000000000000001a8d326d8c59ccb89fde87a9fec130ac332c99c4ac17e", // Bitcoin 976051
+		"9c4ac17e0ac332c97a9fec13cb89fde826d8c59c0001a8d30000000000000000"},
+	{"000000000002d01c1fccc21636b607dfd930d31d01c3a62104612a1719011250", // Bitcoin 99999 (pre-segwit)
+		"1901125004612a1701c3a621d930d31d36b607df1fccc2160002d01c00000000"},
+	{"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f", // Bitcoin genesis
+		"0a8ce26f72b3f1b646a2a6c14ff763ae65831e939c085ae10019d66800000000"},
+	{blockBCH, prevBCH}, // Bitcoin Cash 945963
+	{"000000000000000000cd65f3dca7fb2bb3a909339a66bb3d7535c1dec40ddb41", // Bitcoin Cash 945962
+		"c40ddb417535c1de9a66bb3db3a90933dca7fb2b00cd65f30000000000000000"},
+	{"1c1d1e1f18191a1b14151617101112130c0d0e0f08090a0b0405060700010203", // synthetic: all words distinct, none zero
+		"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},
+}
+
+// Word order reversed, bytes within a word kept (#192); not the byte reversal.
 func TestReversePrevHash(t *testing.T) {
-	got, err := reversePrevHash(pyString(prevBCH))
-	if err != nil || got != "00000000000000002d28fc006817e425e213f7e020ddcd0f41cae18d08f2d940" {
-		t.Error(got, err)
+	for _, v := range prevHashVectors {
+		for _, in := range []string{v[1], strings.ToUpper(v[1])} {
+			if got, err := reversePrevHash(pyString(in)); err != nil || got != v[0] {
+				t.Errorf("reversePrevHash(%s) = %s, %v; want %s", in, got, err, v[0])
+			}
+		}
+	}
+	for _, bad := range []string{"", "ab", strings.Repeat("00", 31), strings.Repeat("00", 33), strings.Repeat("zz", 32),
+		strings.Repeat("0", 63)} {
+		if got, err := reversePrevHash(pyString(bad)); err == nil {
+			t.Errorf("reversePrevHash(%q) = %s, want an error", bad, got)
+		}
 	}
 }
 
@@ -95,7 +122,7 @@ func TestClassifierMarksConfirmedBCHWhenHeightDivergesAndAPIConfirms(t *testing.
 	if got := classify(c, 945900, prevBCH); got != "bch" {
 		t.Error(got)
 	}
-	if p := path.Load(); p != "/00000000000000002d28fc006817e425e213f7e020ddcd0f41cae18d08f2d940" {
+	if p := path.Load(); p != "/"+blockBCH {
 		t.Error(p)
 	}
 }
@@ -170,6 +197,9 @@ func TestPrepareSkipsUnparsedHeightAndEmptyPrevHash(t *testing.T) {
 	}
 	if classify(c, 6976415, "zz") != "" || c.Unclassifiable.Load() != 1 { // Python: exception -> None
 		t.Error("invalid hex prev_hash")
+	}
+	if classify(c, 6976415, "abcd") != "" || c.Unclassifiable.Load() != 2 || calls.Load() != 0 { // not 32 bytes
+		t.Error("short prev_hash")
 	}
 }
 

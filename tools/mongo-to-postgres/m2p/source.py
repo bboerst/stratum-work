@@ -20,6 +20,7 @@ from typing import Iterator, Optional
 
 from pymongo import ASCENDING, DESCENDING, MongoClient
 
+from .cuts import Cuts, source_name
 from .convert import ISO_PREFIX, Reject, day_start, hex_ns, parse_timestamp, utc_day
 
 LOG = logging.getLogger("m2p.source")
@@ -85,22 +86,32 @@ class Source:
             {"timestamp": {"$gte": start.replace(tzinfo=None), "$lt": end.replace(tzinfo=None)}},
         ]}
 
-    def iter_day(self, d: date, until: Optional[datetime] = None, projection: Optional[dict] = None) -> Iterator[dict]:
+    def iter_day(self, d: date, until: Optional[datetime] = None, projection: Optional[dict] = None,
+                 cuts: Optional["Cuts"] = None) -> Iterator[dict]:
         """Documents whose recorded UTC day is d (and recorded time < until, if given).
 
+        With `cuts` (m2p.cuts.Cuts) instead of `until`, each document is kept only if its recorded time is before its
+        own source's cut (`pool_name` as stored); the projection must then include `pool_name`.
         Documents whose timestamp can't be parsed never match a day; verify's coverage check finds them."""
+        if cuts is not None:
+            until = cuts.query_until()
+            start = day_start(d)
         cur = self.db.mining_notify.find(self.day_query(d, until), projection, batch_size=self.batch_size)
         for doc in cur:
             try:
                 raw, _ = parse_timestamp(doc.get("timestamp"))
             except Reject:
                 # An ISO-looking string that doesn't parse belongs to the day of its date prefix: hand it to the
-                # caller, whose conversion rejects (and records) it, so it is counted rather than skipped.
+                # caller, whose conversion rejects (and records) it, so it is counted rather than skipped. With
+                # per-source cuts, only if its source has any of the day.
                 ts = doc.get("timestamp")
-                if isinstance(ts, str) and ISO_PREFIX.match(ts) and ts[:10] == d.isoformat():
+                if isinstance(ts, str) and ISO_PREFIX.match(ts) and ts[:10] == d.isoformat() and \
+                        (cuts is None or cuts.end(source_name(doc)) > start):
                     yield doc
                 continue
             if utc_day(raw) != d or (until is not None and raw >= until):
+                continue
+            if cuts is not None and not cuts.admits(source_name(doc), raw):
                 continue
             yield doc
 

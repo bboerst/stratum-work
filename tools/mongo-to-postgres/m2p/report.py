@@ -6,18 +6,21 @@ from collections import Counter
 
 import psycopg
 
+from .cuts import Cuts
 from .target import SCHEMA
 
 
 def build(pg_kw: dict, site: str, verify_json: dict | None = None) -> str:
     with psycopg.connect(**pg_kw, autocommit=True) as pg:
-        days = pg.execute(f"""SELECT day, until, mongo_docs, templates, templates_other, duplicates, rejected, seconds,
+        days = pg.execute(f"""SELECT day, until, pool_until, mongo_docs, templates, templates_other, duplicates, rejected, seconds,
                                      stats FROM {SCHEMA}.days WHERE site = %s ORDER BY day""", (site,)).fetchall()
         findings = pg.execute(f"""SELECT day, height, offset_s, count, corrected, evidence FROM {SCHEMA}.tz_findings
                                   WHERE site = %s ORDER BY height, day""", (site,)).fetchall()
         rejected = pg.execute(f"""SELECT reason, count(*), min(mongo_id), min(detail) FROM {SCHEMA}.rejected
                                   WHERE site = %s GROUP BY 1 ORDER BY 2 DESC""", (site,)).fetchall()
         sources = pg.execute("SELECT count(*) FROM sources WHERE site = %s", (site,)).fetchone()[0]
+    # (day, cut description or None for a whole day, ...): per-source cuts (--pool-until) are part of the description
+    days = [(d, Cuts.from_record(d, u, p).describe() or None, *rest) for d, u, p, *rest in days]
     out = [f"# MongoDB → Postgres backfill report (site `{site}`)", ""]
     if not days:
         return "\n".join(out + ["No days migrated yet."])
@@ -39,7 +42,7 @@ def build(pg_kw: dict, site: str, verify_json: dict | None = None) -> str:
     partial = [(d, u) for d, u, *_ in days if u is not None]
     out += [
         f"- **Days:** {len(days)} ({days[0][0]} … {days[-1][0]})" + (
-            f"; partial (cut at): " + ", ".join(f"{d} < {u.isoformat()}" for d, u in partial) if partial else ""),
+            f"; partial (cut at): " + "; ".join(f"{d}: {u}" for d, u in partial) if partial else ""),
         f"- **MongoDB documents:** {tot['mongo']:,} from {sources} sources",
         f"- **→ `templates`:** {tot['templates']:,}; **`templates_other`:** {tot['other']:,}; "
         f"**duplicates dropped:** {tot['dups']:,} ({dup_identical:,} identical, {dup_differing:,} differing); "
@@ -83,4 +86,12 @@ def build(pg_kw: dict, site: str, verify_json: dict | None = None) -> str:
     if verify_json:
         out += ["", "## Verification", "", "| check | status |", "|---|---|"]
         out += [f"| {c['name']} | **{c['status']}** |" for c in verify_json["checks"]]
+        windows = next((c.get("pool_windows") for c in verify_json["checks"] if c["name"].startswith("counts per")), None)
+        if windows:
+            out += ["", "### Per-pool cut-offs (`--pool-until`), counts checked up to each pool's own cut", "",
+                    "| source | days | own cut (last day) | documents | beyond the default cut | counts |",
+                    "|---|---|---|---|---|---|"]
+            out += [f"| `{n}` | {w['days'][0]} … {w['days'][1]} ({w['days'][2]}) | {w['cuts'][-1]['source'] or 'whole day'} | "
+                    f"{w['counts'].get('mongo', 0):,} | {w['counts'].get('beyond_default_cut', 0):,} | "
+                    f"{'exact' if w['ok'] else '**mismatch**'} |" for n, w in windows.items()]
     return "\n".join(x for x in out if x is not None)

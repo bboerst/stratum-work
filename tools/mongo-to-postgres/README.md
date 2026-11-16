@@ -55,17 +55,49 @@ python -m m2p cleanup --yes              # after sign-off: drops the bookkeeping
 `migrate` options:
 - `--from-day` / `--to-day`: limit the day range.
 - `--until`: an exclusive cut-off for receive times. A day that is still being written is always cut 2 minutes behind now, and the cut is recorded. A later run with a later cut redoes that day (delete and reload, in one transaction), and never shrinks it.
+- `--pool-until NAME=INSTANT` (repeatable): for the source `NAME`, cut at `INSTANT` instead of `--until`. See [Per-pool cut-off](#per-pool-cut-off).
+- `--only-pools NAME[,NAME]` (repeatable): load only these sources; every other source keeps what it has.
 - `--skip-blocks`, `--skip-pools`.
 - `--batch-size`: MongoDB cursor batch size.
 
 Without the `timestamp` index, every day is a collection scan: still correct, just slow.
+
+### Per-pool cut-off
+Sometimes one pool keeps being collected only by the old deployment after T0, until it switches at a later T_L. Its documents in [T0, T_L) must be copied too, and no other pool's documents after T0. `--pool-until NAME=T_L` gives that source its own cut. `NAME` is matched exactly as stored (`pool_name` in MongoDB, `sources.name` in Postgres). A name that matches nothing is logged as a warning at the end of the run.
+
+How it fits the day model:
+- **Each day records a cut per source:** `days.until` is the default, and `days.pool_until` holds the sources with their own cut. Per source, coverage only grows: the new cut is the larger of what is recorded and what is asked for.
+- **Every day is built whole.** Each source's documents up to its own cut are read, and the timezone safety net, de-duplication and routing (whose `prev_hash` evidence draws on every source) run over all of them. The rows and the bookkeeping are therefore the same however the work was split over runs.
+- **What a run does to a day:**
+  - When only some sources' own cuts grew, only their rows are deleted and reloaded, in one transaction. The day's bookkeeping is rewritten from the whole-day build, and the other sources' rows are left alone. Before that, the rebuilt rows of every other source are compared with what Postgres holds (time, offset, `job_id`, height, table, reason). If anything differs, the day is reloaded whole: the warning is logged and the mode is recorded in `stats.redo`.
+  - When the default cut grows, the whole day is reloaded, as before.
+- **Days after T0's day** hold nothing of the other sources (their cut is the day's start), so they are loaded for that pool alone.
+
+Worked example, with `ExamplePool` standing in for the pool's name:
+
+```bash
+# 1. one pass: every pool up to T0, ExamplePool up to T_L
+python -m m2p migrate --create-index --until 2026-12-01T00:00:00Z --pool-until ExamplePool=2026-12-03T12:00:00Z --workers 4
+
+# 2. or a second pass after a first one without the option (same result as 1). --only-pools keeps every other
+#    source as loaded, even if --until were mistyped or left out.
+python -m m2p migrate --until 2026-12-01T00:00:00Z --workers 4                     # first pass, earlier
+python -m m2p migrate --until 2026-12-01T00:00:00Z --pool-until ExamplePool=2026-12-03T12:00:00Z \
+    --only-pools ExamplePool --workers 4
+#    -> 2026-12-01: ExamplePool's rows reloaded alone (its cut grows from T0 to the whole day)
+#    -> 2026-12-02 and 2026-12-03: new, ExamplePool only (until 12:00 on the 3rd)
+
+python -m m2p verify --out verify.json   # counts per (day, source) up to each source's own cut
+```
+
+A re-run with the same options is a no-op, and so is a re-run without `--pool-until`, because a cut never shrinks. Use the same image for `verify` and `report`: an older version doesn't read `days.pool_until` and miscounts those days.
 
 ### Bookkeeping (`mongo_to_postgres` schema)
 It's a one-off job's state, not part of the app's schema, so the tool creates it with `IF NOT EXISTS`, and `cleanup` drops it.
 
 | Table | Holds |
 |---|---|
-| `days` | per day: cut-off, counts, seconds, statistics (formats, reasons, height changes, unknown fields, ...) |
+| `days` | per day: cut-off (`until`, and per source `pool_until`), counts, seconds, statistics (formats, reasons, height changes, unknown fields, how the day was last reloaded, ...) |
 | `day_sources` | per day and source: MongoDB documents, `templates`, `templates_other`, duplicates, rejected |
 | `tz_findings` | per height: offset, count, evidence, corrected or suspect |
 | `rejected` | full documents that couldn't be converted losslessly, with the reason |
@@ -77,13 +109,15 @@ It's a one-off job's state, not part of the app's schema, so the tool creates it
 | Check | FAIL when | WARN when |
 |---|---|---|
 | coverage | a timestamp is in no known format (no day can select the document) | days with documents were not migrated |
-| counts per (day, source) | MongoDB ≠ `templates` + `templates_other` + duplicates + rejected | rejects, or duplicates whose content differed |
+| counts per (day, source), each source up to its own cut | MongoDB ≠ `templates` + `templates_other` + duplicates + rejected | rejects, or duplicates whose content differed |
 | byte-exact round trip (default 10,000 random templates) | any field differs after re-encoding, or the routing invariants break (`chain_family` kept, parse failure → `height_parse_failed`) | — |
 | routing by reason | — | `height_implausible` rows that build on the known block *h*−1 within an hour of it (misrouting) |
 | timestamp sanity per height (first template − block *h*−1 header time) | an outlier at ±6 h / ±7 h (a timezone that wasn't caught) | other outliers beyond ±1 h |
 | missing heights | — | heights without templates outside the known gaps (default `876883-876903`, `--known-gap`) |
 | blocks | a MongoDB `block_hash` missing in Postgres | fields differ (expected for rows the new backend wrote) |
 | pools | — | definitions differ (expected after the backend's daily refresh) |
+
+With `--pool-until`, the counts check also reports each such source's window: its days, its cut against the day's default, and the documents beyond the default cut. `verify` prints it as `pool window '<name>': ...`, and `report --verify-json` includes it as a table.
 
 The routing check also reports, for each reason, row counts, shares, sources, the height range and samples. `latency_ms` is a `real` column, so the round trip compares it as float4.
 
@@ -132,3 +166,10 @@ M2P_IMAGE=<image> tools/mongo-to-postgres/test-e2e.sh    # the same checks again
 - a collection outage
 
 The script then migrates with 2 workers, verifies, asserts every case, re-runs to prove resumability, and checks that `verify` catches a deleted row and an unrecognized timestamp.
+
+The per-pool cut-off runs on its own copy of the fixture: global cut T0, `PoolB` until T_L the next day. The script checks:
+- one pass with the option, against a first pass without it followed by a second `--only-pools` pass: the same rows and bookkeeping
+- the second pass leaves the other pools' rows untouched
+- the re-runs are no-ops
+- `verify` passes and reports the window
+- the whole-day fallback, when another source's rows differ

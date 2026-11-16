@@ -1,9 +1,9 @@
 "use client";
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from "react";
-import { useGlobalDataStream } from "@/lib/DataStreamContext";
+import { useGlobalDataStream, useTemplateBuffer } from "@/lib/DataStreamContext";
 import { StreamDataType } from "@/lib/types";
-import { poolListFromKey, poolListKey, sortPoolNames } from "@/lib/poolList";
+import { collectPoolNames, poolListFromKey, poolListKey } from "@/lib/poolList";
 
 const STORAGE_KEY_HIDDEN = "poolFilterHidden";
 
@@ -33,6 +33,8 @@ const PoolFilterContext = createContext<PoolFilterContextType | undefined>(undef
 
 export function PoolFilterProvider({ children }: { children: ReactNode }) {
   const { data, latestMessagesByPool } = useGlobalDataStream();
+  // The template buffer holds the initial load (prefill) as well as live templates, so the list is complete at once.
+  const { entries: bufferEntries } = useTemplateBuffer();
   const [hiddenPools, setHiddenPools] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
 
@@ -48,16 +50,11 @@ export function PoolFilterProvider({ children }: { children: ReactNode }) {
   }, [hiddenPools, hydrated]);
 
   // Keyed on the names, so the list stays the same array while the set of pools is unchanged (lib/poolList.ts)
-  const allPoolsKey = useMemo(() => {
-    const poolSet = new Set<string>();
-    Object.keys(latestMessagesByPool).forEach(name => poolSet.add(name));
-    data.forEach(item => {
-      if (item.type === StreamDataType.STRATUM_V1 && item.data.pool_name) {
-        poolSet.add(item.data.pool_name);
-      }
-    });
-    return poolListKey(sortPoolNames(poolSet));
-  }, [data, latestMessagesByPool]);
+  const allPoolsKey = useMemo(() => poolListKey(collectPoolNames(
+    data.flatMap(item => (item.type === StreamDataType.STRATUM_V1 ? [item.data.pool_name] : [])),
+    Object.keys(latestMessagesByPool),
+    bufferEntries,
+  )), [data, latestMessagesByPool, bufferEntries]);
   const allPools = useMemo(() => poolListFromKey(allPoolsKey), [allPoolsKey]);
 
   const togglePool = useCallback((poolName: string) => {

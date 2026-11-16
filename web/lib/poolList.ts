@@ -24,3 +24,20 @@ export function poolListKey(names: readonly string[]): string {
 export function poolListFromKey(key: string): string[] {
   return key ? key.slice(1).split(SEP) : [];
 }
+
+/**
+ * Every pool name the realtime views can show: live stream messages, the latest message per pool, and the shared
+ * template buffer, which the initial load (/api/realtime-prefill) seeds before any live template arrives. Without the
+ * buffer the filter stayed empty until the first live template.
+ */
+export function collectPoolNames(
+  streamNames: Iterable<string | null | undefined>,
+  latestByPool: Iterable<string>,
+  bufferEntries: Iterable<{ data: { pool_name?: string | null } }>,
+): string[] {
+  const names = new Set<string>();
+  for (const n of streamNames) if (n) names.add(n);
+  for (const n of latestByPool) if (n) names.add(n);
+  for (const e of bufferEntries) if (e.data.pool_name) names.add(e.data.pool_name);
+  return sortPoolNames(names);
+}

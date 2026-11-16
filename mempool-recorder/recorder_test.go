@@ -389,8 +389,7 @@ func TestExpiredEvictedUnknown(t *testing.T) {
 	wantReason(t, h.removal(young.Txid), reasonUnknown, nil)
 	z := mkTx("z", coin(4))
 	h.add(z)
-	h.node.info.MempoolMinFee = "0.00002"
-	h.clock += 10_000_000 // past the cached getmempoolinfo
+	h.node.info.MempoolMinFee = "0.00002" // the node starts trimming; our cached info (just fetched) predates it
 	h.ev('R', z.Txid)
 	h.quiet()
 	wantReason(t, h.removal(z.Txid), reasonEvicted, nil)

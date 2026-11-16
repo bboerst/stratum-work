@@ -103,7 +103,10 @@ settle
 check "tables match the node's mempool"   'consistent'
 q_old="SELECT removal || ':' || hash_display(replaced_by) FROM mempool_txs WHERE txid = hash_from_display('$OLD')"
 check "RBF: replaced, replaced_by = the bump" '[ "$(psql_ "$q_old")" = "replaced:$NEW" ]'
-check "zmq rows have fees, sizes, inputs"  '[ "$(psql_ "SELECT count(*) FROM mempool_txs WHERE txid = hash_from_display('"'"'$S1'"'"') AND fee > 0 AND vsize > 0 AND weight > 0 AND size > 0 AND octet_length(wtxid) = 32 AND octet_length(inputs) >= 36 AND first_seen_src = '"'"'zmq'"'"' AND ancestor_count >= 1")" = 1 ]'
+check "zmq rows have fees, sizes, inputs"  '[ "$(psql_ "SELECT count(*) FROM mempool_txs WHERE txid = hash_from_display('"'"'$S1'"'"') AND fee > 0 AND vsize > 0 AND weight > 0 AND size > 0 AND octet_length(wtxid) = 32 AND input_count >= 1 AND first_seen_src = '"'"'zmq'"'"' AND ancestor_count >= 1")" = 1 ]'
+vin() { cli getrawtransaction "$1" 1 | tr -d '\n ' | grep -o '"txid":"[0-9a-f]*","vout":[0-9]*' | sed 's/"txid":"\([0-9a-f]*\)","vout":\([0-9]*\)/\1:\2/' | paste -sd,; }
+q_in() { echo "SELECT string_agg(hash_display(i.prevout_txid) || ':' || i.prevout_vout, ',' ORDER BY i.n) FROM mempool_tx_inputs i JOIN mempool_txs t USING (txid, first_seen) WHERE t.txid = hash_from_display('$1') AND t.removed_at IS NULL"; }
+check "inputs in mempool_tx_inputs = the tx's vin" '[ -n "$(vin "$S1")" ] && [ "$(psql_ "$(q_in "$S1")")" = "$(vin "$S1")" ] && [ "$(psql_ "SELECT input_count FROM mempool_txs WHERE txid = hash_from_display('"'"'$S1'"'"')")" = "$(vin "$S1" | tr , "\n" | wc -l)" ]'
 check "fee matches getmempoolentry"        '[ "$(psql_ "SELECT fee FROM mempool_txs WHERE txid = hash_from_display('"'"'$S2'"'"')")" = "$(cli getmempoolentry "$S2" | sed -n "s/.*\"base\": \([0-9.]*\).*/\1/p" | awk "{printf \"%d\", \$1*1e8 + 0.5}")" ]'
 check "raw tx stored (--store-raw)"        '[ "$(psql_ "SELECT encode(raw, '"'"'hex'"'"') FROM mempool_tx_raw WHERE txid = hash_from_display('"'"'$S1'"'"')")" = "$(cli getrawtransaction "$S1")" ]'
 B1=$(cli generatetoaddress 1 "$ADDR" | tr -d ' "[]' | grep .)
@@ -161,10 +164,15 @@ check "evicted: recorded as such"           '[ "$(psql_ "SELECT count(*) FROM me
 check "tables match the node after eviction" 'consistent'
 
 echo "== restart (resync)"
+cli generatetoaddress 8 "$ADDR" >/dev/null                      # clear the full mempool (~12 big txs per block)
+# Replaced after the restart. Its fee clears the node's raised minimum (a wallet tx below it is kept by the wallet
+# but never enters the mempool).
+OLD2=$(w -named sendtoaddress address="$(w getnewaddress)" amount=0.15 fee_rate=30)
+check "restart: OLD2 in the mempool"        'cli getmempoolentry "$OLD2"'
 DOWN1=$(w sendtoaddress "$(w getnewaddress)" 0.14)            # in the mempool at the stop, mined while down
 settle
 docker stop "$REC" >/dev/null
-cli generatetoaddress 1 "$ADDR" >/dev/null
+cli generateblock "$ADDR" "[\"$DOWN1\"]" >/dev/null             # mines DOWN1 only
 WHILE=$(w sendtoaddress "$(w getnewaddress)" 0.11)              # added while down
 docker logs "$REC" > "$TMP/rec1.log" 2>&1; docker rm -f "$REC" >/dev/null
 start_rec
@@ -174,6 +182,9 @@ settle
 check "tables match the node after restart" 'consistent'
 check "added while down: from the snapshot" '[ "$(psql_ "SELECT first_seen_src FROM mempool_txs WHERE txid = hash_from_display('"'"'$WHILE'"'"')")" = mempool ]'
 check "mined while down: closed by the resync" '[ "$(psql_ "SELECT removal || '"'"':'"'"' || removed_src FROM mempool_txs WHERE txid = hash_from_display('"'"'$DOWN1'"'"')")" = "mined:resync" ]'
+NEW2=$(w -named bumpfee "$OLD2" | sed -n 's/.*"txid": "\(.*\)".*/\1/p')
+settle
+check "RBF after restart (inputs reloaded from mempool_tx_inputs)" '[ -n "$NEW2" ] && [ "$(psql_ "SELECT removal || '"'"':'"'"' || hash_display(replaced_by) FROM mempool_txs WHERE txid = hash_from_display('"'"'$OLD2'"'"')")" = "replaced:$NEW2" ]'
 check "after restart: zmq again"            '[ "$(psql_ "SELECT first_seen_src FROM mempool_txs WHERE txid = hash_from_display('"'"'$AFTER'"'"')")" = zmq ]'
 check "no duplicate open rows"              '[ "$(psql_ "SELECT count(*) FROM (SELECT txid FROM mempool_txs WHERE removed_at IS NULL GROUP BY txid HAVING count(*) > 1) d")" = 0 ]'
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -65,6 +66,7 @@ func (s *PGStore) ensure(ctx context.Context) error {
 	// Staging tables for this session (emptied at every commit).
 	if _, err := c.Exec(ctx, `
 		CREATE TEMP TABLE mr_ins (LIKE mempool_txs) ON COMMIT DELETE ROWS;
+		CREATE TEMP TABLE mr_inp (LIKE mempool_tx_inputs) ON COMMIT DELETE ROWS;
 		CREATE TEMP TABLE mr_rm (txid bytea, first_seen timestamptz, removed_at timestamptz, removal text,
 			removed_src text, replaced_by bytea, block_hash bytea, block_height integer) ON COMMIT DELETE ROWS`); err != nil {
 		_ = c.Close(ctx)
@@ -85,7 +87,9 @@ func (s *PGStore) Close() {
 
 var insertColumns = []string{"first_seen", "first_seen_src", "txid", "wtxid", "size", "vsize", "weight", "fee",
 	"modified_fee", "ancestor_count", "ancestor_size", "ancestor_fees", "descendant_count", "descendant_size",
-	"descendant_fees", "inputs"}
+	"descendant_fees", "input_count"}
+
+var inputColumns = []string{"first_seen", "txid", "n", "prevout_txid", "prevout_vout"}
 
 func ts(us int64) time.Time { return time.UnixMicro(us).UTC() }
 
@@ -109,19 +113,30 @@ func (r *TxRow) values() []any {
 		w := r.Wtxid
 		wtxid = w[:]
 	}
-	inputs := r.Inputs
-	if inputs == nil {
-		inputs = []byte{}
+	var inputCount any
+	if r.Inputs != nil {
+		inputCount = int32(len(r.Inputs) / OutpointLen)
 	}
 	txid := r.Txid
 	v := []any{ts(r.FirstSeen), r.FirstSeenSrc, txid[:], wtxid, nzInt(r.Size), nzInt(r.VSize), nzInt(r.Weight),
-		nil, nil, nil, nil, nil, nil, nil, nil, inputs}
+		nil, nil, nil, nil, nil, nil, nil, nil, inputCount}
 	if e := r.Entry; e != nil {
 		v[7], v[8] = e.Fee, e.ModFee
 		v[9], v[10], v[11] = int32(e.AncestorCount), int32(e.AncestorSize), e.AncestorFees
 		v[12], v[13], v[14] = int32(e.DescendantCount), int32(e.DescendantSize), e.DescendantFees
 	}
 	return v
+}
+
+// inputRows: one mempool_tx_inputs row per input.
+func (r *TxRow) inputRows() [][]any {
+	out := make([][]any, 0, len(r.Inputs)/OutpointLen)
+	txid := r.Txid
+	for i := 0; (i+1)*OutpointLen <= len(r.Inputs); i++ {
+		prev, vout := inputAt(r.Inputs, i)
+		out = append(out, []any{ts(r.FirstSeen), txid[:], int32(i), prev[:], int64(vout)})
+	}
+	return out
 }
 
 func (s *PGStore) Write(ctx context.Context, ops []Op, keepRaw bool) error {
@@ -136,13 +151,14 @@ func (s *PGStore) Write(ctx context.Context, ops []Op, keepRaw bool) error {
 }
 
 func (s *PGStore) write(ctx context.Context, ops []Op, keepRaw bool) error {
-	var ins, raw, rm [][]any
+	var ins, inp, raw, rm [][]any
 	var blocks []*BlockRow
 	minFirst := int64(1<<63 - 1)
 	for _, op := range ops {
 		switch {
 		case op.Insert != nil:
 			ins = append(ins, op.Insert.values())
+			inp = append(inp, op.Insert.inputRows()...)
 			if keepRaw && op.Insert.Raw != nil {
 				t := op.Insert.Txid
 				raw = append(raw, []any{ts(op.Insert.FirstSeen), t[:], op.Insert.Raw})
@@ -172,6 +188,14 @@ func (s *PGStore) write(ctx context.Context, ops []Op, keepRaw bool) error {
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO mempool_txs SELECT * FROM mr_ins ON CONFLICT (txid, first_seen) DO NOTHING`); err != nil {
 			return fmt.Errorf("inserting rows: %w", err)
+		}
+	}
+	if len(inp) > 0 {
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"mr_inp"}, inputColumns, pgx.CopyFromRows(inp)); err != nil {
+			return fmt.Errorf("staging inputs: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO mempool_tx_inputs SELECT * FROM mr_inp ON CONFLICT (txid, first_seen, n) DO NOTHING`); err != nil {
+			return fmt.Errorf("inserting inputs: %w", err)
 		}
 	}
 	if len(raw) > 0 {
@@ -237,28 +261,36 @@ func (s *PGStore) withConn(ctx context.Context, fn func(*pgx.Conn) error) error 
 	return fn(c)
 }
 
+// OpenTxs loads the rows still open, with their inputs (mempool_tx_inputs, kept 30 days: longer than any open row
+// lasts). A row whose inputs are missing gets nil Inputs; the resync fetches them from the node.
 func (s *PGStore) OpenTxs(ctx context.Context, since time.Time) ([]OpenTx, error) {
 	var out []OpenTx
 	err := s.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `SELECT txid, first_seen, inputs FROM mempool_txs WHERE removed_at IS NULL AND first_seen >= $1`, since)
+		rows, err := c.Query(ctx, `SELECT t.txid, t.first_seen, i.prevout_txid, i.prevout_vout
+			FROM mempool_txs t LEFT JOIN mempool_tx_inputs i ON i.txid = t.txid AND i.first_seen = t.first_seen AND i.first_seen >= $1
+			WHERE t.removed_at IS NULL AND t.first_seen >= $1 ORDER BY t.txid, t.first_seen, i.n`, since)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var txid, inputs []byte
+			var txid, prev []byte
+			var vout *int64
 			var first time.Time
-			if err := rows.Scan(&txid, &first, &inputs); err != nil {
+			if err := rows.Scan(&txid, &first, &prev, &vout); err != nil {
 				return err
 			}
 			if len(txid) != 32 {
 				continue
 			}
-			o := OpenTx{Txid: Hash(txid), FirstSeen: first.UnixMicro()}
-			if len(inputs) > 0 {
-				o.Inputs = inputs
+			fs := first.UnixMicro()
+			if n := len(out); n == 0 || out[n-1].Txid != Hash(txid) || out[n-1].FirstSeen != fs {
+				out = append(out, OpenTx{Txid: Hash(txid), FirstSeen: fs})
 			}
-			out = append(out, o)
+			if len(prev) == 32 && vout != nil {
+				o := &out[len(out)-1]
+				o.Inputs = binary.LittleEndian.AppendUint32(append(o.Inputs, prev...), uint32(*vout))
+			}
 		}
 		return rows.Err()
 	})

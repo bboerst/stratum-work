@@ -586,9 +586,10 @@ func (r *Recorder) disconnected(ctx context.Context, ev SeqEvent) {
 	}
 }
 
-// mempoolFull refreshes getmempoolinfo when it's older than a few seconds.
-func (r *Recorder) mempoolFull(ctx context.Context) bool {
-	if r.info == nil || r.now()-r.infoAt > 5_000_000 {
+// mempoolFull reports whether the node has been trimming to size, from a getmempoolinfo taken after `after` (the
+// removal's receipt time): a cached answer from before the removal could predate the first trim.
+func (r *Recorder) mempoolFull(ctx context.Context, after int64) bool {
+	if r.info == nil || r.infoAt < after {
 		if info, err := r.node.MempoolInfo(ctx); err == nil {
 			r.info, r.infoAt = info, r.now()
 		}
@@ -637,7 +638,11 @@ func (r *Recorder) finalize() {
 				p.reason = reasonExpired
 			default:
 				if full == nil {
-					f := r.mempoolFull(context.Background())
+					last := int64(0)
+					for _, q := range r.pending {
+						last = max(last, q.at)
+					}
+					f := r.mempoolFull(context.Background(), last)
 					full = &f
 				}
 				if *full {

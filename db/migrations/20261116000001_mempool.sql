@@ -37,8 +37,7 @@ CREATE TABLE mempool_txs (
     descendant_count integer,
     descendant_size  integer,
     descendant_fees  bigint,
-    inputs          bytea       NOT NULL CHECK (octet_length(inputs) % 36 = 0),
-                                           -- prevouts, n x (txid internal order || vout u32 LE); empty if unknown
+    input_count     integer,               -- inputs in mempool_tx_inputs; NULL if unknown (tx never fetched)
     removed_at      timestamptz CHECK (removed_at >= first_seen),
     removal         mempool_removal,
     removed_src     text        CHECK (removed_src IN ('zmq', 'resync')),
@@ -68,6 +67,27 @@ ALTER TABLE mempool_txs SET (
     timescaledb.orderby      = 'removed_at, first_seen',
     timescaledb.sparse_index = 'bloom(txid)'
 );
+
+-- Transaction inputs (prevouts), one row per input, keyed like mempool_txs by (txid, first_seen). Kept for 30 DAYS
+-- only (retention policy in the next migration): the recorder needs them only while a tx is in the mempool (at
+-- most -mempoolexpiry, 14 days; reloaded from here after a restart) to detect replacements and conflicts. So the
+-- resolver (and any analysis of spends: CPFP, conflict chains) has inputs for the last 30 days only; older
+-- mempool_txs rows keep input_count but not the inputs. Inputs are the largest incompressible part of a row
+-- (32-byte prevout hashes), which is why they aren't kept forever.
+CREATE TABLE mempool_tx_inputs (
+    first_seen   timestamptz NOT NULL,   -- the mempool_txs row's first_seen (time column)
+    txid         bytea       NOT NULL CHECK (octet_length(txid) = 32),
+    n            integer     NOT NULL CHECK (n >= 0),               -- input index
+    prevout_txid bytea       NOT NULL CHECK (octet_length(prevout_txid) = 32),  -- internal byte order
+    prevout_vout bigint      NOT NULL CHECK (prevout_vout BETWEEN 0 AND 4294967295)  -- u32
+);
+SELECT create_hypertable('mempool_tx_inputs', by_range('first_seen', INTERVAL '1 day'));
+CREATE UNIQUE INDEX mempool_tx_inputs_tx ON mempool_tx_inputs (txid, first_seen, n);
+-- Columnstore after 2 days, like templates: rows never change. Ordered by first_seen (a tx's inputs share it, so they
+-- sit together), bloom filters on both hashes. The restart reload joins open rows to their inputs: measured 72 ms for
+-- 20k open transactions with both tables compressed.
+ALTER TABLE mempool_tx_inputs SET (timescaledb.enable_columnstore, timescaledb.segmentby = '',
+    timescaledb.orderby = 'first_seen, n', timescaledb.sparse_index = 'bloom(txid), bloom(prevout_txid)');
 
 -- Raw transactions, only when the recorder runs with --store-raw (default off; ~300 MB/day on mainnet). Separate
 -- table so a retention window can drop whole chunks without touching the metadata.
@@ -112,7 +132,8 @@ CREATE INDEX mempool_offmempool_txid ON mempool_offmempool (txid);
 CREATE INDEX mempool_offmempool_seen ON mempool_offmempool (seen_at);
 
 -- Least privilege: the recorder writes its own tables and nothing else. SELECT on mempool_txs is needed for the
--- UPDATE ... WHERE that closes a row, the restart reload and the off-mempool check; on mempool_blocks for the
+-- UPDATE ... WHERE that closes a row, the restart reload and the off-mempool check (and on mempool_tx_inputs for the
+-- reload); on mempool_blocks for the
 -- last-block lookup at restart.
 DO $$
 BEGIN
@@ -120,16 +141,18 @@ BEGIN
 END $$;
 GRANT USAGE ON SCHEMA public TO stratum_mempool;
 GRANT SELECT, INSERT, UPDATE ON mempool_txs TO stratum_mempool;
+GRANT SELECT, INSERT ON mempool_tx_inputs TO stratum_mempool;  -- SELECT: the restart reload
 GRANT INSERT ON mempool_tx_raw, mempool_offmempool TO stratum_mempool;
 GRANT SELECT, INSERT ON mempool_blocks TO stratum_mempool;
-GRANT SELECT ON mempool_txs, mempool_tx_raw, mempool_blocks, mempool_offmempool TO stratum_backend, stratum_web;
+GRANT SELECT ON mempool_txs, mempool_tx_inputs, mempool_tx_raw, mempool_blocks, mempool_offmempool TO stratum_backend, stratum_web;
 
 -- migrate:down
-REVOKE ALL ON mempool_txs, mempool_tx_raw, mempool_blocks, mempool_offmempool FROM stratum_mempool, stratum_backend, stratum_web;
+REVOKE ALL ON mempool_txs, mempool_tx_inputs, mempool_tx_raw, mempool_blocks, mempool_offmempool FROM stratum_mempool, stratum_backend, stratum_web;
 REVOKE USAGE ON SCHEMA public FROM stratum_mempool;
 DROP TABLE mempool_offmempool;
 DROP TABLE mempool_blocks;
 DROP TABLE mempool_tx_raw;
+DROP TABLE mempool_tx_inputs;
 DROP TABLE mempool_txs;
 DROP TYPE mempool_removal;
 DROP FUNCTION hash_from_display(text);

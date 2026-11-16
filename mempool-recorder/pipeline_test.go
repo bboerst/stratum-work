@@ -149,3 +149,19 @@ func TestMetricsRender(t *testing.T) {
 		t.Error("ready while unsynced")
 	}
 }
+
+func TestInputRows(t *testing.T) {
+	a := mkTx("a", coin(1), outpoint(hashOf("x", 0), 7))
+	r := &TxRow{Txid: a.Txid, FirstSeen: 5, Inputs: a.Inputs}
+	rows := r.inputRows()
+	x := hashOf("x", 0)
+	if len(rows) != 2 || rows[1][2] != int32(1) || rows[1][4] != int64(7) || string(rows[1][3].([]byte)) != string(x[:]) {
+		t.Fatalf("%v", rows)
+	}
+	if v := r.values(); v[len(v)-1] != int32(2) {
+		t.Fatalf("input_count %v", v[len(v)-1])
+	}
+	if v := (&TxRow{}).values(); v[len(v)-1] != nil {
+		t.Fatal("unknown inputs must be NULL")
+	}
+}

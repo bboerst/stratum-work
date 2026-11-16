@@ -1,6 +1,7 @@
-# Client performance (web/perf, #157): every PR that touches web/ is measured against its base in the same job, so
-# runner noise largely cancels out. Results go to the job summary, a sticky PR comment (same-repository PRs; forks get
-# the summary only) and an artifact. Synthetic data only (web/perf/fixture.ts). See web/perf/README.md.
+# Client performance (web/perf, #157): every PR that touches web/ is measured against its base in the same job, the
+# two alternating run by run, so runner noise largely cancels out. Results go to the job summary, a sticky PR comment
+# (same-repository PRs; forks get the summary only) and an artifact. Synthetic data only (web/perf/fixture.ts). See
+# web/perf/README.md.
 name: perf
 
 on:
@@ -55,9 +56,10 @@ jobs:
             for _ in $(seq 1 60); do node -e "fetch('http://127.0.0.1:$port/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" && break; sleep 2; done
           done
           cd pr/web
-          npx tsx perf/run.ts --base-url http://127.0.0.1:3102 --label "base (${BASE_SHA::7})" --out ../../perf-base.json
-          npx tsx perf/run.ts --base-url http://127.0.0.1:3100 --label "this PR" --compare ../../perf-base.json \
-            --out ../../perf-pr.json --markdown ../../perf.md
+          # One process measures both builds, alternating run by run within each page, so runner drift hits both sides
+          npx tsx perf/run.ts --base-url http://127.0.0.1:3100 --label "this PR" --out ../../perf-pr.json \
+            --compare-url http://127.0.0.1:3102 --compare-label "base (${BASE_SHA::7})" --compare-out ../../perf-base.json \
+            --markdown ../../perf.md
           cat ../../perf.md >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -39,6 +39,7 @@ mempool-recorder/test-e2e.sh            # mempool recorder end to end: regtest n
 db/test-migrations.sh                   # migrations up/down/up + role privileges (Docker)
 backend/test-stale-blocks-e2e.sh        # stale blocks: two regtest nodes, fork + reorg, backend in Postgres mode (Docker)
 backend/test-reorg-reconcile-e2e.sh     # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode (Docker)
+backend/test-block-gap-fill-e2e.sh      # historical gaps on a pruned node, filled via getblockfrompeer (Docker)
 tools/mongo-to-postgres/test-e2e.sh     # backfill tool: unit tests + synthetic fixture end to end (Docker)
 tools/replica-compare/test-e2e.sh       # replica comparison: unit tests + synthetic fixture end to end (Docker)
 tools/site-compare/test-e2e.sh          # site comparison: unit tests + two synthetic fake sites over HTTP (Docker)

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Historical gap fill end to end (gap_fill.py): the backend follows a PRUNED regtest node (B) that is connected to a
+# full node (A). Interior gaps are made by deleting rows from `blocks` (Postgres mode), some of them at heights B has
+# pruned. The backend fills the unpruned ones from B directly and the pruned ones by having B download them from A
+# (getblockfrompeer). Needs Docker; everything runs in throwaway containers on a private network.
+#
+#   backend/test-block-gap-fill-e2e.sh
+#
+# Regtest pruning: -prune=550 -fastprune (64 KiB block files), then `pruneblockchain`. Two limits decide what can
+# go: a block file is deleted only when every block in it is below the prune height, and the last 288 blocks are
+# always kept. Regtest blocks with only a coinbase are ~240 bytes, so the first file holds ~270 blocks and the chain
+# has to be ~700 long before that file can be pruned.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+IMAGE_PG=timescale/timescaledb:2.30.2-pg18
+IMAGE_BTC=bitcoin/bitcoin:32.1
+IMAGE_PY=python:3.13-slim
+IMAGE_MQ=rabbitmq:3.13.7-alpine
+DBMATE=ghcr.io/amacneil/dbmate:2.37.0
+NET=gapfill-e2e-$$; PG=gapfill-pg-$$; BA=gapfill-btca-$$; BB=gapfill-btcb-$$; BE=gapfill-backend-$$; MQ=gapfill-mq-$$
+MIN=255
+ok=0; bad=0
+check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then echo "  PASS  $d"; ok=$((ok+1)); else echo "  FAIL  $d"; bad=$((bad+1)); fi; }
+retry() { local n=$1; shift; for _ in $(seq "$n"); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
+cleanup() { docker rm -fv "$BE" "$BA" "$BB" "$PG" "$MQ" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
+trap cleanup EXIT
+
+cli() { local n=$1; shift; docker exec "$n" bitcoin-cli -regtest -rpcuser=test -rpcpassword=test "$@"; }
+sql() { docker exec "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -At -c "$1"; }
+sql_is() { [ "$(sql "$1")" = "$2" ]; }
+at() { [ "$(cli "$1" getblockcount)" = "$2" ]; }
+logs_have() { [[ "$(docker logs "$1" 2>&1)" == *"$2"* ]]; }
+pruned_on_b() { [[ "$(cli "$BB" getblock "$(cli "$BB" getblockhash "$1")" 1 2>&1)" == *"pruned data"* ]]; }
+has_data_on_b() { cli "$BB" getblock "$(cli "$BB" getblockhash "$1")" 1 >/dev/null; }
+# node A's chain from $MIN to its tip vs the backend's blocks_best, "height:hash" per line
+node_chain() {   # one docker exec: a few hundred heights
+  docker exec "$BA" sh -c 'c() { bitcoin-cli -regtest -rpcuser=test -rpcpassword=test "$@"; }
+    for h in $(seq "$1" "$(c getblockcount)"); do echo "$h:$(c getblockhash "$h")"; done' _ "$MIN"
+}
+pg_chain() { sql "SELECT height || ':' || encode(block_hash, 'hex') FROM blocks_best WHERE height >= $MIN ORDER BY height, block_hash"; }
+converged() { [ "$(pg_chain)" = "$(node_chain)" ]; }
+stored() { sql_is "SELECT count(*) FROM blocks_best WHERE height = $1" 1; }
+all_stored() { for h in "$@"; do stored "$h" || return 1; done; }
+none_stored() { for h in "$@"; do stored "$h" && return 1; done; return 0; }
+
+docker network create "$NET" >/dev/null
+docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=test "$IMAGE_PG" -c timescaledb.enable_chunk_skipping=on >/dev/null
+# RabbitMQ only so block publishing doesn't spend seconds per block on reconnect attempts
+docker run -d --name "$MQ" --network "$NET" -e RABBITMQ_DEFAULT_USER=mquser -e RABBITMQ_DEFAULT_PASS=mqpassword "$IMAGE_MQ" >/dev/null 2>&1
+docker run -d --name "$BA" --network "$NET" "$IMAGE_BTC" bitcoind -regtest -server -listen -rpcbind=0.0.0.0 \
+  -rpcallowip=0.0.0.0/0 -rpcuser=test -rpcpassword=test -printtoconsole=0 >/dev/null
+docker run -d --name "$BB" --network "$NET" "$IMAGE_BTC" bitcoind -regtest -server -listen -rpcbind=0.0.0.0 \
+  -rpcallowip=0.0.0.0/0 -rpcuser=test -rpcpassword=test -zmqpubhashblock=tcp://0.0.0.0:28332 -printtoconsole=0 \
+  -prune=550 -fastprune >/dev/null
+for i in $(seq 60); do docker exec "$PG" pg_isready -h localhost -U postgres >/dev/null 2>&1 && break; sleep 1; done; sleep 2
+docker run --rm --network "$NET" -v "$PWD/db:/db" -e DBMATE_NO_DUMP_SCHEMA=true \
+  -e DATABASE_URL="postgres://postgres:test@$PG:5432/postgres?sslmode=disable" "$DBMATE" --wait up >/dev/null
+docker exec -i "$PG" psql -h localhost -U postgres -q < db/dev-users.sql
+for i in $(seq 90); do docker exec "$MQ" rabbitmq-diagnostics -q ping >/dev/null 2>&1 && break; sleep 1; done
+for n in "$BA" "$BB"; do for i in $(seq 30); do cli "$n" getblockcount >/dev/null 2>&1 && break; sleep 1; done; done
+
+echo "== chain: A mines, pruned B follows; the backend follows B"
+cli "$BB" addnode "$BA:18444" onetry >/dev/null
+cli "$BA" generatetodescriptor 280 "raw(51)" >/dev/null
+check "B synced to 280" retry 60 at "$BB" 280
+# Started while the chain is short, so the backfill (MIN..tip, paced) is quick; the rest arrives over ZMQ.
+docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" \
+  -e DB_BACKEND=postgres -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
+  -e BITCOIN_RPC_HOST="$BB" -e BITCOIN_RPC_PORT=18443 -e BITCOIN_RPC_USER=test -e BITCOIN_RPC_PASSWORD=test \
+  -e BITCOIN_ZMQ_BLOCK="tcp://$BB:28332" -e STALE_BLOCKS_ENABLED=false -e BLOCK_GAP_WINDOW=10 \
+  -e MIN_BLOCK_HEIGHT=$MIN -e BLOCK_GAP_FILL_INTERVAL_S=5 -e BLOCK_GAP_FILL_PEER_TIMEOUT_S=10 \
+  -e RABBITMQ_HOST="$MQ" \
+  -e POOL_LIST_URL=http://127.0.0.1:9/pools.json -e LOCAL_POOL_FILE=/nonexistent.json \
+  "$IMAGE_PY" sh -c 'cp -r /src /app && cd /app && pip install -q --root-user-action=ignore -r requirements.txt 2>/dev/null && exec python -u main.py' >/dev/null
+check "backend stored $MIN..280" retry 240 converged
+for _ in $(seq 6); do cli "$BA" generatetodescriptor 70 "raw(51)" >/dev/null; sleep 2; done
+check "B synced to 700" retry 60 at "$BB" 700
+check "backend stored $MIN..700" retry 300 converged
+check "the gap fill found nothing to do so far (it logs only when something is missing)" bash -c "! docker logs $BE 2>&1 | grep -q 'Gap fill'"
+
+echo "== prune B, cut it off from A, make gaps"
+PRUNEHEIGHT=$(cli "$BB" pruneblockchain 412)
+echo "  B pruned up to height $PRUNEHEIGHT"
+check "B pruned the first block file (prune height >= 270)" test "$PRUNEHEIGHT" -ge 270
+PRUNED_GAPS=(258 259 260 261 262 270)
+GAPS_SQL=$(IFS=,; echo "${PRUNED_GAPS[*]}")
+all_pruned_on_b() { for h in "$@"; do pruned_on_b "$h" || return 1; done; }
+check "B has no data for the pruned gap heights" all_pruned_on_b "${PRUNED_GAPS[@]}"
+cli "$BB" setnetworkactive false >/dev/null
+no_peers() { [ "$(cli "$BB" getconnectioncount)" = 0 ]; }
+check "B disconnected" retry 20 no_peers
+sql "DELETE FROM blocks WHERE height IN ($GAPS_SQL, 500)" >/dev/null
+check "gaps made at the 6 pruned heights (500 may be refilled already)" sql_is "SELECT count(*) FROM blocks_best WHERE height IN ($GAPS_SQL)" 0
+check "500 not pruned on B (filled without a peer)" has_data_on_b 500
+
+echo "== no peer: the unpruned gap is filled, the pruned ones wait"
+check "500 filled straight from B" retry 60 stored 500
+check "pruned gaps logged as no suitable peer" retry 30 logs_have "$BE" "no connected peer serves old blocks"
+check "pruned gaps still missing" none_stored "${PRUNED_GAPS[@]}"
+
+echo "== reconnect: pruned gaps are fetched from A"
+cli "$BB" setnetworkactive true >/dev/null
+cli "$BB" addnode "$BA:18444" onetry >/dev/null
+check "all gaps filled" retry 90 all_stored "${PRUNED_GAPS[@]}"
+check "blocks_best equals A's chain $MIN..700" converged
+check "logged as fetched from a peer" logs_have "$BE" "fetched from peer"
+check "filled blocks stored as synced (seen_at NULL), like the backfill" \
+  sql_is "SELECT count(*) FROM blocks WHERE height IN ($GAPS_SQL) AND seen_at IS NULL" 6
+check "B has block 260's data again (getblockfrompeer)" has_data_on_b 260
+runs_logged() { docker logs "$BE" 2>&1 | grep -c "Gap fill:.*missing"; }
+sleep 6; RUNS=$(runs_logged); sleep 12   # two more runs (BLOCK_GAP_FILL_INTERVAL_S=5)
+check "later runs find no gaps (no new 'missing' log)" test "$(runs_logged)" = "$RUNS"
+
+echo "== backend logs (gap fill)"
+docker logs "$BE" 2>&1 | grep -E "Gap fill" | head -30
+echo "RESULT: $ok passed, $bad failed"
+[ "$bad" = 0 ]

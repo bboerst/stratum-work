@@ -59,6 +59,16 @@ START_FULL_REINDEX_ON_BOOT = False
 # the highest stored block, and never replaces one. 0 turns the window off.
 BLOCK_GAP_WINDOW = int(os.getenv("BLOCK_GAP_WINDOW", "144"))
 
+# Historical gap fill (gap_fill.py): at startup (after the sync) and then every BLOCK_GAP_FILL_INTERVAL_S seconds,
+# every height missing between MIN_BLOCK_HEIGHT and the stored tip is fetched; on a pruned node the node first
+# downloads the block again from a peer (getblockfrompeer). At most BLOCK_GAP_FILL_MAX_BLOCKS blocks per run, up to
+# BLOCK_GAP_FILL_PEERS peers per block, BLOCK_GAP_FILL_PEER_TIMEOUT_S seconds each. No gaps = two indexed reads, no
+# RPC. 0 turns it off.
+BLOCK_GAP_FILL_INTERVAL_S = float(os.getenv("BLOCK_GAP_FILL_INTERVAL_S", "3600"))
+BLOCK_GAP_FILL_MAX_BLOCKS = int(os.getenv("BLOCK_GAP_FILL_MAX_BLOCKS", "50"))
+BLOCK_GAP_FILL_PEERS = int(os.getenv("BLOCK_GAP_FILL_PEERS", "3"))
+BLOCK_GAP_FILL_PEER_TIMEOUT_S = float(os.getenv("BLOCK_GAP_FILL_PEER_TIMEOUT_S", "30"))
+
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
     """AuthServiceProxy that verifies https endpoints against RPC_CA_FILE when one is configured."""
@@ -284,6 +294,11 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
 def process_block(block_hash: str, is_new_block: bool = False) -> bool:
     """Fetch, analyse, store and publish one block. is_new_block: seen live now (Postgres: seen_at = now; MongoDB:
     upsert by hash). Returns False when it failed (logged)."""
+    return process_block_status(block_hash, is_new_block) == "ok"
+
+
+def process_block_status(block_hash: str, is_new_block: bool = False) -> str:
+    """process_block, returning "ok", "pruned" (the node no longer has the block's data) or "error"."""
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
@@ -307,10 +322,13 @@ def process_block(block_hash: str, is_new_block: bool = False) -> bool:
             }
         }
         publish_to_rabbitmq(rabbitmq_doc)
-        return True
+        return "ok"
+    except PrunedBlockError as e:
+        logger.warning("Block %s not processed, the node has pruned it: %s", block_hash, e)
+        return "pruned"
     except Exception as e:
         logger.error("Error processing block %s: %s", block_hash, e)
-        return False
+        return "error"
 
 def reprocess_block_full(block_hash: str, publish_update: bool = False) -> str:
     """Rebuild one block from RPC. Returns "ok", "pruned" or "error"."""
@@ -815,12 +833,39 @@ def start_stale_block_tracker():
     logger.info("Stale block tracking started")
 
 
+# --- Historical gap fill (gap_fill.py) ---
+def gap_filler():
+    from gap_fill import HistoricalGapFiller
+    return HistoricalGapFiller(
+        rpc=node_rpc, store=store,
+        store_block=lambda h: process_block_status(h, is_new_block=False),   # synced, not seen live
+        # serialised with new blocks; only the store step runs there, never the wait for a peer
+        on_block_processor=lambda fn: block_processor.submit(fn).result(),
+        min_height=MIN_BLOCK_HEIGHT, max_blocks=BLOCK_GAP_FILL_MAX_BLOCKS, max_peers=BLOCK_GAP_FILL_PEERS,
+        peer_timeout=BLOCK_GAP_FILL_PEER_TIMEOUT_S)
+
+
+def sync_then_fill_gaps():
+    """The startup sync, then the historical gap fill now and every BLOCK_GAP_FILL_INTERVAL_S seconds."""
+    sync_blocks()
+    if BLOCK_GAP_FILL_INTERVAL_S <= 0 or not store.enabled:
+        logger.info("Historical gap fill off (BLOCK_GAP_FILL_INTERVAL_S=%s)", BLOCK_GAP_FILL_INTERVAL_S)
+        return
+    filler = gap_filler()
+    while True:
+        try:
+            filler.run()
+        except Exception as e:
+            logger.error("Historical gap fill failed (retried next run): %s", e)
+        time.sleep(BLOCK_GAP_FILL_INTERVAL_S)
+
+
 def start_background_workers():
     """Initialize background tasks when running as a worker-only service."""
     logger.info("Starting background workers for Bitcoin Mining Pool Identification Service")
     load_pools_once()
     start_stale_block_tracker()
-    threading.Thread(target=sync_blocks, daemon=True).start()
+    threading.Thread(target=sync_then_fill_gaps, daemon=True, name="sync_gap_fill").start()
     threading.Thread(target=zmq_listener, daemon=True).start()
     threading.Thread(target=pool_updater_task, daemon=True).start()
     start_heartbeat_thread()

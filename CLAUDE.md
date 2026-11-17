@@ -9,7 +9,7 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | `collector-go/` | Go port of the collector (#148): one process per pool, Postgres + RabbitMQ (no MongoDB), kernel receive timestamps, `/livez` `/readyz` `/metrics`. Same flags; passwords from env only. Golden tests against the Python functions (`testdata/gen_golden.py`). | Go |
 | `mempool-recorder/` | Follows the Bitcoin node's mempool over ZMQ (`sequence` + `rawtx`) and records every transaction with first-seen time and how it left (mined, replaced, conflict, reorg, expired, evicted) in `mempool_txs`; blocks and off-mempool block transactions too (#180). Race-free sync and resync, `/livez` `/readyz` `/metrics`. ([README](mempool-recorder/README.md)) | Go |
 | `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see [README "Adding an analyzer"](README.md#adding-an-analyzer)), publishes block events. | Python |
-| `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views, other chains (`templates_other`, Postgres only). API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
+| `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views; `/api/other-chains` summarizes `templates_other` (Postgres only). API routes in `web/app/api/`. Prisma schema in `web/prisma/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
 | `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
 | `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |

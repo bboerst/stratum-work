@@ -2,7 +2,7 @@
 
 Status: **proposal, measured on synthetic data** (section 4). It's planned for after the production cutover to Postgres, not before.
 
-**Recommendation: do it.** Store every received template in `templates`. Drop `templates_other`, and stop classifying in the collectors and the backfill. Height reads pass the height's **time window** (derived from `blocks`) as query parameters, so the planner can drop chunks by time. With that, one table reads as fast as today's Bitcoin-only table, even at production's chunk count. Without it, the lost height-based chunk skipping costs about 40 ms per height read at ~160 chunks, and that grows with history (section 4). Only one read gets slower: the all-time "other chains" summary now scans the whole table. That page is already cached, and a longer cache is enough.
+**Recommendation: do it.** Store every received template in `templates`. Drop `templates_other`, and stop classifying in the collectors and the backfill. Height reads pass the height's **time window** (derived from `blocks`) as query parameters, so the planner can drop chunks by time. With that, one table reads as fast as today's Bitcoin-only table, even at production's chunk count. Without it, the lost height-based chunk skipping costs about 40 ms per height read at ~160 chunks, and that grows with history (section 4). The window is also what keeps stale and other-chain rows out of height reads, so it is part of the design, not an optional optimization (see "Why the window is required" below). Only one read gets slower: the "other chains" summary now scans the table instead of a 0.6 % side table. It defaults to the last 90 days, which keeps it around a second.
 
 ## 1. Why
 
@@ -36,7 +36,7 @@ Should the collector store the node tip it saw as an annotation? **No.** `blocks
 |---|---|---|
 | **Bitcoin parent** | `prev_hash` is a block in `blocks` or `stale_blocks` | One view, `bitcoin_parents(prev_hash)`. It holds both block tables with each hash converted once per *block* into stratum's word order (`stratum_prev_hash_to_block_hash()` is its own inverse), so templates join it on the raw column. Converting per *template* instead was 43× slower (section 4). |
 | **Unknown parent** | anything else | Either another chain, or a Bitcoin block we don't have. That can be a tip race (the block isn't stored yet), a gap in `blocks` (resolves when the gap is filled), or a block that lost a race before it reached our node. The prev hash alone can't tell these apart, and nothing below needs it to. |
-| **Height window** | from the arrival of the block at `height − 1` to the arrival of the block at `height`, widened by 2 h on each side | Arrival is the earliest `seen_at` at that height, or `block_time` where `seen_at` is null (backfilled history). The 2 h is the consensus limit on how far ahead a header time may run, so the window also holds for header times. If a block isn't stored, that side of the window is open. |
+| **Height window** | from the arrival of the block at `height − 1` to the arrival of the block at `height`, widened by 2 h on each side | Arrival is the earliest `seen_at` at that height, or `block_time` where `seen_at` is null (backfilled history). The 2 h is the consensus limit on how far ahead a header time may run, so the window also holds for header times. If the block at a bound isn't stored (a gap in `blocks`), that side uses the nearest stored block below or above instead, so the window widens but never opens. An open side would turn off both chunk exclusion and the stale filter at exactly the heights with gaps. |
 | **Stale** | Bitcoin parent, received after its height's window | The stuck-feed case: an old job re-sent hours or days later. |
 
 **BCH detection: drop it.** A BCH template has no Bitcoin parent, so it is an "unknown parent" like every other chain. The other-chains page already characterizes each pool's group (height range, prev hashes, AuxPoW share). A chain name would need per-chain knowledge (today an external API, called at ingest) for a label on a page that works without it. If a name is ever wanted, that page can derive it from stored facts, e.g. heights and `nbits`, without storing it.
@@ -46,6 +46,12 @@ Should the collector store the node tip it saw as an annotation? **No.** `blocks
 **Passing the window.** The window must reach the planner as values: literals, or parameters of a custom plan. Only then are chunks outside it dropped before planning. Two things were tried and don't work (section 4):
 - computing the window inside the query (stable functions, subqueries) still plans every chunk;
 - filtering a view on `received_at` stops at the view's window functions.
+
+**Why the window is required.** Without it, a read at `height = h` returns every row at that height, wherever it came from:
+- stuck-feed rows, which carry the old height they were mined for and arrive hours or days later;
+- another chain's templates whose heights pass through a past Bitcoin height (a chain a few thousand blocks behind Bitcoin today crosses heights Bitcoin had years ago).
+
+The synthetic data covered the first case and the "Bitcoin + 5" collision, but not the second: its BCH-like chain sat below every synthetic block height. A plain one-table read without the window would change what height pages show, so the window is not optional.
 
 So there are two pieces:
 - `height_window(from_height, to_height)` → `(from_ts, to_ts)`: a small SQL function over `blocks`. Readers call it first, which is one indexed lookup.
@@ -58,7 +64,7 @@ So there are two pieces:
 | R1 / R8 templates at a height, R4 first seen per pool, backend analytics `templates_at_height` | `templates` / `templates_dedup` at `height = h` | Same SQL plus `received_at` within `height_window(h, h)`. Unknown-parent rows inside the window stay, as today; they are the "unknown tip" prev hashes of the fork visual. Collisions are no worse than today's ±6 rule, which also admits another chain's template whose height happens to be near Bitcoin's. |
 | R2 template details, all chains | `templates_dedup ∪ templates_other_dedup` | `templates_dedup` with an open time range (no union) |
 | Fork visual, `stale_tip_templates()` | `templates` by height range | Same, with the range's window; prev hashes are labelled from `blocks` / `stale_blocks` as today |
-| Other chains page (`/api/other-chains`) | aggregate over `templates_other` | aggregate over `templates` where `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)`, plus a "stale Bitcoin" group. The `templates_other_*` views and the single-/multi-source split in `other-chains.ts` go away. Cache for an hour (today: 5 minutes). |
+| Other chains page (`/api/other-chains`) | aggregate over `templates_other` | aggregate over `templates` where `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)`, plus a "stale Bitcoin" group, over the **last 90 days by default** (a longer range on request). The `templates_other_*` views and the single-/multi-source split in `other-chains.ts` go away. The cache stays at 5 minutes. |
 | Live stream (browser) | drops templates the collector tagged with `chain_family` | The browser already knows the tip from the blocks stream and applies the same ±6 rule itself. This only affects display; nothing stored depends on it. |
 
 ## 3. What gets deleted
@@ -126,12 +132,14 @@ The variants:
 - **C makes it worse.** Excluding at executor startup still plans every chunk and evaluates the functions for each.
 - **C′ matches A, or beats it,** because the time window is narrower than a chunk's height range.
 - **Plan modes for C′.**
-  - node-postgres sends unnamed statements, so every plan is custom and gets the C′ numbers.
+  - The web queries through node-postgres `pool.query(text, values)` without a statement name (checked in `web/lib/db/postgres.ts`), so every plan is custom and gets the C′ numbers.
   - A cached generic plan (psycopg after 5 executions) excludes at startup instead: 0.1 + 10.2 ms. That's still 4× better than B.
-- **The other-chains summary is the real cost:** a full scan of `prev_hash` instead of a 0.6 % table. It's linear in rows, so about 15 s at 136M templates, which is why the page's cache becomes an hour. The per-pool template pages stay cheap, since they filter on pool and receive time.
+- **The other-chains summary is the real cost:** a full scan of `prev_hash` instead of a 0.6 % table. It's linear in the rows scanned (30 days: 936 ms vs all time: 1,481 ms on 14M rows), so about 15 s over all 136M templates. That's why the page defaults to the last 90 days, about a second at production's current rate. The per-pool template pages stay cheap, since they filter on pool and receive time.
 - **Classify the small side.** The first anti-join converted every template's hash (`stratum_prev_hash_to_block_hash(t.prev_hash) = b.block_hash`) and took 64 s. Converting the blocks instead (`bitcoin_parents`) took 1.5 s.
 
 ## 5. Migration (after the production cutover)
+
+**Before step 1:** port the real `templates_copies` / `templates_dedup` bodies into the bounds-taking functions and check with `EXPLAIN` that a height read scans one chunk. Only a reduced function was verified (section 4). If Postgres declines to inline the real body, the bounds stop reaching chunk exclusion without any error, and reads go back to planning every chunk.
 
 1. **Web and backend first,** reading both ways:
    - functions with windows for the height reads;

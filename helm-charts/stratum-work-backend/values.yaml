@@ -61,6 +61,13 @@ env:
   # tracker off: the best-chain reconciler, #212, records the blocks it replaces the same way).
   # STALE_BLOCKS_ENABLED: "true"
   # STALE_POLL_INTERVAL_S: "60"
+  #
+  # Historical gap fill (gap_fill.py): missing blocks between MIN_BLOCK_HEIGHT and the stored tip, after the startup
+  # sync and on this timer (0 = off). On a pruned node it also needs getpeerinfo and getblockfrompeer.
+  # BLOCK_GAP_FILL_INTERVAL_S: "3600"
+  # BLOCK_GAP_FILL_MAX_BLOCKS: "50"
+  # BLOCK_GAP_FILL_PEERS: "3"
+  # BLOCK_GAP_FILL_PEER_TIMEOUT_S: "30"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

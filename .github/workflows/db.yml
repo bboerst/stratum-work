@@ -5,15 +5,16 @@
 #   backend-store  backend/integrations/store.py (PostgresStore) against a real migrated database, as the backend role
 #   backfill-tool  tools/mongo-to-postgres: unit tests, then the end-to-end fixture (throwaway MongoDB + TimescaleDB)
 #   stale-blocks   backend stale-block tracking end to end: two regtest nodes, a fork and a reorg (throwaway containers),
-#                  then best-chain reconciliation across reorgs in Postgres and MongoDB mode
+#                  then best-chain reconciliation across reorgs in Postgres and MongoDB mode, then the historical gap
+#                  fill on a pruned node (getblockfrompeer)
 name: db
 
 on:
   pull_request:
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
   push:
     branches: [main]
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", "collector/coinbase.py", "tools/mongo-to-postgres/**", ".github/workflows/db.yml"]
 
 permissions:
   contents: read
@@ -101,3 +102,6 @@ jobs:
 
       - name: Best-chain reconciliation end to end (reorgs with the tracker off, backend down, 2 deep, MongoDB mode)
         run: backend/test-reorg-reconcile-e2e.sh
+
+      - name: Historical gap fill end to end (pruned regtest node, gaps fetched via getblockfrompeer)
+        run: backend/test-block-gap-fill-e2e.sh

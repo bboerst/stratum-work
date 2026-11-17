@@ -112,6 +112,8 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BITCOIN_ZMQ_BLOCK` | `tcp://host.docker.internal:28332` | ZMQ block notifications |
 | `MIN_BLOCK_HEIGHT` | `863998` | Lowest height the backend backfills on first start |
 | `BLOCK_GAP_WINDOW` | `144` | Heights below the tip the backend checks against the node's active chain after each sync, new block and reorg: missing blocks are fetched, blocks a reorg replaced are swapped for the node's and marked stale (0 = off; see "Best chain" below) |
+| `BLOCK_GAP_FILL_INTERVAL_S` | `3600` | Seconds between runs of the historical gap fill (also once after the startup sync): every height missing between `MIN_BLOCK_HEIGHT` and the stored tip is fetched, on a pruned node through `getblockfrompeer` (0 = off; see "Historical gaps" below) |
+| `BLOCK_GAP_FILL_MAX_BLOCKS` / `_PEERS` / `_PEER_TIMEOUT_S` | `50` / `3` / `30` | Per gap-fill run: blocks at most, peers tried per pruned block, seconds to wait for each peer |
 | `POSTGRES_PORT` | `5432` | Host port of the Postgres profile |
 | `COLLECTOR_PG_HOST` (+ `_USER`, `_PASSWORD`) | *(empty: off)* | Collectors also write to Postgres |
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |
@@ -217,6 +219,8 @@ psql postgres://web:web@localhost:5432/stratum                           # from 
 **Stale blocks** (backend in Postgres mode): on every new block and every `STALE_POLL_INTERVAL_S` (60) seconds the backend calls `getchaintips`, walks each non-active branch to the fork point and stores its blocks in `stale_blocks` (header always; coinbase, size and pool when the node has the full block); reorgs of the active chain go to `chain_reorgs`. `STALE_BLOCKS_ENABLED=false` turns it off. RPC methods used: `getchaintips`, `getblockheader`, `getblock`, `getblockhash`.
 
 **Best chain** (both database modes): after each sync, new block and reorg the backend compares its stored best block at each of the last `BLOCK_GAP_WINDOW` heights with the node's (`getblockhash`). A missing block is fetched; a stored block the node's active chain no longer has (a reorg) is replaced by the node's block, stored with `seen_at` = when the backend noticed. The replaced block stays stored: in Postgres it gets a `stale_blocks` row (`was_active`, and a `chain_reorgs` row), so `blocks_best` hides it, even with `STALE_BLOCKS_ENABLED=false`; in MongoDB its document gets `stale: true` (and `stale_at`), and every read of "the block at a height" or "the tip" skips such documents. RPC methods used: `getblockcount`, `getblockhash`, `getblock`, plus `getchaintips` and `getblockheader` in Postgres mode.
+
+**Historical gaps** (both database modes): the startup sync only extends the stored range at both ends, and the best-chain check covers the last `BLOCK_GAP_WINDOW` heights. Deeper gaps (e.g. blocks that failed while the database was unreachable) are filled by a separate pass, once after the startup sync and then every `BLOCK_GAP_FILL_INTERVAL_S` seconds. It reads the stored heights between `MIN_BLOCK_HEIGHT` and the stored tip (no RPC when nothing is missing) and stores up to `BLOCK_GAP_FILL_MAX_BLOCKS` missing blocks per run, newest first, as synced blocks (`seen_at` NULL, like the backfill). A pruned node answers "Block not available (pruned data)" for old blocks: then the backend asks it to download the block again from a connected peer that advertises `NETWORK` (full history; `NETWORK_LIMITED` peers only serve the last 288 blocks), outbound peers first, up to `BLOCK_GAP_FILL_PEERS` peers with `BLOCK_GAP_FILL_PEER_TIMEOUT_S` seconds each, and stores it once it arrives (the node may prune it again later; it is only needed once). The wait happens outside the block processor, so new blocks are never delayed. A block that can't be fetched is logged and retried on the next run. RPC methods used: `getblockhash`, `getblock`, plus `getpeerinfo` and `getblockfrompeer` (Bitcoin Core 23+) on a pruned node.
 
 **Migrations:** `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then fill `-- migrate:up` and a working `-- migrate:down`. TimescaleDB procedures such as `add_columnstore_policy` need `-- migrate:up transaction:false`. `db/test-migrations.sh` runs them up/down/up and checks the role privileges.
 
@@ -339,6 +343,7 @@ End-to-end scripts (need Docker; everything runs in throwaway containers):
 db/test-migrations.sh                  # migrations up/down/up + role privileges
 backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork and a reorg, backend in Postgres mode
 backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode
+backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
 tools/mongo-to-postgres/test-e2e.sh    # backfill: unit tests + synthetic fixture
 tools/replica-compare/test-e2e.sh      # unit tests + synthetic fixture

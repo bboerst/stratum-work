@@ -7,6 +7,7 @@ import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/
 import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
 import { Zap } from 'lucide-react';
 import type { PoolBurst } from '@/lib/useDataStream';
+import { childTitle, feeRateChildOf } from '@/lib/txFeeRates';
 
 interface RealtimeTableRowProps {
   row: SortedRow;
@@ -123,6 +124,12 @@ function RealtimeTableRowComponent({
           {typeof row.feeRateComputed === "number"
             ? row.feeRateComputed
             : row.feeRateComputed || "N/A"}
+          {typeof row.feeRateComputed === "number" && (() => {
+            const child = feeRateChildOf(row.first_transaction);
+            return child ? (
+              <span className="ml-1 text-xs text-muted-foreground cursor-help" title={childTitle(child)}>+child</span>
+            ) : null;
+          })()}
         </TableCell>
       )}
       

@@ -56,6 +56,19 @@ export interface TxOffMempool {
   position: number;              // index in the block (1 = first after the coinbase)
 }
 
+/**
+ * A direct child our node had seen spending the transaction (by `at`): the one with the highest ancestor-package rate.
+ * same_block: once this transaction is mined (as our node saw it), whether the child was mined in the same block;
+ * null before.
+ */
+export interface TxChild {
+  txid: string;
+  first_seen: number;            // ms since the epoch, when our node first saw the child
+  package_fee_rate: number;      // the child's ancestor_fees / ancestor_vsize (this transaction included)
+  block_hash: string | null;     // the block that mined the child, if our node saw it mined
+  same_block: boolean | null;
+}
+
 export interface TxInfo {
   txid: string;
   found: boolean;                // false: our node never saw it (in its mempool within the time window, or in a block)
@@ -67,6 +80,7 @@ export interface TxInfo {
   fee_rate?: number | null;
   ancestor_fee_rate?: number | null;
   child_package_fee_rate?: number | null;
+  child?: TxChild | null;        // the child behind child_package_fee_rate
   effective_fee_rate?: number | null;
   ancestor_count?: number | null;
   ancestor_vsize?: number | null;
@@ -105,6 +119,9 @@ export interface TxRow {
   o_seen_ms: string | number | null;
   o_position: number | null;
   child_package_fee_rate: string | number | null;
+  child_txid: string | null;
+  child_first_seen_ms: string | number | null;
+  child_block_hash: string | null;
 }
 
 const numOrNull = (v: string | number | null | undefined) => (v === null || v === undefined ? null : Number(v));
@@ -150,6 +167,12 @@ export function rowToTxInfo(r: TxRow): TxInfo {
     ...feeRates(fee, r.vsize, r.ancestor_count, ancestorFees, r.ancestor_size, numOrNull(r.child_package_fee_rate)),
     ancestor_count: r.ancestor_count, ancestor_vsize: r.ancestor_size, ancestor_fees: ancestorFees,
     descendant_count: r.descendant_count, descendant_vsize: r.descendant_size, descendant_fees: numOrNull(r.descendant_fees),
+    child: r.child_txid && r.child_package_fee_rate !== null ? {
+      txid: r.child_txid, first_seen: Number(r.child_first_seen_ms), package_fee_rate: Number(r.child_package_fee_rate),
+      block_hash: r.child_block_hash,
+      // Once this transaction is mined: was the child in that block? Unknown (null) before.
+      same_block: removal?.reason === 'mined' && removal.block_hash ? r.child_block_hash === removal.block_hash : null,
+    } : null,
     first_seen: numOrNull(r.m_first_seen_ms), first_seen_src: r.first_seen_src,
     removal, offmempool,
   };
@@ -170,7 +193,7 @@ export const TX_SQL = `WITH q AS MATERIALIZED (SELECT d.display, hash_from_displ
          ${MS('m.removed_at')} AS removed_ms, m.removal, m.removed_src,
          hash_display(m.replaced_by) AS replaced_by, hash_display(m.block_hash) AS block_hash, m.block_height,
          hash_display(o.block_hash) AS o_block_hash, o.height AS o_height, ${MS('o.seen_at')} AS o_seen_ms,
-         o.position AS o_position, k.child_package_fee_rate
+         o.position AS o_position, k.child_package_fee_rate, k.child_txid, k.child_first_seen_ms, k.child_block_hash
     FROM q
     LEFT JOIN LATERAL (
       SELECT * FROM mempool_txs t WHERE t.txid = q.txid AND t.first_seen >= $2::timestamptz AND t.first_seen < $3::timestamptz
@@ -180,16 +203,18 @@ export const TX_SQL = `WITH q AS MATERIALIZED (SELECT d.display, hash_from_displ
       SELECT * FROM mempool_offmempool x WHERE x.txid = q.txid ORDER BY x.seen_at DESC LIMIT 1
     ) o ON true
     LEFT JOIN LATERAL (
-      SELECT max(c.rate) AS child_package_fee_rate
+      SELECT c.rate AS child_package_fee_rate, hash_display(ci.txid) AS child_txid,
+             ${MS('ci.first_seen')} AS child_first_seen_ms, hash_display(c.block_hash) AS child_block_hash
         FROM (SELECT DISTINCT i.txid, i.first_seen FROM mempool_tx_inputs i
                WHERE i.prevout_txid = q.txid AND i.first_seen >= m.first_seen
                  AND i.first_seen >= $2::timestamptz AND i.first_seen <= $4::timestamptz) ci
         CROSS JOIN LATERAL (
-          SELECT t.ancestor_fees::float8 / t.ancestor_size AS rate FROM mempool_txs t
+          SELECT t.ancestor_fees::float8 / t.ancestor_size AS rate, t.block_hash FROM mempool_txs t
            WHERE t.txid = ci.txid AND t.first_seen = ci.first_seen
              AND t.first_seen >= $2::timestamptz AND t.first_seen <= $4::timestamptz AND t.ancestor_size > 0
            LIMIT 1   -- keeps it a per-child lookup (index / bloom filter), not a hash join over the whole window
         ) c
+       ORDER BY c.rate DESC LIMIT 1
     ) k ON m.first_seen IS NOT NULL`;
 
 /**

@@ -3,7 +3,7 @@
  * cache, the labels the table shows, the mempool.space source and fallback, and the runtime setting.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFeeRateClient, FEE_LABEL, formatFeeRate, templateTimeMs, txInfoToFeeRate } from '../txFeeRates';
+import { childTitle, createFeeRateClient, FEE_LABEL, formatFeeRate, templateTimeMs, txInfoToChild, txInfoToFeeRate } from '../txFeeRates';
 import { txApiConfigFromEnv } from '../txApiConfig';
 import { feeRates } from '../db/tx';
 import type { TxInfo } from '../db/tx';
@@ -14,7 +14,7 @@ const NOW = Date.UTC(2026, 10, 16, 12, 0, 0);
 type Answer = (txid: string) => Partial<TxInfo>;
 
 /** A fetch that answers /api/tx from `answer` and mempool.space from `mempool`, recording every URL. */
-function fakeFetch(answer: Answer = t => ({ found: true, status: 'in_mempool', effective_fee_rate: parseInt(t, 16) }),
+function fakeFetch(answer: Answer = t => ({ found: true, status: 'in_mempool', fee_rate: parseInt(t, 16) }),
                    opts: { status?: number; supported?: boolean; mempool?: (url: string) => unknown } = {}) {
   const urls: string[] = [];
   const fn = vi.fn(async (input: RequestInfo | URL) => {
@@ -137,26 +137,41 @@ describe('fee-rate client, local source', () => {
   });
 
   it('falls back to mempool.space on failure only when configured', async () => {
-    const f = fakeFetch(undefined, { status: 503, mempool: url => url.includes('/v1/cpfp/') ? { effectiveFeePerVsize: 12.345 } : undefined });
+    const f = fakeFetch(undefined, { status: 503, mempool: url => url.includes('/api/tx/') ? { fee: 1234.5, weight: 400 } : undefined });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const c = createFeeRateClient({ fetch: f.fetch });
     c.configure({ source: 'local', mempoolSpaceFallback: true });
     const p = c.get(tx(1));
     await settle();
     expect(await p).toBe(12.3);
-    expect(f.urls).toEqual([`/api/tx?txids=${tx(1)}`, `https://mempool.space/api/v1/cpfp/${tx(1)}`]);
+    expect(f.urls).toEqual([`/api/tx?txids=${tx(1)}`, `https://mempool.space/api/tx/${tx(1)}`, `https://mempool.space/api/v1/cpfp/${tx(1)}`]);
   });
 });
 
 describe('fee-rate client, mempool.space source (the previous behavior)', () => {
-  it('is the default, and looks each txid up as before', async () => {
+  it('is the default: the own rate from /api/tx, a paying child from /api/v1/cpfp', async () => {
     const f = fakeFetch(undefined, { mempool: url => url.includes('/api/tx/') ? { fee: 2820, weight: 564 } : undefined });
     const c = createFeeRateClient({ fetch: f.fetch });
     c.configure(undefined);
     const ps = [c.get(tx(1)), c.get(tx(1))];
     await settle();
     expect(await Promise.all(ps)).toEqual([20, 20]);
-    expect(f.urls).toEqual([`https://mempool.space/api/v1/cpfp/${tx(1)}`, `https://mempool.space/api/tx/${tx(1)}`]);
+    expect(f.urls).toEqual([`https://mempool.space/api/tx/${tx(1)}`, `https://mempool.space/api/v1/cpfp/${tx(1)}`]);
+    expect(c.childOf(tx(1))).toBeNull();
+  });
+
+  it('reports the paying child beside the own rate, not instead of it (CPFP)', async () => {
+    // 209 sat / 834 WU alone (1 sat/vB); two children: the better package is 60,236 sat / 302.5 vB
+    const f = fakeFetch(undefined, { mempool: url => url.includes('/api/tx/') ? { fee: 209, weight: 836 }
+      : url.includes('/v1/cpfp/') ? { effectiveFeePerVsize: 198.8, descendants: [
+        { txid: tx(8), fee: 100, weight: 400 }, { txid: tx(9), fee: 60027, weight: 373 }] } : undefined });
+    const c = createFeeRateClient({ fetch: f.fetch });
+    c.configure({ source: 'mempool.space' });
+    const p = c.get(tx(1));
+    await settle();
+    expect(await p).toBe(1);
+    expect(c.childOf(tx(1))).toMatchObject({ txid: tx(9), firstSeen: null, sameBlock: null, source: 'mempool.space' });
+    expect(c.childOf(tx(1))!.packageFeeRate).toBeCloseTo(60236 / 302.25, 6);
   });
 
   it('answers "not found" when mempool.space has nothing, and uses it without a config after a while', async () => {
@@ -168,10 +183,41 @@ describe('fee-rate client, mempool.space source (the previous behavior)', () => 
   });
 });
 
+describe('fee-rate client, local source, CPFP', () => {
+  it('shows the own rate and keeps the child /api/tx reported', async () => {
+    const child = { txid: tx(9), first_seen: NOW - 60_000, package_fee_rate: 198.8, block_hash: tx(77), same_block: true };
+    const f = fakeFetch(t => t === tx(1)
+      ? { found: true, status: 'mined', fee_rate: 1, effective_fee_rate: 198.8, child_package_fee_rate: 198.8, child }
+      : { found: true, status: 'in_mempool', fee_rate: 20 });
+    const c = createFeeRateClient({ fetch: f.fetch });
+    c.configure({ source: 'local' });
+    const ps = [c.get(tx(1)), c.get(tx(2))];
+    await settle();
+    expect(await Promise.all(ps)).toEqual([1, 20]);
+    expect(c.childOf(tx(1))).toEqual({ txid: tx(9), packageFeeRate: 198.8, firstSeen: NOW - 60_000, sameBlock: true, source: 'local' });
+    expect(c.childOf(tx(2))).toBeNull();
+    expect(c.childOf(undefined)).toBeNull();
+  });
+});
+
+describe('the child marker', () => {
+  it('says what was observed, and by whom', () => {
+    const local = txInfoToChild({ child: { txid: tx(9), first_seen: Date.UTC(2026, 10, 17, 0, 52, 6), package_fee_rate: 198.7987,
+      block_hash: tx(77), same_block: true } })!;
+    expect(childTitle(local)).toBe(`The number is this transaction's own fee rate. Our node saw a transaction spending it (${tx(9)}, `
+      + `first seen 2026-11-17T00:52:06.000Z). Together they pay 199 sat/vB (child pays for parent). Both were mined in the same block.`);
+    expect(childTitle({ ...local, sameBlock: false })).toContain('The child was not mined in the same block.');
+    expect(childTitle({ ...local, sameBlock: null })).not.toContain('block.');
+    expect(childTitle({ ...local, source: 'mempool.space', firstSeen: null })).toContain(`mempool.space lists a transaction spending it (${tx(9)}).`);
+    expect(txInfoToChild({ child: null })).toBeNull();
+  });
+});
+
+
 describe('fee-rate values', () => {
   it('formats like before', () => {
     expect([formatFeeRate(123.6), formatFeeRate(12.34), formatFeeRate(1.234)]).toEqual([124, 12.3, 1.23]);
-    expect(txInfoToFeeRate({ found: true, status: 'mined', effective_fee_rate: 5.555 })).toBe(5.56);
+    expect(txInfoToFeeRate({ found: true, status: 'mined', fee_rate: 5.555 })).toBe(5.56);
   });
 
   it('computes the package rate from ancestors', () => {

@@ -2,7 +2,14 @@
 
 A transaction as this deployment's Bitcoin node saw it, from the mempool recorder's tables (`mempool_txs`,
 `mempool_offmempool`; [mempool-recorder](../../../../mempool-recorder/README.md)). It replaces the browser's lookups at
-mempool.space for the realtime table's first-transaction fee rate (#198). Read-only; **Postgres deployments only**.
+mempool.space for the realtime table's first-transaction fee rate (#198).
+
+**What the table shows:** `fee_rate`, the transaction's own rate, an observed property of the transaction. A child
+paying for it (CPFP) is shown next to it as a `+child` marker, with `child` in the tooltip (which transaction, when our
+node saw it, the package rate, and whether both were mined in the same block). The package rate isn't shown as the
+value: which transactions a pool includes, and why, isn't in the template (it reveals only the first txid), so it would
+be a model of the pool's block assembly, not an observation. For a template's first transaction the own rate is also
+its ancestor-package rate: in a valid block it can't have unconfirmed parents. Read-only; **Postgres deployments only**.
 
 ## Endpoints
 
@@ -41,7 +48,8 @@ Responses:
 | `fee_rate` | `fee / vsize`, sat/vB, unrounded |
 | `ancestor_fee_rate` | `ancestor_fees / ancestor_vsize`, sat/vB: with its unconfirmed ancestors, **as of first seen** |
 | `child_package_fee_rate` | The highest ancestor-package rate (`ancestor_fees / ancestor_vsize`, as of the child's first seen) among its direct children first seen during its stay and by `at`; `null` without one. That package includes this transaction, so it's the rate a child paying for it (CPFP) gets it mined at |
-| `effective_fee_rate` | What the table shows; see below |
+| `child` | `null`, or the child behind `child_package_fee_rate`: `{ txid, first_seen, package_fee_rate, block_hash, same_block }`. `first_seen`: when our node first saw the child (ms). `block_hash`: the block that mined the child, as our node saw it. `same_block`: once this transaction is mined, whether the child was in the same block; `null` before |
+| `effective_fee_rate` | The rate under a model of ancestor-package block assembly; see below. Not what the table shows |
 | `ancestor_count`, `ancestor_vsize`, `ancestor_fees` | Including itself, as of first seen (Core's `getmempoolentry`: modified fees, sigop-adjusted vsize) |
 | `descendant_count`, `descendant_vsize`, `descendant_fees` | Including itself, as of first seen (usually 1: children arrive later) |
 | `first_seen` | ms since the epoch, start of the latest stay in our mempool |

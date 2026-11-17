@@ -64,10 +64,12 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
       ancestor_size: 300, ancestor_fees: 5200 });
     // CPFP: a 1 sat/vB parent, a child seen 10 min later whose package with it pays ~199 sat/vB, a cheaper child, and
     // a child first seen after the template time used below
+    // parent and the ~199 sat/vB child were mined together in `block`; the late child wasn't
+    const minedIn = { removed_at: at(1), removal: 'mined', removed_src: 'zmq', block_hash: internal(block), block_height: 3_000_001 };
     await insertTx(tx.cpfpParent, at(60), { size: 372, vsize: 209, weight: 834, fee: 209, modified_fee: 209,
-      ancestor_size: 209, ancestor_fees: 209, descendant_size: 209, descendant_fees: 209 });
+      ancestor_size: 209, ancestor_fees: 209, descendant_size: 209, descendant_fees: 209, ...minedIn });
     await insertTx(tx.cpfpChild, at(50), { vsize: 93, weight: 373, fee: 60027, modified_fee: 60027, ancestor_count: 2,
-      ancestor_size: 302, ancestor_fees: 60236 });
+      ancestor_size: 302, ancestor_fees: 60236, ...minedIn });
     await insertTx(tx.cheapChild, at(45), { vsize: 100, fee: 100, modified_fee: 100, ancestor_count: 2,
       ancestor_size: 309, ancestor_fees: 309 });
     await insertTx(tx.lateChild, at(10), { vsize: 100, fee: 100_000, modified_fee: 100_000, ancestor_count: 2,
@@ -144,6 +146,9 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
   it('raises a parent to its paying child\'s package rate, children seen by `at` only (CPFP)', async () => {
     const [now_] = await mod.getTxs([tx.cpfpParent]);
     expect(now_.fee_rate).toBe(1);
+    // by now the best package is the late child's, which wasn't mined with the parent
+    expect(now_.child).toEqual({ txid: tx.lateChild, first_seen: at(10).getTime(), package_fee_rate: 100_209 / 309,
+      block_hash: null, same_block: false });
     // the late child (100,209 / 309) is the best package by now
     expect(now_.child_package_fee_rate).toBeCloseTo(100_209 / 309, 10);
     expect(now_.effective_fee_rate).toBeCloseTo(100_209 / 309, 10);
@@ -151,11 +156,13 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
     const [then] = await mod.getTxs([tx.cpfpParent], at(30).getTime());
     expect(then.child_package_fee_rate).toBeCloseTo(60_236 / 302, 10);
     expect(then.effective_fee_rate).toBeCloseTo(199.46, 2);
+    expect(then.child).toEqual({ txid: tx.cpfpChild, first_seen: at(50).getTime(), package_fee_rate: 60_236 / 302,
+      block_hash: block, same_block: true });
     // before any child: its own rate
     const [first] = await mod.getTxs([tx.cpfpParent], at(55).getTime());
-    expect(first).toMatchObject({ child_package_fee_rate: null, effective_fee_rate: 1 });
+    expect(first).toMatchObject({ child_package_fee_rate: null, child: null, effective_fee_rate: 1 });
     // a transaction without children
-    expect((await mod.getTxs([tx.inMempool]))[0]).toMatchObject({ child_package_fee_rate: null, effective_fee_rate: 20 });
+    expect((await mod.getTxs([tx.inMempool]))[0]).toMatchObject({ child_package_fee_rate: null, child: null, effective_fee_rate: 20 });
   });
 
   it('searches stays first seen within 15 days before `at` (compressed chunks too)', async () => {

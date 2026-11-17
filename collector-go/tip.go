@@ -165,6 +165,11 @@ func (f *TipFollower) update(ctx context.Context) {
 			f.log.Debug("updated BTC tip state", "height", h)
 			return
 		}
+		if attempt == 0 {
+			// A block arrived, so the stored tip is behind: classify and route without a tip until the update
+			// succeeds (as with no node), rather than against a tip that is known to be stale.
+			f.Tip.Invalidate()
+		}
 		if attempt >= len(tipRetryDelays) {
 			f.log.Warn("BTC tip update failed; giving up until the next block", "err", err, "attempts", attempt+1)
 			return

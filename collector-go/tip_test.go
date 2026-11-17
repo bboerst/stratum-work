@@ -212,3 +212,36 @@ func TestTipUpdateRetriesAfterFailure(t *testing.T) {
 		t.Errorf("ok=%v calls=%d", ok, calls.Load())
 	}
 }
+
+// A block notification whose getblockcount fails must not leave the old tip in use: it is known to be behind.
+// Production: tip 976,016 kept for 27 minutes while 976,017..976,021 arrived, so fresh templates at 976,022 were
+// 6 above it and classified as another chain (chain_family "unknown").
+func TestFailedTipUpdateInvalidatesTheOldTip(t *testing.T) {
+	old := tipRetryDelays
+	tipRetryDelays = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { tipRetryDelays = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
+	t.Cleanup(srv.Close)
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	rpc, _ := NewRPC("http", host, port, "u", "p", "", 2*time.Second)
+	tip := NewTipState(30 * time.Minute)
+	tip.Set(976_016)
+	f := &TipFollower{Tip: tip, RPC: rpc, log: quietLog}
+	f.update(context.Background())
+	if h, ok := tip.Current(); ok {
+		t.Fatalf("tip %d still in use after a failed update", h)
+	}
+	c := NewClassifier(tip, tipAhead, nil, func(*Document) {}, quietLog)
+	d := &Document{Height: 976_022}
+	d.Params[pPrevHash] = pyString(strings.Repeat("ab", 32))
+	if c.Prepare(d) || d.ChainFamily != "" {
+		t.Errorf("classified %q (lookup %v) without a usable tip", d.ChainFamily, c.Prepare(d))
+	}
+	if r := route(976_022, d.ChainFamily, 0, false); r != routeBTC {
+		t.Errorf("routed %+v", r)
+	}
+	tip.Set(976_021) // the next successful update restores it
+	if h, ok := tip.Current(); !ok || h != 976_021 {
+		t.Errorf("tip %d ok=%v", h, ok)
+	}
+}

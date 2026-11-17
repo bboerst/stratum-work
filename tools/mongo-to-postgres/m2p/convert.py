@@ -109,6 +109,15 @@ class TipIndex:
         for _, h in pairs:
             running = h if running is None else max(running, h)
             self._tips.append(running)
+        # _next_min[i]: the lowest height among the blocks *after* position i in time order (None for the last).
+        # The blocks index has gaps (heights the backend never stored, e.g. during outages): inside one, the real
+        # tip is somewhere between the last block before it and the first one after it, not stuck at the former.
+        self._next_min: list = [None] * len(pairs)
+        low = None
+        for i in range(len(pairs) - 1, -1, -1):
+            self._next_min[i] = low
+            low = pairs[i][1] if low is None else min(low, pairs[i][1])
+        self._first_min = low   # lowest height of all (what follows "before every block")
         self.block_time: dict[int, int] = {}   # height -> earliest header time at that height (forks: min)
         for t, h in pairs:
             if h not in self.block_time:
@@ -124,6 +133,18 @@ class TipIndex:
     def tip_at(self, dt: datetime) -> Optional[int]:
         i = bisect.bisect_right(self._times, (dt - EPOCH).total_seconds()) - 1
         return self._tips[i] if i >= 0 else None
+
+    def tip_ceiling(self, dt: datetime) -> Optional[int]:
+        """The highest the real tip at `dt` can be as far as the blocks index knows: one below the lowest height of
+        the blocks whose header time is after `dt`. Equal to tip_at(dt) where the index is complete; above it inside
+        a gap of missing heights. None if no block has a header time after `dt` (no upper bound known)."""
+        i = bisect.bisect_right(self._times, (dt - EPOCH).total_seconds()) - 1
+        nxt = self._first_min if i < 0 else self._next_min[i]
+        return None if nxt is None else nxt - 1
+
+    def missing_between(self, lo: int, hi: int) -> bool:
+        """True if any height in (lo, hi] is absent from the index."""
+        return any(h not in self.block_time for h in range(lo + 1, hi + 1))
 
 
 class DayTips:
@@ -152,6 +173,12 @@ class DayTips:
         if i < 0:
             return base
         return self._max[i] if base is None else max(base, self._max[i])
+
+    def tip_ceiling(self, dt: datetime) -> Optional[int]:
+        return self.tips.tip_ceiling(dt)
+
+    def missing_between(self, lo: int, hi: int) -> bool:
+        return self.tips.missing_between(lo, hi)
 
 
 # ── document -> row ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -267,9 +294,27 @@ def convert(doc: dict) -> Converted:
                      str(doc.get("_id", "")))
 
 
+def tip_for_route(height: int, tips, dt: datetime) -> Optional[int]:
+    """The Bitcoin tip to judge a template received at `dt` against.
+
+    Normally tips.tip_at(dt). But where the blocks index has a gap (heights between the tip and the first block after
+    `dt` that were never stored), the real tip at `dt` is anywhere in [tip_at, tip_ceiling]: a template is plausible if
+    it is within the routing window of *some* tip in that range, so the tip nearest its height is used. Without this,
+    every template inside a gap of more than TIP_AHEAD blocks was misrouted as height_implausible (the tip stayed at
+    the last block before the gap). Only ever widens towards heights the index can't rule out; a complete index gives
+    exactly tip_at."""
+    lo = tips.tip_at(dt)
+    if lo is None or height <= lo:
+        return lo
+    hi = tips.tip_ceiling(dt)
+    if hi is None or hi <= lo or not tips.missing_between(lo, min(hi, height)):
+        return lo
+    return min(height, hi)
+
+
 def route_converted(c: Converted, tips):
     """The live collector's routing (collector/pgsink.route) with the Bitcoin tip at the (corrected) receive time."""
-    return route(c.height, c.chain_family, tips.tip_at(c.received_at))
+    return route(c.height, c.chain_family, tip_for_route(c.height, tips, c.received_at))
 
 
 def is_btc(r) -> bool:

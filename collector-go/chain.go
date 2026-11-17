@@ -49,6 +49,15 @@ func (t *TipState) Set(h int64) {
 	t.mu.Unlock()
 }
 
+// Invalidate forgets the tip until the next successful Set. Used when a block notification arrived but the new
+// height couldn't be read: the stored tip is then known to be behind, and keeping it for up to staleAfter misfiled
+// real Bitcoin templates as another chain whenever several blocks arrived in that window.
+func (t *TipState) Invalidate() {
+	t.mu.Lock()
+	t.updated = time.Time{}
+	t.mu.Unlock()
+}
+
 // reversePrevHash converts a Stratum mining.notify prev_hash to the block hash as explorers and RPC show it
 // (chain_detection.reverse_prev_hash). Stratum sends the previous block hash as eight 4-byte words in reverse order,
 // each word's bytes left as they are, so reversing the word order (not the byte order) gives the block hash.

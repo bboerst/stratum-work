@@ -383,6 +383,30 @@ class RuntimeConfigTests(unittest.TestCase):
 
 
 class TipListenerTests(unittest.TestCase):
+    def test_failed_update_after_a_block_notification_forgets_the_old_tip(self):
+        # Production: a tip kept after failed updates while 5 blocks arrived made fresh templates 6 above it, so they
+        # were classified as another chain. A notification proves the stored tip is behind.
+        saved = (collector_main.tip_state.current_height, collector_main.tip_state.last_update_monotonic)
+        socket_obj = Mock()
+        socket_obj.recv_multipart.side_effect = [[b"hashblock", b"x" * 32]]
+        context = Mock()
+        context.socket.return_value = socket_obj
+        fake_zmq = types.SimpleNamespace(SUB=1, SUBSCRIBE=2, Context=types.SimpleNamespace(instance=lambda: context))
+        try:
+            collector_main.update_tip_state(976_016)
+            self.assertEqual(collector_main.current_btc_tip(), 976_016)
+            with patch.object(collector_main, "zmq", fake_zmq), \
+                    patch.object(collector_main, "fetch_local_btc_tip_height", side_effect=TimeoutError("awaiting headers")), \
+                    patch.object(collector_main.time, "sleep", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):   # stop the listener's retry loop
+                    collector_main.listen_for_btc_tip_updates(Namespace(bitcoin_zmq_block="tcp://node:28333"))
+            self.assertIsNone(collector_main.current_btc_tip())
+            self.assertIsNone(collector_main.classify_notification_chain(976_022, "ab" * 32))
+            collector_main.update_tip_state(976_021)
+            self.assertEqual(collector_main.current_btc_tip(), 976_021)
+        finally:
+            collector_main.tip_state.current_height, collector_main.tip_state.last_update_monotonic = saved
+
     def test_fetch_local_btc_tip_height_closes_underlying_rpc_connection(self):
         args = Namespace(
             bitcoin_rpc_user="rpcuser",

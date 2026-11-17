@@ -201,3 +201,69 @@ class TestDayTips:
         stale = convert(doc("y", hex_ts(t), height=975_555, coinbase1=coinbase1(975_555),
                             prev_hash=cv.stratum_prev_hash(hashes[975_562]).hex()))
         assert cv.route_converted(stale, cv.DayTips(tips, [c, stale])).reason == "height_implausible"
+
+
+class TestBlocksIndexGaps:
+    """The blocks index (MongoDB `blocks`, copied to Postgres) has gaps where the backend stored nothing. Real case:
+    heights 959,141..959,165 are missing (block hashes and header times below are mainnet's). The header-time tip
+    stayed at 959,140 for the whole gap, so every template from 959,147 on (tip + 7) was routed to templates_other
+    as height_implausible: 32,383 templates of 32 pools, 959,147..959,166."""
+
+    BLOCKS = [
+        (959_130, 1784725473, "00000000000000000001ab2a029aa525ba9016b31c7e72f814d6cf3dc5b77c41"),
+        (959_131, 1784725775, "00000000000000000000fc8b92756fb1a8682670f9a35b83d883d7be64934aa2"),
+        (959_132, 1784726446, "000000000000000000016dc4cdc338593df972fba4517d9947d6f0c17683c10a"),
+        (959_133, 1784727518, "00000000000000000001f705aab51b7339400a0b6fd6c12ac61df3ed84eaca72"),
+        (959_134, 1784727267, "0000000000000000000006b894441f3fa4003e8570da0b32b4e6c681fd2efdef"),
+        (959_140, 1784730552, "00000000000000000001af46598e5eae82bc58339aa17a0b84817c5ecdffadcf"),
+        # 959,141 .. 959,165: not in the index
+        (959_166, 1784750332, "00000000000000000001624afd13f28dcb34dc2a66e077e28d7f963d85dbf19a"),
+        (959_167, 1784750520, "00000000000000000001c589b0159acdd0b185e4dbe6f623682dab06dd1426a9"),
+        (959_168, 1784750694, "00000000000000000000823ed156392da2bfc8670fc42d84df7627f6188c328d"),
+    ]
+    # (height, receive time as time_ns() hex, the prev_hash every pool sent) for the first template at the height
+    TEMPLATES = [
+        (959_146, "18c4a6ce9cd1d327", "266fcc47a7d7bdf7c90ec04ce82bea34956186aa000042160000000000000000"),
+        (959_147, "18c4a6f4d55b5268", "1432e328e7dca470d12ebe0642d6e445e9e9b0e600016ba60000000000000000"),
+        (959_150, "18c4a787fe0e377e", "2d0829041298a0649217b1fb5d992badb62edc8b00022c0c0000000000000000"),
+        (959_165, "18c4b28da4930e9e", "647cdbb03893d1cd6ba97d31a15d1f2f7c7215930001db140000000000000000"),
+        (959_166, "18c4b348b40302d3", "8a41d667c5748c3290635da079ed919fcfb866230001911a0000000000000000"),  # before 959,166's header time
+        (959_167, "18c4b4e3765d39bd", "85dbf19a8d7f963d66e077e2cb34dc2afd13f28d0001624a0000000000000000"),
+    ]
+
+    def _doc(self, i, height, ts, prev, **over):
+        return doc(f"g{i}", ts, height=height, coinbase1=coinbase1(height), prev_hash=prev, **over)
+
+    def test_templates_inside_a_gap_are_bitcoin(self):
+        tips = TipIndex(self.BLOCKS)
+        rows = [convert(self._doc(i, h, ts, prev)) for i, (h, ts, prev) in enumerate(self.TEMPLATES)]
+        day = cv.DayTips(tips, rows)
+        for c in rows:
+            assert cv.route_converted(c, day).table == "templates", c.height
+        # what the router used to do: the tip at receive time alone, stuck at the last block before the gap
+        stuck = [c.height for c in rows if route(c.height, None, day.tip_at(c.received_at)).table != "templates"]
+        assert stuck == [959_147, 959_150, 959_165, 959_166]
+        assert day.tip_at(rows[2].received_at) == 959_140 and day.tip_ceiling(rows[2].received_at) == 959_165
+
+    def test_the_gap_does_not_admit_what_cannot_be_bitcoin(self):
+        tips = TipIndex(self.BLOCKS)
+        ts = self.TEMPLATES[2][1]   # inside the gap: the tip is somewhere in 959,140..959,165
+        for h, why in [(959_172, "height_implausible"),     # above the gap's last height + 6
+                       (959_133, "height_implausible"),     # below the last block before it - 6
+                       (23_109_268, "height_implausible")]:  # another chain
+            assert cv.route_converted(convert(self._doc(0, h, ts, "22" * 32)), tips).reason == why, h
+        for h in (959_134, 959_171):
+            assert cv.route_converted(convert(self._doc(0, h, ts, "22" * 32)), tips).table == "templates", h
+        # classifier verdicts still win
+        assert cv.route_converted(convert(self._doc(0, 959_150, ts, "22" * 32, chain_family="bch")), tips).reason == "bch"
+
+    def test_a_complete_index_routes_exactly_as_before(self):
+        complete = [(h, 1784730552 + (h - 959_140) * 600, format(h, "064x")) for h in range(959_130, 959_170)]
+        tips = TipIndex(complete)
+        for h in range(959_120, 959_190):
+            for dt_s in (-30, 0, 299, 3000):
+                t = datetime.fromtimestamp(1784730552 + dt_s, UTC)
+                assert cv.tip_for_route(h, tips, t) == tips.tip_at(t), (h, dt_s)
+        # and after the newest block there is no ceiling
+        late = datetime.fromtimestamp(1784730552 + 10**6, UTC)
+        assert tips.tip_ceiling(late) is None and cv.tip_for_route(959_175, tips, late) == 959_169

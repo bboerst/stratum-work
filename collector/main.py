@@ -122,6 +122,15 @@ def update_tip_state(height):
         tip_state.last_update_monotonic = time.monotonic()
 
 
+def invalidate_tip_state():
+    """A block arrived but its height couldn't be read: the stored tip is known to be behind. Forget it until the next
+    successful update (classification and routing then run without a tip, as with no node) instead of using it for up
+    to stale_after_seconds, which misfiled real Bitcoin templates as another chain when several blocks came in that
+    window."""
+    with tip_state_lock:
+        tip_state.last_update_monotonic = None
+
+
 def close_rpc_connection(conn):
     raw_conn = getattr(conn, "_AuthServiceProxy__conn", None)
     raw_close = getattr(raw_conn, "close", None)
@@ -224,7 +233,11 @@ def listen_for_btc_tip_updates(args):
                 parts = socket_obj.recv_multipart()
                 if len(parts) < 2:
                     continue
-                height = fetch_local_btc_tip_height(args)
+                try:
+                    height = fetch_local_btc_tip_height(args)
+                except Exception:
+                    invalidate_tip_state()
+                    raise
                 update_tip_state(height)
                 LOG.debug("Updated BTC tip state to height %s", height)
         except Exception as exc:

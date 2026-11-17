@@ -20,7 +20,8 @@ const internal = (display: string) => Buffer.from(display, 'hex').reverse();
 describe.skipIf(!enabled)('Postgres transaction read', () => {
   const tx = {
     inMempool: txid(), mined: txid(), replaced: txid(), offOnly: txid(), notSeen: txid(), child: txid(),
-    evictedThenOff: txid(), noFee: txid(), oldCompressed: txid(),
+    evictedThenOff: txid(), noFee: txid(), oldCompressed: txid(), cpfpParent: txid(), cpfpChild: txid(),
+    lateChild: txid(), cheapChild: txid(),
   };
   const block = txid();
   const block2 = txid();
@@ -61,6 +62,21 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
     // a child of a low-fee parent: 5000 sat / 100 vB alone, 5200 / 300 with its ancestor
     await insertTx(tx.child, at(3), { vsize: 100, weight: 400, fee: 5000, modified_fee: 5000, ancestor_count: 2,
       ancestor_size: 300, ancestor_fees: 5200 });
+    // CPFP: a 1 sat/vB parent, a child seen 10 min later whose package with it pays ~199 sat/vB, a cheaper child, and
+    // a child first seen after the template time used below
+    await insertTx(tx.cpfpParent, at(60), { size: 372, vsize: 209, weight: 834, fee: 209, modified_fee: 209,
+      ancestor_size: 209, ancestor_fees: 209, descendant_size: 209, descendant_fees: 209 });
+    await insertTx(tx.cpfpChild, at(50), { vsize: 93, weight: 373, fee: 60027, modified_fee: 60027, ancestor_count: 2,
+      ancestor_size: 302, ancestor_fees: 60236 });
+    await insertTx(tx.cheapChild, at(45), { vsize: 100, fee: 100, modified_fee: 100, ancestor_count: 2,
+      ancestor_size: 309, ancestor_fees: 309 });
+    await insertTx(tx.lateChild, at(10), { vsize: 100, fee: 100_000, modified_fee: 100_000, ancestor_count: 2,
+      ancestor_size: 309, ancestor_fees: 100_209 });
+    for (const [c, seen] of [[tx.cpfpChild, at(50)], [tx.cheapChild, at(45)], [tx.lateChild, at(10)]] as const) {
+      await admin.query(`INSERT INTO mempool_tx_inputs (first_seen, txid, n, prevout_txid, prevout_vout)
+                         VALUES ($1, $2, 0, $3, 0), ($1, $2, 1, $4, 1)`,
+        [seen, internal(c), internal(tx.cpfpParent), randomBytes(32)]);
+    }
     await insertTx(tx.noFee, at(3), { fee: null, modified_fee: null, ancestor_count: null, ancestor_size: null,
       ancestor_fees: null, descendant_count: null, descendant_size: null, descendant_fees: null,
       removed_at: at(3), removal: 'unknown', removed_src: 'resync' });
@@ -79,6 +95,7 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
 
   afterAll(async () => {
     const all = Object.values(tx).map(internal);
+    await admin?.query(`DELETE FROM mempool_tx_inputs WHERE txid = ANY($1)`, [all]);
     await admin?.query(`DELETE FROM mempool_offmempool WHERE txid = ANY($1)`, [all]);
     await admin?.query(`DELETE FROM mempool_txs WHERE txid = ANY($1)`, [all]);
     await admin?.end();
@@ -124,6 +141,23 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
 
   });
 
+  it('raises a parent to its paying child\'s package rate, children seen by `at` only (CPFP)', async () => {
+    const [now_] = await mod.getTxs([tx.cpfpParent]);
+    expect(now_.fee_rate).toBe(1);
+    // the late child (100,209 / 309) is the best package by now
+    expect(now_.child_package_fee_rate).toBeCloseTo(100_209 / 309, 10);
+    expect(now_.effective_fee_rate).toBeCloseTo(100_209 / 309, 10);
+    // as of a template received 30 min ago: the late child wasn't seen yet, the cheap one doesn't count
+    const [then] = await mod.getTxs([tx.cpfpParent], at(30).getTime());
+    expect(then.child_package_fee_rate).toBeCloseTo(60_236 / 302, 10);
+    expect(then.effective_fee_rate).toBeCloseTo(199.46, 2);
+    // before any child: its own rate
+    const [first] = await mod.getTxs([tx.cpfpParent], at(55).getTime());
+    expect(first).toMatchObject({ child_package_fee_rate: null, effective_fee_rate: 1 });
+    // a transaction without children
+    expect((await mod.getTxs([tx.inMempool]))[0]).toMatchObject({ child_package_fee_rate: null, effective_fee_rate: 20 });
+  });
+
   it('searches stays first seen within 15 days before `at` (compressed chunks too)', async () => {
     const twentyDaysAgo = now - 20 * 86_400_000;
     expect((await mod.getTxs([tx.oldCompressed]))[0]).toMatchObject({ found: false, status: 'not_seen' });
@@ -146,7 +180,7 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
   it('uses the txid indexes, and bloom filters on compressed chunks', async () => {
     const planNodes = async (atMs: number) => {
       const plan = (await admin.query(`EXPLAIN (FORMAT JSON) ${mod.TX_SQL}`, [[tx.mined, tx.offOnly],
-        new Date(atMs - mod.TX_WINDOW_BEFORE_MS), new Date(atMs + mod.TX_WINDOW_AFTER_MS)])).rows[0]['QUERY PLAN'];
+        new Date(atMs - mod.TX_WINDOW_BEFORE_MS), new Date(atMs + mod.TX_WINDOW_AFTER_MS), new Date(atMs)])).rows[0]['QUERY PLAN'];
       const nodes: { type: string; rel?: string; index?: string; filter?: string }[] = [];
       const walk = (n: Record<string, unknown>) => {
         nodes.push({ type: n['Node Type'] as string, rel: n['Relation Name'] as string, index: n['Index Name'] as string,

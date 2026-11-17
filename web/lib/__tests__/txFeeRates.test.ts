@@ -174,13 +174,26 @@ describe('fee-rate values', () => {
     expect(txInfoToFeeRate({ found: true, status: 'mined', effective_fee_rate: 5.555 })).toBe(5.56);
   });
 
-  it('computes the package rate from ancestors only', () => {
-    expect(feeRates(2820, 141, 1, 2820, 141)).toEqual({ fee_rate: 20, ancestor_fee_rate: 20, effective_fee_rate: 20 });
+  it('computes the package rate from ancestors', () => {
+    expect(feeRates(2820, 141, 1, 2820, 141)).toEqual({ fee_rate: 20, ancestor_fee_rate: 20, child_package_fee_rate: null,
+      effective_fee_rate: 20 });
     // low-fee parent pulls a child down
     expect(feeRates(5000, 100, 2, 5200, 300).effective_fee_rate).toBeCloseTo(17.333, 3);
     // high-fee parent: the child is mined at its own rate after it
-    expect(feeRates(1000, 100, 2, 11000, 200)).toEqual({ fee_rate: 10, ancestor_fee_rate: 55, effective_fee_rate: 10 });
-    expect(feeRates(null, 100, null, null, null)).toEqual({ fee_rate: null, ancestor_fee_rate: null, effective_fee_rate: null });
+    expect(feeRates(1000, 100, 2, 11000, 200)).toEqual({ fee_rate: 10, ancestor_fee_rate: 55, child_package_fee_rate: null,
+      effective_fee_rate: 10 });
+    expect(feeRates(null, 100, null, null, null)).toEqual({ fee_rate: null, ancestor_fee_rate: null,
+      child_package_fee_rate: null, effective_fee_rate: null });
+  });
+
+  it('raises the rate to a paying child\'s package (CPFP)', () => {
+    // 209 sat / 209 vB alone; a child's package with it pays 60,236 sat / 302 vB
+    expect(feeRates(209, 209, 1, 209, 209, 60236 / 302).effective_fee_rate).toBeCloseTo(199.46, 2);
+    // a child paying less than the parent doesn't lower it
+    expect(feeRates(2000, 100, 1, 2000, 100, 5).effective_fee_rate).toBe(20);
+    // with a low-fee ancestor too: the higher of the two packages
+    expect(feeRates(5000, 100, 2, 5200, 300, 40).effective_fee_rate).toBe(40);
+    expect(feeRates(null, null, null, null, null, 7).effective_fee_rate).toBe(7);
   });
 
   it('reads template times', () => {

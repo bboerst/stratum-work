@@ -40,6 +40,7 @@ Responses:
 | `vsize`, `weight`, `size` | Virtual bytes, weight units, serialized bytes |
 | `fee_rate` | `fee / vsize`, sat/vB, unrounded |
 | `ancestor_fee_rate` | `ancestor_fees / ancestor_vsize`, sat/vB: with its unconfirmed ancestors, **as of first seen** |
+| `child_package_fee_rate` | The highest ancestor-package rate (`ancestor_fees / ancestor_vsize`, as of the child's first seen) among its direct children first seen during its stay and by `at`; `null` without one. That package includes this transaction, so it's the rate a child paying for it (CPFP) gets it mined at |
 | `effective_fee_rate` | What the table shows; see below |
 | `ancestor_count`, `ancestor_vsize`, `ancestor_fees` | Including itself, as of first seen (Core's `getmempoolentry`: modified fees, sigop-adjusted vsize) |
 | `descendant_count`, `descendant_vsize`, `descendant_fees` | Including itself, as of first seen (usually 1: children arrive later) |
@@ -57,14 +58,20 @@ transaction, computed from what our node reported when the transaction entered i
 
 - no unconfirmed ancestors: `fee_rate`;
 - with ancestors: `min(fee_rate, ancestor_fee_rate)`. Low-fee parents pull a child down to the package rate, and
-  high-fee parents are mined on their own first, leaving the child at its own rate.
+  high-fee parents are mined on their own first, leaving the child at its own rate;
+- then raised to `child_package_fee_rate` when that is higher: a child paying for the transaction (CPFP) gets it mined
+  as part of the child's package. A template's first transaction is often exactly such a parent: 1 sat/vB on its own,
+  ~200 sat/vB with the child that pays for it.
+
+Children come from the recorder's inputs (`mempool_tx_inputs`), which are kept for **30 days**: for older transactions
+`child_package_fee_rate` is `null`. Only direct children count, each with its own ancestor package as our node reported
+it when the child arrived; grandchildren aren't followed. Only children seen by `at` count (`at` is rounded up to the
+hour, so a child seen up to an hour after a template can be included).
 
 mempool.space's `effectiveFeePerVsize` (its `/api/v1/cpfp/<txid>`, what the table showed before) is computed over the
-transaction's **current cluster, descendants included**. The two numbers differ when:
+transaction's **current cluster, descendants included**. The two numbers can still differ when:
 
-- **a child pays for the parent (CPFP)**: ours ignores descendants, so a low-fee parent bumped by a later child shows
-  its own low rate here and the higher package rate there. A template's first transaction is often exactly such a
-  parent;
+- **the cluster is deeper or wider**: grandchildren, or a child's other descendants, aren't followed here;
 - **ancestors confirm or change after first seen**: ours stays as of first seen, theirs is recalculated;
 - **`prioritisetransaction`** on our node: ancestor fees are modified fees;
 - **sigop-heavy transactions**: the ancestor vsize is sigop-adjusted, `vsize` isn't;

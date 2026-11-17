@@ -19,11 +19,15 @@
  *   ancestor_fee_rate   ancestor_fees / ancestor_vsize as of first seen: the transaction together with its unconfirmed
  *                       ancestors (Core's ancestor package; modified fees, sigop-adjusted vsize), as getmempoolentry
  *                       reported when it entered our mempool.
- *   effective_fee_rate  the rate a miner selecting by ancestor package gets for it: the smaller of the two when it has
- *                       unconfirmed ancestors (low-fee parents pull it down; high-fee parents are mined on their own
- *                       first), else fee_rate. Descendants are NOT included: a child that later pays for this
- *                       transaction (CPFP) doesn't raise it, which is where mempool.space's effectiveFeePerVsize (the
- *                       current cluster, descendants included) is higher. See web/app/api/tx/README.md.
+ *   child_package_fee_rate  the highest ancestor-package rate among its direct children that our node had seen by
+ *                       `at`: each child's ancestor_fees / ancestor_vsize as of the child's first seen, which is the
+ *                       package (this transaction included) a miner selecting by ancestor package mines it in when a
+ *                       child pays for it (CPFP). From mempool_tx_inputs, so only within its 30-day retention; null
+ *                       without such a child. Grandchildren aren't followed.
+ *   effective_fee_rate  the rate a miner selecting by ancestor package gets for it: the smaller of fee_rate and
+ *                       ancestor_fee_rate when it has unconfirmed ancestors (low-fee parents pull it down; high-fee
+ *                       parents are mined on their own first), else fee_rate; raised to child_package_fee_rate when a
+ *                       child pays more. See web/app/api/tx/README.md.
  */
 import { getPgPool } from './pg';
 
@@ -62,6 +66,7 @@ export interface TxInfo {
   size?: number | null;
   fee_rate?: number | null;
   ancestor_fee_rate?: number | null;
+  child_package_fee_rate?: number | null;
   effective_fee_rate?: number | null;
   ancestor_count?: number | null;
   ancestor_vsize?: number | null;
@@ -99,19 +104,23 @@ export interface TxRow {
   o_height: number | null;
   o_seen_ms: string | number | null;
   o_position: number | null;
+  child_package_fee_rate: string | number | null;
 }
 
 const numOrNull = (v: string | number | null | undefined) => (v === null || v === undefined ? null : Number(v));
 
 /** Fee rates in sat/vB, unrounded (the client formats them). */
 export function feeRates(fee: number | null, vsize: number | null, ancestorCount: number | null,
-                         ancestorFees: number | null, ancestorVsize: number | null) {
+                         ancestorFees: number | null, ancestorVsize: number | null,
+                         childPackageRate: number | null = null) {
   const fee_rate = fee !== null && vsize ? fee / vsize : null;
   const ancestor_fee_rate = ancestorFees !== null && ancestorVsize ? ancestorFees / ancestorVsize : null;
-  const effective_fee_rate = (ancestorCount ?? 1) > 1 && ancestor_fee_rate !== null
+  const own = (ancestorCount ?? 1) > 1 && ancestor_fee_rate !== null
     ? (fee_rate === null ? ancestor_fee_rate : Math.min(fee_rate, ancestor_fee_rate))
     : fee_rate;
-  return { fee_rate, ancestor_fee_rate, effective_fee_rate };
+  // A child paying for it (CPFP) gets it mined at the child's package rate, when that is higher.
+  const effective_fee_rate = childPackageRate !== null && (own === null || childPackageRate > own) ? childPackageRate : own;
+  return { fee_rate, ancestor_fee_rate, child_package_fee_rate: childPackageRate, effective_fee_rate };
 }
 
 export function rowToTxInfo(r: TxRow): TxInfo {
@@ -138,7 +147,7 @@ export function rowToTxInfo(r: TxRow): TxInfo {
   return {
     txid: r.txid, found: true, status,
     fee, vsize: r.vsize, weight: r.weight, size: r.size,
-    ...feeRates(fee, r.vsize, r.ancestor_count, ancestorFees, r.ancestor_size),
+    ...feeRates(fee, r.vsize, r.ancestor_count, ancestorFees, r.ancestor_size, numOrNull(r.child_package_fee_rate)),
     ancestor_count: r.ancestor_count, ancestor_vsize: r.ancestor_size, ancestor_fees: ancestorFees,
     descendant_count: r.descendant_count, descendant_vsize: r.descendant_size, descendant_fees: numOrNull(r.descendant_fees),
     first_seen: numOrNull(r.m_first_seen_ms), first_seen_src: r.first_seen_src,
@@ -149,8 +158,10 @@ export function rowToTxInfo(r: TxRow): TxInfo {
 const MS = (col: string) => `(extract(epoch FROM ${col}) * 1000)::bigint`;
 
 /**
- * $1: display-order txids (text[]); $2, $3: the first_seen window. One row per txid; the mempool_txs columns are NULL
- * if it has no stay in the window. MATERIALIZED: hash_from_display() runs once per txid, not once per decompressed row.
+ * $1: display-order txids (text[]); $2, $3: the first_seen window; $4: `at`. One row per txid; the mempool_txs columns
+ * are NULL if it has no stay in the window. MATERIALIZED: hash_from_display() runs once per txid, not once per
+ * decompressed row. Children: transactions with an input spending it (mempool_tx_inputs), first seen during its stay
+ * and by `at`; their mempool_txs rows give each child's ancestor package (this transaction included).
  */
 export const TX_SQL = `WITH q AS MATERIALIZED (SELECT d.display, hash_from_display(d.display) AS txid FROM unnest($1::text[]) AS d (display))
   SELECT q.display AS txid,
@@ -159,7 +170,7 @@ export const TX_SQL = `WITH q AS MATERIALIZED (SELECT d.display, hash_from_displ
          ${MS('m.removed_at')} AS removed_ms, m.removal, m.removed_src,
          hash_display(m.replaced_by) AS replaced_by, hash_display(m.block_hash) AS block_hash, m.block_height,
          hash_display(o.block_hash) AS o_block_hash, o.height AS o_height, ${MS('o.seen_at')} AS o_seen_ms,
-         o.position AS o_position
+         o.position AS o_position, k.child_package_fee_rate
     FROM q
     LEFT JOIN LATERAL (
       SELECT * FROM mempool_txs t WHERE t.txid = q.txid AND t.first_seen >= $2::timestamptz AND t.first_seen < $3::timestamptz
@@ -167,7 +178,19 @@ export const TX_SQL = `WITH q AS MATERIALIZED (SELECT d.display, hash_from_displ
     ) m ON true
     LEFT JOIN LATERAL (
       SELECT * FROM mempool_offmempool x WHERE x.txid = q.txid ORDER BY x.seen_at DESC LIMIT 1
-    ) o ON true`;
+    ) o ON true
+    LEFT JOIN LATERAL (
+      SELECT max(c.rate) AS child_package_fee_rate
+        FROM (SELECT DISTINCT i.txid, i.first_seen FROM mempool_tx_inputs i
+               WHERE i.prevout_txid = q.txid AND i.first_seen >= m.first_seen
+                 AND i.first_seen >= $2::timestamptz AND i.first_seen <= $4::timestamptz) ci
+        CROSS JOIN LATERAL (
+          SELECT t.ancestor_fees::float8 / t.ancestor_size AS rate FROM mempool_txs t
+           WHERE t.txid = ci.txid AND t.first_seen = ci.first_seen
+             AND t.first_seen >= $2::timestamptz AND t.first_seen <= $4::timestamptz AND t.ancestor_size > 0
+           LIMIT 1   -- keeps it a per-child lookup (index / bloom filter), not a hash join over the whole window
+        ) c
+    ) k ON m.first_seen IS NOT NULL`;
 
 /**
  * Look up display-order txids (validated, lower-case, at most TX_BATCH_MAX), one result per txid in input order, as of
@@ -177,7 +200,8 @@ export async function getTxs(txids: string[], atMs: number = Date.now()): Promis
   if (txids.length === 0) return [];
   if (txids.length > TX_BATCH_MAX) throw new Error(`at most ${TX_BATCH_MAX} txids`);
   for (const t of txids) if (!TXID_RE.test(t)) throw new Error('txids must be 64 lower-case hex characters');
-  const rows = (await getPgPool().query<TxRow>(TX_SQL, [txids, new Date(atMs - TX_WINDOW_BEFORE_MS), new Date(atMs + TX_WINDOW_AFTER_MS)])).rows;
+  const rows = (await getPgPool().query<TxRow>(TX_SQL, [txids, new Date(atMs - TX_WINDOW_BEFORE_MS),
+    new Date(atMs + TX_WINDOW_AFTER_MS), new Date(atMs)])).rows;
   const byTxid = new Map(rows.map(r => [r.txid, rowToTxInfo(r)]));
   return txids.map(t => byTxid.get(t) ?? { txid: t, found: false, status: 'not_seen' });
 }

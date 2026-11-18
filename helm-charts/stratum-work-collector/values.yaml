@@ -1,20 +1,12 @@
-# Which collector to run: "python" (collector/, the default) or "go" (collector-go/, stratum-work#148). Both take
-# the same arguments. The Go collector ignores the Bitcoin node and chain-detection flags (--bitcoin-*, --btc-*,
-# --bch-*: chain classification happens at read time), does not write MongoDB (its --db-* flags are ignored) and
-# reads passwords only from the environment (RABBITMQ_PASSWORD, PG_PASSWORD; see `env` / `envFrom`).
-# Go: set resources.limits.memory (64Mi is enough: ~5 MiB idle, ~27 MiB more with a full 10,000-template Postgres
+# The collector (collector-go/): writes Postgres and RabbitMQ. It ignores the Bitcoin node and chain-detection flags
+# (--bitcoin-*, --btc-*, --bch-*: chain classification happens at read time), rejects the old MongoDB flags (--db-*)
+# and reads passwords only from the environment (RABBITMQ_PASSWORD, PG_PASSWORD; see `env` / `envFrom`).
+# Set resources.limits.memory (64Mi is enough: ~5 MiB idle, ~27 MiB more with a full 10,000-template Postgres
 # queue); GOMEMLIMIT follows the limit, and without one it is the node's memory.
-implementation: python
-
 image:
-  repository: bboerst/stratum-work-collector
-  # tag:
-  pullPolicy: IfNotPresent
-
-# Image for implementation: go (pin a sha-<7> tag).
-goImage:
   repository: bboerst/stratum-work-collector-go
-  # tag:
+  # tag: required, pin a sha-<7> tag
+  pullPolicy: IfNotPresent
 
 # Extra container environment, e.g. passwords from a Secret:
 #   env:
@@ -23,10 +15,10 @@ goImage:
 env: []
 envFrom: []
 
-# Go only: replica identity when a pool is collected more than once per site (stored in sources.replica).
+# Replica identity when a pool is collected more than once per site (stored in sources.replica).
 replica: ""
 
-# Go only: /livez, /readyz and /metrics on this port, with liveness/readiness probes.
+# /livez, /readyz and /metrics on this port, with liveness/readiness probes.
 health:
   port: 8080
   # /readyz fails when the last mining.notify is older than this (minutes); raise it for quiet pools.
@@ -49,14 +41,6 @@ arguments:
   - "stratum+tcp://beststratumpool.com:3333"
   - --userpass
   - "username:password"
-  - --db-url
-  - "mongodb://localhost:27017"
-  - --db-name
-  - "stratum_db"
-  - --db-username
-  - "admin"
-  - --db-password
-  - "password"
   - --log-level
   - "INFO"
 

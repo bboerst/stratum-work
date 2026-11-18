@@ -13,7 +13,7 @@ func TestPythonFlagsAndDefaults(t *testing.T) {
 	t.Setenv("COLLECTOR_REPLICA", "")
 	t.Setenv("RABBITMQ_PASSWORD", "mq-secret")
 	c, err := parseConfig(strings.Fields(`-u stratum+tcp://Pool.Example.com:3333 -up user:pw -ru mquser -r rabbitmq
-		-re ex -d mongodb -dn db -du mu -dp mp --log-level DEBUG -k --use-proxy --proxy-port 9150`), io.Discard)
+		-re ex --log-level DEBUG -k --use-proxy --proxy-port 9150`), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,8 +25,16 @@ func TestPythonFlagsAndDefaults(t *testing.T) {
 		c.ReadyMaxNotifyAgeMin != 10 || c.StratumClientPort != 3333 {
 		t.Errorf("%+v", c)
 	}
-	if len(c.Warnings) != 4 { // the four MongoDB flags
+	if len(c.Warnings) != 0 {
 		t.Error(c.Warnings)
+	}
+}
+
+func TestMongoDBFlagsAreRejected(t *testing.T) {
+	for _, f := range []string{"-d", "--db-url", "-dn", "--db-name", "-du", "--db-username", "-dp", "--db-password"} {
+		if _, err := parseConfig([]string{"-u", "stratum+tcp://p:1", "-up", "u:p", f, "x"}, io.Discard); err == nil {
+			t.Errorf("%s: accepted", f)
+		}
 	}
 }
 

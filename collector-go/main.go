@@ -1,6 +1,5 @@
 // stratum-work collector, Go port of collector/main.py (stratum-work#148). One process per pool: connects to one
 // Stratum endpoint, records every mining.notify with its receipt time, and writes it to Postgres and RabbitMQ.
-// MongoDB is not supported (its flags are accepted and ignored, so deployments can switch images).
 package main
 
 import (
@@ -76,8 +75,8 @@ func envFloat(k string, def float64) float64 {
 
 // parseConfig accepts the Python collector's flags (long and short forms) with the same defaults and env vars.
 // Differences: passwords come only from the environment (RABBITMQ_PASSWORD, PG_PASSWORD) and passing one on the
-// command line is an error; the MongoDB flags and the chain-classification flags (ignoredTipFlags) are accepted and
-// ignored.
+// command line is an error; the chain-classification flags (ignoredTipFlags) are accepted and ignored. The MongoDB
+// flags (--db-url, --db-name, --db-username, --db-password and their short forms) are not accepted.
 func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	c := &Config{}
 	fs := flag.NewFlagSet("collector", flag.ContinueOnError)
@@ -106,11 +105,6 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	var rabbitPassFlag, pgPassFlag, rpcPassFlag string
 	str(&rabbitPassFlag, []string{"rp", "rabbitmq-password"}, "", "not accepted: set env RABBITMQ_PASSWORD")
 	str(&c.RabbitExchange, []string{"re", "rabbitmq-exchange"}, envOr("RABBITMQ_EXCHANGE", "mining_notify_exchange"), "RabbitMQ fanout exchange (env RABBITMQ_EXCHANGE)")
-	var mongo [4]string
-	str(&mongo[0], []string{"d", "db-url"}, "", "MongoDB URL (ignored: the Go collector writes Postgres only)")
-	str(&mongo[1], []string{"dn", "db-name"}, "", "ignored (MongoDB)")
-	str(&mongo[2], []string{"du", "db-username"}, "", "ignored (MongoDB)")
-	str(&mongo[3], []string{"dp", "db-password"}, "", "ignored (MongoDB)")
 	str(&c.PGHost, []string{"pg-host"}, os.Getenv("PG_HOST"), "Postgres host (env PG_HOST); the sink is enabled when --pg-host and --pg-user are set")
 	str(&c.PGPort, []string{"pg-port"}, envOr("PG_PORT", "5432"), "Postgres port (env PG_PORT)")
 	str(&c.PGDatabase, []string{"pg-database"}, envOr("PG_DATABASE", "stratum"), "Postgres database (env PG_DATABASE)")
@@ -176,12 +170,6 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	for _, n := range ignoredTipFlags {
 		if set[n] {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("flag --%s is ignored: chain classification moved to read time (docs/design/one-templates-table.md)", n))
-		}
-	}
-	for i, n := range []string{"db-url", "db-name", "db-username", "db-password"} {
-		short := []string{"d", "dn", "du", "dp"}[i]
-		if set[n] || set[short] {
-			c.Warnings = append(c.Warnings, fmt.Sprintf("--%s ignored: MongoDB is not supported by the Go collector (Postgres only)", n))
 		}
 	}
 	if c.URL == "" || c.UserPass == "" {

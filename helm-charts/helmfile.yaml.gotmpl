@@ -5,8 +5,8 @@ releases:
     chart: ./stratum-work-collector
     values:
       - image:
-          repository: bboerst/stratum-work-collector
-          # tag: 
+          repository: bboerst/stratum-work-collector-go
+          # tag: required, pin a sha-<7> tag
           pullPolicy: IfNotPresent
         poolName: "{{ .poolName }}"
         service:

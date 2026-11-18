@@ -120,7 +120,7 @@ BEGIN
          AND j.best_block_hash = pg_temp.h('b99'), format('p2 stale details %s', row_to_json(j));
 
   -- every connection of ts-p4: b's own jobs count although a (the primary) was up the whole time
-  SELECT count(*) INTO n FROM templates_dedup d WHERE d.height = 975700 AND d.pool = 'ts-p4';
+  SELECT count(*) INTO n FROM templates_dedup(975700, 975700, '-infinity', 'infinity') d WHERE true AND d.pool = 'ts-p4';
   ASSERT n = 4, format('fixture: templates_dedup shows only a''s rows for p4 (%s)', n);
   SELECT * INTO j FROM stale_tip_templates(975700, 975700) s WHERE s.pool = 'ts-p4';
   ASSERT j.tip = 'stale' AND j.stale_block_hash = pg_temp.h('s99'), format('p4 stale link %s', row_to_json(j));

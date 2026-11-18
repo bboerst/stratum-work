@@ -63,7 +63,6 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
 | [`helm-charts/`](helm-charts/) | Charts for [collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md) and [webapp](helm-charts/stratum-work-webapp/README.md) | Helm |
-| [`tools/replica-compare/`](tools/replica-compare/README.md) | Compares two collector replicas of a pool in Postgres (field equality, coinbase structure, candidate job keys) | Python |
 | [`tools/site-compare/`](tools/site-compare/README.md) | Compares two deployed sites through their public API only | Python |
 | [`docs/`](docs/) | Field documentation and [design docs](docs/design/postgres-timescale.md) | |
 | [`scripts/`](scripts/) | One-off MongoDB helpers (dump/import templates by height) | Python |
@@ -247,8 +246,7 @@ All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-t
 | `templates` | Every template, one row per `mining.notify`, whatever chain it is for (hypertable on `received_at`, indexed on `(height, source_id, received_at)`). `prev_hash` is in Stratum's word order; `height` is as the pool sent it (0 if unparseable) |
 | `bitcoin_parents` | The blocks we know (`blocks` and `stale_blocks`) by `prev_hash` in Stratum's order: a template whose `prev_hash` isn't here doesn't build on our Bitcoin chain |
 | `template_routing_labels` | The old write-time chain classification (`chain`, `reason`) of the rows that were in the former `templates_other` table, kept as a fact |
-| `templates_dedup` / `templates_copies` | One stream per pool when a pool is collected over several connections: `templates_dedup` is what reads show, `templates_copies` classifies every row (`primary`, `copy`, `secondary_stream`, `gap_fill`). With one collector per pool, `templates_dedup` = the raw rows. `templates_dedup(h1, h2, t1, t2)` / `templates_copies(…)` are the same with height and receive-time bounds (chunk exclusion); `height_window(h1, h2)` gives a height range's receive window |
-| `template_dedup_report(from_ts, to_ts)` | What the de-duplication did, per UTC day, pool and site |
+| `templates_dedup(h1, h2, t1, t2)` / `templates_copies(…)` | One stream per pool when a pool is collected over several connections, for heights `h1`–`h2` received in `[t1, t2]`: `templates_dedup` is what reads show, `templates_copies` classifies every row (`primary`, `copy`, `secondary_stream`, `gap_fill`). With one collector per pool, `templates_dedup` = the raw rows. `height_window(h1, h2)` gives a height range's receive window (`t_from`, `t_to`); pass `'-infinity', 'infinity'` for every row at the heights. The bounds go to chunk exclusion, so pass them as values |
 | `blocks`, `blocks_best` | Every block stored (keyed by hash, so stale and best blocks coexist); `blocks_best` hides the currently stale ones. `block_hash` is in display (explorer) order. `mining_pool` and `analysis` are jsonb |
 | `pools` | Pool definitions from mempool/mining-pools |
 | `stale_blocks`, `chain_reorgs` | Stale blocks and reorgs the node saw |
@@ -257,7 +255,7 @@ All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-t
 | `templates_rejected`, `ingest_events` | collector-go only: messages it couldn't store, and bursts / dropped templates |
 | `hash_display(bytea)`, `hash_from_display(text)`, `stratum_prev_hash_to_block_hash(bytea)` | Byte-order helpers: internal ↔ display hex, and Stratum `prev_hash` → block hash |
 
-**Gotchas.** Always filter template reads on `height` (or a height range): the views and functions push it down to the index, and without it they read the whole table. Take the Bitcoin tip from `blocks_best`, never from `max(height)` of templates: other chains' templates are stored too, at their own heights. For one height's templates, bound the receive time with `height_window(h, h)` (the web's height reads do), so a stuck feed's late re-send or another chain's template at a past height isn't counted. Templates at height `h` are work for the block after `h − 1`. With several collectors per pool, count from `templates_dedup`, or group raw rows by pool: one row per collector is not one template.
+**Gotchas.** Always filter template reads on `height` (or a height range): the functions take it as arguments, and a raw `templates` read without it reads the whole table. Take the Bitcoin tip from `blocks_best`, never from `max(height)` of templates: other chains' templates are stored too, at their own heights. For one height's templates, bound the receive time with `height_window(h, h)` (the web's height reads do), so a stuck feed's late re-send or another chain's template at a past height isn't counted. Templates at height `h` are work for the block after `h − 1`. With several collectors per pool, count from `templates_dedup(…)`, or group raw rows by pool: one row per collector is not one template.
 
 ### Example queries
 ```sql
@@ -268,26 +266,29 @@ SELECT max(height) AS tip FROM blocks_best;
 SELECT height, encode(block_hash, 'hex') AS hash, block_time, mining_pool->>'name' AS pool, analysis->'flags' AS flags
   FROM blocks_best ORDER BY height DESC LIMIT 10;
 
--- Per pool at one height: templates, first template time, how many distinct first transactions
+-- Per pool at one height (received in its window): templates, first template time, distinct first transactions.
+-- The bounds come from height_window(). As values they exclude chunks at plan time (in psql:
+-- `SELECT * FROM height_window(925000, 925000) \gset`, then :'t_from', :'t_to'); the subqueries below work in any
+-- client but are slower (measured: 0.6 s against 20 ms).
 SELECT pool, count(*) AS templates, min(first_seen) AS first_seen,
        count(DISTINCT substring(merkle_branches FROM 1 FOR 32)) AS first_txs
-  FROM templates_dedup WHERE height = 925000
+  FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000)))
  GROUP BY pool ORDER BY first_seen;
 
 -- Which pools built on which previous block at a height (a fork shows up as two prev hashes)
 SELECT encode(stratum_prev_hash_to_block_hash(prev_hash), 'hex') AS prev_block, array_agg(DISTINCT pool) AS pools
-  FROM templates_dedup WHERE height = 925000 GROUP BY 1;
+  FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000))) GROUP BY 1;
 
 -- Each pool's first transaction of its latest template at a height, as an explorer txid
 SELECT DISTINCT ON (pool) pool, hash_display(substring(merkle_branches FROM 1 FOR 32)) AS first_txid
-  FROM templates_dedup WHERE height = 925000 AND length(merkle_branches) >= 32
+  FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000)))
+ WHERE length(merkle_branches) >= 32
  ORDER BY pool, received_at DESC;
 
 -- ... joined to the mempool recorder: when the node first saw it, and its fee rate
 SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vsize AS sat_per_vb
-  FROM templates_dedup t
-  JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32)
- WHERE t.height = 925000;
+  FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000))) t
+  JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32);
 
 -- Templates that don't build on a block we know, per pool (last day; /api/other-chains summarizes 90 days)
 SELECT s.name AS pool, count(*), min(t.height), max(t.height)
@@ -300,12 +301,9 @@ SELECT s.name AS pool, count(*), min(t.height), max(t.height)
 SELECT height, pool, tip, templates, mined_after_switch
   FROM stale_tip_templates((SELECT max(height) - 100 FROM blocks_best), (SELECT max(height) + 1 FROM blocks_best));
 
--- What the de-duplication did over the last day (one collector per pool: every row is primary)
-SELECT day, pool, site, rows, secondary_hidden, gap_fills FROM template_dedup_report(now() - interval '1 day', now());
 ```
 
 ### Tools
-- [`tools/replica-compare`](tools/replica-compare/README.md): two collectors of the same pool, field by field (what identifies "the same job" across connections). Reads Postgres; any role with `SELECT` works.
 - [`tools/site-compare`](tools/site-compare/README.md): two deployed sites through their public API only, height by height. Gentle by default (2 requests/s, retries honoring `Retry-After`, a response cache). Keep reports of real sites out of the repository.
 
 ### Public API
@@ -351,7 +349,6 @@ backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork
 backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode, full-history check
 backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
-tools/replica-compare/test-e2e.sh      # unit tests + synthetic fixture
 tools/site-compare/test-e2e.sh         # unit tests + two fake sites over HTTP
 ```
 Client performance: `npm run perf` against a running production build ([web/perf/README.md](web/perf/README.md)).
@@ -404,7 +401,7 @@ Guidelines: keep findings small (what the UI needs to render); keep the logic de
 ## Further reading
 - [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, backups, migration plan, redundant collection.
 - [How the data is measured](docs/methodology.md): what each value is, how it was taken, and its limits.
-- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [replica-compare](tools/replica-compare/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
+- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 
 **License:** [MIT](LICENSE), © the stratum.work contributors.

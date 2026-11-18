@@ -387,6 +387,9 @@ func TestPostgresIntegration(t *testing.T) {
 	evStart := time.Unix(0, testNS).UTC().Truncate(time.Second)
 	s.SubmitEvent(IngestEvent{Kind: "burst", Start: evStart, End: evStart.Add(2 * time.Second), Templates: 3100, Peak: 2900,
 		Detail: map[string]any{"per_second": []int{200, 2900}, "first_job_id": "j\"1"}})
+	s.SubmitEvent(startEvent("node-ci", "test", evStart))
+	s.SubmitEvent(IngestEvent{Kind: "session", Start: evStart, End: evStart.Add(time.Minute), Templates: 2,
+		Detail: map[string]any{"subscribed_at": evStart.Add(time.Second).Format(time.RFC3339Nano), "end": "EOF"}})
 	other := testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"})
 	other.ChainFamily = "unknown"
 	s.Submit(other)
@@ -394,7 +397,7 @@ func TestPostgresIntegration(t *testing.T) {
 	s.Submit(noLat)
 	if !waitFor(func() bool {
 		st := s.Stats()
-		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4 && st["events_written"] == 1
+		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4 && st["events_written"] == 3
 	}, 15*time.Second) {
 		t.Fatal(s.Stats())
 	}
@@ -428,6 +431,12 @@ func TestPostgresIntegration(t *testing.T) {
 		br != strings.Repeat("aa", 32)+strings.Repeat("bb", 32) || ver != "20000000" || h != 975_500 || lat != 12.5 ||
 		lm != "tcp" || rcv.UnixMicro() != testNS/1000 {
 		t.Error(err, prev, h, lat, lm, rcv)
+	}
+	var node, sessEnd string
+	if err := c.QueryRow(context.Background(), `SELECT (SELECT detail->>'node' FROM ingest_events WHERE source_id = $1 AND kind = 'start'),
+		(SELECT detail->>'end' FROM ingest_events WHERE source_id = $1 AND kind = 'session' AND templates = 2)`, sid).Scan(&node, &sessEnd); err != nil ||
+		node != "node-ci" || sessEnd != "EOF" {
+		t.Error("start/session events:", err, node, sessEnd)
 	}
 	var oh int32
 	var chain, reason string

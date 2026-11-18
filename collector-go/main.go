@@ -29,6 +29,7 @@ type Config struct {
 	PGHost, PGPort, PGDatabase, PGUser, PGSSLMode, PGPassword string // PGPassword: env PG_PASSWORD only
 	PGMaxQueue                                                int
 	Site, Replica                                             string
+	Node                                                      string
 	KeepAlive                                                 bool
 	LogLevel                                                  string
 	UseProxy                                                  bool
@@ -128,6 +129,7 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 		"templates buffered while Postgres is unreachable; the oldest are dropped beyond this (env PG_MAX_QUEUE)")
 	str(&c.Site, []string{"collector-site"}, envOr("COLLECTOR_SITE", "local"), "where this collector runs, stored with the source (env COLLECTOR_SITE)")
 	str(&c.Replica, []string{"collector-replica"}, envOr("COLLECTOR_REPLICA", "a"), "replica identity when a pool is collected more than once per site, stored with the source (env COLLECTOR_REPLICA)")
+	str(&c.Node, []string{"collector-node"}, os.Getenv("COLLECTOR_NODE"), "the machine (e.g. Kubernetes node) this process runs on, whose clock stamps received_at; recorded in its ingest_events \"start\" row (env COLLECTOR_NODE)")
 	boolean(&c.KeepAlive, []string{"k", "keep-alive"}, "send mining.subscribe every 480 s to keep the connection alive")
 	str(&c.LogLevel, []string{"l", "log-level"}, "INFO", "DEBUG, INFO, WARNING, ERROR or CRITICAL")
 	boolean(&c.UseProxy, []string{"use-proxy"}, "connect through a SOCKS5 proxy")
@@ -234,7 +236,7 @@ func run(cfg *Config) int {
 	for _, w := range cfg.Warnings {
 		log.Warn(w)
 	}
-	log.Info("starting", "version", version, "site", cfg.Site, "replica", cfg.Replica)
+	log.Info("starting", "version", version, "site", cfg.Site, "replica", cfg.Replica, "node", cfg.Node)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -263,6 +265,11 @@ func run(cfg *Config) int {
 			pg.maxQueue = cfg.PGMaxQueue
 		}
 		pg.Start()
+	}
+	if pg != nil {
+		// Which machine's clock stamps this process's templates: a pod can land on a different node after every
+		// restart, and the replica name doesn't say which.
+		pg.SubmitEvent(startEvent(cfg.Node, version, time.Now()))
 	}
 	var rmq *RabbitMQPublisher
 	if cfg.RabbitUser != "" && cfg.RabbitPassword != "" {
@@ -355,6 +362,16 @@ func run(cfg *Config) int {
 		rmq.Close(5 * time.Second)
 	}
 	return code
+}
+
+// startEvent is the ingest_events record of a collector process starting (kind "start"). A template's node is the
+// node of the latest start of its source at or before its received_at.
+func startEvent(node, version string, at time.Time) IngestEvent {
+	d := map[string]any{"node": nil, "version": version}
+	if node != "" {
+		d["node"] = node
+	}
+	return IngestEvent{Kind: "start", Start: at, End: at, Detail: d}
 }
 
 // replicaStartDelay staggers replicas of a pool by their index: replica "a" (or "0", a StatefulSet ordinal) starts

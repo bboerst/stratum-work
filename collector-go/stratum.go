@@ -127,9 +127,12 @@ type Collector struct {
 	// Reject quarantines what the pool sent that can't be stored as a template (quarantine.go); nil = log only.
 	// Must not block (PostgresSink.SubmitReject).
 	Reject func(Rejection)
-	// Bursts detects burst episodes; Event receives them (PostgresSink.SubmitEvent). Either may be nil.
+	// Bursts detects burst episodes; Event receives them and the session records (PostgresSink.SubmitEvent).
+	// Either may be nil.
 	Bursts *BurstDetector
 	Event  func(IngestEvent)
+	// Templates received in the current connection, for its session record (read-goroutine state).
+	sessionTemplates int
 
 	sendMu  sync.Mutex
 	nextID  int64
@@ -355,6 +358,7 @@ func (c *Collector) process(msg pyValue, l line) {
 		c.log.Info("mining.notify", "job_id", truncate(pyStrOf(params[pJobID]), 64),
 			"prev_hash", truncate(pyStrOf(params[pPrevHash]), 16), "clean", pyStrOf(params[pCleanJobs]),
 			"height", d.Height, "app_minus_rx_us", (l.app-l.ts)/1000)
+		c.sessionTemplates++
 		c.emit(d)
 	case "mining.set_difficulty":
 		p, _ := msg.get("params")
@@ -392,6 +396,23 @@ func (c *Collector) rejectLineError(err error) {
 	if errors.As(err, &tl) {
 		c.reject(Rejection{TsNs: time.Now().UnixNano(), Stage: "line", Reason: tl.Error(), Raw: tl.prefix})
 	}
+}
+
+// sessionEvent is the ingest_events record of one pool connection (kind "session"): when the TCP connection was
+// up, when the subscribe succeeded (zero if it never did), how many templates came in, and why it ended. With the
+// "start" record (node), these are the facts behind "was this connection collecting at time t".
+func (c *Collector) sessionEvent(ctx context.Context, connected, subscribed time.Time, err error, relay bool) IngestEvent {
+	detail := map[string]any{"subscribed_at": nil, "end": "shutdown"}
+	if !subscribed.IsZero() {
+		detail["subscribed_at"] = subscribed.UTC().Format(time.RFC3339Nano)
+	}
+	if ctx.Err() == nil && err != nil {
+		detail["end"] = truncate(err.Error(), 200)
+	}
+	if relay {
+		detail["relay"] = true
+	}
+	return IngestEvent{Kind: "session", Start: connected, End: time.Now(), Templates: c.sessionTemplates, Detail: detail}
 }
 
 func (c *Collector) event(e IngestEvent) {
@@ -446,13 +467,16 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
-func (c *Collector) session(ctx context.Context) error {
+func (c *Collector) session(ctx context.Context) (err error) {
 	c.tracker.Reset()
 	c.log.Info("connecting", "host", c.host, "port", c.port, "proxy", c.cfg.UseProxy)
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
+	connected, subscribed := time.Now(), time.Time{}
+	c.sessionTemplates = 0
+	defer func() { c.event(c.sessionEvent(ctx, connected, subscribed, err, false)) }()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	defer conn.Close()
@@ -466,6 +490,7 @@ func (c *Collector) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	subscribed = time.Now()
 	for _, p := range pending {
 		c.process(p.msg, p.l)
 	}
@@ -568,7 +593,7 @@ func (c *Collector) connectWithRetries(ctx context.Context) (net.Conn, error) {
 	return nil, err
 }
 
-func (c *Collector) relaySession(ctx context.Context, client net.Conn) error {
+func (c *Collector) relaySession(ctx context.Context, client net.Conn) (err error) {
 	defer client.Close()
 	// A new Watcher per miner in Python: fresh tracker and extranonce.
 	c.tracker.Reset()
@@ -577,6 +602,11 @@ func (c *Collector) relaySession(ctx context.Context, client net.Conn) error {
 	if err != nil {
 		return err
 	}
+	// The miner does the handshake, so there is no subscribe time of our own; runs after wg.Wait (no race on the
+	// template count).
+	connected := time.Now()
+	c.sessionTemplates = 0
+	defer func() { c.event(c.sessionEvent(ctx, connected, time.Time{}, err, true)) }()
 	defer pool.Close()
 	c.setConn(pool)
 	defer c.setConn(nil)

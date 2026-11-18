@@ -510,6 +510,8 @@ func TestRelayBetweenMinerAndPool(t *testing.T) {
 	pool := newFakePool(t)
 	c, docs, m, cancel := testCollector(t, poolURL(pool), nil)
 	defer cancel()
+	events := make(chan IngestEvent, 8)
+	c.Event = func(e IngestEvent) { events <- e }
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()
 	ln.Close()
@@ -569,6 +571,11 @@ func TestRelayBetweenMinerAndPool(t *testing.T) {
 	_ = f.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := f.r.ReadString('\n'); err == nil {
 		t.Error("pool connection not closed after the miner left")
+	}
+	// the relayed connection is recorded as a session: one template, ended by the miner leaving
+	if e := nextEvent(t, events); e.Kind != "session" || e.Templates != 1 || e.Detail["relay"] != true ||
+		e.Detail["subscribed_at"] != nil || e.Detail["end"] == "shutdown" {
+		t.Errorf("relay session event %+v", e)
 	}
 	miner2, err := net.Dial("tcp", addr)
 	if err != nil {

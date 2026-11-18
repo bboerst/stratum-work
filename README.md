@@ -117,6 +117,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `POSTGRES_PORT` | `5432` | Host port of the Postgres profile |
 | `COLLECTOR_PG_HOST` (+ `_USER`, `_PASSWORD`) | *(empty: off)* | Collectors also write to Postgres |
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |
+| `COLLECTOR_NODE` | *(empty)* | Go collector: the machine whose clock stamps `received_at`, recorded in its `ingest_events` `start` row (in Kubernetes, the pod's `spec.nodeName`) |
 | `BACKEND_DB_BACKEND` / `WEB_DB_BACKEND` | `mongodb` | `postgres` switches the backend / web to Postgres |
 | `STREAM_POOL_RATE` / `STREAM_POOL_BURST` | `5` / `20` | Per-pool live display limit (every template is still stored) |
 | `EXTRANONCE1_MASK_KEY` | *(random per start)* | Key for masking extranonce1 in everything the web serves |

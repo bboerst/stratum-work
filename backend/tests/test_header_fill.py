@@ -3,14 +3,11 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from header_fill import BlockHeaderFiller  # noqa: E402
+from decimal import Decimal  # noqa: E402
 
-HEADER_FIELDS = {"nTx": "transactions", "version": "version", "merkleroot": "merkle_root", "bits": "bits",
-                 "nonce": "nonce", "difficulty": "difficulty", "size": "size", "weight": "weight"}
+from header_fill import BlockHeaderFiller, block_header_fields  # noqa: E402
 
-
-def fields(h):  # same mapping as main.block_header_fields
-    return {v: h[k] for k, v in HEADER_FIELDS.items() if h.get(k) is not None}
+fields = block_header_fields
 
 
 class FakeStore:
@@ -72,3 +69,30 @@ class HeaderFillTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlockHeaderFieldsTest(unittest.TestCase):
+    # what python-bitcoinrpc returns for getblock: JSON numbers with a fraction come back as Decimal
+    BLOCK = {"nTx": 3, "size": 1234, "weight": 4000, "version": 536870912, "merkleroot": "ab" * 32, "bits": "1d00ffff",
+             "nonce": 4294967295, "difficulty": Decimal("4.656542373906925E-10"), "tx": ["cd" * 32]}
+
+    def test_maps_the_node_fields(self):
+        self.assertEqual(block_header_fields(self.BLOCK), {
+            "transactions": 3, "size": 1234, "weight": 4000, "version": 536870912, "merkle_root": "ab" * 32,
+            "bits": "1d00ffff", "nonce": 4294967295, "difficulty": 4.656542373906925e-10})
+
+    def test_difficulty_is_a_float_so_mongodb_can_store_the_document(self):
+        doc = block_header_fields(self.BLOCK)
+        self.assertIs(type(doc["difficulty"]), float)
+        try:
+            import bson
+        except ImportError:  # pragma: no cover - pymongo is in backend/requirements.txt
+            self.skipTest("bson (pymongo) not installed")
+        bson.encode(doc)   # raised InvalidDocument for Decimal (every MongoDB block save since #234)
+
+    def test_header_only_result_has_no_size_or_weight(self):
+        header = {k: v for k, v in self.BLOCK.items() if k not in ("size", "weight", "nTx", "tx")}
+        header["nTx"] = 3
+        self.assertNotIn("size", block_header_fields(header))
+        self.assertNotIn("weight", block_header_fields(header))
+

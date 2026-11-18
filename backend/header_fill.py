@@ -1,7 +1,7 @@
 """Header fill: blocks stored before the backend recorded the header columns (tx_count, version, merkle_root, bits,
 nonce, difficulty; size and weight) get them from the node.
 
-New blocks carry them from the getblock the backend already makes (main.block_header_fields). Blocks stored earlier
+New blocks carry them from the getblock the backend already makes (block_header_fields below). Blocks stored earlier
 (the startup sync, the history backfill) have NULLs. One run takes up to `max_blocks` of them, newest first, asks the
 node for each block's header (getblockheader: works on a pruned node too, but has no size or weight, so those stay
 NULL for blocks whose data the node no longer has) and fills only the columns that are still NULL, in batches.
@@ -13,6 +13,20 @@ import logging
 from typing import Any, Callable, Dict, List
 
 logger = logging.getLogger("backend.header_fill")
+
+
+def block_header_fields(block: Dict[str, Any]) -> Dict[str, Any]:
+    """The block's header facts as the node reports them (getblock / getblockheader), in the block document's field
+    names (the web reads the same names from MongoDB; Postgres stores them in blocks' header columns). Keys the node
+    didn't report are left out. getblockheader has no size or weight.
+
+    The RPC client returns JSON numbers with a fraction as Decimal, which MongoDB can't encode: difficulty is stored
+    as a float, the type of the Postgres column (double precision)."""
+    difficulty = block.get("difficulty")
+    out = {"transactions": block.get("nTx"), "size": block.get("size"), "weight": block.get("weight"),
+           "version": block.get("version"), "merkle_root": block.get("merkleroot"), "bits": block.get("bits"),
+           "nonce": block.get("nonce"), "difficulty": float(difficulty) if difficulty is not None else None}
+    return {k: v for k, v in out.items() if v is not None}
 
 
 class BlockHeaderFiller:

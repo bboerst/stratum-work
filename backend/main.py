@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from bitcoin_utils import extract_coinbase_data
 from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: MongoDB or Postgres (DB_BACKEND)
 from integrations.rabbitmq import start_heartbeat_thread
+from header_fill import block_header_fields   # new blocks and the header fill share one mapping
 
 # Global mining pool definitions cache
 pools_cache: Dict[str, Dict[str, Any]] = {}
@@ -312,15 +313,6 @@ def block_coinbase_fields(block: Dict[str, Any], block_hash: str) -> Dict[str, A
         logger.warning("block %s: coinbase/merkle facts not stored (self-check failed): %s", block_hash, e)
         return {}
 
-
-def block_header_fields(block: Dict[str, Any]) -> Dict[str, Any]:
-    """The block's header facts as the node reports them (getblock / getblockheader), in the block document's field
-    names (the web reads the same names from MongoDB; Postgres stores them in blocks' header columns). Keys the node
-    didn't report are left out. getblockheader has no size or weight."""
-    out = {"transactions": block.get("nTx"), "size": block.get("size"), "weight": block.get("weight"),
-           "version": block.get("version"), "merkle_root": block.get("merkleroot"), "bits": block.get("bits"),
-           "nonce": block.get("nonce"), "difficulty": block.get("difficulty")}
-    return {k: v for k, v in out.items() if v is not None}
 
 def process_block(block_hash: str, is_new_block: bool = False, seen_at: Optional[datetime] = None,
                   seen_via: Optional[str] = None) -> bool:

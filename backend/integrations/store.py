@@ -140,7 +140,7 @@ class MongoStore:
 
 
 def _header_params(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """blocks' header columns from a block document's header fields (main.block_header_fields); missing = NULL."""
+    """blocks' header columns from a block document's header fields (header_fill.block_header_fields); missing = NULL."""
     bits = doc.get("bits")
     return dict(
         tx_count=doc.get("transactions"), size=doc.get("size"), weight=doc.get("weight"), version=doc.get("version"),

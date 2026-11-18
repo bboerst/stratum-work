@@ -120,6 +120,12 @@ class MongoStore:
     def fill_block_headers(self, docs: List[Dict[str, Any]]) -> int:
         return 0
 
+    def blocks_missing_branches(self, limit: int) -> List[str]:
+        return []
+
+    def fill_block_coinbase(self, docs: List[Dict[str, Any]]) -> int:
+        return 0
+
     # templates
     def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
         return list(self.db.mining_notify.find({"height": height, "chain_family": {"$exists": False}}))
@@ -143,6 +149,17 @@ def _header_params(doc: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def _coinbase_params(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """blocks' #235 columns from a block document's coinbase facts (coinbase.coinbase_facts). The txid is stored in
+    internal byte order (the document has it as RPC displays it); the branches already are."""
+    txid = doc.get("coinbase_txid")
+    return dict(
+        merkle_branches=bytes.fromhex(doc["merkle_branches"]) if doc.get("merkle_branches") is not None else None,
+        coinbase_txid=bytes.fromhex(txid)[::-1] if txid else None,
+        coinbase_tx=bytes.fromhex(doc["coinbase_tx"]) if doc.get("coinbase_tx") else None,
+    )
+
+
 def _to_bytes(hex_str: Optional[str]) -> bytes:
     return bytes.fromhex(hex_str or "")
 
@@ -163,10 +180,12 @@ class PostgresStore:
 
     _BLOCK_UPSERT = """
         INSERT INTO blocks (block_hash, height, block_time, seen_at, seen_via, coinbase_script_sig, pool_id, mining_pool,
-                            analysis, tx_count, size, weight, version, merkle_root, bits, nonce, difficulty)
+                            analysis, tx_count, size, weight, version, merkle_root, bits, nonce, difficulty,
+                            merkle_branches, coinbase_txid, coinbase_tx)
         VALUES (%(block_hash)s, %(height)s, %(block_time)s, %(seen_at)s, %(seen_via)s, %(coinbase_script_sig)s,
                 %(pool_id)s, %(mining_pool)s, %(analysis)s, %(tx_count)s, %(size)s, %(weight)s, %(version)s,
-                %(merkle_root)s, %(bits)s, %(nonce)s, %(difficulty)s)
+                %(merkle_root)s, %(bits)s, %(nonce)s, %(difficulty)s, %(merkle_branches)s, %(coinbase_txid)s,
+                %(coinbase_tx)s)
         ON CONFLICT (block_hash) DO UPDATE SET
             height = EXCLUDED.height, block_time = EXCLUDED.block_time,
             -- header facts never change for a hash: a save without one (e.g. a document from before they were
@@ -175,6 +194,9 @@ class PostgresStore:
             weight = COALESCE(EXCLUDED.weight, blocks.weight), version = COALESCE(EXCLUDED.version, blocks.version),
             merkle_root = COALESCE(EXCLUDED.merkle_root, blocks.merkle_root), bits = COALESCE(EXCLUDED.bits, blocks.bits),
             nonce = COALESCE(EXCLUDED.nonce, blocks.nonce), difficulty = COALESCE(EXCLUDED.difficulty, blocks.difficulty),
+            merkle_branches = COALESCE(EXCLUDED.merkle_branches, blocks.merkle_branches),
+            coinbase_txid = COALESCE(EXCLUDED.coinbase_txid, blocks.coinbase_txid),
+            coinbase_tx = COALESCE(EXCLUDED.coinbase_tx, blocks.coinbase_tx),
             -- the first time we saw it live is kept, with how we saw it (SET reads the row's old values)
             seen_at = COALESCE(blocks.seen_at, EXCLUDED.seen_at),
             seen_via = CASE WHEN blocks.seen_at IS NULL THEN EXCLUDED.seen_via ELSE blocks.seen_via END,
@@ -253,7 +275,7 @@ class PostgresStore:
             coinbase_script_sig=_to_bytes(doc.get("coinbase_script_sig")), pool_id=_pool_id(doc.get("mining_pool")),
             mining_pool=json.dumps(doc.get("mining_pool") or {}, default=str),
             analysis=json.dumps(doc.get("analysis") or {}, default=str),
-            **_header_params(doc),
+            **_header_params(doc), **_coinbase_params(doc),
         )
 
     def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
@@ -341,6 +363,31 @@ class PostgresStore:
                 cur.executemany(self._HEADER_FILL, params)
                 return cur.rowcount
         return self._run(run)
+
+    # coinbase fill (coinbase_fill.py, #235): blocks stored before their merkle branches were recorded
+    def blocks_missing_branches(self, limit: int) -> List[str]:
+        """Hashes (hex, as stored) of blocks without merkle_branches, newest first."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex') FROM blocks WHERE merkle_branches IS NULL ORDER BY height DESC LIMIT %s",
+            (limit,)).fetchall())
+        return [r[0] for r in rows]
+
+    _COINBASE_FILL = """
+        UPDATE blocks SET
+            merkle_branches = COALESCE(merkle_branches, %(merkle_branches)s),
+            coinbase_txid = COALESCE(coinbase_txid, %(coinbase_txid)s), coinbase_tx = COALESCE(coinbase_tx, %(coinbase_tx)s)
+        WHERE block_hash = %(block_hash)s"""
+
+    def fill_block_coinbase(self, docs: List[Dict[str, Any]]) -> int:
+        """Fill only the #235 columns that are still NULL, from {block_hash, <coinbase facts>} documents."""
+        params = [dict(block_hash=_to_bytes(d["block_hash"]), **_coinbase_params(d)) for d in docs]
+        if not params:
+            return 0
+        def run(c):
+            with c.cursor() as cur:
+                cur.executemany(self._COINBASE_FILL, params)
+        self._run(run)
+        return len(params)
 
     def best_block_hashes_between(self, low: int, high: int) -> Dict[int, List[str]]:
         """{height: [hash, ...]} of the blocks_best rows in [low, high]."""

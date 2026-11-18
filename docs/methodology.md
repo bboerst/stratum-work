@@ -128,6 +128,25 @@ Bitcoin node reports for it (**observed**): from the full block when the backend
 before these were recorded, from the node's block header. A header has no size or weight, so those stay empty for
 older blocks whose full data the node no longer keeps.
 
+To link a block to the work it was built from, the backend also stores the block's coinbase merkle path (the same
+shape as a template's `merkle_branches`), its coinbase txid and, for blocks it stores from now on, its coinbase
+transaction. All of these are self-checked against the node's data before they are stored: the path must hash the
+coinbase txid to the block's merkle root, and the coinbase must hash to its txid. `block_template_matches(h_from, h_to)`
+compares them with the stored templates at read time:
+
+- **Full match (verified):** every branch equal. The template carried exactly the block's transactions, in order.
+  It identifies the job's transaction set, not who mined it: pools that build from the same mempool in the same way
+  can send identical sets, so every matching pool is listed next to the block's own identification.
+- **Coinbase checks:** whether the block's coinbase starts with the template's `coinbase1` and ends with its
+  `coinbase2`, and whether the bytes between them are exactly the template's extranonce length (the pool's own
+  coinbase layout). Many pools put per-connection bytes into the coinbase, so these mark how close the match is
+  rather than being required.
+- **Partial match (match depth k):** the first k branches agree, so the first 2^k - 1 transactions after the
+  coinbase are identical; a similarity, not proof.
+- An empty block has no branches, so every empty template "matches" it: that proves nothing. A block without a
+  stored path is unknown, and one whose path no stored template shares had its job never sent to our connections (or
+  sent after the last one we stored).
+
 ## Other chains
 
 Some pools serve other chains (for example Bitcoin Cash) on the same connections. A template whose height is far from

@@ -49,6 +49,8 @@ class MongoStoreTests(unittest.TestCase):
 
     def test_header_fill_is_postgres_only(self):
         self.assertEqual(self.store.blocks_missing_header(10), [])
+        self.assertEqual(self.store.blocks_missing_branches(10), [])
+        self.assertEqual(self.store.fill_block_coinbase([{"block_hash": "ab"}]), 0)
         self.assertEqual(self.store.fill_block_headers([{"block_hash": "ab"}]), 0)
 
     def test_replace_block(self):
@@ -174,6 +176,25 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             self.assertIn("Foundry USA", mp)
         hashes = [b["block_hash"] for b in self.store.block_hashes_by_height_desc() if b["height"] in (h, h + 1)]
         self.assertEqual(hashes, ["a2" * 32, "a1" * 32])
+
+    def test_coinbase_facts_are_written_and_the_fill_only_touches_nulls(self):
+        h = self.h + 30
+        br = "ab" * 32 + "cd" * 32
+        doc = dict(self._block(h, "d1"), merkle_branches=br, coinbase_txid="ef" * 31 + "01", coinbase_tx="0100")
+        self.store.save_block(doc, is_new_block=True)
+        self.store.save_block(self._block(h, "d1"), is_new_block=False)     # a save without them keeps them
+        self.store.save_block(self._block(h + 1, "d2"), is_new_block=False)
+        self.assertIn("d2" * 32, self.store.blocks_missing_branches(100_000))
+        self.assertNotIn("d1" * 32, self.store.blocks_missing_branches(100_000))
+        self.store.fill_block_coinbase([{"block_hash": "d2" * 32, "merkle_branches": "", "coinbase_txid": "aa" * 32},
+                                        {"block_hash": "d1" * 32, "merkle_branches": "00" * 32}])   # d1 unchanged
+        with self.psycopg.connect(self.admin) as c:
+            rows = {r[0]: r[1:] for r in c.execute(
+                "SELECT height, encode(merkle_branches, 'hex'), encode(coinbase_txid, 'hex'), encode(coinbase_tx, 'hex') "
+                "FROM blocks WHERE height IN (%s, %s)", (h, h + 1)).fetchall()}
+        # the txid is stored in internal byte order (reversed from the display hex)
+        self.assertEqual(rows[h], (br, "01" + "ef" * 31, "0100"))
+        self.assertEqual(rows[h + 1], ("", "aa" * 32, None))          # an empty block: empty branches, no coinbase bytes
 
     def test_header_columns_are_written_and_the_fill_only_touches_nulls(self):
         h = self.h + 20

@@ -4,7 +4,7 @@ DO $$
 DECLARE u record;
 BEGIN
   FOR u IN SELECT * FROM (VALUES ('collector', 'stratum_collector'), ('backend', 'stratum_backend'), ('web', 'stratum_web'),
-                                  ('mempool', 'stratum_mempool')) AS t(name, role) LOOP
+                                  ('mempool', 'stratum_mempool'), ('clock', 'stratum_clock')) AS t(name, role) LOOP
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = u.name) THEN
       EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', u.name, u.name);
     END IF;

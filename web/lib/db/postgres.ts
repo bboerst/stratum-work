@@ -3,8 +3,12 @@
  * DB_BACKEND=postgres. Each function returns exactly what its MongoDB counterpart returns; pg-mapping.ts does the
  * row → JSON conversion. All SQL is parameterized.
  *
- * `templates` holds Bitcoin templates only (the collector routes everything else to `templates_other`), so the
- * BTC-only reads need no chain filter.
+ * Height reads also bound receive time (docs/design/one-templates-table.md): a template for height h is received
+ * between the block at h - 1 arriving and the block at h arriving (height_window(), from stored blocks, 2 h margin).
+ * That keeps out what a height alone can't: a stuck feed re-sending an old job hours later at its old height, and
+ * another chain's template at a height Bitcoin passed long ago. The window is fetched first, in its own round trip,
+ * and passed as parameters: node-postgres sends unnamed statements, so each plan is custom and TimescaleDB drops the
+ * chunks outside it at planning. Computed inside the same query it wouldn't.
  *
  * Redundant collection (several collectors per pool, `sources.replica`, possibly at several sites): reads that mean
  * "the templates" read the views `templates_dedup` / `templates_other_dedup`
@@ -46,6 +50,14 @@ async function query<T>(text: string, values: unknown[] = []): Promise<T[]> {
   return result.rows as T[];
 }
 
+/** The receive-time window of the templates for heights [from, to] (height_window(), db migration 20261118000006), as
+ * text so '-infinity' / 'infinity' round-trip as parameters. */
+async function heightWindow(from: number, to: number = from): Promise<[string, string]> {
+  const [w] = await query<{ t_from: string; t_to: string }>(
+    'SELECT t_from::text AS t_from, t_to::text AS t_to FROM height_window($1, $2)', [from, to]);
+  return [w.t_from, w.t_to];
+}
+
 // ── templates (R1, R2, R4) ────────────────────────────────────────────────────────────────────────────────────────
 
 const RECEIVED_US = '(extract(epoch FROM t.received_at) * 1000000)::bigint';
@@ -62,27 +74,26 @@ const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${OWN_RECEIVED_US} AS
 
 /** R1: Bitcoin templates at a height (one stream per pool across replicas), earliest first. */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
+  const [from, to] = await heightWindow(height);
   const rows = await query<TemplateRow>(
     `SELECT ${DEDUP_COLUMNS}, j.latency_ms, j.latency_method::text AS latency_method
-       FROM templates_dedup j
-      WHERE j.height = $1
+       FROM templates_dedup($1, $1, $2, $3) j
       ORDER BY j.first_seen, j.source_id, j.job_id`,
-    [height],
+    [height, from, to],
   );
   return rows.map(templateRowToMiningNotify);
 }
 
 /**
- * R2: every template at a height, Bitcoin or not (the template details page has always shown all of them), one
- * stream per pool across replicas. Rows from templates_other carry their chain as chain_family. Latency
+ * R2: every template at a height, Bitcoin or not, received whenever (the template details page has always shown all
+ * of them), one stream per pool across replicas. Rows from templates_other carry their chain as chain_family. Latency
  * isn't part of the R2 response, so it's not read.
  */
 export async function allTemplatesAtHeight(height: number): Promise<MiningNotify[]> {
   const rows = await query<TemplateRow>(
     `SELECT * FROM (
        SELECT ${DEDUP_COLUMNS}, NULL::text AS chain
-         FROM templates_dedup j
-        WHERE j.height = $1
+         FROM templates_dedup($1, $1, '-infinity', 'infinity') j   -- every row at the height, whenever received
        UNION ALL
        SELECT ${DEDUP_COLUMNS}, j.chain::text AS chain
          FROM templates_other_dedup j
@@ -101,15 +112,16 @@ export async function allTemplatesAtHeight(height: number): Promise<MiningNotify
  * Note: across sites the receive times come from different clocks and network paths (design doc section 5).
  */
 export async function firstSeenByPool(height: number) {
+  const [from, to] = await heightWindow(height);
   const rows = await query<FirstSeenRow>(
     `SELECT pool_name, received_us, latency_ms FROM (
        SELECT DISTINCT ON (s.name) s.name AS pool_name, ${RECEIVED_US} AS received_us, t.latency_ms
          FROM templates t JOIN sources s ON s.id = t.source_id
-        WHERE t.height = $1 AND s.name <> ''
+        WHERE t.height = $1 AND t.received_at >= $2 AND t.received_at <= $3 AND s.name <> ''
         ORDER BY s.name, t.received_at
      ) f
      ORDER BY received_us, pool_name`,
-    [height],
+    [height, from, to],
   );
   return rows.map(firstSeenRowToItem);
 }
@@ -118,9 +130,10 @@ export async function firstSeenByPool(height: number) {
 export async function poolNamesAtHeight(height: number): Promise<string[]> {
   const rows = await query<{ name: string }>(
     `SELECT s.name FROM sources s
-      WHERE EXISTS (SELECT 1 FROM templates t WHERE t.source_id = s.id AND t.height = $1)
+      WHERE EXISTS (SELECT 1 FROM templates t WHERE t.source_id = s.id AND t.height = $1
+                       AND t.received_at >= $2 AND t.received_at <= $3)
       ORDER BY s.name`,
-    [height],
+    [height, ...(await heightWindow(height))],
   );
   return [...new Set(rows.map(r => r.name))];
 }

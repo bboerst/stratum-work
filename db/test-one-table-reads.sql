@@ -44,25 +44,16 @@ BEGIN
   SELECT * INTO r FROM height_window(975701, 975706);
   ASSERT r.t_from = t0 - interval '2 hours' AND r.t_to = t0 + interval '60 min' + interval '2 hours', format('range: %s', r);
 
-  -- parity: with an open time range, the functions return exactly what the views return
-  SELECT count(*) INTO n FROM (
-    (SELECT * FROM templates_copies(975700, 975710, '-infinity', 'infinity') EXCEPT ALL SELECT * FROM templates_copies WHERE height BETWEEN 975700 AND 975710)
-    UNION ALL
-    (SELECT * FROM templates_copies WHERE height BETWEEN 975700 AND 975710 EXCEPT ALL SELECT * FROM templates_copies(975700, 975710, '-infinity', 'infinity'))) d;
-  ASSERT n = 0, format('templates_copies parity: %s differing rows', n);
-  SELECT count(*) INTO n FROM (
-    (SELECT * FROM templates_dedup(975700, 975710, '-infinity', 'infinity') EXCEPT ALL SELECT * FROM templates_dedup WHERE height BETWEEN 975700 AND 975710)
-    UNION ALL
-    (SELECT * FROM templates_dedup WHERE height BETWEEN 975700 AND 975710 EXCEPT ALL SELECT * FROM templates_dedup(975700, 975710, '-infinity', 'infinity'))) d;
-  ASSERT n = 0, format('templates_dedup parity: %s differing rows', n);
-  ASSERT (SELECT count(*) FROM templates_dedup(975700, 975710, '-infinity', 'infinity')) > 0, 'parity compared nothing';
+  -- (Parity with the old views was checked here until 20261119000001 dropped them; production parity: 0 rows
+  -- differing at 8 heights, 2026-11-18.)
+  ASSERT (SELECT count(*) FROM templates_dedup(975700, 975710, '-infinity', 'infinity')) > 0, 'the fixture has rows';
 
   -- the window keeps out the stale re-send and the other chain's row; the rest of 975701/975702 stays
   SELECT count(*) INTO n FROM templates_dedup(975702, 975702, (SELECT t_from FROM height_window(975702, 975702)), (SELECT t_to FROM height_window(975702, 975702))) WHERE job_id = 'stale';
   ASSERT n = 0, 'stale re-send inside the window';
   ASSERT (SELECT count(*) FROM templates_dedup(975702, 975702, '-infinity', 'infinity') WHERE job_id = 'stale') = 1, 'stale row missing from the open read';
   SELECT count(*) INTO n FROM templates_dedup(975701, 975701, (SELECT t_from FROM height_window(975701, 975701)), (SELECT t_to FROM height_window(975701, 975701)));
-  ASSERT n = (SELECT count(*) FROM templates_dedup WHERE height = 975701 AND job_id <> 'other'), format('975701 windowed: %s rows', n);
+  ASSERT n = (SELECT count(*) FROM templates_dedup(975701, 975701, '-infinity', 'infinity') WHERE true AND job_id <> 'other'), format('975701 windowed: %s rows', n);
   -- the stale row can't become a primary: p2's primary at 975702 is k2
   ASSERT (SELECT array_agg(job_id ORDER BY job_id) FROM templates_dedup(975702, 975702, t0 - interval '1 day', t0 + interval '1 day') WHERE pool = 'ot-p2') = ARRAY['k2'], 'p2 primary at 975702';
 

@@ -264,7 +264,7 @@ SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vs
   FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000))) t
   JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32);
 
--- Templates that don't build on a block we know, per pool (last day; /api/other-chains summarizes 90 days)
+-- Templates that don't build on a block we know, per pool (last day; /api/unknown-parents groups 90 days by parent)
 SELECT s.name AS pool, count(*), min(t.height), max(t.height)
   FROM templates t JOIN sources s ON s.id = t.source_id
  WHERE t.received_at > now() - interval '1 day'
@@ -292,8 +292,8 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them |
-| `GET /api/other-chains` | Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (`no_bitcoin_parent`: the previous block is no block we know; work on stale Bitcoin blocks is in `stale_tip_templates()` instead), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes |
-| `GET /api/other-chains?pool=P[&chain=unknown][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. Exact copies on a pool's several connections count once (`copies`) |
+| `GET /api/unknown-parents` | Templates of the last 90 days whose previous block is no block we know, as episodes (one per parent): height, pools with their connections (a/b), first / last receive time, duration, templates (exact copies on a pool's connections count once), AuxPoW share, the facts (tip when first seen, offset from it, nbits, Bitcoin's bits at height − 1, proof of work, recorded as stale) and the kind inferred from them (`bitcoin_block`, `other_chain`, `invalid_parent`, `undetermined`; [rules](docs/methodology.md#unknown-parents)). Recomputed every 30 minutes |
+| `GET /api/unknown-parents?parent=<hex>` | One episode's details: every template from its pools at heights h − 1 … h + 1 within its minutes ± 5, decoded (scriptSig height, tags, AuxPoW root, outputs) and labelled by the parent it built on (`best`, `stale`, `this`, `other`), plus the blocks we know at h − 1 and h with their arrival |
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md)) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 

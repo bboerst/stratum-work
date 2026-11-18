@@ -16,7 +16,7 @@ details are in the other files in [`docs/`](./).
 - [Which templates belong to a height](#which-templates-belong-to-a-height)
 - [Several connections per pool](#several-connections-per-pool)
 - [Blocks](#blocks)
-- [Other chains](#other-chains)
+- [Unknown parents](#unknown-parents)
 - [First transaction fee rate](#first-transaction-fee-rate)
 - [Older history](#older-history)
 
@@ -166,7 +166,7 @@ compares them with the stored templates at read time:
   stored path is unknown, and one whose path no stored template shares had its job never sent to our connections (or
   sent after the last one we stored).
 
-## Other chains
+## Unknown parents
 
 Some pools serve other chains (for example Bitcoin Cash) on the same connections. The collector stores every template
 it receives in `templates`, without judging which chain it belongs to. That judgement used to be made at receipt,
@@ -178,12 +178,39 @@ job re-sent long after its block, isn't shown as a current Bitcoin template, and
 the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
-The "Other chains" view lists the last 90 days' templates whose previous block is no block we know: another chain
-mined on the same connection, a pool's own tip it never announced, or a Bitcoin block we never stored. Several pools
-building on the same unknown parent at one height is the sign of a Bitcoin block (a stale one we never recorded);
-for a few seconds after a new block it can also be the new block itself, before we stored it. Work on a stale
-Bitcoin block is Bitcoin work and is shown with the stale blocks, not here. A template seen on several of a pool's
-connections counts once, and only as exact copies.
+The "Unknown parents" view looks at the last 90 days' templates whose previous block is no block we know (neither
+in `blocks` nor recorded in `stale_blocks`). It groups them by that parent into **episodes**: one unknown parent, the
+height its templates build, the pools that built on it and on which of their connections (labelled a, b, … in each
+pool's (site, replica) order, so a letter always names the same connection), when the first and last template
+arrived, and how many templates (a template seen on several of a pool's connections counts once, and only as an exact
+copy). Work on a stale Bitcoin block we recorded is Bitcoin work and is shown with the stale blocks, not here.
+
+What each parent is gets **inferred** when the page is read, never stored, from these facts (`web/lib/parentKind.ts`):
+
+- **Bitcoin's difficulty**: whether the templates' `nbits` equal the `bits` of our best-chain block at height − 1
+  (at a difficulty retarget height, the block at the height itself, since the template's target is the new
+  period's). Unknown when we store no Bitcoin block there.
+- **Distance from our tip**: height − 1 minus the highest best-chain block that had reached us by the first template.
+- **Proof of work**: the parent hash, read as a 256-bit number, is at or below the target encoded by Bitcoin's `bits`
+  at height − 1 (or by the templates' own `nbits` when no Bitcoin block is stored there).
+
+The rules, in order:
+
+1. **Another chain**: the difficulty isn't Bitcoin's, or it is unknown and the height is more than one block from our
+   tip. This comes before the proof-of-work check on purpose: another chain's block at a lower difficulty fails
+   Bitcoin's target, and would otherwise look like an invalid Bitcoin parent.
+2. **Unrecorded Bitcoin block**: Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
+   target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
+   lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
+   seconds before the page was computed, before we stored it: the page is recomputed every 30 minutes, so such an
+   episode stays listed until then.
+3. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a
+   valid block at all.
+4. **Undetermined**: no stored block to compare with at all.
+
+Each episode on the page shows these facts next to the inferred kind, and its details show every template from its
+pools around its minutes, each labelled by the parent it built on (our best chain, a stale block, this unknown parent,
+or another one), with the arrival of the blocks at height − 1 and at the height.
 
 ## First transaction fee rate
 

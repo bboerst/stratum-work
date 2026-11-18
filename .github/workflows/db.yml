@@ -1,19 +1,20 @@
 # Database tests:
 #   migrations     db/migrations up -> down -> up + role privileges, on the official TimescaleDB image (local dev) and
 #                  on the CloudNativePG + TimescaleDB image built from postgres/Dockerfile (production)
-#   collector-sink collector/pgsink.py against a real migrated database, connected as the least-privilege collector role
+#   collector-sink collector-go's Postgres sink against a real migrated database, connected as the least-privilege
+#                  collector role
 #   backend-store  backend/integrations/store.py (PostgresStore) against a real migrated database, as the backend role
 #   stale-blocks   backend stale-block tracking end to end: two regtest nodes, a fork and a reorg (throwaway containers),
-#                  then best-chain reconciliation across reorgs in Postgres and MongoDB mode, then the historical gap
+#                  then best-chain reconciliation across reorgs, then the historical gap
 #                  fill on a pruned node (getblockfrompeer)
 name: db
 
 on:
   pull_request:
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", "collector/coinbase.py", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
   push:
     branches: [main]
-    paths: ["db/**", "postgres/**", "collector/pgsink.py", "collector/requirements.txt", "collector/tests/test_pgsink.py", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", "collector/coinbase.py", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
 
 permissions:
   contents: read
@@ -48,15 +49,15 @@ jobs:
             -e DBMATE_NO_DUMP_SCHEMA=true ghcr.io/amacneil/dbmate:2.37.0 --wait up
           docker exec -i pg psql -U stratum -d stratum -v ON_ERROR_STOP=1 -q < db/dev-users.sql
 
+      # In the pinned image tests.yml uses, on the database's network; -run limits it to the integration test (the
+      # rest runs in tests.yml).
       - name: Collector sink integration test (as the collector role)
-        env:
-          PG_TEST_HOST: localhost
-          PG_TEST_USER: collector
-          PG_TEST_PASSWORD: collector
-          PG_TEST_ADMIN_DSN: postgresql://stratum:stratum@localhost/stratum
         run: |
-          python3 -m pip install -q -r collector/requirements.txt pytest
-          python3 -m pytest -v collector/tests/test_pgsink.py
+          docker run --rm --network t -v "$PWD/collector-go:/src" -w /src \
+            -e PG_TEST_HOST=pg -e PG_TEST_USER=collector -e PG_TEST_PASSWORD=collector \
+            -e PG_TEST_ADMIN_USER=stratum -e PG_TEST_ADMIN_PASSWORD=stratum \
+            golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 \
+            go test -race -count=1 -run '^TestPostgresIntegration$' -v ./...
 
   backend-store:
     runs-on: ubuntu-24.04
@@ -88,10 +89,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Stale blocks end to end (regtest fork + reorg, backend in Postgres mode)
+      - name: Stale blocks end to end (regtest fork + reorg)
         run: backend/test-stale-blocks-e2e.sh
 
-      - name: Best-chain reconciliation end to end (reorgs with the tracker off, backend down, 2 deep, MongoDB mode)
+      - name: Best-chain reconciliation end to end (reorgs with the tracker off, backend down, 2 deep, full-history check)
         run: backend/test-reorg-reconcile-e2e.sh
 
       - name: Historical gap fill end to end (pruned regtest node, gaps fetched via getblockfrompeer)

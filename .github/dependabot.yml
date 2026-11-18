@@ -13,12 +13,6 @@ updates:
         update-types: [minor, patch]
     # Other majors get their own PRs and a separate review.
     ignore:
-      # Prisma 7 doesn't support MongoDB ("please stay on Prisma v6"). The web moves to Postgres via `pg` (#113),
-      # so Prisma goes away with MongoDB rather than being upgraded.
-      - dependency-name: prisma
-        update-types: [version-update:semver-major]
-      - dependency-name: "@prisma/client"
-        update-types: [version-update:semver-major]
       # TypeScript 7 (the Go compiler): typescript-eslint doesn't support it yet, so `npm run lint` fails.
       # Remove once typescript-eslint/typescript-eslint#10940 ships.
       - dependency-name: typescript
@@ -28,7 +22,7 @@ updates:
         update-types: [version-update:semver-major]
 
   - package-ecosystem: pip
-    directories: [/collector, /backend]
+    directory: /backend
     schedule: { interval: weekly, day: monday }
     cooldown: { default-days: 7 }
     groups:
@@ -36,7 +30,7 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: docker
-    directories: [/web, /collector, /backend, /postgres]
+    directories: [/web, /backend, /postgres]
     schedule: { interval: weekly, day: monday }
     cooldown: { default-days: 7 }
     groups:

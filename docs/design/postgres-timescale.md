@@ -1,5 +1,7 @@
 # Design: MongoDB → Postgres + TimescaleDB
 
+> Historical: MongoDB, the Python collector (`collector/`) and Prisma have since been removed, and every component is Postgres only. This document describes the system as it was when written.
+
 Tracking: #90 (epic). Status: **ready for review**. All five sections are drafted, and section 3 is measured on real production data.
 
 1. [Current data access](#1-current-data-access) ✅

@@ -2,7 +2,7 @@
 
 [stratum.work](https://stratum.work) shows, in real time, the block templates Bitcoin mining pools hand out to their miners. Collectors connect to pools over the Stratum protocol like an ordinary miner, record every `mining.notify` message, and stream them to the browser, which decodes and visualizes them: what each pool is building on, what it pays out, which transactions it put first, and how quickly it switches to a new block. The idea comes from `0xB10C` ([original thread](https://primal.net/e/note1qckcs4y67eyaawad96j7mxevucgygsfwxg42cvlrs22mxptrg05qtv0jz3)); this project puts it in a form many people can use. A development deployment runs at [dev.stratum.work](https://dev.stratum.work).
 
-**Contents:** [How it works](#how-it-works) · [Repository map](#repository-map) · [Quick start](#quick-start-docker-compose) · [Postgres mode](#postgres--timescaledb) · [Data analysis](#running-it-for-data-analysis) · [Testing and CI](#testing-and-ci) · [Contributing](#contributing) · [Further reading](#further-reading)
+**Contents:** [How it works](#how-it-works) · [Repository map](#repository-map) · [Quick start](#quick-start-docker-compose) · [Postgres](#postgres--timescaledb) · [Data analysis](#running-it-for-data-analysis) · [Testing and CI](#testing-and-ci) · [Contributing](#contributing) · [Further reading](#further-reading)
 
 Coding agents: also read [CLAUDE.md](CLAUDE.md) (conventions, test commands and data gotchas in short form).
 
@@ -13,17 +13,16 @@ Coding agents: also read [CLAUDE.md](CLAUDE.md) (conventions, test commands and 
 |---|---|---|
 | **Templates:** every `mining.notify` a pool sends (job id, previous block hash, the two coinbase halves, merkle branches, version, nBits, nTime, clean-jobs flag), with receive time and latency estimates | Mining pools, over Stratum | collector |
 | **Blocks:** every Bitcoin block, the pool that mined it (coinbase tags and payout addresses, matched against [mempool/mining-pools](https://github.com/mempool/mining-pools)) and the analytics findings for its height | Bitcoin Core node (RPC + ZMQ) | backend |
-| **Stale blocks and reorgs:** blocks on non-active branches the node knows about, and switches of the active chain (Postgres mode only) | Bitcoin Core node (`getchaintips`) | backend |
-| **Mempool:** every transaction the node's mempool accepted, with first-seen time and how it left (mined, replaced, conflict, ...) (Postgres only) | Bitcoin Core node (ZMQ `sequence` + `rawtx`) | mempool-recorder |
+| **Stale blocks and reorgs:** blocks on non-active branches the node knows about, and switches of the active chain | Bitcoin Core node (`getchaintips`) | backend |
+| **Mempool:** every transaction the node's mempool accepted, with first-seen time and how it left (mined, replaced, conflict, ...) | Bitcoin Core node (ZMQ `sequence` + `rawtx`) | mempool-recorder |
 
 ### Architecture
 ```mermaid
 flowchart LR
   pools[Mining pools] -- "Stratum mining.notify" --> collector
   node[Bitcoin Core node] -- "RPC + ZMQ" --> backend
-  node -. "chain detection" .-> collector
   node -- "ZMQ sequence, rawtx" --> recorder[mempool-recorder]
-  collector -- templates --> db[("Postgres + TimescaleDB<br/>(or MongoDB, legacy)")]
+  collector -- templates --> db[("Postgres + TimescaleDB")]
   collector -- "live templates" --> mq[RabbitMQ]
   backend -- "blocks, pools, analytics, stale blocks" --> db
   backend -- "block events" --> mq
@@ -33,12 +32,12 @@ flowchart LR
   web -- "SSE /api/stream + JSON API" --> browser[Browser: decodes and draws]
 ```
 
-- **collector** (`collector/`, Python): one process per pool. Publishes each template to RabbitMQ for the live view and stores it. In MongoDB it tags other chains' templates (`chain_family`; some pools mine other chains on the same endpoints), asking the node for the current tip; in Postgres it stores every template in `templates`. **collector-go** (`collector-go/`) is a Go port that accepts the same flags, writes Postgres only, and stores every template in `templates` without asking a node: which chain a template belongs to is derived at read time ([design doc](docs/design/one-templates-table.md)), so it ignores the node and chain-detection flags. It also adds ingest hardening (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`).
+- **collector** (`collector-go/`, Go): one process per pool. Publishes each template to RabbitMQ for the live view and stores every template in `templates` without asking a node: which chain a template belongs to is derived at read time ([design doc](docs/design/one-templates-table.md); some pools mine other chains on the same endpoints). It also hardens ingest (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`). It replaced an earlier Python collector (`collector/`, removed).
 - **backend** (`backend/`, Python): follows the node (RPC + ZMQ `hashblock`), backfills blocks down to `MIN_BLOCK_HEIGHT`, identifies the pool of each block, runs the [analytics plug-ins](#adding-an-analyzer) over the templates of that height, tracks stale blocks, and publishes block events.
 - **web** (`web/`, Next.js): serves the UI, the live stream (`/api/stream`, Server-Sent Events) and a read-only JSON API (`web/app/api/`).
 - **mempool-recorder** (`mempool-recorder/`, Go): records the node's mempool so templates can be resolved against it (a template's `merkle_branches[0]` is the txid of its first transaction). See its [README](mempool-recorder/README.md).
 
-**Storage.** The project is moving from MongoDB to **Postgres + TimescaleDB**, the store going forward ([design doc](docs/design/postgres-timescale.md)). Both are supported and each component is switched by configuration. The local `docker compose` stack still **defaults to MongoDB** (collectors write `mining_notify`, backend and web use MongoDB); Postgres is an opt-in profile, see [Postgres + TimescaleDB](#postgres--timescaledb). Stale-block tracking, the mempool recorder and collector-go exist only in Postgres mode.
+**Storage.** Everything is stored in **Postgres + TimescaleDB** ([design doc](docs/design/postgres-timescale.md); the project moved there from MongoDB). The local `docker compose` stack runs it too, see [Postgres + TimescaleDB](#postgres--timescaledb).
 
 ### How the data is measured
 What each value is (observed, verified or modelled), how arrival times and clocks are measured and how far they can be off, what the latency adjustment assumes, how several connections per pool and duplicates are handled, and the limits of older history: [docs/methodology.md](docs/methodology.md).
@@ -46,7 +45,7 @@ What each value is (observed, verified or modelled), how arrival times and clock
 ### Trustless processing
 The server collects and forwards the raw messages; **all decoding, formatting and visualization happens in the browser** (coinbase reconstruction, scriptSig tags, outputs and fees, the first transaction, merkle and timing views). So anyone can check what the site shows against what the pools sent, and the stream (`GET /api/stream`) can power other tools. The browser doing the work also means client performance matters: CI measures it on every web PR ([web/perf](web/perf/README.md)).
 
-Where the decoding lives: `web/utils/bitcoinUtils.ts` (coinbase transaction, scriptSig ASCII and info, outputs and value, first transaction, OP_RETURN and AuxPoW data), `web/utils/formatters.ts` (coinbase assembly, prev-hash, nTime, nBits). The collector only stores what it received (`create_notification_document` in `collector/main.py`); the backend's block processing is `process_block` / `build_block_doc` in `backend/main.py`.
+Where the decoding lives: `web/utils/bitcoinUtils.ts` (coinbase transaction, scriptSig ASCII and info, outputs and value, first transaction, OP_RETURN and AuxPoW data), `web/utils/formatters.ts` (coinbase assembly, prev-hash, nTime, nBits). The collector only stores what it received (`newDocument` in `collector-go/document.go`); the backend's block processing is `process_block` / `build_block_doc` in `backend/main.py`.
 
 ### The `mining.notify` message
 A pool sends `mining.notify` whenever it has new work: on a new block (with clean-jobs set, so miners drop old work) and periodically as it refreshes the transaction set. Its fields, and how the UI derives its columns from them, are documented one per page in [`docs/`](docs/):
@@ -55,20 +54,18 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 ## Repository map
 | Path | What | Stack |
 |---|---|---|
-| [`collector/`](collector/) | Stratum client, one per pool: `mining.notify` to RabbitMQ and MongoDB (`mining_notify`) and/or Postgres (`collector/pgsink.py`), latency estimates, chain detection | Python |
-| [`collector-go/`](collector-go/) | Go port of the collector: Postgres + RabbitMQ only, kernel receive timestamps, quarantine and burst records, `/livez` `/readyz` `/metrics`. Golden tests against the Python functions (`testdata/gen_golden.py`) | Go |
-| [`backend/`](backend/) | Follows the node; `blocks`, `pools`, analytics (`backend/analytics/`), stale blocks (`stale_blocks.py`), storage layer for both databases (`integrations/store.py`) | Python |
-| [`web/`](web/) | Next.js app: realtime table, template details, timing, Sankey, infra/latency views; API routes in `web/app/api/`, data layer in `web/lib/db/`, Prisma schema (MongoDB) in `web/prisma/`, perf harness in [`web/perf/`](web/perf/README.md) | TypeScript, Next.js 16 |
+| [`collector-go/`](collector-go/) | Stratum client, one per pool: `mining.notify` to Postgres and RabbitMQ, latency estimates, kernel receive timestamps, quarantine and burst records, `/livez` `/readyz` `/metrics`. A golden test against a frozen fixture from the earlier Python collector (`testdata/golden.json`) | Go |
+| [`backend/`](backend/) | Follows the node; `blocks`, `pools`, analytics (`backend/analytics/`), stale blocks (`stale_blocks.py`), storage layer (`integrations/store.py`) | Python |
+| [`web/`](web/) | Next.js app: realtime table, template details, timing, Sankey, infra/latency views; API routes in `web/app/api/`, data layer in `web/lib/db/`, perf harness in [`web/perf/`](web/perf/README.md) | TypeScript, Next.js 16 |
 | [`mempool-recorder/`](mempool-recorder/README.md) | Records the node's mempool in Postgres | Go |
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
 | [`helm-charts/`](helm-charts/) | Charts for [collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md) and [webapp](helm-charts/stratum-work-webapp/README.md) | Helm |
 | [`tools/site-compare/`](tools/site-compare/README.md) | Compares two deployed sites through their public API only | Python |
 | [`docs/`](docs/) | Field documentation and [design docs](docs/design/postgres-timescale.md) | |
-| [`scripts/`](scripts/) | One-off MongoDB helpers (dump/import templates by height) | Python |
 
 ## Quick start (docker compose)
-`docker compose` runs the stack on one machine: RabbitMQ, MongoDB, five collectors connected to public pools, the backend and the web app. The web app runs in **development mode with hot reload**.
+`docker compose` runs the stack on one machine: RabbitMQ, Postgres + TimescaleDB (migrations applied at startup), five collectors connected to public pools, the backend and the web app. The web app runs in **development mode with hot reload**.
 
 ### Prerequisites
 - [Docker Engine](https://docs.docker.com/engine/install/) with the [Compose plugin](https://docs.docker.com/compose/install/) (`docker compose`, v2).
@@ -79,12 +76,12 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 ```bash
 git clone https://github.com/bboerst/stratum-work.git
 cd stratum-work
-cp .env.example .env        # optional: Bitcoin node, remote access, Postgres switches
+cp .env.example .env        # optional: Bitcoin node, remote access
 docker compose up --build   # add -d to run in the background
 ```
 Open http://localhost:3000. Collectors connect to their pools straight away, and templates appear as pools send `mining.notify`. The first build takes a few minutes.
 
-**Without a Bitcoin node** the live template table works, and so does everything the browser derives from templates. Blocks, pool identification, analytics and (in Postgres mode) stale blocks stay empty, and the backend logs RPC connection errors and keeps retrying. Collectors can't check template heights against the tip, so templates from other chains may not be told apart.
+**Without a Bitcoin node** the live template table works, and so does everything the browser derives from templates. Blocks, pool identification, analytics and stale blocks stay empty, and the backend logs RPC connection errors and keeps retrying. Without stored blocks, templates from other chains can't be told apart from Bitcoin's (that's judged against the stored blocks at read time).
 
 To run the optimized production build (no hot reload): `ENVIRONMENT=production docker compose up --build`.
 
@@ -95,8 +92,7 @@ To run the optimized production build (no hot reload): `ENVIRONMENT=production d
 | `backend` | 8001 (`BACKEND_PORT`) | Block processing and analytics; needs a node |
 | `collector-*` | none | One per pool (`antpool`, `f2pool`, `poolin`, `secpool`, `256foundation`) |
 | `rabbitmq` | 5672, 15672 | Management UI at http://localhost:15672 (`mquser` / `mqpassword`) |
-| `mongodb` | 27017 | `mongo:7.0.24` (`mongouser` / `mongopassword`), database `stratum-logger` |
-| `postgres` | 5432 (`POSTGRES_PORT`) | Only with `--profile postgres`, see [below](#postgres--timescaledb) |
+| `postgres` | 5432 (`POSTGRES_PORT`) | TimescaleDB, plus `postgres-migrate` and `postgres-dev-users`, which run once at startup; see [below](#postgres--timescaledb) |
 
 These are local development credentials: don't expose the ports to an untrusted network. To bind them elsewhere, see [machine-specific overrides](#machine-specific-overrides). To start only some services: `docker compose up --build web backend collector-f2pool` (dependencies start with them).
 
@@ -116,22 +112,20 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BLOCK_GAP_FILL_INTERVAL_S` | `3600` | Seconds between runs of the historical gap fill (also once after the startup sync): every height missing between `MIN_BLOCK_HEIGHT` and the stored tip is fetched, on a pruned node through `getblockfrompeer` (0 = off; see "Historical gaps" below) |
 | `BLOCK_GAP_FILL_MAX_BLOCKS` / `_PEERS` / `_PEER_TIMEOUT_S` | `50` / `3` / `30` | Per gap-fill run: blocks at most, peers tried per pruned block, seconds to wait for each peer |
 | `BEST_CHAIN_HISTORY_INTERVAL_S` | `86400` | Seconds between runs of the full-history best-chain check (also once after the startup sync): the stored best block at every height between `MIN_BLOCK_HEIGHT` and the stored tip is compared with the node's (0 = off; see "Best chain, full history" below) |
-| `POSTGRES_PORT` | `5432` | Host port of the Postgres profile |
-| `COLLECTOR_PG_HOST` (+ `_USER`, `_PASSWORD`) | *(empty: off)* | Collectors also write to Postgres |
+| `POSTGRES_PORT` | `5432` | Host port of the Postgres service |
+| `COLLECTOR_PG_*` / `BACKEND_PG_*` / `WEB_PG_*` | the local `postgres` service, each as its own user | Point a component at another database (`_HOST`, `_PORT`, `_DATABASE`, `_USER`, `_PASSWORD`, and `_SSLMODE` for collectors and web) |
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |
-| `COLLECTOR_NODE` | *(empty)* | Go collector: the machine whose clock stamps `received_at`, recorded in its `ingest_events` `start` row (in Kubernetes, the pod's `spec.nodeName`) |
-| `BACKEND_DB_BACKEND` / `WEB_DB_BACKEND` | `mongodb` | `postgres` switches the backend / web to Postgres |
+| `COLLECTOR_NODE` | *(empty)* | The machine whose clock stamps `received_at`, recorded in its `ingest_events` `start` row (in Kubernetes, the pod's `spec.nodeName`) |
 | `STREAM_POOL_RATE` / `STREAM_POOL_BURST` | `5` / `20` | Per-pool live display limit (every template is still stored) |
 | `EXTRANONCE1_MASK_KEY` | *(random per start)* | Key for masking extranonce1 in everything the web serves |
-| `TX_API_SOURCE` / `TX_API_MEMPOOL_SPACE_FALLBACK` | `auto` / `false` | Where the table's first-transaction fee rates come from: `auto` = this deployment's `/api/tx` in Postgres mode, mempool.space otherwise; `local` / `mempool.space` force one. The fallback asks mempool.space when `/api/tx` fails |
+| `TX_API_SOURCE` / `TX_API_MEMPOOL_SPACE_FALLBACK` | `mempool.space` / `false` | Where the table's first-transaction fee rates come from. Compose runs no mempool recorder, so it defaults to mempool.space; `auto` (the web's own default) = this deployment's `/api/tx` with historical data enabled, mempool.space otherwise; `local` forces `/api/tx`. The fallback asks mempool.space when `/api/tx` fails |
 
 ### Connecting a Bitcoin node
-The backend and the collectors share the node settings. The node needs:
+Only the backend uses the node (the collectors don't). The node needs:
 - **RPC** reachable from the containers. A node on the Docker host is `host.docker.internal`; make sure `rpcallowip` allows the Docker network (e.g. `172.16.0.0/12`). Read-only RPC is enough.
-- **ZMQ block notifications** on `BITCOIN_ZMQ_BLOCK`: the backend subscribes to `hashblock`, the collectors to `rawblock` + `hashblock`, so publish both on that address:
+- **ZMQ block notifications** on `BITCOIN_ZMQ_BLOCK`: the backend subscribes to `hashblock`:
   ```
   zmqpubhashblock=tcp://0.0.0.0:28332
-  zmqpubrawblock=tcp://0.0.0.0:28332
   ```
 - **Nodes behind a TLS proxy** (e.g. StartOS) serve RPC over `https`, often with a private CA. Point the stack at the CA rather than turning off verification: `BITCOIN_RPC_SCHEME=https` and `BITCOIN_RPC_CA_FILE=/path/to/root-ca.pem` (a host path, mounted read-only).
 - **First start:** the backend backfills every block from the tip down to `MIN_BLOCK_HEIGHT`, over 100k blocks with the default. For a quick start set it a few dozen blocks below the current tip; there are no templates for blocks mined before your collectors ran anyway.
@@ -147,8 +141,8 @@ The backend and the collectors share the node settings. The node needs:
 docker compose stop          # stop, keep containers and data
 docker compose down          # remove containers and the network, KEEP the data volumes
 ```
-> **Warning:** `docker compose down -v` also deletes the named volumes, i.e. **all collected data** (`mongo-data` and `pg-data`). Don't use it (or `docker volume prune`) unless that's what you want. To reset only one store, remove just its volume, e.g. Postgres:
-> `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data` (volume names are `<project>_<volume>`; the project defaults to the directory name, check with `docker volume ls`).
+> **Warning:** `docker compose down -v` also deletes the named volumes, i.e. **all collected data** (`pg-data`). Don't use it (or `docker volume prune`) unless that's what you want. To reset only one store, remove just its volume, e.g. Postgres:
+> `docker compose rm -sf postgres && docker volume rm stratum-work_pg-data` (volume names are `<project>_<volume>`; the project defaults to the directory name, check with `docker volume ls`). The next `docker compose up` migrates the empty database again.
 
 ### Adding a pool (local)
 Each `collector-*` service connects to one pool and extends the shared `x-collector-base` template (environment, dependencies, restart policy). To add one locally, put a service in your `docker-compose.override.yml` (gitignored) and change only the pool flags:
@@ -156,16 +150,13 @@ Each `collector-*` service connects to one pool and extends the shared `x-collec
 services:
   collector-newpool:
     extends: {file: docker-compose.yml, service: collector-f2pool}
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "NewPool"
-      --url "stratum+tcp://newpool.example.com:3333"
-      --userpass "someuser.worker:x"
-      --rabbitmq-host "rabbitmq" --rabbitmq-username "mquser" --rabbitmq-password "mqpassword"
-      --db-url "mongodb" --db-name "stratum-logger" --db-username "mongouser" --db-password "mongopassword"
-      --log-level "INFO"
+    command:
+      - --pool-name=NewPool
+      - --url=stratum+tcp://newpool.example.com:3333
+      - --userpass=someuser.worker:x
+      - --log-level=INFO
 ```
-`--pool-name` is the name shown in the UI and stored as the source. `python main.py --help` (in `collector/`) lists every flag; settings with an env fallback (`BITCOIN_*`, `PG_*`, `RABBITMQ_*`) are documented there. Use a pool's public endpoint and a username it accepts for anonymous or test mining; respect its terms.
+`--pool-name` is the name shown in the UI and stored as the source. RabbitMQ and Postgres come from the template's environment (passwords only from the environment: the collector refuses them on the command line). `docker compose run --rm --no-deps collector-f2pool --help` lists every flag with its env fallback (`PG_*`, `RABBITMQ_*`, `COLLECTOR_*`). Use a pool's public endpoint and a username it accepts for anonymous or test mining; respect its terms.
 
 ### Running on a remote machine
 If the stack runs on another machine, use its hostname instead of `localhost`:
@@ -182,35 +173,18 @@ services:
   web:
     ports: !override
       - "100.64.0.10:3000:3000"   # e.g. only on a VPN address
-  mongodb:
+  postgres:
     ports: !override
-      - "127.0.0.1:27017:27017"   # keep infrastructure on loopback
+      - "127.0.0.1:5432:5432"     # keep infrastructure on loopback
 ```
 
 ## Postgres + TimescaleDB
-Postgres is opt-in through a Compose profile:
-```bash
-docker compose --profile postgres up --build
-```
-This adds three services:
+`docker compose up` runs Postgres with three services:
 - `postgres`: TimescaleDB 2.30 on Postgres 18 (`timescale/timescaledb:2.30.2-pg18`); owner `stratum` / `stratum`, database `stratum`.
 - `postgres-migrate`: applies [`db/migrations`](db/migrations) with dbmate, then exits.
 - `postgres-dev-users`: creates the local login users `collector`, `backend` and `web` (password = user name), each granted its least-privilege role (`stratum_collector`, `stratum_backend`, `stratum_web`), then exits.
 
-Then switch components in `.env` and recreate them (`docker compose --profile postgres up -d`):
-```bash
-COLLECTOR_PG_HOST=postgres      # collectors write Postgres too (in addition to MongoDB)
-BACKEND_DB_BACKEND=postgres     # blocks, pools, analytics reads, stale blocks
-WEB_DB_BACKEND=postgres         # the web reads Postgres (as the read-only `web` user)
-```
-With all three, the backend and web run fully on Postgres. Both collectors write every template to `templates`, other chains' and unparseable heights included: which chain a template belongs to, and whether it is current, is judged at read time ([design doc](docs/design/one-templates-table.md)). The web's API responses are the same as in MongoDB mode except for ids and µs-precision timestamps (see `web/lib/db/pg-mapping.ts`); `npm run parity` (`web/scripts/read-parity.ts`) checks that both backends return the same data when both have it.
-```bash
-# needs data in both (e.g. collectors writing to both); the network is <project>_default
-docker run --rm --network stratum-work_default -v "$PWD/web:/app" -w /app \
-  -e DATABASE_URL='mongodb://mongouser:mongopassword@mongodb:27017/stratum-logger?authSource=admin' \
-  -e PG_HOST=postgres -e PG_USER=web -e PG_PASSWORD=web node:24-alpine \
-  sh -c 'npm ci && npx prisma generate && npm run parity'   # optional: -- --heights 975500-975520
-```
+The collectors, backend and web start once the users exist, each connected as its own user. The collectors write every template to `templates`, other chains' and unparseable heights included: which chain a template belongs to, and whether it is current, is judged at read time ([design doc](docs/design/one-templates-table.md)). The web turns rows into API responses in `web/lib/db/pg-mapping.ts`.
 
 Connect with psql (the image has it, no local install needed):
 ```bash
@@ -219,22 +193,22 @@ docker compose exec postgres psql -U stratum stratum                     # owner
 psql postgres://web:web@localhost:5432/stratum                           # from the host, with a local psql
 ```
 
-**Stale blocks** (backend in Postgres mode): on every new block and every `STALE_POLL_INTERVAL_S` (60) seconds the backend calls `getchaintips`, walks each non-active branch to the fork point and stores its blocks in `stale_blocks` (header always; coinbase, size and pool when the node has the full block); reorgs of the active chain go to `chain_reorgs`. `STALE_BLOCKS_ENABLED=false` turns it off. RPC methods used: `getchaintips`, `getblockheader`, `getblock`, `getblockhash`.
+**Stale blocks**: on every new block and every `STALE_POLL_INTERVAL_S` (60) seconds the backend calls `getchaintips`, walks each non-active branch to the fork point and stores its blocks in `stale_blocks` (header always; coinbase, size and pool when the node has the full block); reorgs of the active chain go to `chain_reorgs`. `STALE_BLOCKS_ENABLED=false` turns it off. RPC methods used: `getchaintips`, `getblockheader`, `getblock`, `getblockhash`.
 
-**Best chain** (both database modes): after each sync, new block and reorg the backend compares its stored best block at each of the last `BLOCK_GAP_WINDOW` heights with the node's (`getblockhash`). A missing block is fetched; a stored block the node's active chain no longer has (a reorg) is replaced by the node's block, stored with `seen_at` = when the backend noticed. The replaced block stays stored: in Postgres it gets a `stale_blocks` row (`was_active`, and a `chain_reorgs` row), so `blocks_best` hides it, even with `STALE_BLOCKS_ENABLED=false`; in MongoDB its document gets `stale: true` (and `stale_at`), and every read of "the block at a height" or "the tip" skips such documents. RPC methods used: `getblockcount`, `getblockhash`, `getblock`, plus `getchaintips` and `getblockheader` in Postgres mode.
+**Best chain**: after each sync, new block and reorg the backend compares its stored best block at each of the last `BLOCK_GAP_WINDOW` heights with the node's (`getblockhash`). A missing block is fetched; a stored block the node's active chain no longer has (a reorg) is replaced by the node's block, stored with `seen_at` = when the backend noticed. The replaced block stays stored: it gets a `stale_blocks` row (`was_active`, and a `chain_reorgs` row), so `blocks_best` hides it, even with `STALE_BLOCKS_ENABLED=false`. RPC methods used: `getblockcount`, `getblockhash`, `getblock`, `getchaintips`, `getblockheader`.
 
-**Historical gaps** (both database modes): the startup sync only extends the stored range at both ends, and the best-chain check covers the last `BLOCK_GAP_WINDOW` heights. Deeper gaps (e.g. blocks that failed while the database was unreachable) are filled by a separate pass, once after the startup sync and then every `BLOCK_GAP_FILL_INTERVAL_S` seconds. It reads the stored heights between `MIN_BLOCK_HEIGHT` and the stored tip (no RPC when nothing is missing) and stores up to `BLOCK_GAP_FILL_MAX_BLOCKS` missing blocks per run, newest first, as synced blocks (`seen_at` NULL, like the backfill). A pruned node answers "Block not available (pruned data)" for old blocks: then the backend asks it to download the block again from a connected peer that advertises `NETWORK` (full history; `NETWORK_LIMITED` peers only serve the last 288 blocks), outbound peers first, up to `BLOCK_GAP_FILL_PEERS` peers with `BLOCK_GAP_FILL_PEER_TIMEOUT_S` seconds each, and stores it once it arrives (the node may prune it again later; it is only needed once). The wait happens outside the block processor, so new blocks are never delayed. A block that can't be fetched is logged and retried on the next run. RPC methods used: `getblockhash`, `getblock`, plus `getpeerinfo` and `getblockfrompeer` (Bitcoin Core 23+) on a pruned node.
+**Historical gaps**: the startup sync only extends the stored range at both ends, and the best-chain check covers the last `BLOCK_GAP_WINDOW` heights. Deeper gaps (e.g. blocks that failed while the database was unreachable) are filled by a separate pass, once after the startup sync and then every `BLOCK_GAP_FILL_INTERVAL_S` seconds. It reads the stored heights between `MIN_BLOCK_HEIGHT` and the stored tip (no RPC when nothing is missing) and stores up to `BLOCK_GAP_FILL_MAX_BLOCKS` missing blocks per run, newest first, as synced blocks (`seen_at` NULL, like the backfill). A pruned node answers "Block not available (pruned data)" for old blocks: then the backend asks it to download the block again from a connected peer that advertises `NETWORK` (full history; `NETWORK_LIMITED` peers only serve the last 288 blocks), outbound peers first, up to `BLOCK_GAP_FILL_PEERS` peers with `BLOCK_GAP_FILL_PEER_TIMEOUT_S` seconds each, and stores it once it arrives (the node may prune it again later; it is only needed once). The wait happens outside the block processor, so new blocks are never delayed. A block that can't be fetched is logged and retried on the next run. RPC methods used: `getblockhash`, `getblock`, plus `getpeerinfo` and `getblockfrompeer` (Bitcoin Core 23+) on a pruned node.
 
-**Best chain, full history** (both database modes): the best-chain check above only covers the recent window, so a wrong block deeper down (e.g. a history backfill that stored a block which later lost a race, while the winner isn't stored) stays wrong. Once after the startup sync and then every `BEST_CHAIN_HISTORY_INTERVAL_S` seconds (default daily), the backend compares the stored best block at every height between `MIN_BLOCK_HEIGHT` and the stored tip with the node's, in chunks of 2,000 heights: one indexed read and one `getblockhash` per height, outside the block processor, so new blocks aren't delayed. Only the fixes run on the block processor: the node's block is stored first, as a synced block (`seen_at` NULL: it wasn't seen live), on a pruned node through the gap fill's `getblockfrompeer` path, and only then is the stored block marked replaced, the same way as above. A height with no stored block is left to the gap fill. In Postgres, marking a block replaced needs its header from the node (`getblockheader`); if the node never saw that block it has no header, the block stays in `blocks_best` next to the node's, and the height is logged as failed and retried on the next run. Each run logs one summary line (checked, mismatched, stored, replaced, failed, duration).
+**Best chain, full history**: the best-chain check above only covers the recent window, so a wrong block deeper down (e.g. a history backfill that stored a block which later lost a race, while the winner isn't stored) stays wrong. Once after the startup sync and then every `BEST_CHAIN_HISTORY_INTERVAL_S` seconds (default daily), the backend compares the stored best block at every height between `MIN_BLOCK_HEIGHT` and the stored tip with the node's, in chunks of 2,000 heights: one indexed read and one `getblockhash` per height, outside the block processor, so new blocks aren't delayed. Only the fixes run on the block processor: the node's block is stored first, as a synced block (`seen_at` NULL: it wasn't seen live), on a pruned node through the gap fill's `getblockfrompeer` path, and only then is the stored block marked replaced, the same way as above. A height with no stored block is left to the gap fill. Marking a block replaced needs its header from the node (`getblockheader`); if the node never saw that block it has no header, the block stays in `blocks_best` next to the node's, and the height is logged as failed and retried on the next run. Each run logs one summary line (checked, mismatched, stored, replaced, failed, duration).
 
 **Migrations:** `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then fill `-- migrate:up` and a working `-- migrate:down`. TimescaleDB procedures such as `add_columnstore_policy` need `-- migrate:up transaction:false`. `db/test-migrations.sh` runs them up/down/up and checks the role privileges.
 
-**Not in compose:** collector-go and the mempool recorder. Run them from their directories (`go run . -h` lists flags and env fallbacks) against the profile's Postgres; the recorder logs in as the local user `mempool` / `mempool` (`db/dev-users.sql`, role `stratum_mempool`) and needs a node with `-zmqpubsequence` / `-zmqpubrawtx` ([README](mempool-recorder/README.md)).
+**Not in compose:** the mempool recorder. Run it from its directory (`go run . -h` lists flags and env fallbacks) against the compose Postgres; it logs in as the local user `mempool` / `mempool` (`db/dev-users.sql`, role `stratum_mempool`) and needs a node with `-zmqpubsequence` / `-zmqpubrawtx` ([README](mempool-recorder/README.md)).
 
 ## Running it for data analysis
 
 ### Getting data
-- **Collect your own.** Start the Postgres profile with the three switches above and a node, set `MIN_BLOCK_HEIGHT` near the tip, and let a few collectors run: `docker compose --profile postgres up -d --build web backend collector-f2pool collector-antpool`. A few hours give dozens of heights; every height has a few hundred templates per pool. Without a node you still get templates (but no blocks).
+- **Collect your own.** Connect a node, set `MIN_BLOCK_HEIGHT` near the tip, and let a few collectors run: `docker compose up -d --build web backend collector-f2pool collector-antpool`. A few hours give dozens of heights; every height has a few hundred templates per pool. Without a node you still get templates (but no blocks).
 - **From the public site.** The web's JSON API is read-only and public (below). [`tools/site-compare`](tools/site-compare/README.md) shows how to fetch it politely (rate limit, retries, cache).
 
 ### The schema in one table
@@ -317,27 +291,24 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/block-pool-first-seen?height=H` | Each pool's first template time at a height, with a `reliable` flag |
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
-| `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them (Postgres deployments) |
-| `GET /api/other-chains` | Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (`no_bitcoin_parent`: the previous block is no block we know; work on stale Bitcoin blocks is in `stale_tip_templates()` instead), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes (Postgres deployments) |
-| `GET /api/other-chains?pool=P[&chain=unknown\|btc][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. Exact copies on a pool's several connections count once (`copies`) |
-| `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md); Postgres deployments) |
+| `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them |
+| `GET /api/other-chains` | Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (`no_bitcoin_parent`: the previous block is no block we know; work on stale Bitcoin blocks is in `stale_tip_templates()` instead), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes |
+| `GET /api/other-chains?pool=P[&chain=unknown][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. Exact copies on a pool's several connections count once (`copies`) |
+| `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md)) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 
 ## Testing and CI
 
 ### Tests per component
 ```bash
-python -m pytest collector/tests        # collector (from the repo root)
 (cd backend && python -m pytest tests)  # backend (from backend/)
 (cd web && npm ci && npm test && npm run lint)   # web: vitest + eslint
-(cd collector-go && go test ./...)      # Go collector
+(cd collector-go && go test ./...)      # collector
 (cd mempool-recorder && go test ./...)  # mempool recorder
 ```
 Python tests need the component's `requirements.txt` plus `pytest`; Go tests need Go (or the `golang` image). Some tests use a real Postgres when `PG_TEST_*` is set and skip otherwise (see `.github/workflows/db.yml` for the setup). With nothing installed locally, run them in the compose containers:
 ```bash
 docker compose exec web npm test
-docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo --entrypoint sh collector-antpool \
-  -c "pip install -q pytest && python -m pytest collector/tests"
 docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo/backend --entrypoint sh backend \
   -c "pip install -q pytest && python -m pytest tests"
 ```
@@ -345,8 +316,8 @@ docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo/backend --entrypoint 
 End-to-end scripts (need Docker; everything runs in throwaway containers):
 ```bash
 db/test-migrations.sh                  # migrations up/down/up + role privileges
-backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork and a reorg, backend in Postgres mode
-backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode, full-history check
+backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork and a reorg
+backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, full-history check
 backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
 tools/site-compare/test-e2e.sh         # unit tests + two fake sites over HTTP
@@ -357,11 +328,11 @@ Client performance: `npm run perf` against a running production build ([web/perf
 | Workflow | Runs on | Checks |
 |---|---|---|
 | `images.yml` | PRs, `main`, releases | Builds multi-arch images (amd64 + arm64) of changed components; PRs push nothing, `main` pushes `bboerst/stratum-work-<component>:sha-<7>` and `:main`, releases push every component as `:<tag>` and `:latest` |
-| `db.yml` | Changes to `db/`, `postgres/`, the Postgres code paths | Migrations on the local and the production image, collector sink and backend store against a migrated database (as their roles), backfill tool e2e, stale blocks e2e, best-chain reconciliation e2e |
+| `tests.yml` | Changes to `web/`, `collector-go/`, `backend/` | Web vitest, tsc and eslint; collector-go gofmt, vet and tests; backend pytest (Postgres-backed tests skip there; `db.yml` runs them) |
+| `db.yml` | Changes to `db/`, `postgres/`, `collector-go/`, the backend's storage code | Migrations on the local and the production image, collector-go's sink and the backend store against a migrated database (as their roles), stale blocks e2e, best-chain reconciliation e2e, historical gap fill e2e |
 | `mempool-recorder.yml` | Changes to `mempool-recorder/` or migrations | gofmt, go vet, go test, e2e |
 | `perf.yml` | PRs touching `web/` | Measures the PR against its base with `web/perf` and posts the table as a PR comment |
 
-CI doesn't yet run the web unit tests and lint, the collector's tests or collector-go's: run them locally before a PR.
 
 ## Contributing
 Issues and pull requests are welcome. The essentials (longer form in [CLAUDE.md](CLAUDE.md)):
@@ -388,7 +359,7 @@ The backend runs analytics plug-ins for each processed block. They inspect the t
            return None
        return {"key": "my_feature", "icon": "star", "details": {"…": "…"}}
    ```
-2. Call it in `run_block_analyses(...)` in `backend/main.py`, which fetches the height's templates from the configured store (`store.templates_at_height(height)`, MongoDB or Postgres):
+2. Call it in `run_block_analyses(...)` in `backend/main.py`, which fetches the height's templates from the store (`store.templates_at_height(height)`):
    ```python
    finding = analyze_my_feature(templates, logger)
    if finding:

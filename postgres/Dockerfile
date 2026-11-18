@@ -5,7 +5,7 @@
 #
 # The CNPG Cluster must set:  postgresql.shared_preload_libraries: [timescaledb]
 #                             postgresql.parameters: { timescaledb.enable_chunk_skipping: "on" }
-# Local development uses the official timescale/timescaledb image instead (docker compose --profile postgres).
+# Local development uses the official timescale/timescaledb image instead (docker compose).
 
 # 18.6-standard-trixie, pinned by digest (CNPG rebuilds tags for security fixes; bump deliberately)
 FROM ghcr.io/cloudnative-pg/postgresql:18.7-standard-trixie@sha256:37fdeea29a4d3ed14570f719488ba55bd21e8975eaea864be5ce74d25a9a13de

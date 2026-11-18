@@ -6,7 +6,7 @@ This Helm chart deploys the Bitcoin Mining Pool Identification System backend se
 
 - Kubernetes 1.16+
 - Helm 3.0+
-- MongoDB database
+- Postgres + TimescaleDB with the migrations in `db/migrations/` applied, and a login in the `stratum_backend` role
 - RabbitMQ server
 - Bitcoin node with RPC and ZMQ enabled
 
@@ -51,12 +51,6 @@ The backend service can be configured with the following environment variables:
 - `BITCOIN_ZMQ_BLOCK`: ZMQ endpoint for new block notifications
 - `MIN_BLOCK_HEIGHT`: Minimum block height to process
 
-### MongoDB Connection
-- `MONGODB_URL`: MongoDB connection URL
-- `MONGODB_DB`: MongoDB database name
-- `MONGODB_USERNAME`: MongoDB username
-- `MONGODB_PASSWORD`: MongoDB password
-
 ### RabbitMQ Connection
 - `RABBITMQ_HOST`: RabbitMQ host
 - `RABBITMQ_PORT`: RabbitMQ port
@@ -74,15 +68,13 @@ The backend service can be configured with the following environment variables:
 - `BITCOIN_RPC_CA_FILE`: CA bundle for an https node with a private CA; never disable verification
 - `BITCOIN_RPC_TIMEOUT`: RPC timeout in seconds (default 30)
 
-### Storage backend (Postgres)
-- `DB_BACKEND`: `mongodb` (default) or `postgres`
+### Storage (Postgres)
 - `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_SSLMODE`, `PG_SSLROOTCERT`: Postgres connection, as separate fields (never a URL)
 - `PG_PASSWORD`: from a Secret via `envValueFrom`
 
 Example (CloudNativePG, verified TLS):
 ```yaml
 env:
-  DB_BACKEND: postgres
   PG_HOST: stratum-pg-rw
   PG_USER: backend
   PG_SSLMODE: verify-full

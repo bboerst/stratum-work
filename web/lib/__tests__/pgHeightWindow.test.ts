@@ -80,4 +80,9 @@ describe.skipIf(!enabled)('Postgres height reads: only the height receive window
     expect(names).toContain(pool);
     expect(names).not.toContain(staleOnly);
   });
+
+  it('isHeightFinal: closed window (block h long ago) is final; above the stored tip is not', async () => {
+    expect(await pg.isHeightFinal(h)).toBe(true);              // block h arrived in 2026-11 test time, + 2 h passed
+    expect(await pg.isHeightFinal(10_000_000)).toBe(false);    // no block: window open-ended
+  });
 });

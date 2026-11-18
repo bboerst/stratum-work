@@ -48,7 +48,7 @@ export function pgConfigFromEnv(env: Env = process.env): PoolConfig {
     ssl: pgSslFromEnv(env),
     application_name: 'stratum-work-web',
     max: 5,                          // small pool: every query is a short indexed lookup
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: 600_000,       // 10 min: a new connection costs a TLS handshake, SCRAM and a cold backend
     connectionTimeoutMillis: 10_000,
     statement_timeout: 30_000,
   };

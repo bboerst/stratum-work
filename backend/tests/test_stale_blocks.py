@@ -86,7 +86,6 @@ class FakeNode:
 
 
 class FakeStore:
-    supports_stale_blocks = True
 
     def __init__(self, active_blocks=()):
         self.blocks = set(active_blocks)   # what the backend stored as tips (blocks table)

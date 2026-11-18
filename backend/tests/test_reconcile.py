@@ -1,8 +1,7 @@
-"""#212: best-chain reconciliation (reconcile.py) in both database modes, against a simulated node.
+"""#212: best-chain reconciliation (reconcile.py), against a simulated node.
 
-Postgres mode runs the real StaleBlockTracker.record_replaced() against an in-memory store with the blocks_best rule
-(blocks minus currently stale stale_blocks rows). MongoDB mode uses the `stale: true` flag. Replaces test_gap_fill.py:
-gap filling is the "missing" case of the reconciler.
+Runs the real StaleBlockTracker.record_replaced() against an in-memory store with the blocks_best rule (blocks minus
+currently stale stale_blocks rows). Replaces test_gap_fill.py: gap filling is the "missing" case of the reconciler.
 """
 import pathlib
 import sys
@@ -55,57 +54,13 @@ class PgStore(FakeStore):
         return h in self.stale and self.stale[h]["reorged_in_at"] is None
 
 
-class MongoStore:
-    """MongoDB semantics: documents with an optional `stale` flag."""
-    enabled = True
-
-    def __init__(self):
-        self.docs = {}   # hash -> {"height", "seen_at", "stale"}
-
-    def put(self, h, height, seen_at=None):
-        self.docs.setdefault(h, {"height": height, "seen_at": None, "stale": False})
-        self.docs[h]["seen_at"] = self.docs[h]["seen_at"] or seen_at
-
-    def highest_block_height(self):
-        best = [d["height"] for d in self.docs.values() if not d["stale"]]
-        return max(best) if best else None
-
-    def best_block_hashes_between(self, low, high):
-        out = {}
-        for h, d in sorted(self.docs.items()):
-            if low <= d["height"] <= high and not d["stale"]:
-                out.setdefault(d["height"], []).append(h)
-        return out
-
-    def known_block_hashes(self, hashes):
-        return {h for h in hashes if h in self.docs}
-
-    def mark_blocks_stale(self, hashes):
-        for h in hashes:
-            self.docs[h]["stale"] = True
-
-    def mark_block_best(self, h):
-        self.docs[h]["stale"] = False
-
-    def best_at(self, height):
-        return self.best_block_hashes_between(height, height).get(height, [])
-
-    def is_stale(self, h):
-        return self.docs[h]["stale"]
-
-    @property
-    def rows(self):
-        return self.docs
-
-
 class Harness:
-    def __init__(self, mode, window=144, min_height=BASE, length=5):
-        self.mode = mode
+    def __init__(self, window=144, min_height=BASE, length=5):
         self.node = FakeNode(base=BASE, length=length)
-        self.store = PgStore() if mode == "pg" else MongoStore()
+        self.store = PgStore()
         self.fail_store, self.fail_hash, self.fail_mark = set(), set(), False
         self.stored, self.hash_calls = [], []
-        self.tracker = StaleBlockTracker(self.node, self.store, now=lambda: NOW) if mode == "pg" else None
+        self.tracker = StaleBlockTracker(self.node, self.store, now=lambda: NOW)
         self.rec = BestChainReconciler(node_height=lambda: self.node.base + len(self.node.active) - 1,
                                        node_hashes=self.node_hashes, store=self.store, store_block=self.store_block,
                                        mark_replaced=self.mark_replaced, window=window, min_height=min_height)
@@ -124,10 +79,7 @@ class Harness:
     def mark_replaced(self, hashes):
         if self.fail_mark:
             raise RuntimeError("db down")
-        if self.mode == "pg":
-            self.tracker.record_replaced(hashes)
-        else:
-            self.store.mark_blocks_stale(hashes)
+        self.tracker.record_replaced(hashes)
 
     def store_chain(self, hashes):
         """What the backend stored as each block arrived (seen live)."""
@@ -139,11 +91,9 @@ class Harness:
         return all(self.store.best_at(h) == [self.node.rpc_getblockhash(h)] for h in range(low, high + 1))
 
 
-class ReconcileTests:
-    mode = None
-
+class ReconcileTests(unittest.TestCase):
     def h(self, **kw):
-        return Harness(self.mode, **kw)
+        return Harness(**kw)
 
     def test_interior_gap_is_filled_with_seen_at(self):
         t = self.h()
@@ -303,10 +253,6 @@ class ReconcileTests:
         t.rec.reconcile()
         self.assertEqual(t.hash_calls, [])
 
-
-class PostgresModeTests(ReconcileTests, unittest.TestCase):
-    mode = "pg"
-
     def test_stale_blocks_rows_like_the_tracker(self):
         t = self.h(length=6)
         a = t.node.active
@@ -359,10 +305,6 @@ class PostgresModeTests(ReconcileTests, unittest.TestCase):
         self.assertEqual(t.store.stale[b]["status"], "invalid")
 
 
-class MongoModeTests(ReconcileTests, unittest.TestCase):
-    mode = "mongo"
-
-
 class RecordReplacedTests(unittest.TestCase):
     def test_unrelated_blocks_are_separate_branches(self):
         node = FakeNode(base=BASE, length=6)
@@ -383,26 +325,18 @@ class RecordReplacedTests(unittest.TestCase):
 
 
 class MainWiringTests(unittest.TestCase):
-    """main.reconcile_recent_window / mark_replaced_blocks: which store path each mode takes."""
+    """main.reconcile_recent_window / mark_replaced_blocks."""
 
     @classmethod
     def setUpClass(cls):
         import main
         cls.main = main
 
-    def test_mongo_marks_documents_stale(self):
-        store = mock.Mock(spec=["mark_blocks_stale"])
-        with mock.patch.object(self.main, "store", store):
-            self.main.mark_replaced_blocks(["aa"])
-        store.mark_blocks_stale.assert_called_once_with(["aa"])
-
-    def test_postgres_records_through_the_tracker(self):
-        store = mock.Mock(supports_stale_blocks=True)
+    def test_replaced_blocks_are_recorded_through_the_tracker(self):
         recorder = mock.Mock()
-        with mock.patch.object(self.main, "store", store), mock.patch.object(self.main, "stale_recorder", lambda: recorder):
+        with mock.patch.object(self.main, "stale_recorder", lambda: recorder):
             self.main.mark_replaced_blocks(["aa"])
         recorder.record_replaced.assert_called_once_with(["aa"])
-        store.mark_blocks_stale.assert_not_called()
 
     def test_reconcile_never_raises(self):
         broken = mock.Mock()

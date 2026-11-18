@@ -11,7 +11,7 @@ from threading import Lock
 import random
 from typing import Any, Dict, List, Optional
 from bitcoin_utils import extract_coinbase_data
-from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: MongoDB or Postgres (DB_BACKEND)
+from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: Postgres (integrations/store.py)
 from integrations.rabbitmq import start_heartbeat_thread
 from header_fill import block_header_fields   # new blocks and the header fill share one mapping
 
@@ -43,8 +43,6 @@ logger.info("Connecting to bitcoin RPC at %s://%s:%s", RPC_SCHEME, RPC_HOST, RPC
 
 ZMQ_BLOCK = os.getenv("BITCOIN_ZMQ_BLOCK", "tcp://bitcoin-node:28332")
 MIN_BLOCK_HEIGHT = int(os.getenv("MIN_BLOCK_HEIGHT", "882000"))
-
-# MongoDB configuration is managed inside integrations.mongodb
 
 POOL_LIST_URL = os.getenv("POOL_LIST_URL", "https://raw.githubusercontent.com/mempool/mining-pools/refs/heads/master/pools-v2.json")
 POOL_UPDATE_INTERVAL = int(os.getenv("POOL_UPDATE_INTERVAL", "86400"))  # Default: once per day
@@ -323,8 +321,8 @@ def block_coinbase_fields(block: Dict[str, Any], block_hash: str) -> Dict[str, A
 
 def process_block(block_hash: str, is_new_block: bool = False, seen_at: Optional[datetime] = None,
                   seen_via: Optional[str] = None) -> bool:
-    """Fetch, analyse, store and publish one block. is_new_block: seen live (MongoDB: upsert by hash; Postgres: sets
-    blocks.seen_at to seen_at, or to now when none is given, and blocks.seen_via, both only the first time).
+    """Fetch, analyse, store and publish one block. is_new_block: seen live (sets blocks.seen_at to seen_at, or to
+    now when none is given, and blocks.seen_via, both only the first time).
     Returns False when it failed (logged)."""
     return process_block_status(block_hash, is_new_block, seen_at, seen_via) == "ok"
 
@@ -675,13 +673,9 @@ def node_block_hashes(heights) -> Dict[int, str]:
 
 
 def mark_replaced_blocks(hashes) -> None:
-    """Mark stored blocks the node's active chain no longer has as not best. Postgres: stale_blocks rows written by
-    the stale-block tracker's code (blocks_best hides them; this runs even with STALE_BLOCKS_ENABLED=false). MongoDB:
-    `stale: true` on the document."""
-    if getattr(store, "supports_stale_blocks", False):
-        stale_recorder().record_replaced(list(hashes))
-    else:
-        store.mark_blocks_stale(list(hashes))
+    """Mark stored blocks the node's active chain no longer has as not best: stale_blocks rows written by the
+    stale-block tracker's code (blocks_best hides them; this runs even with STALE_BLOCKS_ENABLED=false)."""
+    stale_recorder().record_replaced(list(hashes))
 
 
 _reconciler = None
@@ -825,7 +819,7 @@ def rabbitmq_heartbeat_task():
     return heartbeat_task()
 
 # --- Stale blocks (#180) ---
-# Postgres mode only (stale_blocks table); STALE_BLOCKS_ENABLED=false turns it off. See stale_blocks.py.
+# stale_blocks table; STALE_BLOCKS_ENABLED=false turns it off. See stale_blocks.py.
 STALE_BLOCKS_ENABLED = os.getenv("STALE_BLOCKS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
 STALE_POLL_INTERVAL_S = float(os.getenv("STALE_POLL_INTERVAL_S", "60"))   # timer between polls (new blocks poll at once)
 stale_tracker = None
@@ -841,7 +835,7 @@ _stale_recorder = None
 
 
 def stale_recorder():
-    """The StaleBlockTracker (Postgres mode). Also built when its poll loop is off: the reconciler records the blocks
+    """The StaleBlockTracker. Also built when its poll loop is off: the reconciler records the blocks
     it replaces through it."""
     global _stale_recorder
     if _stale_recorder is None:
@@ -861,8 +855,9 @@ def _after_stale_poll(stats) -> None:
 
 def start_stale_block_tracker():
     global stale_tracker
-    if not (STALE_BLOCKS_ENABLED and store.enabled and getattr(store, "supports_stale_blocks", False)):
-        logger.info("Stale block tracking off (needs DB_BACKEND=postgres; STALE_BLOCKS_ENABLED=%s)", STALE_BLOCKS_ENABLED)
+    if not (STALE_BLOCKS_ENABLED and store.enabled):
+        logger.info("Stale block tracking off (STALE_BLOCKS_ENABLED=%s, storage enabled=%s)", STALE_BLOCKS_ENABLED,
+                    store.enabled)
         return
     stale_tracker = stale_recorder()
     threading.Thread(target=stale_tracker.run_forever, args=(STALE_POLL_INTERVAL_S, _after_stale_poll), daemon=True,

@@ -6,15 +6,13 @@ import logging
 
 logger = logging.getLogger("backend.integrations")
 
-# Storage for blocks, pools and the templates analytics read: MongoDB (default) or Postgres, chosen by DB_BACKEND
-# (#112). With DB_BACKEND=postgres, the MongoDB module is never imported (it connects at import time).
+# Storage for blocks, pools and the templates analytics read: Postgres (#112).
+from .store import PostgresStore, make_store
 try:
-    from .store import MongoStore, make_store
     store = make_store()
 except Exception:
-    logger.exception("Storage backend failed to initialize; historical data disabled")
-    from .store import MongoStore
-    store = MongoStore(None)  # disabled
+    logger.exception("Storage failed to initialize; historical data disabled")
+    store = PostgresStore({}, enabled=False)
 
 try:
     from .rabbitmq import rabbitmq_manager, publish_to_rabbitmq  # noqa: F401

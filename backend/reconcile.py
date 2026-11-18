@@ -1,8 +1,7 @@
 """Best-chain reconciliation (#212): the stored best block at each recent height equals the node's active chain.
 
 ZMQ `hashblock` announces only the new tip, and sync only fills heights that have no block at all. So after a reorg
-the block our node accepted first (and later disconnected) used to stay "the block at height h", in MongoDB mode for
-good. The reconciler doesn't depend on seeing the reorg happen. For every height in a window below the node's tip it
+the block our node accepted first (and later disconnected) could stay "the block at height h". The reconciler doesn't depend on seeing the reorg happen. For every height in a window below the node's tip it
 compares the node's block hash (getblockhash) with the stored best block(s) at that height:
 
   * no stored best block          -> fetch and store the node's block (a gap: e.g. the database was down)
@@ -14,9 +13,8 @@ left alone: the node may just be behind (restarting, catching up), and once it p
 
 "Store" means: the block is known already (a block that was replaced earlier and is active again) -> mark it best
 again; otherwise store_block(hash), which fetches it and saves it as seen now (seen_at = detection time, not NULL).
-"Mark as no longer best" is mode specific (mark_replaced): Postgres records a stale_blocks row (was_active) through the
-stale-block tracker's own code, which hides it from blocks_best; MongoDB sets `stale: true` on the document, which
-every best-chain read filters out.
+"Mark as no longer best" (mark_replaced) records a stale_blocks row (was_active) through the stale-block tracker's own
+code, which hides it from blocks_best.
 
 Every height is checked, not just a walk back from the tip until the first match: the common reorg leaves the new tip
 stored (ZMQ announces it) above a replaced block, so a match at the tip says nothing about the heights below it.

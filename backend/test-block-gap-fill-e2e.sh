@@ -127,6 +127,38 @@ check "263's values are the node's (nTx, merkle root, bits, nonce)" sql_is \
 check "size and weight stay NULL (a header has none)" \
   sql_is "SELECT count(*) FROM blocks WHERE height IN (263, 600) AND size IS NULL AND weight IS NULL" 2
 
+echo "== coinbase facts and merkle branches (coinbase.py, coinbase_fill.py, #235)"
+cbtxid_of() { cli "$BB" getblock "$(cli "$BB" getblockhash "$1")" 1 | python3 -c 'import json,sys; print(bytes.fromhex(json.load(sys.stdin)["tx"][0])[::-1].hex())'; }
+check "every block stored from the node has its branches and coinbase txid" \
+  sql_is "SELECT count(*) FROM blocks WHERE merkle_branches IS NULL OR coinbase_txid IS NULL" 0
+check "700: coinbase txid as the node has it (internal byte order)" \
+  sql_is "SELECT encode(coinbase_txid, 'hex') FROM blocks WHERE height = 700" "$(cbtxid_of 700)"
+check "700: the stored coinbase hashes to its txid" \
+  sql_is "SELECT sha256(sha256(coinbase_tx)) = coinbase_txid FROM blocks WHERE height = 700" t
+# A block with transactions: spend four mature OP_TRUE coinbase outputs (regtest accepts non-standard spends) and mine
+# them with A's generateblock, so the branches come from a real 5-transaction tree (odd count: duplicated nodes).
+DESC=$(cli "$BA" getdescriptorinfo "wpkh(0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)" | python3 -c 'import json,sys; print(json.load(sys.stdin)["descriptor"])')
+ADDR=$(cli "$BA" deriveaddresses "$DESC" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')
+TXS=()
+for h in 1 2 3 4; do
+  prev=$(cli "$BA" getblock "$(cli "$BA" getblockhash "$h")" 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["tx"][0])')
+  raw=$(cli "$BA" createrawtransaction "[{\"txid\":\"$prev\",\"vout\":0}]" "[{\"$ADDR\":49.9}]")
+  TXS+=("\"$raw\"")
+done
+TXLIST=$(IFS=,; echo "[${TXS[*]}]")
+MINED=$(cli "$BA" generateblock "raw(51)" "$TXLIST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hash"])')
+check "B synced to 701" retry 60 at "$BB" 701
+check "701 stored" retry 60 stored 701
+check "701: 5 transactions, 3 branches stored" sql_is "SELECT length(merkle_branches) / 32 FROM blocks WHERE height = 701" 3
+TX1=$(cli "$BB" getblock "$MINED" 1 | python3 -c 'import json,sys; print(bytes.fromhex(json.load(sys.stdin)["tx"][1])[::-1].hex())')
+check "701: branch 0 is the node's first transaction after the coinbase" bash -c "[ -n '$TX1' ] && [ \"\$(docker exec $PG psql -h localhost -U postgres -At -c \"SELECT encode(substring(merkle_branches FROM 1 FOR 32), 'hex') FROM blocks WHERE height = 701\")\" = '$TX1' ]"
+# The fill: clear 600 (B has its data) and 263 (pruned on B). Newest first: 600 is filled, then it stops at 263.
+sql "UPDATE blocks SET merkle_branches = NULL, coinbase_txid = NULL, coinbase_tx = NULL WHERE height IN (263, 600)" >/dev/null
+check "the coinbase fill restores 600's branches and txid (getblock verbosity 1, no coinbase bytes)" retry 30 \
+  sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of 600)' AND coinbase_tx IS NULL FROM blocks WHERE height = 600" t
+check "263 (pruned on B) stays unknown, and the fill logged where it stopped" \
+  bash -c "[ \"\$(docker exec $PG psql -h localhost -U postgres -At -c 'SELECT merkle_branches IS NULL FROM blocks WHERE height = 263')\" = t ] && docker logs $BE 2>&1 | grep -q 'stopped at a pruned block'"
+
 echo "== backend logs (gap fill)"
 docker logs "$BE" 2>&1 | grep -E "Gap fill" | head -30
 echo "RESULT: $ok passed, $bad failed"

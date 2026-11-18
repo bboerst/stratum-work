@@ -72,6 +72,10 @@ BLOCK_GAP_FILL_PEER_TIMEOUT_S = float(os.getenv("BLOCK_GAP_FILL_PEER_TIMEOUT_S",
 # columns (tx_count, version, merkle_root, bits, nonce, difficulty, size, weight) get them from getblockheader.
 # 0 = off. Postgres only.
 HEADER_FILL_MAX_BLOCKS = int(os.getenv("HEADER_FILL_MAX_BLOCKS", "20000"))
+# Coinbase fill (coinbase_fill.py, #235): after each gap-fill run, up to COINBASE_FILL_MAX_BLOCKS stored blocks without
+# merkle branches get them (and the coinbase txid) from getblock verbosity 1, newest first, until the first block
+# the node has pruned. 0 = off. Postgres only.
+COINBASE_FILL_MAX_BLOCKS = int(os.getenv("COINBASE_FILL_MAX_BLOCKS", "1000"))
 
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
@@ -294,7 +298,19 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
         "analysis": analysis,
     }
     doc.update(block_header_fields(block))
+    doc.update(block_coinbase_fields(block, block_hash))
     return doc
+
+
+def block_coinbase_fields(block: Dict[str, Any], block_hash: str) -> Dict[str, Any]:
+    """The block's merkle branches, coinbase txid and coinbase (coinbase.py, #235), self-checked. If the node's data
+    doesn't check out, none of them (logged): never unverified facts."""
+    from coinbase import coinbase_facts
+    try:
+        return coinbase_facts(block) or {}
+    except (ValueError, KeyError, IndexError) as e:
+        logger.warning("block %s: coinbase/merkle facts not stored (self-check failed): %s", block_hash, e)
+        return {}
 
 
 def block_header_fields(block: Dict[str, Any]) -> Dict[str, Any]:
@@ -879,11 +895,20 @@ def sync_then_fill_gaps():
         from header_fill import BlockHeaderFiller
         headers = BlockHeaderFiller(rpc=node_rpc, store=store, header_fields=block_header_fields,
                                     max_blocks=HEADER_FILL_MAX_BLOCKS)
+    coinbases = None
+    if COINBASE_FILL_MAX_BLOCKS > 0:
+        from coinbase_fill import BlockCoinbaseFiller
+        coinbases = BlockCoinbaseFiller(rpc=node_rpc, store=store, max_blocks=COINBASE_FILL_MAX_BLOCKS)
     while True:
         try:
             filler.run()
         except Exception as e:
             logger.error("Historical gap fill failed (retried next run): %s", e)
+        if coinbases is not None:
+            try:
+                coinbases.run()
+            except Exception as e:
+                logger.error("Coinbase fill failed (retried next run): %s", e)
         if headers is not None:
             try:
                 headers.run()

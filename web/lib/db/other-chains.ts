@@ -3,10 +3,11 @@
  * (docs/design/one-templates-table.md): every template is in `templates`, and nothing stored says which chain it's for.
  * Over the last OTHER_CHAINS_DAYS days of receive time:
  *  - chain 'unknown', reason 'no_bitcoin_parent': its prev_hash is no block we know (bitcoin_parents: blocks and
- *    stale_blocks). Other chains mined on the same connections, mostly; also a Bitcoin template built on a block
- *    the backend hasn't stored yet (seconds, at a new block).
- *  - chain 'btc', reason 'stale_bitcoin_parent': it builds on a Bitcoin block that is stale now (stale_blocks, not
- *    reorged in again).
+ *    stale_blocks): another chain mined on the same connection, a pool's own tip it never announced, or a Bitcoin
+ *    block we never stored (several pools at one height point that way; also, for seconds, a new block the backend
+ *    hasn't stored yet).
+ * Work on a stale Bitcoin block is Bitcoin work, so it isn't here: the stale-blocks / fork view shows it
+ * (stale_tip_templates()).
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here (the height reads leave it out
  * by their receive windows; the template details page shows it). Postgres only: MongoDB mode has no such view.
  *
@@ -26,8 +27,8 @@ import type { TemplateRow } from './pg-mapping';
 
 export const OTHER_CHAINS_PAGE_MAX = 200;
 export const OTHER_CHAINS_DAYS = 90;
-export const OTHER_CHAINS_CHAINS = ['btc', 'unknown'] as const;
-export const OTHER_CHAINS_REASONS = ['no_bitcoin_parent', 'stale_bitcoin_parent'] as const;
+export const OTHER_CHAINS_CHAINS = ['unknown'] as const;
+export const OTHER_CHAINS_REASONS = ['no_bitcoin_parent'] as const;
 
 // The merge-mining (AuxPoW) commitment magic in a coinbase scriptSig. coinbase1 and coinbase2 are checked separately:
 // the extranonce sits between them in the real coinbase, so a match across their boundary would be a false one.
@@ -67,18 +68,11 @@ interface SummarySqlRow {
  */
 function candidates(poolFilter = 'TRUE'): string {
   const window = `t.received_at >= now() - interval '${OTHER_CHAINS_DAYS} days'`;
-  return `stale AS (
-      SELECT stratum_prev_hash_to_block_hash(block_hash) AS prev_hash FROM stale_blocks WHERE reorged_in_at IS NULL
-    ), c AS (
+  return `c AS (
       SELECT t.*, s.name AS pool, 'unknown' AS chain, 'no_bitcoin_parent' AS reason
         FROM templates t JOIN sources s ON s.id = t.source_id
        WHERE ${window} AND s.name <> ALL ($1::text[]) AND ${poolFilter}
          AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)
-      UNION ALL
-      SELECT t.*, s.name AS pool, 'btc' AS chain, 'stale_bitcoin_parent' AS reason
-        FROM templates t JOIN sources s ON s.id = t.source_id
-       WHERE ${window} AND s.name <> ALL ($1::text[]) AND ${poolFilter}
-         AND t.prev_hash IN (SELECT prev_hash FROM stale)
     ), k AS (
       SELECT c.*, row_number() OVER (PARTITION BY c.height, c.pool, c.source_id, c.prev_hash, c.merkle_branches,
                                                   c.version, c.nbits, c.ntime

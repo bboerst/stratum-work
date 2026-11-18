@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (lib/db/other-chains.ts):
- * chain 'unknown' / reason 'no_bitcoin_parent' (the previous block is no block we know: other chains on the same
- * connections, mostly) and chain 'btc' / reason 'stale_bitcoin_parent' (built on a stale Bitcoin block). Read-only,
+ * chain 'unknown' / reason 'no_bitcoin_parent': the previous block is no block we know (another chain on the same
+ * connection, a pool's unannounced tip, or a Bitcoin block never stored). Work on stale Bitcoin blocks isn't here
+ * (stale_tip_templates()). Read-only,
  * Postgres only (MongoDB mode answers supported: false without touching a database). POOL_BLACKLIST pools are left
  * out entirely.
  *

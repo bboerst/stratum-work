@@ -59,9 +59,9 @@ describe('GET /api/other-chains', () => {
       expect((await get(route, qs)).status, qs).toBe(400);
     }
     expect(getOtherTemplates).not.toHaveBeenCalled();
-    expect((await get(route, '?pool=P&chain=btc&reason=stale_bitcoin_parent&n=1000&before=1790000000000000')).status).toBe(200);
+    expect((await get(route, '?pool=P&chain=unknown&reason=no_bitcoin_parent&n=1000&before=1790000000000000')).status).toBe(200);
     expect(getOtherTemplates).toHaveBeenCalledWith(
-      { pool: 'P', chain: 'btc', reason: 'stale_bitcoin_parent', before: '1790000000000000', n: 200 }, []);
+      { pool: 'P', chain: 'unknown', reason: 'no_bitcoin_parent', before: '1790000000000000', n: 200 }, []);
   });
 
   it('passes POOL_BLACKLIST to both reads', async () => {

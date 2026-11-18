@@ -1,8 +1,8 @@
 /**
  * /api/other-chains (app/api/other-chains/route.ts, lib/db/other-chains.ts) against a real, migrated database, as a
  * user in the stratum_web role. Every template is in `templates`; the view judges at read time, over the last 90
- * days: no known Bitcoin parent ('unknown' / 'no_bitcoin_parent') or a stale Bitcoin parent ('btc' /
- * 'stale_bitcoin_parent'). Covered: the summary aggregation (counts, heights, prev hashes, months, AuxPoW share),
+ * days: no known Bitcoin parent ('unknown' / 'no_bitcoin_parent'). A template built on a stale Bitcoin block is
+ * left out (Bitcoin work). Covered: the summary aggregation (counts, heights, prev hashes, months, AuxPoW share),
  * exact copies across a pool's two collectors counted once, a Bitcoin-parent row and a row older than 90 days left
  * out, keyset pagination (including rows sharing a receive time), POOL_BLACKLIST exclusion and extranonce1 masking.
  * Skipped unless a test database is configured, like pgDedupReads.test.ts:
@@ -116,7 +116,7 @@ describe.skipIf(!enabled)('Postgres other-chain templates (read-time judgement)'
     expect(body.days).toBe(90);
     const mine = body.groups.filter((g: { pool: string }) => [single, multi, hidden].includes(g.pool));
     expect(mine.map((g: { pool: string; reason: string }) => `${g.pool}/${g.reason}`).sort())
-      .toEqual([`${multi}/no_bitcoin_parent`, `${single}/no_bitcoin_parent`, `${single}/stale_bitcoin_parent`].sort());
+      .toEqual([`${multi}/no_bitcoin_parent`, `${single}/no_bitcoin_parent`].sort());   // stale-block work is Bitcoin's: not here
     const u = mine.find((g: { pool: string; reason: string }) => g.pool === single && g.reason === 'no_bitcoin_parent');
     expect(u).toMatchObject({
       chain: 'unknown', templates: 5, min_height: 5_000_000, max_height: 5_000_001, distinct_heights: 2,
@@ -126,9 +126,7 @@ describe.skipIf(!enabled)('Postgres other-chain templates (read-time judgement)'
     const at = (g: { monthly: number[] }, s: number) => g.monthly[months.indexOf(month(s))];
     expect(at(u, 0)).toBe(5);
     expect(u.monthly.reduce((a: number, b: number) => a + b, 0)).toBe(5);
-    const st = mine.find((g: { reason: string }) => g.reason === 'stale_bitcoin_parent');
-    expect(st).toMatchObject({ pool: single, chain: 'btc', templates: 1, min_height: 940_000 });
-    expect(at(st, 20 * DAY)).toBe(1);
+    expect(mine.some((g: { reason: string }) => g.reason === 'stale_bitcoin_parent')).toBe(false);
     const m = mine.find((g: { pool: string }) => g.pool === multi);
     expect(m).toMatchObject({ templates: 2, distinct_heights: 1, auxpow_templates: 0 });
   });
@@ -147,9 +145,10 @@ describe.skipIf(!enabled)('Postgres other-chain templates (read-time judgement)'
     expect(p2.templates.find((x: { id: string }) => x.id.endsWith('-u2'))).toMatchObject({ auxpow: true,
       auxpow_root: 'ab'.repeat(32), auxpow_merkle_size: 1 });
     expect(p2.templates.find((x: { id: string }) => x.id.endsWith('-u1')).auxpow).toBe(false);
-    // the whole pool without filters (not the Bitcoin-parent row, not the one from 100 days ago), and a chain filter
-    expect(jobs((await get(`?pool=${single}`)).body.templates)).toEqual(['s1', 'u5', 'u4', 'u3', 'u2', 'u1']);
-    expect(jobs((await get(`?pool=${single}&chain=btc`)).body.templates)).toEqual(['s1']);
+    // the whole pool without filters (not the Bitcoin-parent row, not the stale-block row s1, not the one from 100
+    // days ago); 'btc' isn't a chain this page lists any more
+    expect(jobs((await get(`?pool=${single}`)).body.templates)).toEqual(['u5', 'u4', 'u3', 'u2', 'u1']);
+    expect((await get(`?pool=${single}&chain=btc`)).status).toBe(400);
   });
 
   it('counts an exact copy on another connection once, and pages it', async () => {

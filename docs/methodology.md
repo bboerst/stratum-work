@@ -178,10 +178,12 @@ job re-sent long after its block, isn't shown as a current Bitcoin template, and
 the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
-The "Other chains" view lists the last 90 days' templates whose previous block is no block we know (mostly other
-chains; for a few seconds after a new block, also Bitcoin templates built on it before we stored it), and templates
-built on a stale Bitcoin block. A template seen on several of a pool's connections counts once, and only as exact
-copies.
+The "Other chains" view lists the last 90 days' templates whose previous block is no block we know: another chain
+mined on the same connection, a pool's own tip it never announced, or a Bitcoin block we never stored. Several pools
+building on the same unknown parent at one height is the sign of a Bitcoin block (a stale one we never recorded);
+for a few seconds after a new block it can also be the new block itself, before we stored it. Work on a stale
+Bitcoin block is Bitcoin work and is shown with the stale blocks, not here. A template seen on several of a pool's
+connections counts once, and only as exact copies.
 
 ## First transaction fee rate
 

@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
  * The summary reads every template of the window (about a second or two on a large table), so it's computed once per
  * SUMMARY_MS per process and served stale while a refresh runs. Template pages are cached for PAGE_MS.
  */
-const SUMMARY_MS = 5 * 60_000;
+const SUMMARY_MS = 30 * 60_000;   // the read scans 90 days of templates (~15 s on production): at most once per 30 min per process
 const PAGE_MS = 30_000;
 const PAGE_CACHE_ENTRIES = 200;
 

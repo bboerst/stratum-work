@@ -305,8 +305,10 @@ export default function OtherChains() {
       <h1 className="text-lg font-semibold mb-1">Other chains</h1>
       <p className="text-xs text-muted-foreground mb-4 max-w-4xl">
         Templates from the last 90 days that don&apos;t build on our Bitcoin chain, judged from what is stored:{" "}
-        <span className="font-mono">no_bitcoin_parent</span> = the previous block is no Bitcoin block we know (mostly
-        other chains some pools mine on the same connections), <span className="font-mono">stale_bitcoin_parent</span>{" "}
+        <span className="font-mono">no_bitcoin_parent</span> = the previous block is no Bitcoin block we have stored:
+        another chain some pools mine on the same connections, or a Bitcoin block we never recorded (such as one that
+        went stale before stale blocks were tracked; several pools at the same heights point that way),{" "}
+        <span className="font-mono">stale_bitcoin_parent</span>{" "}
         = built on a Bitcoin block that went stale. Copies of a template on several connections count once. AuxPoW =
         the coinbase carries a merge-mining commitment (<span className="font-mono">fabe6d6d</span>).
       </p>

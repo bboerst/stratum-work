@@ -97,7 +97,7 @@ describe('GET /api/other-chains', () => {
     expect((await (await get(route)).json()).months).toEqual(['2026-10']);
     await get(route);
     expect(getOtherChainsSummary).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(Date.now() + 6 * 60_000);
+    vi.setSystemTime(Date.now() + 31 * 60_000);   // past SUMMARY_MS (30 min)
     // stale: the old result right away, one refresh in the background
     expect((await (await get(route)).json()).months).toEqual(['2026-10']);
     expect((await (await get(route)).json()).months).toEqual(['2026-10']);

@@ -10,8 +10,8 @@
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here (the height reads leave it out
  * by their receive windows; the template details page shows it). Postgres only: MongoDB mode has no such view.
  *
- * The window is fixed: the anti-join reads every template received in it (about 1.5 s for 90 days on production;
- * all of history takes about a minute), so the summary is cached by the route.
+ * The window is fixed: the anti-join reads every template received in it (the summary takes about 15 s for 90 days on
+ * production, all of history about a minute), so the route caches the summary for 30 min.
  *
  * Redundant collection: rows are de-duplicated on the candidates only, as exact copies across a pool's connections:
  * the templates_copies key (height, pool, prev_hash, merkle_branches, version, nbits, ntime) plus the copy number per
@@ -69,7 +69,7 @@ function candidates(poolFilter = 'TRUE'): string {
   const window = `t.received_at >= now() - interval '${OTHER_CHAINS_DAYS} days'`;
   return `stale AS (
       SELECT stratum_prev_hash_to_block_hash(block_hash) AS prev_hash FROM stale_blocks WHERE reorged_in_at IS NULL
-    ), c AS MATERIALIZED (
+    ), c AS (
       SELECT t.*, s.name AS pool, 'unknown' AS chain, 'no_bitcoin_parent' AS reason
         FROM templates t JOIN sources s ON s.id = t.source_id
        WHERE ${window} AND s.name <> ALL ($1::text[]) AND ${poolFilter}
@@ -191,15 +191,18 @@ export async function getOtherTemplates(q: OtherTemplatesQuery, excludePools: st
   if (excludePools.includes(q.pool)) return { rows: [], next_before: null };
   const pool = getPgPool();
   const base = [excludePools, q.pool, q.chain ?? null, q.reason ?? null];
-  const cte = candidates('s.name = $2');
+  // The pool's source ids as values, not a join on sources.name: source_id is the columnstore segment key, so only
+  // that pool's segments are decompressed (production: 3.3 s instead of 13 s for a pool's 90 days).
+  const ids = (await pool.query<{ id: number }>(`SELECT id FROM sources WHERE name = $1`, [q.pool])).rows.map(r => r.id);
+  if (ids.length === 0) return { rows: [], next_before: null };
   const page = (await pool.query<OtherTemplateRow>(
-    `WITH ${cte} SELECT ${COLUMNS} FROM d
+    `WITH ${candidates('t.source_id = ANY ($7::int[]) AND s.name = $2')} SELECT ${COLUMNS} FROM d
       WHERE ${GROUP} AND ($5::bigint IS NULL OR d.received_at < ${TS('$5')})
-      ORDER BY ${ORDER} LIMIT $6`, [...base, q.before ?? null, n + 1])).rows;
+      ORDER BY ${ORDER} LIMIT $6`, [...base, q.before ?? null, n + 1, ids])).rows;
   return finishPage(page, n, async us => (await pool.query<OtherTemplateRow>(
-    `WITH ${cte} SELECT ${COLUMNS} FROM d
+    `WITH ${candidates('t.source_id = ANY ($6::int[]) AND s.name = $2')} SELECT ${COLUMNS} FROM d
       WHERE ${GROUP} AND d.received_at = ${TS('$5')}
-      ORDER BY ${ORDER}`, [...base, us])).rows);
+      ORDER BY ${ORDER}`, [...base, us, ids])).rows);
 }
 
 /** Cut a page fetched with LIMIT n + 1; rows tied with the last row's receive time are all included. */

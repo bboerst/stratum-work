@@ -68,6 +68,10 @@ env:
   # BLOCK_GAP_FILL_MAX_BLOCKS: "50"
   # BLOCK_GAP_FILL_PEERS: "3"
   # BLOCK_GAP_FILL_PEER_TIMEOUT_S: "30"
+  #
+  # Full-history best-chain check (best_chain_history.py): every stored best block between MIN_BLOCK_HEIGHT and the
+  # stored tip against the node's chain, after the startup sync and on this timer (0 = off). Same RPC methods as above.
+  # BEST_CHAIN_HISTORY_INTERVAL_S: "86400"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

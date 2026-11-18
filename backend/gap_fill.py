@@ -105,13 +105,13 @@ class HistoricalGapFiller:
                 stats["failed"] += 1
                 continue
             if peers is None:
-                peers = self._peers()
+                peers = self.peers()
             if not peers:
                 stats["no_peer"] += 1
                 self.log.warning("Gap fill: block %d (%s) is pruned and no connected peer serves old blocks "
                                  "(NETWORK service); retried next run", height, block_hash)
                 continue
-            if self._fetch_from_peers(height, block_hash, peers):
+            if self.fetch_from_peers(height, block_hash, peers):
                 stats["stored"] += 1
                 stats["from_peer"] += 1
             else:
@@ -136,14 +136,20 @@ class HistoricalGapFiller:
             self.log.info("Gap fill: stored block %d (%s)", height, block_hash)
         return result
 
-    def _peers(self) -> List[int]:
+    def peers(self) -> List[int]:
         try:
             return full_history_peers(self.rpc("getpeerinfo") or [])
         except Exception as e:
             self.log.error("Gap fill: getpeerinfo failed: %s", e)
             return []
 
-    def _fetch_from_peers(self, height: int, block_hash: str, peers: List[int]) -> bool:
+    def fetch_from_peers(self, height: int, block_hash: str, peers: List[int],
+                         store_step: Optional[Callable[[], str]] = None) -> bool:
+        """Ask peers for a pruned block, outside the block processor, then run store_step once the node has it
+        (default: the gap fill's store on the block processor; the best-chain history check passes its own).
+        store_step returns "ok" | "pruned" | "error". True = stored."""
+        if store_step is None:
+            store_step = lambda: self.on_block_processor(lambda: self._store(height, block_hash))  # noqa: E731
         for peer in peers[: max(1, self.max_peers)]:
             try:
                 self.rpc("getblockfrompeer", block_hash, peer)
@@ -154,7 +160,7 @@ class HistoricalGapFiller:
             if not self._wait_for_block(block_hash):
                 self.log.warning("Gap fill: peer %d didn't deliver block %d within %.0fs", peer, height, self.peer_timeout)
                 continue
-            result = self.on_block_processor(lambda: self._store(height, block_hash))
+            result = store_step()
             if result == "ok":
                 self.log.info("Gap fill: block %d (%s) fetched from peer %d", height, block_hash, peer)
                 return True

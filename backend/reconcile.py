@@ -64,7 +64,21 @@ class BestChainReconciler:
             return stats
         stored = self.store.best_block_hashes_between(low, top)
         heights = list(range(top, low - 1, -1))
-        node = self.node_hashes(heights)
+        stats = self.reconcile_heights(heights, stored, self.node_hashes(heights))
+        if stats["stored"] or stats["reactivated"] or stats["replaced"] or stats["failed"]:
+            self.log.info("Best chain reconciled %d..%d: %s", low, top, stats)
+        return stats
+
+    def reconcile_heights(self, heights: List[int], stored: Dict[int, List[str]], node: Dict[int, str],
+                          store_block: Optional[Callable[[str], bool]] = None,
+                          replace_only_when_best: bool = False) -> Dict[str, int]:
+        """Make the stored best block at each of `heights` the node's. stored: {height: [stored best hashes]};
+        node: {height: the node's hash} (a height left out = failed). store_block: instead of self.store_block.
+        replace_only_when_best: mark a stored block replaced only once the node's block at its height is stored (or
+        already was). Without it (the window) a stored block is marked even when storing the node's block failed: the
+        height then has no best block until the next run stores the node's as missing."""
+        store_block = store_block or self.store_block
+        stats = {"checked": 0, "stored": 0, "reactivated": 0, "replaced": 0, "failed": 0}
         replaced: List[str] = []
         for h in heights:
             want = node.get(h)
@@ -73,7 +87,9 @@ class BestChainReconciler:
                 continue
             stats["checked"] += 1
             have = stored.get(h, [])
-            replaced.extend(x for x in have if x != want)
+            losers = [x for x in have if x != want]
+            if want in have or not replace_only_when_best:
+                replaced.extend(losers)
             if want in have:
                 continue
             try:
@@ -81,15 +97,19 @@ class BestChainReconciler:
                     self.store.mark_block_best(want)
                     stats["reactivated"] += 1
                     self.log.info("Best chain: block %d (%s) is the node's again", h, want)
-                elif self.store_block(want):
+                elif store_block(want):
                     stats["stored"] += 1
                     self.log.info("Best chain: stored block %d (%s)%s", h, want,
-                                  f", replacing {', '.join(x for x in have if x != want)}" if have else " (was missing)")
+                                  f", replacing {', '.join(losers)}" if have else " (was missing)")
                 else:
                     stats["failed"] += 1
+                    continue
             except Exception as e:
                 stats["failed"] += 1
                 self.log.error("Best chain: storing block %d (%s) failed (retried next time): %s", h, want, e)
+                continue
+            if replace_only_when_best:
+                replaced.extend(losers)
         if replaced:
             try:
                 self.mark_replaced(replaced)
@@ -98,6 +118,4 @@ class BestChainReconciler:
             except Exception as e:
                 stats["failed"] += 1
                 self.log.error("Best chain: marking %s as replaced failed (retried next time): %s", replaced, e)
-        if stats["stored"] or stats["reactivated"] or stats["replaced"] or stats["failed"]:
-            self.log.info("Best chain reconciled %d..%d: %s", low, top, stats)
         return stats

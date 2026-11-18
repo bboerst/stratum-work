@@ -13,6 +13,10 @@
 # C. Postgres, a 2-deep reorg, with the stale-block tracker on too: converges, one chain_reorgs row of depth 2.
 # D. MongoDB mode: the winner is stored, the loser's document has stale: true, and the backend's best-block reads
 #    (MongoStore) return node1's chain.
+# E. Postgres, the full-history best-chain check: BLOCK_GAP_WINDOW=2, tracker off, history check off, backend stopped
+#    across a reorg whose loser ends up 6 blocks below the tip: the loser stays best. Restarted with the history check
+#    on, blocks_best converges, the loser gets a stale_blocks row and the winner is stored as synced (seen_at and
+#    seen_via NULL).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 IMAGE_PG=timescale/timescaledb:2.30.2-pg18
@@ -71,10 +75,10 @@ BE_ENV=(-e BITCOIN_RPC_HOST="$B1" -e BITCOIN_RPC_PORT=18443 -e BITCOIN_RPC_USER=
 PG_ENV=(-e DB_BACKEND=postgres -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable)
 # rm -rf first: a `docker start` reruns this command in the same container
 BE_CMD='rm -rf /app && cp -r /src /app && cd /app && pip install -q --root-user-action=ignore -r requirements.txt 2>/dev/null && exec python -u main.py'
-start_pg_backend() {   # $1 = STALE_BLOCKS_ENABLED
+start_pg_backend() {   # $1 = STALE_BLOCKS_ENABLED, then more docker run options (-e ...)
   docker rm -fv "$BE" >/dev/null 2>&1
   docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" "${PG_ENV[@]}" "${BE_ENV[@]}" \
-    -e MIN_BLOCK_HEIGHT=99 -e STALE_BLOCKS_ENABLED="$1" "$IMAGE_PY" sh -c "$BE_CMD" >/dev/null
+    -e MIN_BLOCK_HEIGHT=99 -e STALE_BLOCKS_ENABLED="$1" "${@:2}" "$IMAGE_PY" sh -c "$BE_CMD" >/dev/null
 }
 
 docker network create "$NET" >/dev/null
@@ -157,8 +161,39 @@ check "the winner is stored, not stale" mongo_is "db.blocks.countDocuments({bloc
 check "the loser is kept with stale: true and a stale_at" mongo_is "db.blocks.countDocuments({block_hash: '$YM', stale: true, stale_at: {\$type: 'date'}})" 1
 check "one unflagged document per height" mongo_is "db.blocks.aggregate([{\$match: {stale: {\$ne: true}}}, {\$group: {_id: '\$height', n: {\$sum: 1}}}, {\$match: {n: {\$gt: 1}}}]).toArray().length" 0
 
+echo "== E. Postgres, full-history best-chain check: a replaced block deeper than BLOCK_GAP_WINDOW"
+docker stop "$BM" >/dev/null
+SMALL=(-e BLOCK_GAP_WINDOW=2 -e BLOCK_GAP_FILL_INTERVAL_S=3)
+start_pg_backend false "${SMALL[@]}" -e BEST_CHAIN_HISTORY_INTERVAL_S=0
+check "backend up, history check off" retry 180 logs_have "$BE" "Best-chain history check off"
+check "backend caught up" retry 180 pg_converged 99
+disconnect
+YE=$(mine "$B1" 1 51)
+EH=$(cli "$B1" getblockcount)
+check "backend stores the loser at $EH" retry 90 sql_is "SELECT count(*) FROM blocks_best WHERE block_hash = '\\x$YE'" 1
+# Stopped across the reorg: running, it would see node1 switch as soon as node2's second block arrived (the window
+# would then fix the loser). Restarted, the sync stores the heights above the stored tip and the window only reaches
+# the top two.
+docker stop "$BE" >/dev/null
+mine "$B2" 7 53 >/dev/null
+WE=$(cli "$B2" getblockhash "$EH")
+check "node1 reorged (the loser 6 below the new tip)" reconnect
+docker start "$BE" >/dev/null
+check "the sync and the window bring every other height in line" retry 180 pg_converged $((EH + 1))
+sleep 8   # a few gap-fill runs
+check "the loser is still best below the window (the bug)" sql_is "SELECT encode(block_hash, 'hex') FROM blocks_best WHERE height = $EH" "$YE"
+check "the node's block at $EH isn't stored" sql_is "SELECT count(*) FROM blocks WHERE block_hash = '\\x$WE'" 0
+start_pg_backend false "${SMALL[@]}" -e BEST_CHAIN_HISTORY_INTERVAL_S=86400
+check "after a restart with the history check on, blocks_best converges" retry 180 pg_converged 99
+check "the history check logged its summary" retry 30 logs_have "$BE" "Best-chain history check 99.."
+check "the loser kept in blocks, stale_blocks row (was_active)" \
+  sql_is "SELECT (SELECT count(*) FROM blocks WHERE block_hash = '\\x$YE') || '|' || was_active || '|' || height FROM stale_blocks WHERE block_hash = '\\x$YE'" "1|true|$EH"
+check "the winner stored as synced (seen_at and seen_via NULL)" \
+  sql_is "SELECT (seen_at IS NULL AND seen_via IS NULL)::text FROM blocks WHERE block_hash = '\\x$WE'" true
+check "one best block per height" sql_is "SELECT count(*) FROM (SELECT height FROM blocks_best GROUP BY height HAVING count(*) > 1) d" 0
+
 echo "== backend logs (best chain / stale)"
-docker logs "$BE" 2>&1 | grep -iE "best chain|stale block|reorg" | head -20
+docker logs "$BE" 2>&1 | grep -iE "best chain|best-chain|stale block|reorg" | tail -20
 docker logs "$BM" 2>&1 | grep -iE "best chain|reorg" | head -10
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

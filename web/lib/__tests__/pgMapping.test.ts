@@ -84,11 +84,11 @@ describe('templateRowToMiningNotify', () => {
       'extranonce2_length', 'lat_ms', 'lat_m']);
   });
 
-  it('uses null for missing latency and the chain for templates_other rows', () => {
-    const doc = templateRowToMiningNotify(templateRow({ latency_ms: null, latency_method: undefined, chain: 'bch' }));
+  it('uses null for missing latency; chain_family is always null (Postgres judges chains at read time)', () => {
+    const doc = templateRowToMiningNotify(templateRow({ latency_ms: null, latency_method: undefined }));
     expect(doc.lat_ms).toBeNull();
     expect(doc.lat_m).toBeNull();
-    expect(doc.chain_family).toBe('bch');
+    expect(doc.chain_family).toBeNull();
   });
 
   it('builds a stable id from the de-duplication key', () => {

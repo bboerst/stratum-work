@@ -13,8 +13,9 @@
  *  - block `_id`/`id`: MongoDB's ObjectId (rendered as "[object Object]" in `id`) vs the block hash
  *  - pool `id`: MongoDB's ObjectId vs the mining-pools id
  *  - JSON key order inside jsonb (analysis, mining_pool): compared order-insensitively
- * Templates present in only one database are classified: before Postgres collection started for that source, routed
- * to templates_other by the collector (height_implausible / height_parse_failed / …), shown from a secondary collector
+ * Templates present in only one database are classified: before Postgres collection started for that source,
+ * received outside the height's receive window (Postgres's height reads leave those out: a stuck feed's late re-send,
+ * another chain's template at a past height; height_window(), db migration 20261118000006), shown from a secondary collector
  * replica (Postgres only: gap fills, near misses, extra copies; see lib/db/postgres.ts), or unexplained.
  * With replicas, Postgres's `timestamp` is the first-seen time (a secondary's exact copy can be earlier), so templates
  * are matched on the row's own receive time, which is part of the Postgres id.
@@ -114,14 +115,12 @@ interface Ctx {
   firstPgHeight: Map<string, number>;
 }
 
-/** `<source_id>-<µs>` of the rows shown from a secondary replica at a height (both tables). */
+/** `<source_id>-<µs>` of the rows shown from a secondary replica at a height. */
 async function secondaryRowsAt(height: number): Promise<Set<string>> {
   const { rows } = await getPgPool().query(
-    `SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint AS us FROM templates_dedup
-      WHERE height = $1 AND NOT is_primary
-     UNION ALL
-     SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint FROM templates_other_dedup
-      WHERE height = $1 AND NOT is_primary`, [height]);
+    `SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint AS us
+       FROM templates_dedup($1, $1, '-infinity', 'infinity')
+      WHERE NOT is_primary`, [height]);
   return new Set(rows.map(r => `${r.source_id}-${r.us}`));
 }
 
@@ -131,12 +130,13 @@ function ownReceipt(id: Json): { key: string; us: bigint } {
   return { key: `${sourceId}-${us}`, us: BigInt(us) };
 }
 
-/** (pool, µs) → templates_other reason, for templates the collector didn't put in `templates`. */
-async function templatesOtherAt(height: number): Promise<Map<string, string>> {
+/** (pool, µs) of the templates at a height received outside its receive window (left out of the height reads). */
+async function outsideWindowAt(height: number): Promise<Set<string>> {
   const { rows } = await getPgPool().query(
-    `SELECT s.name, (extract(epoch FROM t.received_at) * 1000000)::bigint AS us, t.reason
-       FROM templates_other t JOIN sources s ON s.id = t.source_id WHERE t.height = $1`, [height]);
-  return new Map(rows.map(r => [`${r.name}|${r.us}`, r.reason as string]));
+    `SELECT s.name, (extract(epoch FROM t.received_at) * 1000000)::bigint AS us
+       FROM templates t JOIN sources s ON s.id = t.source_id CROSS JOIN template_height_windows($1, $1) w
+      WHERE t.height = $1 AND (t.received_at < w.w_from OR t.received_at > w.w_to)`, [height]);
+  return new Set(rows.map(r => `${r.name}|${r.us}`));
 }
 
 type Tpl = Record<string, Json> & { pool_name: string; timestamp: string };
@@ -151,7 +151,7 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
     const k = `${t.pool_name}|${ownReceipt(t.id).us}`;
     pgByKey.set(k, [...(pgByKey.get(k) ?? []), t]);
   }
-  const other = await templatesOtherAt(height);
+  const outside = await outsideWindowAt(height);
   const secondary = await secondaryRowsAt(height);
   const matchedPg = new Set<Tpl>();
   const mongoOrder: Tpl[] = [];
@@ -173,9 +173,8 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
     }
     if (!p) {
       const start = ctx.pgStart.get(m.pool_name);
-      const reason = other.get(`${m.pool_name}|${us}`);
       if (start === undefined || us < start) expected(r, 'MongoDB-only: before Postgres collection started');
-      else if (reason && btcOnly) expected(r, `MongoDB-only: collector routed to templates_other (${reason})`);
+      else if (btcOnly && outside.has(`${m.pool_name}|${us}`)) expected(r, 'MongoDB-only: outside the height\'s receive window');
       else { ok = false; mismatch(r, `h=${height} MongoDB-only template ${m.pool_name} ts=${m.timestamp}`); }
       continue;
     }
@@ -187,10 +186,10 @@ async function compareTemplates(r: ReadResult, height: number, mongo: Tpl[], pg:
     const { id: _a, timestamp: _b, ...mRest } = m;
     const { id: _c, timestamp: _d, ...pRest } = p;
     void _a; void _b; void _c; void _d;
-    if (!btcOnly && m.chain_family === undefined && typeof p.chain_family === 'string') {
-      // R2: MongoDB says Bitcoin (no chain_family) but the collector routed it to templates_other.
-      const reason = other.get(`${p.pool_name}|${nsToUs(p.timestamp)}`) ?? '?';
-      expected(r, `chain_family set: collector routed to templates_other (${reason})`);
+    if (typeof m.chain_family === 'string' && p.chain_family === null) {
+      // MongoDB's collector tagged another chain; Postgres keeps no per-row chain (judged at read time).
+      expected(r, `chain_family: MongoDB collector tag (${m.chain_family}); Postgres judges at read time`);
+      delete (mRest as Record<string, Json>).chain_family;
       delete (pRest as Record<string, Json>).chain_family;
     }
     const d = diffPaths(mRest, pRest);
@@ -417,8 +416,6 @@ async function main() {
   const { rows: starts } = await pool.query(
     `SELECT s.name, min(x.us) AS start_us, min(x.height) AS first_height FROM (
         SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint AS us, height FROM templates
-        UNION ALL
-        SELECT source_id, (extract(epoch FROM received_at) * 1000000)::bigint, NULL FROM templates_other
      ) x JOIN sources s ON s.id = x.source_id GROUP BY s.name`);
   const ctx: Ctx = {
     pgStart: new Map(starts.map(s => [s.name as string, BigInt(s.start_us)])),

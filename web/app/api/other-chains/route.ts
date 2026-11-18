@@ -11,20 +11,22 @@ import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
 export const dynamic = "force-dynamic";
 
 /**
- * Templates that aren't Bitcoin's (`templates_other`: other chains on the same connections, implausible heights,
- * unknown chains, height parse failures). Read-only, Postgres only (MongoDB mode answers supported: false without
- * touching a database). POOL_BLACKLIST pools are left out entirely, at every height.
+ * Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (lib/db/other-chains.ts):
+ * chain 'unknown' / reason 'no_bitcoin_parent' (the previous block is no block we know: other chains on the same
+ * connections, mostly) and chain 'btc' / reason 'stale_bitcoin_parent' (built on a stale Bitcoin block). Read-only,
+ * Postgres only (MongoDB mode answers supported: false without touching a database). POOL_BLACKLIST pools are left
+ * out entirely.
  *
  *   GET /api/other-chains
  *       summary per (pool, chain, reason): counts, height range, distinct heights / prev hashes, first / last seen,
- *       AuxPoW share, templates per month (aligned with `months`)
- *   GET /api/other-chains?pool=NAME[&chain=bch|unknown|btc][&reason=…][&n=50][&before=<µs cursor>]
+ *       AuxPoW share, templates per month (aligned with `months`), and `days` (the window)
+ *   GET /api/other-chains?pool=NAME[&chain=unknown|btc][&reason=…][&n=50][&before=<µs cursor>]
  *       that group's templates, newest first, with decoded fields; `next_before` pages to older ones
  *
- * The summary aggregates every row (seconds on a large table), so it's computed once per SUMMARY_MS per process and
- * served stale while a refresh runs. Template pages are cached for PAGE_MS.
+ * The summary reads every template of the window (about a second or two on a large table), so it's computed once per
+ * SUMMARY_MS per process and served stale while a refresh runs. Template pages are cached for PAGE_MS.
  */
-const SUMMARY_MS = 5 * 60_000;
+const SUMMARY_MS = 30 * 60_000;   // the read scans 90 days of templates (~15 s on production): at most once per 30 min per process
 const PAGE_MS = 30_000;
 const PAGE_CACHE_ENTRIES = 200;
 

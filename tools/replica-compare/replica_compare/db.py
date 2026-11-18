@@ -9,18 +9,13 @@ from .analyze import Template
 
 QUERY = """
 SELECT s.name, s.replica, t.received_at, t.height, t.job_id, t.prev_hash, t.coinbase1, t.coinbase2,
-       t.merkle_branches, t.version, t.nbits, t.ntime, t.clean_jobs, t.extranonce1, t.extranonce2_length, t.chain
-FROM (
-    SELECT received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches, version, nbits,
-           ntime, clean_jobs, extranonce1, extranonce2_length, 'btc'::text AS chain
-    FROM templates WHERE received_at >= %(since)s AND received_at < %(until)s
-    UNION ALL
-    SELECT received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches, version, nbits,
-           ntime, clean_jobs, extranonce1, extranonce2_length, chain::text
-    FROM templates_other WHERE received_at >= %(since)s AND received_at < %(until)s
-) t
+       t.merkle_branches, t.version, t.nbits, t.ntime, t.clean_jobs, t.extranonce1, t.extranonce2_length,
+       -- judged at read time, as the web's other-chains view: built on a block we know, or not
+       CASE WHEN EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash) THEN 'btc' ELSE 'unknown' END
+FROM templates t
 JOIN sources s ON s.id = t.source_id
-WHERE (%(site)s::text IS NULL OR s.site = %(site)s) AND s.replica = ANY(%(replicas)s)
+WHERE t.received_at >= %(since)s AND t.received_at < %(until)s
+  AND (%(site)s::text IS NULL OR s.site = %(site)s) AND s.replica = ANY(%(replicas)s)
   AND (%(pools)s::text[] IS NULL OR s.name = ANY(%(pools)s))
 ORDER BY s.name, t.received_at
 """

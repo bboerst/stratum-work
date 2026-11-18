@@ -84,15 +84,6 @@ SELECT timestamptz '2030-06-01 00:00:00+00' + make_interval(secs => r.s), s.id, 
        r.ntime, true, decode(r.cb, 'hex'), 8, r.s, 'tcp'
   FROM tj_rows r JOIN tj_src s ON s.k = r.k;
 
--- other chains: an exact copy on the secondary ('copy'), a near miss while the primary is active ('secondary_stream')
--- and a row after the primary went silent ('gap_fill')
-INSERT INTO templates_other (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
-                             version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length, chain, reason)
-SELECT timestamptz '2030-06-01 00:00:00+00' + make_interval(secs => v.s), s.id, 975600, v.job_id, '\x0b', '\x01',
-       '\x02', '', 1, 2, v.ntime, true, '\x03', 8, 'bch', 'bch'
-  FROM (VALUES ('tj-p1/s1/a', 2.0, 'oa', 3), ('tj-p1/s1/b', 1.0, 'ob', 3), ('tj-p1/s1/b', 1.5, 'oc', 4),
-               ('tj-p1/s1/b', 300.0, 'od', 5))
-       v(k, s, job_id, ntime) JOIN tj_src s ON s.k = v.k;
 
 CREATE FUNCTION pg_temp.tj_check() RETURNS void LANGUAGE plpgsql AS $$
 DECLARE j record; n int; t0 timestamptz := '2030-06-01 00:00:00+00';
@@ -180,14 +171,6 @@ BEGIN
   SELECT string_agg(replica || ':' || class, ',' ORDER BY received_at) INTO j FROM templates_copies WHERE height = 975612;
   ASSERT j.string_agg = 'b:gap_fill,b:gap_fill,b:secondary_stream,a:primary,b:secondary_stream,a:primary',
          format('975612 primary late: %s', j.string_agg);
-
-  -- other chains
-  SELECT string_agg(job_id || ':' || class, ',' ORDER BY job_id) INTO j FROM templates_other_copies WHERE height = 975600 AND pool = 'tj-p1';
-  ASSERT j.string_agg = 'oa:primary,ob:copy,oc:secondary_stream,od:gap_fill', format('other classes: %s', j.string_agg);
-  SELECT * INTO j FROM templates_other_dedup WHERE height = 975600 AND job_id = 'oa';
-  ASSERT j.first_seen = t0 + interval '1 s' AND j.copies = 2 AND j.chain = 'bch' AND j.reason = 'bch', format('oa %s', row_to_json(j));
-  SELECT string_agg(job_id, ',' ORDER BY job_id) INTO j FROM templates_other_dedup WHERE height = 975600 AND pool = 'tj-p1';
-  ASSERT j.string_agg = 'oa,od', format('other shown: %s', j.string_agg);
 
   -- three sites: one row per template, per-site receive times kept next to the cross-site first_seen
   SELECT string_agg(job_id || ':' || class, ',' ORDER BY job_id) INTO j FROM templates_copies WHERE height = 975600 AND pool = 'tj-p4';

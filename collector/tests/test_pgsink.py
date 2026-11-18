@@ -5,9 +5,9 @@ import unittest
 from datetime import datetime, timezone
 
 try:
-    from collector.pgsink import BTC, PostgresConfig, PostgresSink, route, to_row
+    from collector.pgsink import PostgresConfig, PostgresSink, to_row
 except ImportError:  # pragma: no cover - when run from inside collector/
-    from pgsink import BTC, PostgresConfig, PostgresSink, route, to_row  # type: ignore
+    from pgsink import PostgresConfig, PostgresSink, to_row  # type: ignore
 
 NS = 1_794_437_000_123_456_789  # epoch ns
 
@@ -21,26 +21,6 @@ def doc(**over):
     }
     d.update(over)
     return d
-
-
-class RouteTests(unittest.TestCase):
-    def test_bitcoin_with_and_without_a_known_tip(self):
-        self.assertIs(route(975_500, None, 975_499), BTC)       # tip + 1: the normal case
-        self.assertIs(route(975_493, None, 975_499), BTC)       # tip - 6: still plausible
-        self.assertIs(route(975_501, None, 975_499), BTC)       # tip + 2
-        self.assertIs(route(975_502, None, 975_499), BTC)       # tip + 3: pools ahead of our node
-        self.assertIs(route(975_505, None, 975_499), BTC)       # tip + 6
-        self.assertIs(route(975_500, None, None), BTC)          # no node: today's behavior
-
-    def test_other_tables(self):
-        self.assertEqual(route(0, None, 975_499).reason, "height_parse_failed")
-        self.assertEqual(route(0, None, None).table, "templates_other")
-        r = route(930_000, "bch", 975_499)
-        self.assertEqual((r.table, r.chain, r.reason), ("templates_other", "bch", "bch"))
-        self.assertEqual(route(975_500, "unknown", 975_499).reason, "unknown_chain")
-        self.assertEqual(route(6_976_415, None, 975_499).reason, "height_implausible")
-        self.assertEqual(route(975_492, None, 975_499).reason, "height_implausible")   # tip - 7
-        self.assertEqual(route(975_506, None, 975_499).reason, "height_implausible")   # tip + 7
 
 
 class ToRowTests(unittest.TestCase):
@@ -77,7 +57,7 @@ class FakeCursor:
     def fetchone(self): return (42,)
     def executemany(self, sql, rows):
         if self.conn.fail_writes: raise RuntimeError("db down")
-        table = "templates_other" if "templates_other" in sql else "templates"
+        table = sql.split()[2]   # INSERT INTO <table>
         self.conn.rows.setdefault(table, []).extend(rows)
 
 
@@ -101,17 +81,17 @@ CFG = PostgresConfig(host="h", port=5432, database="d", user="u", password="secr
 
 
 class SinkTests(unittest.TestCase):
-    def test_writes_routed_rows_and_registers_source(self):
+    def test_writes_every_template_to_templates_and_registers_source(self):
+        # another chain's height and an unparseable one (0) are stored as received: chains are judged at read time
         conn = FakeConn()
-        sink = PostgresSink(CFG, "P", stratum_url="stratum+tcp://x:3333", tip_provider=lambda: 975_499,
-                            connect=lambda **kw: conn).start()
+        sink = PostgresSink(CFG, "P", stratum_url="stratum+tcp://x:3333", connect=lambda **kw: conn).start()
         sink.submit(doc())
         sink.submit(doc(height=6_976_415))
-        sink.submit(doc(height=0))
-        self.assertTrue(wait_for(lambda: sink.stats["written"] + sink.stats["written_other"] == 3))
+        sink.submit(doc(height=0, chain_family="unknown"))
+        self.assertTrue(wait_for(lambda: sink.stats["written"] == 3))
         sink.close()
-        self.assertEqual(len(conn.rows["templates"]), 1)
-        self.assertEqual([r[-1] for r in conn.rows["templates_other"]], ["height_implausible", "height_parse_failed"])
+        self.assertEqual(list(conn.rows), ["templates"])
+        self.assertEqual([r[2] for r in conn.rows["templates"]], [975_500, 6_976_415, 0])
         self.assertIn(("P", "test", "b", "stratum+tcp://x:3333"), [p for _, p in conn.executed])
         self.assertIn("ON CONFLICT (name, site, replica)", conn.executed[0][0])
 
@@ -169,10 +149,10 @@ class PostgresIntegrationTests(unittest.TestCase):
                              database=os.getenv("PG_TEST_DATABASE", "stratum"), user=os.environ["PG_TEST_USER"],
                              password=os.environ["PG_TEST_PASSWORD"], sslmode="disable", site="ci")
         name = f"itest-{int(time.time() * 1000)}"
-        sink = PostgresSink(cfg, name, stratum_url="stratum+tcp://example:3333", tip_provider=lambda: 975_499).start()
+        sink = PostgresSink(cfg, name, stratum_url="stratum+tcp://example:3333").start()
         sink.submit(doc(pool_name=name))
         sink.submit(doc(pool_name=name, job_id="other", height=6_976_415))
-        self.assertTrue(wait_for(lambda: sink.stats["written"] + sink.stats["written_other"] == 2, timeout=15), sink.stats)
+        self.assertTrue(wait_for(lambda: sink.stats["written"] == 2, timeout=15), sink.stats)
         sink.close()
         admin = os.getenv("PG_TEST_ADMIN_DSN")
         if not admin:
@@ -181,11 +161,12 @@ class PostgresIntegrationTests(unittest.TestCase):
             sid, replica = c.execute("SELECT id, replica FROM sources WHERE name = %s AND site = 'ci'", (name,)).fetchone()
             self.assertEqual(replica, "a")   # PostgresConfig default
             row = c.execute("""SELECT encode(prev_hash,'hex'), encode(coinbase1,'hex'), encode(merkle_branches,'hex'),
-                                      lpad(to_hex(version),8,'0'), height FROM templates WHERE source_id = %s""", (sid,)).fetchone()
+                                      lpad(to_hex(version),8,'0'), height FROM templates
+                                WHERE source_id = %s AND job_id = 'abc1'""", (sid,)).fetchone()
             d = doc()
             self.assertEqual(row, (d["prev_hash"], d["coinbase1"], "".join(d["merkle_branches"]), d["version"], 975_500))
-            other = c.execute("SELECT height, chain::text, reason FROM templates_other WHERE source_id = %s", (sid,)).fetchone()
-            self.assertEqual(other, (6_976_415, "unknown", "height_implausible"))
+            other = c.execute("SELECT height FROM templates WHERE source_id = %s AND job_id = 'other'", (sid,)).fetchone()
+            self.assertEqual(other, (6_976_415,))
 
 
 if __name__ == "__main__":

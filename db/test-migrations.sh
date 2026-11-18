@@ -38,7 +38,7 @@ check "templates(_other), mempool_txs, _tx_inputs, _tx_raw, clock_samples: hyper
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
 check "6 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 6 ]'
 check "retention: inputs 30 days, raw 14 days" '[ "$(psql_ "SELECT string_agg(hypertable_name || '"'"'='"'"'|| (config->>'"'"'drop_after'"'"'), '"'"','"'"' ORDER BY hypertable_name) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_retention'"'"'")" = "mempool_tx_inputs=30 days,mempool_tx_raw=14 days" ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 21 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 22 ]'
 check "blocks.seen_via: zmq / reconcile / NULL only" 'psql_ "INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig, seen_via) VALUES (decode('"'"'01'"'"', '"'"'hex'"'"'), 1, now(), decode('"'"'00'"'"', '"'"'hex'"'"'), '"'"'zmq'"'"')" && ! psql_ "INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig, seen_via) VALUES (decode('"'"'02'"'"', '"'"'hex'"'"'), 1, now(), decode('"'"'00'"'"', '"'"'hex'"'"'), '"'"'rpc'"'"')" && psql_ "DELETE FROM blocks WHERE height = 1"'
 check "ingest_events: start + session kinds" 'psql_ "INSERT INTO sources (name, site) VALUES ('"'"'kind-test'"'"', '"'"'t'"'"')" && psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'start'"'"', now(), now(), 0 FROM sources LIMIT 1" && psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'session'"'"', now(), now(), 0 FROM sources LIMIT 1" && ! psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'reboot'"'"', now(), now(), 0 FROM sources LIMIT 1" && psql_ "DELETE FROM ingest_events; DELETE FROM sources WHERE name = '"'"'kind-test'"'"'"'
 check "mempool_tx_inputs indexed by prevout" '[ "$(psql_ "SELECT count(*) FROM pg_indexes WHERE indexname = '"'"'mempool_tx_inputs_prevout'"'"'")" = 1 ]'
@@ -118,6 +118,7 @@ check "web: cannot write stale blocks"   '! as_user t_web "DELETE FROM stale_blo
 check "collector: no stale-block access" '! as_user t_collector "SELECT 1 FROM stale_blocks" && ! as_user t_collector "SELECT * FROM stale_tip_templates(1, 2)"'
 check "stale: unknown chaintip status rejected" '! psql_ "UPDATE stale_blocks SET last_status = '"'"'other'"'"'"'
 psql_ "DELETE FROM stale_blocks; DELETE FROM chain_reorgs" >/dev/null
+check "one table reads: windows, bounded dedup = views, stale filter, inlined, stale tips (synthetic)" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-one-table-reads.sql'
 check "stale blocks: synthetic best / stale / unknown tips" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-stale-blocks.sql'
 check "web + backend: call block_template_matches" 'as_user t_web "SELECT count(*) FROM block_template_matches(975500, 975500)" && as_user t_backend "SELECT count(*) FROM block_template_matches(975500, 975500)"'
 check "collector: cannot call block_template_matches" '! as_user t_collector "SELECT 1 FROM block_template_matches(975500, 975500)"'
@@ -133,6 +134,7 @@ psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool, t_clock; DROP USE
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
 check "one stream per pool: window constants" '[ "$(psql_ "SELECT template_stream_silence() || '"'"' '"'"' || template_stream_lead()")" = "00:01:30 00:00:10" ]'
 check "stale-tip read: every connection, grants kept" '[ "$(psql_ "SELECT prosrc LIKE '"'"'%FROM templates t%'"'"' AND prosrc NOT LIKE '"'"'%templates_dedup%'"'"' AND has_function_privilege('"'"'stratum_web'"'"', oid, '"'"'EXECUTE'"'"') AND has_function_privilege('"'"'stratum_backend'"'"', oid, '"'"'EXECUTE'"'"') AND NOT has_function_privilege('"'"'stratum_collector'"'"', oid, '"'"'EXECUTE'"'"') FROM pg_proc WHERE proname = '"'"'stale_tip_templates'"'"'")" = t ]'
+check "down drops the one-table read functions, restores stale_tip_templates" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname IN ('"'"'height_window'"'"', '"'"'template_height_windows'"'"') OR (proname IN ('"'"'templates_dedup'"'"', '"'"'templates_copies'"'"'))")" = 0 ] && [ "$(psql_ "SELECT l.lanname FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang WHERE p.proname = '"'"'stale_tip_templates'"'"'")" = sql ] && [ "$(psql_ "SELECT count(*) FROM pg_views WHERE viewname = '"'"'bitcoin_parents'"'"'")" = 0 ]'
 check "down drops the block coinbase columns + match function" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM information_schema.columns WHERE table_name = '"'"'blocks'"'"' AND column_name IN ('"'"'merkle_branches'"'"', '"'"'coinbase_txid'"'"', '"'"'coinbase_tx'"'"')")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_proc WHERE proname = '"'"'block_template_matches'"'"'")" = 0 ]'
 check "down drops the clock_samples policy" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = '"'"'clock_samples'"'"'")" = 0 ]'
 check "down drops clock_samples + role"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'clock_samples'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_clock'"'"'")" = 0 ]'
@@ -153,7 +155,7 @@ psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 21 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 22 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

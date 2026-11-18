@@ -36,8 +36,10 @@ class MongoStore:
         return self.db is not None
 
     # blocks
-    def save_block(self, doc: Dict[str, Any], is_new_block: bool) -> None:
+    def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
+                   seen_via: Optional[str] = None) -> None:
         # New blocks upsert (avoid duplicates); blocks synced during backfill were checked for existence first.
+        # seen_at / seen_via are Postgres-only (MongoDB documents never stored an arrival time).
         if is_new_block:
             self.db.blocks.update_one({"block_hash": doc["block_hash"]}, {"$set": doc}, upsert=True)
         else:
@@ -143,12 +145,15 @@ class PostgresStore:
     """Postgres + TimescaleDB. Connects as a user in the stratum_backend role (least privilege)."""
 
     _BLOCK_UPSERT = """
-        INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig, pool_id, mining_pool, analysis)
-        VALUES (%(block_hash)s, %(height)s, %(block_time)s, %(seen_at)s, %(coinbase_script_sig)s, %(pool_id)s,
-                %(mining_pool)s, %(analysis)s)
+        INSERT INTO blocks (block_hash, height, block_time, seen_at, seen_via, coinbase_script_sig, pool_id, mining_pool,
+                            analysis)
+        VALUES (%(block_hash)s, %(height)s, %(block_time)s, %(seen_at)s, %(seen_via)s, %(coinbase_script_sig)s,
+                %(pool_id)s, %(mining_pool)s, %(analysis)s)
         ON CONFLICT (block_hash) DO UPDATE SET
             height = EXCLUDED.height, block_time = EXCLUDED.block_time,
-            seen_at = COALESCE(blocks.seen_at, EXCLUDED.seen_at),   -- first time we saw it live is kept
+            -- the first time we saw it live is kept, with how we saw it (SET reads the row's old values)
+            seen_at = COALESCE(blocks.seen_at, EXCLUDED.seen_at),
+            seen_via = CASE WHEN blocks.seen_at IS NULL THEN EXCLUDED.seen_via ELSE blocks.seen_via END,
             coinbase_script_sig = EXCLUDED.coinbase_script_sig, pool_id = EXCLUDED.pool_id,
             mining_pool = EXCLUDED.mining_pool, analysis = EXCLUDED.analysis"""
 
@@ -212,19 +217,24 @@ class PostgresStore:
             return False
 
     # blocks
-    def _block_params(self, doc: Dict[str, Any], seen_now: bool) -> Dict[str, Any]:
+    def _block_params(self, doc: Dict[str, Any], seen_now: bool, seen_at: Optional[datetime] = None,
+                      seen_via: Optional[str] = None) -> Dict[str, Any]:
+        # seen_now: seen live. seen_at: when it arrived (the ZMQ receive time); without one (a block the
+        # reconciliation found), the time it is saved, i.e. when we detected it. Not seen live: both NULL.
         return dict(
             block_hash=_to_bytes(doc["block_hash"]), height=int(doc["height"]),
             block_time=datetime.fromtimestamp(int(doc["timestamp"]), tz=timezone.utc),
-            seen_at=datetime.now(timezone.utc) if seen_now else None,
+            seen_at=(seen_at or datetime.now(timezone.utc)) if seen_now else None,
+            seen_via=seen_via if seen_now else None,
             coinbase_script_sig=_to_bytes(doc.get("coinbase_script_sig")), pool_id=_pool_id(doc.get("mining_pool")),
             mining_pool=json.dumps(doc.get("mining_pool") or {}, default=str),
             analysis=json.dumps(doc.get("analysis") or {}, default=str),
         )
 
-    def save_block(self, doc: Dict[str, Any], is_new_block: bool) -> None:
+    def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
+                   seen_via: Optional[str] = None) -> None:
         # Always an upsert keyed by hash: unlike the MongoDB insert during backfill, this can't create duplicates.
-        params = self._block_params(doc, seen_now=is_new_block)
+        params = self._block_params(doc, seen_now=is_new_block, seen_at=seen_at, seen_via=seen_via)
         self._run(lambda c: c.execute(self._BLOCK_UPSERT, params))
 
     def replace_block(self, doc: Dict[str, Any]) -> None:

@@ -9,7 +9,7 @@ from queue import Queue, Empty
 from contextlib import contextmanager
 from threading import Lock
 import random
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from bitcoin_utils import extract_coinbase_data
 from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: MongoDB or Postgres (DB_BACKEND)
 from integrations.rabbitmq import start_heartbeat_thread
@@ -291,18 +291,21 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
     }
     return doc
 
-def process_block(block_hash: str, is_new_block: bool = False) -> bool:
-    """Fetch, analyse, store and publish one block. is_new_block: seen live now (Postgres: seen_at = now; MongoDB:
-    upsert by hash). Returns False when it failed (logged)."""
-    return process_block_status(block_hash, is_new_block) == "ok"
+def process_block(block_hash: str, is_new_block: bool = False, seen_at: Optional[datetime] = None,
+                  seen_via: Optional[str] = None) -> bool:
+    """Fetch, analyse, store and publish one block. is_new_block: seen live (MongoDB: upsert by hash; Postgres: sets
+    blocks.seen_at to seen_at, or to now when none is given, and blocks.seen_via, both only the first time).
+    Returns False when it failed (logged)."""
+    return process_block_status(block_hash, is_new_block, seen_at, seen_via) == "ok"
 
 
-def process_block_status(block_hash: str, is_new_block: bool = False) -> str:
+def process_block_status(block_hash: str, is_new_block: bool = False, seen_at: Optional[datetime] = None,
+                         seen_via: Optional[str] = None) -> str:
     """process_block, returning "ok", "pruned" (the node no longer has the block's data) or "error"."""
     try:
         doc = build_block_doc(block_hash)
         height = doc["height"]
-        store.save_block(doc, is_new_block)
+        store.save_block(doc, is_new_block, seen_at=seen_at, seen_via=seen_via)
 
         logger.info("%s block %d (%s) mined by %s",
                    "Processed new" if is_new_block else "Synced old",
@@ -663,7 +666,8 @@ def reconcile_recent_window(low_height=None) -> Dict[str, int]:
             from reconcile import BestChainReconciler
             _reconciler = BestChainReconciler(
                 node_height=lambda: node_rpc("getblockcount"), node_hashes=node_block_hashes, store=store,
-                store_block=lambda h: process_block(h, is_new_block=True),   # seen_at = detection time
+                # seen live, but found by the reconciliation, not announced: seen_at = detection time, marked as such
+                store_block=lambda h: process_block(h, is_new_block=True, seen_via="reconcile"),
                 mark_replaced=mark_replaced_blocks, window=BLOCK_GAP_WINDOW, min_height=MIN_BLOCK_HEIGHT)
         return _reconciler.reconcile(low_height)
     except Exception as e:
@@ -758,6 +762,9 @@ def zmq_listener():
             while True:
                 try:
                     parts = socket.recv_multipart()
+                    # The block's arrival time, taken before anything else: blocks.seen_at used to be the time of the DB
+                    # save, after getblock, the analyses and the queue (median 0.84 s, max 40 s later than this).
+                    received_at = datetime.now(timezone.utc)
                     if len(parts) < 2:
                         continue
                     topic, msg = parts[0], parts[1]
@@ -767,7 +774,7 @@ def zmq_listener():
                         bhash = msg.hex()
                         logger.info("ZMQ received new block hash: %s", bhash)
                         # Submit new block to the block processor
-                        block_processor.submit(process_block, bhash, True)
+                        block_processor.submit(process_block, bhash, True, received_at, "zmq")
                         # Then the recent window against the node's chain: blocks a reorg replaced (ZMQ announces only
                         # the new tip) and blocks that failed earlier (e.g. the DB was down when they came)
                         block_processor.submit(reconcile_recent_window)

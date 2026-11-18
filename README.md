@@ -40,6 +40,9 @@ flowchart LR
 
 **Storage.** The project is moving from MongoDB to **Postgres + TimescaleDB**, the store going forward ([design doc](docs/design/postgres-timescale.md)). Both are supported and each component is switched by configuration. The local `docker compose` stack still **defaults to MongoDB** (collectors write `mining_notify`, backend and web use MongoDB); Postgres is an opt-in profile, see [Postgres + TimescaleDB](#postgres--timescaledb). Stale-block tracking, the mempool recorder and collector-go exist only in Postgres mode.
 
+### How the data is measured
+What each value is (observed, verified or modelled), how arrival times and clocks are measured and how far they can be off, what the latency adjustment assumes, how several connections per pool and duplicates are handled, and the limits of older history: [docs/methodology.md](docs/methodology.md).
+
 ### Trustless processing
 The server collects and forwards the raw messages; **all decoding, formatting and visualization happens in the browser** (coinbase reconstruction, scriptSig tags, outputs and fees, the first transaction, merkle and timing views). So anyone can check what the site shows against what the pools sent, and the stream (`GET /api/stream`) can power other tools. The browser doing the work also means client performance matters: CI measures it on every web PR ([web/perf](web/perf/README.md)).
 
@@ -398,6 +401,7 @@ Guidelines: keep findings small (what the UI needs to render); keep the logic de
 
 ## Further reading
 - [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, backups, migration plan, redundant collection.
+- [How the data is measured](docs/methodology.md): what each value is, how it was taken, and its limits.
 - Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [mongo-to-postgres](tools/mongo-to-postgres/README.md), [replica-compare](tools/replica-compare/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 

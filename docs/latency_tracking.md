@@ -1,5 +1,8 @@
 # Latency Tracking
 
+> The code below is the Python collector (`collector/`); the Go collector (`collector-go/`) does the same (`latency.go`).
+> What the estimate can and can't tell you (the window it comes from, and RTT/2 as its midpoint): [How the data is measured](methodology.md#latency-adjustment).
+
 The collector records when a `mining.notify` message arrives from a pool, then
 optionally attaches an estimate of how long that message spent traveling over
 the network. The web application can subtract that estimate when displaying or

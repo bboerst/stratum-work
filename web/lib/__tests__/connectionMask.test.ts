@@ -84,7 +84,7 @@ describe('maskExtranonce1 (process key)', () => {
 });
 
 describe('maskTemplate', () => {
-  it('masks the MongoDB / API shape without touching other fields or the input', () => {
+  it('masks the API shape without touching other fields or the input', () => {
     const doc = { id: 'x', pool_name: 'PoolA', coinbase1: '01', coinbase2: '02', extranonce1: '0011aabb', extranonce2_length: 4 };
     const out = maskTemplate(doc, mask);
     expect(out).toEqual({ ...doc, extranonce1: mask('PoolA', '0011aabb') });

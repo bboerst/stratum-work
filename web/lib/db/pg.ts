@@ -3,7 +3,7 @@ import type { ConnectionOptions } from 'tls';
 import { Pool, type PoolConfig } from 'pg';
 
 /**
- * Postgres connection for the web app (DB_BACKEND=postgres, #113). Connects as a read-only user (a member of the
+ * Postgres connection for the web app (#113). Connects as a read-only user (a member of the
  * `stratum_web` role, see db/migrations). Configuration comes from separate fields, never a connection URL, so
  * errors and logs can't print the password:
  *
@@ -56,7 +56,7 @@ export function pgConfigFromEnv(env: Env = process.env): PoolConfig {
 
 const globalForPg = global as unknown as { stratumPgPool?: Pool };
 
-/** The shared pool, created on first use (so MongoDB deployments never touch Postgres settings). */
+/** The shared pool, created on first use (so nothing connects with historical data disabled). */
 export function getPgPool(): Pool {
   if (!globalForPg.stratumPgPool) {
     const config = pgConfigFromEnv();

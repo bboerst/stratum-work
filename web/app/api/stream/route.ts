@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
       // Several collectors per pool: one stream per pool (lib/streamDedup.ts). Only the lowest-ranked (site, replica)
       // source that sent something in the last 90 s is forwarded, and exact copies once. Templates without
-      // site/replica (one collector per pool, MongoDB mode) are never filtered.
+      // site/replica (older collectors) are never filtered.
       const dedup = new StreamTemplateDedup();
 
       // Helper function to safely enqueue data to the controller

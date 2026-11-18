@@ -119,7 +119,6 @@ export async function GET(request: NextRequest) {
           // Original fields from the notification (excluding coinbase1 and coinbase2)
           id: notification.id,
           pool_name: notification.pool_name,
-          chain_family: notification.chain_family ?? undefined,
           timestamp: notification.timestamp,
           height: notification.height,
           prev_hash: prevHash, // Use only the reversed (big-endian) format

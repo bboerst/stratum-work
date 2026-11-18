@@ -252,17 +252,16 @@ describe('fee-rate values', () => {
 });
 
 describe('TX_API_SOURCE', () => {
-  it('auto: local only in Postgres mode with history enabled', () => {
-    expect(txApiConfigFromEnv({})).toEqual({ source: 'mempool.space', mempoolSpaceFallback: false });
-    expect(txApiConfigFromEnv({ DB_BACKEND: 'postgres' })).toEqual({ source: 'local', mempoolSpaceFallback: false });
-    expect(txApiConfigFromEnv({ DB_BACKEND: 'postgres', ENABLE_HISTORICAL_DATA: 'false' }).source).toBe('mempool.space');
+  it('auto: local only with history enabled', () => {
+    expect(txApiConfigFromEnv({})).toEqual({ source: 'local', mempoolSpaceFallback: false });
+    expect(txApiConfigFromEnv({ ENABLE_HISTORICAL_DATA: 'false' }).source).toBe('mempool.space');
   });
 
   it('explicit values and the fallback', () => {
-    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'mempool.space', DB_BACKEND: 'postgres' }).source).toBe('mempool.space');
-    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'local' }).source).toBe('local');
-    expect(txApiConfigFromEnv({ DB_BACKEND: 'postgres', TX_API_MEMPOOL_SPACE_FALLBACK: 'true' }).mempoolSpaceFallback).toBe(true);
+    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'mempool.space' }).source).toBe('mempool.space');
+    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'local', ENABLE_HISTORICAL_DATA: 'false' }).source).toBe('local');
+    expect(txApiConfigFromEnv({ TX_API_MEMPOOL_SPACE_FALLBACK: 'true' }).mempoolSpaceFallback).toBe(true);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'bogus' }).source).toBe('mempool.space');
+    expect(txApiConfigFromEnv({ TX_API_SOURCE: 'bogus' }).source).toBe('local');   // auto
   });
 });

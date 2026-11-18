@@ -30,8 +30,8 @@ Responses:
 { "enabled": true, "supported": true, "txs": [ /* one per txid, in request order */ ] }
 // GET /api/tx/<txid>
 { "enabled": true, "supported": true, "tx": { /* ... */ } }
-// MongoDB deployments (or ENABLE_HISTORICAL_DATA=false): no database is touched
-{ "enabled": true, "supported": false, "txs": [] }       // or "tx": null
+// ENABLE_HISTORICAL_DATA=false: no database is touched
+{ "enabled": false, "supported": false, "txs": [] }      // or "tx": null
 ```
 
 `400` for a malformed txid, more than 100 txids, or a bad `at`; `500` if the database read fails.
@@ -106,8 +106,9 @@ into one request and keeps fee rates per txid for the page's lifetime (unseen on
 ## Settings
 
 `TX_API_SOURCE` (`auto` | `local` | `mempool.space`) and `TX_API_MEMPOOL_SPACE_FALLBACK` choose where the browser gets
-fee rates from (`web/lib/txApiConfig.ts`, served by `/api/runtime-config`). `auto` uses this API in Postgres mode and
-mempool.space otherwise, so MongoDB deployments behave as before.
+fee rates from (`web/lib/txApiConfig.ts`, served by `/api/runtime-config`). `auto` uses this API when historical data
+is enabled and mempool.space otherwise. The local compose stack runs no mempool recorder, so it sets
+`TX_API_SOURCE=mempool.space` by default.
 
 ## Performance
 

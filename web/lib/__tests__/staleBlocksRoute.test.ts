@@ -1,6 +1,6 @@
 /**
- * /api/stale-blocks against mocked database functions (#180), plus the row mapping. MongoDB mode and disabled
- * history don't touch a database; responses are shared for the cache period; POOL_BLACKLIST applies only to template
+ * /api/stale-blocks against mocked database functions (#180), plus the row mapping. Disabled history doesn't
+ * touch a database; responses are shared for the cache period; POOL_BLACKLIST applies only to template
  * summaries above the tip.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,10 +14,9 @@ const block = (height: number, pools: string[]): StaleBlock => ({
     node_switch_at: 15, mined_after_switch_ms: 5 })),
 });
 
-async function loadRoute({ historical = true, backend = 'postgres', blacklist = '', tip = 100 } = {}) {
+async function loadRoute({ historical = true, blacklist = '', tip = 100 } = {}) {
   vi.resetModules();
   vi.stubEnv('POOL_BLACKLIST', blacklist);
-  vi.stubEnv('DB_BACKEND', backend);
   const getRecentStaleBlocks = vi.fn(async () => [block(100, ['Public', 'Private']), block(98, ['Public', 'Private'])]);
   const getHighestBlock = vi.fn(async () => ({ height: tip }));
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical, getHighestBlock }));
@@ -60,8 +59,8 @@ describe('GET /api/stale-blocks', () => {
     expect((await get(route, '?n=x')).status).toBe(400);
   });
 
-  it('touches no database in MongoDB mode or with history disabled', async () => {
-    for (const opts of [{ backend: 'mongodb' }, { historical: false }]) {
+  it('touches no database with history disabled', async () => {
+    for (const opts of [{ historical: false }]) {
       const { route, getRecentStaleBlocks, getHighestBlock } = await loadRoute(opts);
       const body = await (await get(route)).json();
       expect(body.supported).toBe(false);

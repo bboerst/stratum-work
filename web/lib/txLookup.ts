@@ -5,7 +5,6 @@
  */
 import { LRUCache } from 'lru-cache';
 import { enableHistoricalData } from './db/blocks';
-import { isPostgres } from './db/backend';
 import { getTxs, TX_BATCH_MAX, TXID_RE, txMaxAgeS, type TxInfo } from './db/tx';
 
 const cache = new LRUCache<string, TxInfo>({ max: 20_000 });
@@ -51,9 +50,9 @@ const json = (body: unknown, status: number, cacheControl: string) =>
 
 /** Answer a parsed request; `single` shapes the body as { tx } instead of { txs }. */
 export async function txResponse(txids: string[], single: boolean, at?: number): Promise<Response> {
-  if (!enableHistoricalData || !isPostgres()) {
-    // No mempool data in this deployment: answer without touching a database.
-    return json({ enabled: enableHistoricalData, supported: false, ...(single ? { tx: null } : { txs: [] }) },
+  if (!enableHistoricalData) {
+    // Historical data disabled: answer without touching a database.
+    return json({ enabled: false, supported: false, ...(single ? { tx: null } : { txs: [] }) },
       200, 'public, max-age=300');
   }
   try {

@@ -243,7 +243,6 @@ export default function OtherChains() {
   if (!summary) body = <p className="text-sm text-muted-foreground">Loading…</p>;
   else if (summary.error) body = <p className="text-sm text-red-500">{summary.error}</p>;
   else if (!summary.enabled) body = <p className="text-sm text-muted-foreground">Historical data is disabled on this deployment.</p>;
-  else if (!summary.supported) body = <p className="text-sm text-muted-foreground">This view is available with the Postgres backend.</p>;
   else body = (
     <>
       <p className="text-xs text-muted-foreground mb-3">

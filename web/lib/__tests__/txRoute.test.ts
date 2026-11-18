@@ -1,6 +1,6 @@
 /**
  * /api/tx and /api/tx/<txid> against a mocked lookup (#198): input validation, the batch cap, cache headers, the
- * per-txid server cache, and MongoDB mode answering without a database. The real queries: pgTx.test.ts.
+ * per-txid server cache, and disabled history answering without a database. The real queries: pgTx.test.ts.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TxInfo } from '../db/tx';
@@ -14,9 +14,8 @@ const answer = (txid: string): TxInfo =>
     : txid === B ? { txid, found: true, status: 'mined', effective_fee_rate: 3 }
       : { txid, found: false, status: 'not_seen' };
 
-async function loadRoutes({ historical = true, backend = 'postgres' } = {}) {
+async function loadRoutes({ historical = true } = {}) {
   vi.resetModules();
-  vi.stubEnv('DB_BACKEND', backend);
   const getTxs = vi.fn(async (txids: string[]) => txids.map(answer));
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/tx', async importOriginal => ({ ...(await importOriginal<object>()), getTxs }));
@@ -93,8 +92,8 @@ describe('GET /api/tx', () => {
     expect((await batch(`?txids=${A}`)).status).toBe(200);
   });
 
-  it('touches no database in MongoDB mode or with history disabled', async () => {
-    for (const opts of [{ backend: 'mongodb' }, { historical: false }]) {
+  it('touches no database with history disabled', async () => {
+    for (const opts of [{ historical: false }]) {
       const { batch, single, getTxs } = await loadRoutes(opts);
       const body = await (await batch(`?txids=${A}`)).json();
       expect(body.supported).toBe(false);

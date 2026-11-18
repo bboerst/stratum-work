@@ -39,9 +39,9 @@ function tpl(pool: string, height: number, offsetMs: number, extra: Partial<Stra
 describe('templateKey', () => {
   it('matches stream (ns) and Postgres (µs) forms of the same receive time, without job_id', () => {
     const live = tpl('A', 100, 5);
-    const fromMongo = { ...live, job_id: undefined as unknown as string };
+    const withoutJobId = { ...live, job_id: undefined as unknown as string };
     const fromPostgres = { ...live, timestamp: hexNsFromPostgres(5) };
-    expect(templateKey(live)).toBe(templateKey(fromMongo));
+    expect(templateKey(live)).toBe(templateKey(withoutJobId));
     expect(templateKey(live)).toBe(templateKey(fromPostgres));
   });
 
@@ -54,7 +54,7 @@ describe('templateKey', () => {
     expect(buffer.add([a, b])).toBe(2);
   });
 
-  it('ignores hex case (Postgres returns lower-case, MongoDB keeps the pool\'s casing)', () => {
+  it('ignores hex case (Postgres returns lower-case, the stream keeps the pool\'s casing)', () => {
     const live = tpl('A', 100, 5, { ntime: '69D72A43', coinbase1: '01AA', coinbase2: 'FF01' });
     const fromPostgres = { ...live, timestamp: hexNsFromPostgres(5), ntime: '69d72a43', coinbase1: '01aa', coinbase2: 'ff01' };
     expect(templateKey(live)).toBe(templateKey(fromPostgres));
@@ -120,11 +120,10 @@ describe('TemplateBuffer merge and de-duplication', () => {
     expect(fresh.map(e => e.data.pool_name)).toEqual(['B']);
   });
 
-  it('skips other chains\' templates (chain_family set) and pools rejected by the filter', () => {
+  it('skips pools rejected by the filter', () => {
     const buffer = new TemplateBuffer();
     buffer.add([
       tpl('A', 100, 1),
-      tpl('A', 6_976_415, 2, { chain_family: 'unknown' }),
       tpl('Hidden', 100, 3),
     ], pool => pool !== 'Hidden');
     expect(buffer.entries().map(e => e.data.pool_name)).toEqual(['A']);
@@ -230,7 +229,7 @@ describe('entry identity', () => {
   });
 });
 
-describe('untagged other-chain templates (the Go collector no longer tags chain_family)', () => {
+describe('other-chain templates (collectors don\'t tag them)', () => {
   it('are kept out by the tip bounds: far above the tip, and below the kept height range', () => {
     const buf = new TemplateBuffer({ heights: 3 });
     buf.setTip(976_400);

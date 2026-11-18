@@ -10,9 +10,6 @@ RUN npm ci
 # Copy the application source
 COPY . .
 
-# Generate Prisma client
-RUN npx prisma generate
-
 # Build the application if production
 ARG ENVIRONMENT=production
 # (development: no build; create an empty .next so the runner stage's COPY succeeds and `next dev` takes over)
@@ -25,11 +22,8 @@ WORKDIR /app
 
 # Copy necessary files from the builder stage
 COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json* ./
-COPY --from=builder /app/prisma ./prisma
 
 # Install production dependencies only if in production
 ARG ENVIRONMENT=production

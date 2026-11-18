@@ -61,7 +61,7 @@ describe.skipIf(!enabled)('Postgres other-chain templates (read-time judgement)'
     Object.assign(process.env, {
       PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
       PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
-      DB_BACKEND: 'postgres', POOL_BLACKLIST: hidden, EXTRANONCE1_MASK_KEY: KEY,
+      POOL_BLACKLIST: hidden, EXTRANONCE1_MASK_KEY: KEY,
     });
     admin = new Client({ connectionString: env.PG_TEST_ADMIN_DSN });   // the web role can't write; insert as admin
     await admin.connect();

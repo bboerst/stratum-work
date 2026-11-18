@@ -35,10 +35,9 @@ describe('selectPrefillTemplates', () => {
     expect(out.map(r => r.pool_name)).toEqual(['A']);
   });
 
-  it('drops other chains\' templates and rows without a pool or a parseable timestamp', () => {
+  it('drops rows without a pool or a parseable timestamp', () => {
     const out = selectPrefillTemplates([
       rec('A', 1000),
-      rec('A', 900, { chain_family: 'bch' }),
       rec('', 800),
       { pool_name: 'B', timestamp: 'zz' },
     ], { nowMs: NOW_MS, isBlacklisted: none });

@@ -13,7 +13,6 @@ export const PREFILL_WINDOW_MS = 300_000;
 export interface PrefillTemplate {
   pool_name?: string | null;
   timestamp: string;
-  chain_family?: string | null;
 }
 
 /** Heights to read: the one being mined (tip + 1), plus the tip itself while it's young enough to be on the chart. */
@@ -28,7 +27,7 @@ export function prefillHeights(tip: { height: number; timestamp: number }, nowMs
  *  - everything received in the last `windowMs` (the timing chart), and
  *  - each pool's latest template before that (the table and Sankey show each pool's latest; the chart needs it as
  *    the start of the bar crossing its left edge).
- * Blacklisted pools and non-Bitcoin templates are dropped, exactly as the stream route and /api/mining-notify do.
+ * Blacklisted pools are dropped, exactly as the stream route and /api/mining-notify do.
  * Output is oldest first.
  */
 export function selectPrefillTemplates<T extends PrefillTemplate>(
@@ -43,7 +42,6 @@ export function selectPrefillTemplates<T extends PrefillTemplate>(
   const withTime: { rec: T; us: bigint }[] = [];
   for (const rec of records) {
     if (!rec.pool_name || isBlacklisted(rec.pool_name)) continue;
-    if (rec.chain_family) continue;
     const us = timestampMicros(rec.timestamp);
     if (us === null) continue;
     withTime.push({ rec, us });

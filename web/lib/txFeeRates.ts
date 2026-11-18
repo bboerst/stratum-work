@@ -6,7 +6,7 @@
  *                  TX_BATCH_MAX per request), so a burst of new templates costs one request, not one per row.
  *                  Historical rows pass their template's time (`at`, rounded up to the hour: /api/tx searches the
  *                  15 days before it); one request per hour of templates.
- *   mempool.space  the previous behavior, one lookup per txid (MongoDB deployments, unless configured otherwise).
+ *   mempool.space  one lookup per txid (historical data disabled, or configured).
  *
  * Values are what the table shows: the transaction's OWN fee rate, fee / vsize (sat/vB, formatted as before), or a
  * label. A child paying for it (CPFP) doesn't change the number: which transactions a pool includes, and why, isn't

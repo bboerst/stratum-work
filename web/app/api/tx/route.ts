@@ -4,8 +4,8 @@ import { badRequest, parseAt, parseTxids, txResponse } from "../../../lib/txLook
 export const dynamic = "force-dynamic";
 
 /**
- * Transactions as our node saw them, from the mempool recorder's tables (#198). Read-only, Postgres only (MongoDB
- * mode answers supported: false without touching a database). Fields and fee-rate definitions: ./README.md.
+ * Transactions as our node saw them, from the mempool recorder's tables (#198). Read-only (with historical data
+ * disabled it answers supported: false without touching a database). Fields and fee-rate definitions: ./README.md.
  *
  *   GET /api/tx?txids=<txid>,<txid>,...[&at=<ms>]   (display-order hex, at most 100)
  *

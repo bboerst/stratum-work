@@ -53,12 +53,11 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
 /**
  * De-duplication key: pool + receive time in µs + the template's content (ntime, coinbase1, coinbase2).
  *
- * It's the same for a template whether it came from the stream, the MongoDB API or the Postgres API. Neither
- * backend's id works across both (MongoDB's is a UUID, Postgres's is `<source>-<µs>-<job_id>`), and MongoDB API rows
- * don't carry job_id. Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
+ * It's the same for a template whether it came from the stream or the API (the API's id, `<source>-<µs>-<job_id>`,
+ * isn't in the stream). Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
  * with the same receive time, so one pool can send two templates in the same µs (3 of 16,310 on dev data,
- * 2026-11-12, always with different ntime/coinbase). Hex is lower-cased because Postgres returns lower-case and
- * MongoDB keeps the pool's casing.
+ * 2026-11-12, always with different ntime/coinbase). Hex is lower-cased because Postgres returns lower-case and the
+ * stream keeps the pool's casing.
  */
 export function templateKey(
   t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'ntime' | 'coinbase1' | 'coinbase2'>>,
@@ -67,17 +66,6 @@ export function templateKey(
   if (us === null || !t.pool_name) return null;
   const content = [t.ntime, t.coinbase1, t.coinbase2].map(v => (v ?? '').toLowerCase()).join('|');
   return `${t.pool_name}|${us.toString()}|${content}`;
-}
-
-/**
- * Drops templates a collector tagged as another chain's (chain_family: the Python collector still tags them). The Go
- * collector no longer classifies (docs/design/one-templates-table.md): its other-chain templates arrive untagged, and
- * the buffer's own height bounds keep them out instead: at most MAX_HEIGHTS_ABOVE_TIP above the Bitcoin tip, and not
- * below the kept height range. A template with a far height that arrives before the first tip is pruned when the tip
- * arrives (setTip).
- */
-export function isBitcoinTemplate(t: Pick<StratumV1Data, 'chain_family'>): boolean {
-  return t.chain_family === undefined || t.chain_family === null || t.chain_family === '';
 }
 
 function compareEntries(a: BufferedTemplate, b: BufferedTemplate): number {
@@ -150,7 +138,10 @@ export class TemplateBuffer {
     const newestByPool = this.newestByPool();
 
     for (const data of templates) {
-      if (!data || !isBitcoinTemplate(data) || !isAllowed(data.pool_name)) continue;
+      // Other chains' templates arrive untagged (collectors don't classify, docs/design/one-templates-table.md): the
+      // height bounds keep them out: at most MAX_HEIGHTS_ABOVE_TIP above the Bitcoin tip, and not below the kept
+      // height range. One with a far height that arrives before the first tip is pruned when the tip arrives (setTip).
+      if (!data || !isAllowed(data.pool_name)) continue;
       if (!Number.isInteger(data.height) || data.height <= 0) continue;
       if (this.tip !== null && data.height > this.tip + MAX_HEIGHTS_ABOVE_TIP) continue;
       const floor = this.heightFloor();

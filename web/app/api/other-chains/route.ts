@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/otherChainsRoute.test.ts)
 import { enableHistoricalData } from "../../../lib/db/blocks";
-import { isPostgres } from "../../../lib/db/backend";
 import {
   getOtherChainsSummary, getOtherTemplates, OTHER_CHAINS_CHAINS, OTHER_CHAINS_PAGE_MAX, type OtherChainsSummary,
 } from "../../../lib/db/other-chains";
@@ -14,9 +13,8 @@ export const dynamic = "force-dynamic";
  * Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (lib/db/other-chains.ts):
  * chain 'unknown' / reason 'no_bitcoin_parent': the previous block is no block we know (another chain on the same
  * connection, a pool's unannounced tip, or a Bitcoin block never stored). Work on stale Bitcoin blocks isn't here
- * (stale_tip_templates()). Read-only,
- * Postgres only (MongoDB mode answers supported: false without touching a database). POOL_BLACKLIST pools are left
- * out entirely.
+ * (stale_tip_templates()). Read-only. With historical data disabled it answers enabled: false, supported: false
+ * without touching a database. POOL_BLACKLIST pools are left out entirely.
  *
  *   GET /api/other-chains
  *       summary per (pool, chain, reason): counts, height range, distinct heights / prev hashes, first / last seen,
@@ -87,7 +85,6 @@ function bad(error: string) {
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   if (!enableHistoricalData) return NextResponse.json({ enabled: false, supported: false });
-  if (!isPostgres()) return NextResponse.json({ enabled: true, supported: false });
 
   const pool = params.get("pool");
   try {

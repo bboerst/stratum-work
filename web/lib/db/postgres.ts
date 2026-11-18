@@ -72,6 +72,12 @@ const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${OWN_RECEIVED_US} AS
   ${FIRST_SEEN_US} AS first_seen_us, j.height, j.job_id, j.prev_hash, j.coinbase1, j.coinbase2, j.merkle_branches,
   j.version, j.nbits, j.ntime, j.clean_jobs, j.extranonce1, j.extranonce2_length`;
 
+/** Whether a height's templates can't change any more: its receive window has closed (t_to is infinity above the tip). */
+export async function isHeightFinal(height: number): Promise<boolean> {
+  const [w] = await query<{ final: boolean }>('SELECT t_to < now() AS final FROM height_window($1, $1)', [height]);
+  return w?.final === true;
+}
+
 /** R1: Bitcoin templates at a height (one stream per pool across replicas), earliest first. */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
   const [from, to] = await heightWindow(height);

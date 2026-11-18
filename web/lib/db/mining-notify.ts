@@ -3,6 +3,7 @@ import { LRUCache } from 'lru-cache';
 import { MiningNotify } from '@prisma/client';
 import { isPostgres } from './backend';
 import * as pg from './postgres';
+import { getHighestBlock } from './blocks';
 
 // Read environment variable and convert to boolean
 // Default to true if the variable is not set
@@ -17,6 +18,23 @@ const blockCache = new LRUCache({
   allowStale: false,
   updateAgeOnGet: true,
 });
+
+/**
+ * A height's templates are cached for good only once they can't change any more. Until then (the height being mined,
+ * a future height, one whose block arrived recently) a read is cached for UNFINISHED_TTL_MS only: caching the first
+ * read for good froze a partial (or, for a future height, empty) answer until the process restarted.
+ *  - Postgres: final once the height's receive window has closed (height_window().t_to, db migration 20261118000006:
+ *    two hours after its block arrived; infinity above the stored tip). Facts only, no block-count guess.
+ *  - MongoDB (no windows): final at least MONGO_FINAL_DEPTH blocks below the highest stored block.
+ */
+export const UNFINISHED_TTL_MS = 15_000;
+export const MONGO_FINAL_DEPTH = 12;
+
+export async function isHeightFinal(height: number): Promise<boolean> {
+  if (isPostgres()) return pg.isHeightFinal(height);
+  const tip = (await getHighestBlock())?.height;
+  return typeof tip === 'number' && height <= tip - MONGO_FINAL_DEPTH;
+}
 
 /**
  * Get mining notifications for a specific block height
@@ -40,11 +58,13 @@ export async function getMiningNotifyByHeight(height: number): Promise<MiningNot
       return cachedRecords;
     }
 
-    // If not in cache, fetch from database
+    // If not in cache, fetch from database. Finality is checked first: a height that becomes final between the two
+    // reads is then only cached briefly, never the other way round.
+    const final = await isHeightFinal(height);
     const records = await fetchMiningNotifyByHeight(height);
 
-    // Store in cache
-    blockCache.set(cacheKey, records);
+    // Store in cache: for good if final, briefly otherwise
+    blockCache.set(cacheKey, records, final ? undefined : { ttl: UNFINISHED_TTL_MS });
     
     return records;
   } catch (error) {

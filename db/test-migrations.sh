@@ -34,11 +34,11 @@ as_user() { docker exec "$PG" psql -h localhost -U "$1" -d postgres -v ON_ERROR_
 echo "== image: $IMAGE"
 check "migrate up (all)"                 'dbmate up'
 check "timescaledb loaded"               '[ -n "$(psql_ "SELECT extversion FROM pg_extension WHERE extname = '"'"'timescaledb'"'"'")" ]'
-check "templates(_other), mempool_txs, _tx_inputs, _tx_raw: hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 5 ]'
+check "templates(_other), mempool_txs, _tx_inputs, _tx_raw, clock_samples: hypertables with columnstore" '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.hypertables WHERE compression_enabled")" = 6 ]'
 check "chunk skipping on templates.height" '[ "$(psql_ "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats WHERE column_name = '"'"'height'"'"'")" -ge 1 ]'
-check "5 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 5 ]'
+check "6 columnstore policy jobs"        '[ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_compression'"'"'")" = 6 ]'
 check "retention: inputs 30 days, raw 14 days" '[ "$(psql_ "SELECT string_agg(hypertable_name || '"'"'='"'"'|| (config->>'"'"'drop_after'"'"'), '"'"','"'"' ORDER BY hypertable_name) FROM timescaledb_information.jobs WHERE proc_name = '"'"'policy_retention'"'"'")" = "mempool_tx_inputs=30 days,mempool_tx_raw=14 days" ]'
-check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 18 ]'
+check "all migrations recorded"        '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 20 ]'
 check "blocks.seen_via: zmq / reconcile / NULL only" 'psql_ "INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig, seen_via) VALUES (decode('"'"'01'"'"', '"'"'hex'"'"'), 1, now(), decode('"'"'00'"'"', '"'"'hex'"'"'), '"'"'zmq'"'"')" && ! psql_ "INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig, seen_via) VALUES (decode('"'"'02'"'"', '"'"'hex'"'"'), 1, now(), decode('"'"'00'"'"', '"'"'hex'"'"'), '"'"'rpc'"'"')" && psql_ "DELETE FROM blocks WHERE height = 1"'
 check "ingest_events: start + session kinds" 'psql_ "INSERT INTO sources (name, site) VALUES ('"'"'kind-test'"'"', '"'"'t'"'"')" && psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'start'"'"', now(), now(), 0 FROM sources LIMIT 1" && psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'session'"'"', now(), now(), 0 FROM sources LIMIT 1" && ! psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'reboot'"'"', now(), now(), 0 FROM sources LIMIT 1" && psql_ "DELETE FROM ingest_events; DELETE FROM sources WHERE name = '"'"'kind-test'"'"'"'
 check "mempool_tx_inputs indexed by prevout" '[ "$(psql_ "SELECT count(*) FROM pg_indexes WHERE indexname = '"'"'mempool_tx_inputs_prevout'"'"'")" = 1 ]'
@@ -82,6 +82,11 @@ check "collector: cannot run the report"  '! as_user t_collector "SELECT * FROM 
 check "dedup: synthetic replicas, sites and report" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-templates-dedup.sql'
 # mempool recorder (mempool-recorder/): its own tables only; backend and web read them
 psql_ "CREATE USER t_mempool LOGIN PASSWORD 'x' IN ROLE stratum_mempool" >/dev/null
+psql_ "CREATE USER t_clock LOGIN PASSWORD 'x' IN ROLE stratum_clock" >/dev/null
+check "clock: insert a sample, again is a no-op" 'as_user t_clock "INSERT INTO clock_samples (node, sampled_at, system_time_s, root_delay_s, root_dispersion_s, stratum, reference) VALUES ('"'"'n1'"'"', '"'"'2026-11-18 03:00Z'"'"', 0.0002, 0.009, 0.0003, 2, '"'"'192.0.2.1'"'"') ON CONFLICT DO NOTHING" && as_user t_clock "INSERT INTO clock_samples (node, sampled_at, system_time_s, root_delay_s, root_dispersion_s, stratum, reference) VALUES ('"'"'n1'"'"', '"'"'2026-11-18 03:00Z'"'"', 0.0002, 0.009, 0.0003, 2, '"'"'192.0.2.1'"'"') ON CONFLICT DO NOTHING" && [ "$(psql_ "SELECT count(*) FROM clock_samples")" = 1 ]'
+check "clock: no other access"            '! as_user t_clock "SELECT 1 FROM clock_samples" && ! as_user t_clock "SELECT 1 FROM templates" && ! as_user t_clock "DELETE FROM clock_samples"'
+check "web + backend: read clock samples" '[ "$(as_user t_web "SELECT round(((abs(system_time_s) + root_dispersion_s + root_delay_s / 2) * 1000)::numeric, 1) FROM clock_samples")" = 5.0 ] && as_user t_backend "SELECT 1 FROM clock_samples"'
+check "collector: no clock access"        '! as_user t_collector "SELECT 1 FROM clock_samples"'
 G=4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b  # genesis coinbase txid, display order
 check "txid byte order: internal bytes are the reversed display hex" '[ "$(psql_ "SELECT encode(hash_from_display('"'"'$G'"'"'), '"'"'hex'"'"')")" = 3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a ] && [ "$(psql_ "SELECT hash_display(hash_from_display('"'"'$G'"'"'))")" = $G ]'
 MTX="INSERT INTO mempool_txs (first_seen, first_seen_src, txid, input_count) VALUES (now() - interval '1 minute', 'zmq', hash_from_display('$G'), 1)"
@@ -118,11 +123,13 @@ check "web + backend: read blocks_best"   'as_user t_web "SELECT count(*) FROM b
 check "collector: cannot read blocks_best" '! as_user t_collector "SELECT 1 FROM blocks_best"'
 check "web: cannot write blocks_best"    '! as_user t_web "DELETE FROM blocks_best"'
 check "blocks_best: stale hidden, active again shown" 'docker exec -i "$PG" psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q < db/test-blocks-best.sql'
-psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool; DROP USER t_collector, t_backend, t_web, t_mempool;" >/dev/null
+psql_ "DROP OWNED BY t_collector, t_backend, t_web, t_mempool, t_clock; DROP USER t_collector, t_backend, t_web, t_mempool, t_clock;" >/dev/null
 
 check "compress a chunk"                 '[ "$(psql_ "SELECT count(compress_chunk(c)) FROM show_chunks('"'"'templates'"'"') c")" -ge 1 ]'
 check "one stream per pool: window constants" '[ "$(psql_ "SELECT template_stream_silence() || '"'"' '"'"' || template_stream_lead()")" = "00:01:30 00:00:10" ]'
 check "stale-tip read: every connection, grants kept" '[ "$(psql_ "SELECT prosrc LIKE '"'"'%FROM templates t%'"'"' AND prosrc NOT LIKE '"'"'%templates_dedup%'"'"' AND has_function_privilege('"'"'stratum_web'"'"', oid, '"'"'EXECUTE'"'"') AND has_function_privilege('"'"'stratum_backend'"'"', oid, '"'"'EXECUTE'"'"') AND NOT has_function_privilege('"'"'stratum_collector'"'"', oid, '"'"'EXECUTE'"'"') FROM pg_proc WHERE proname = '"'"'stale_tip_templates'"'"'")" = t ]'
+check "down drops the clock_samples policy" 'dbmate down && [ "$(psql_ "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = '"'"'clock_samples'"'"'")" = 0 ]'
+check "down drops clock_samples + role"   'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_tables WHERE tablename = '"'"'clock_samples'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname = '"'"'stratum_clock'"'"'")" = 0 ]'
 check "down restores the two ingest_events kinds" 'dbmate down && ! psql_ "INSERT INTO ingest_events (source_id, kind, started_at, ended_at, templates) SELECT id, '"'"'start'"'"', now(), now(), 0 FROM sources LIMIT 1"'
 check "down drops blocks.seen_via"        'dbmate down && [ "$(psql_ "SELECT count(*) FROM information_schema.columns WHERE table_name = '"'"'blocks'"'"' AND column_name = '"'"'seen_via'"'"'")" = 0 ]'
 check "down drops the prevout index"      'dbmate down && [ "$(psql_ "SELECT count(*) FROM pg_indexes WHERE indexname = '"'"'mempool_tx_inputs_prevout'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_indexes WHERE indexname = '"'"'mempool_tx_inputs_tx'"'"'")" = 1 ]'
@@ -140,7 +147,7 @@ psql_ "DELETE FROM sources WHERE replica <> 'a'" >/dev/null
 check "migrate down to zero"             'for _ in 1 2 3 4 5 6; do dbmate down || exit 1; done'
 check "down left nothing behind"         '[ "$(psql_ "SELECT count(*) FROM pg_tables WHERE schemaname = '"'"'public'"'"' AND tablename <> '"'"'schema_migrations'"'"'")" = 0 ] && [ "$(psql_ "SELECT count(*) FROM pg_roles WHERE rolname LIKE '"'"'stratum_%'"'"'")" = 0 ]'
 check "migrate up again"                 'dbmate up'
-check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 18 ]'
+check "all migrations recorded again"  '[ "$(psql_ "SELECT count(*) FROM schema_migrations")" = 20 ]'
 
 echo "RESULT: $ok passed, $bad failed"
 [ "$bad" = 0 ]

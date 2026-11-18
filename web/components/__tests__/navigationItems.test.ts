@@ -14,9 +14,9 @@ describe('navItems', () => {
     expect(navItems.some(item => item.href === '/latency' || item.label === 'Latency')).toBe(false);
   });
 
-  test('lists the Other chains page (read-time judgement)', () => {
+  test('lists the Unknown parents page', () => {
     expect(navItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ href: '/other-chains', label: 'Other chains' }),
+      expect.objectContaining({ href: '/unknown-parents', label: 'Unknown parents' }),
     ]));
   });
 });

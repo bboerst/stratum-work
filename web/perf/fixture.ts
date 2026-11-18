@@ -159,6 +159,70 @@ export class Fixture {
     return BASE_HEIGHT + Math.floor((nowS - this.tipTimeS) / BLOCK_SECONDS);
   }
 
+  /**
+   * /api/unknown-parents: 36 synthetic episodes over 90 days, a mix of the three kinds (block races across many pools,
+   * short bursts of another chain on one pool, invalid parents). Its own random stream, so the other fixtures don't
+   * change.
+   */
+  unknownParents(nowS: number) {
+    const r = rng(this.opts.seed + 7);
+    const end = nowS * 1000, start = end - 90 * 86_400_000;
+    const tip = this.tipAt(nowS);
+    const episodes = Array.from({ length: 36 }, (_, i) => {
+      const kind = i % 6 === 5 ? "invalid_parent" : i % 3 === 1 ? "bitcoin_block" : "other_chain";
+      const first = Math.floor(start + ((i + r()) / 36) * (end - start));
+      const duration = Math.floor((kind === "other_chain" ? 10 + r() * 170 : 30 + r() * 600) * 1000);
+      const n = kind === "other_chain" ? 1 : 1 + Math.floor(r() * 12);
+      const pools = Array.from({ length: n }, (_, k) => ({
+        pool: this.pools[kind === "other_chain" ? 0 : (k * 7 + i) % this.opts.pools].name,
+        connections: k % 3 === 0 ? ["a"] : ["a", "b"], templates: 1 + Math.floor(r() * 40),
+      }));
+      const height = kind === "other_chain" ? 6_000_000 + i * 3 : tip - 13_000 + i * 320;
+      const offset = kind === "other_chain" ? height - 1 - (tip - 13_000 + i * 320) : 0;
+      return {
+        parent: (kind === "invalid_parent" ? "ff".repeat(28) : "00".repeat(9) + randHex(r, 19)) + hexOf(i, 4),
+        height, heights: [height], pools, first_ms: first, last_ms: first + duration, duration_ms: duration,
+        templates: pools.reduce((s, p) => s + p.templates, 0), auxpow_templates: 0, auxpow_share: 0,
+        facts: {
+          tip_at_first: height - 1 - offset, tip_offset: offset, nbits: [kind === "other_chain" ? "1a0abcde" : "17030ecd"],
+          bitcoin_bits: kind === "other_chain" ? null : "17030ecd", bitcoin_bits_at: null,
+          bitcoin_difficulty: kind === "other_chain" ? null : true, pow_ok: kind !== "invalid_parent",
+          pow_bits: kind === "other_chain" ? "1a0abcde" : "17030ecd", in_stale_blocks: false,
+        },
+        kind,
+      };
+    });
+    return { enabled: true, supported: true, days: 90, window_start: start, generated_at: end, episodes };
+  }
+
+  /** /api/unknown-parents?parent=…: the episode's pools, a template every 5 s each over its minutes ± 5 (thousands). */
+  unknownParentDrill(nowS: number, parent: string) {
+    const summary = this.unknownParents(nowS);
+    const episode = summary.episodes.find((e) => e.parent === parent);
+    if (!episode) return { error: "no such episode" };
+    const from_ms = episode.first_ms - 300_000, to_ms = episode.last_ms + 300_000;
+    const labels = ["best", "this", "best"] as const;
+    const templates = [];
+    for (const [pi, p] of episode.pools.entries()) {
+      for (let t = from_ms + pi * 300; t <= to_ms; t += 5000) {
+        const phase = t < episode.first_ms ? 0 : t <= episode.last_ms ? 1 : 2;
+        templates.push({
+          id: `${pi}-${t}`, pool_name: p.pool, parent: labels[phase], connections: p.connections,
+          height: episode.height - 1 + phase, received_at: t, copies: p.connections.length, prev_hash: parent,
+          version: "20000000", nbits: "17030ecd", ntime: Math.floor(t / 1000).toString(16), clean_jobs: true,
+          extranonce1: "00000000", extranonce2_length: 4, merkle_branches: 12, coinbase_ok: true, scriptsig_height: episode.height,
+          coinbase_tags: `/Synthetic Pool ${pi + 1}/`, auxpow: false, auxpow_root: null, auxpow_merkle_size: null,
+          outputs: [{ value: 312_500_000, script_hex: "0014" + "11".repeat(20) }], output_total: 312_500_000,
+        });
+      }
+    }
+    templates.sort((a, b) => a.received_at - b.received_at);
+    return {
+      enabled: true, supported: true, episode, from_ms, to_ms, templates, truncated: false,
+      blocks: [{ hash: this.prevHash(episode.height - 1), height: episode.height - 1, arrival_ms: episode.first_ms - 2000, best: true }],
+    };
+  }
+
   /** /api/blocks?n=… : the last n blocks up to the tip. */
   blocks(nowS: number, n: number) {
     const tip = this.tipAt(nowS);

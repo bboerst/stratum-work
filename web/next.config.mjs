@@ -8,6 +8,10 @@ const nextConfig = {
     .split(",")
     .map((host) => host.trim())
     .filter(Boolean),
+  // The Other chains page became Unknown parents (episodes per unknown parent).
+  async redirects() {
+    return [{ source: '/other-chains', destination: '/unknown-parents', permanent: true }];
+  },
   // Rewrites configuration from next.config.mjs
   async rewrites() {
     return [

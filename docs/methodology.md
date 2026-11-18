@@ -166,6 +166,29 @@ compares them with the stored templates at read time:
   stored path is unknown, and one whose path no stored template shares had its job never sent to our connections (or
   sent after the last one we stored).
 
+Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and each row records which
+(`header_source`):
+
+- **From our node** (`node`, **observed**): every branch our node's `getchaintips` reports besides the active chain,
+  walked back to where it forks, with the node's header for each block and, when the node downloaded it, the full
+  block. A block our node had as its tip until a reorganisation is marked `was_active` and linked to the reorg.
+- **From the public stale-blocks dataset** (`bitcoin-data/stale-blocks`, **verified**): blocks our node never had,
+  because they lost before reaching it or are older than stale-block tracking, can still be proved by the templates:
+  pools built on them. When templates from at least two pools at one height build on a previous block we don't know,
+  that is a Bitcoin block we never stored. The [stale-blocks dataset](https://github.com/bitcoin-data/stale-blocks)
+  (public domain, CC0; [doi:10.5281/zenodo.22667157](https://doi.org/10.5281/zenodo.22667157)) collects such
+  blocks' headers, and some full blocks, from many nodes. A header from it is stored only if every check passes: it
+  hashes to the dataset's hash and to the hash the templates built on; the hash meets the proof of work its `bits`
+  claim, within Bitcoin's limit, and those `bits` equal our best block's at the same height (where we have them); it
+  builds on our best block at the height below; its height is the templates' height minus one; and our best block
+  at that height is a different block. A full block from the dataset must parse exactly, carry that header, and its
+  transactions must hash to the header's merkle root; its coinbase, size, weight and pool are then filled like our
+  node's. A parent seen from only one pool is accepted only when the dataset has it, under the same checks. Such a
+  row has status `not-in-node` (no status of our node applies), is never `was_active`, and its `first_seen` is the
+  earliest template built on it: when we first had evidence of the block. A dataset entry that fails a check is
+  reported and not stored. The importer is `backend/stale_import.py`; every candidate and every rejection is in its
+  summary.
+
 ## Unknown parents
 
 Some pools serve other chains (for example Bitcoin Cash) on the same connections. The collector stores every template
@@ -203,7 +226,8 @@ The rules, in order:
    target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
    lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
    seconds before the page was computed, before we stored it: the page is recomputed every 30 minutes, so such an
-   episode stays listed until then.
+   episode stays listed until then. Once its header is imported from the public stale-blocks dataset (see
+   [Blocks](#blocks)) the parent is a known block and the episode leaves this view.
 3. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a
    valid block at all.
 4. **Undetermined**: no stored block to compare with at all.

@@ -69,6 +69,13 @@ BLOCK_GAP_FILL_INTERVAL_S = float(os.getenv("BLOCK_GAP_FILL_INTERVAL_S", "3600")
 BLOCK_GAP_FILL_MAX_BLOCKS = int(os.getenv("BLOCK_GAP_FILL_MAX_BLOCKS", "50"))
 BLOCK_GAP_FILL_PEERS = int(os.getenv("BLOCK_GAP_FILL_PEERS", "3"))
 BLOCK_GAP_FILL_PEER_TIMEOUT_S = float(os.getenv("BLOCK_GAP_FILL_PEER_TIMEOUT_S", "30"))
+# Full-history best-chain check (best_chain_history.py): at startup (after the sync) and then every
+# BEST_CHAIN_HISTORY_INTERVAL_S seconds, the stored best block at every height between MIN_BLOCK_HEIGHT and the
+# stored tip is compared with the node's active chain, in chunks, outside the block processor; only the fixes run on
+# it. A wrong block is replaced by the node's (stored as synced, seen_at NULL; on a pruned node via getblockfrompeer)
+# and marked stale. 0 turns it off.
+BEST_CHAIN_HISTORY_INTERVAL_S = float(os.getenv("BEST_CHAIN_HISTORY_INTERVAL_S", "86400"))
+BEST_CHAIN_HISTORY_CHUNK = 2000
 # Header fill (header_fill.py): after each gap-fill run, up to HEADER_FILL_MAX_BLOCKS stored blocks without header
 # columns (tx_count, version, merkle_root, bits, nonce, difficulty, size, weight) get them from getblockheader.
 # 0 = off. Postgres only.
@@ -875,38 +882,71 @@ def gap_filler():
         peer_timeout=BLOCK_GAP_FILL_PEER_TIMEOUT_S)
 
 
+def best_chain_history_check(fetcher=None):
+    """The full-history best-chain check (best_chain_history.py), with its own reconciler: blocks it stores were not
+    seen live, so they are saved as synced (seen_at NULL), unlike the window's."""
+    from best_chain_history import BestChainHistoryCheck
+    from reconcile import BestChainReconciler
+    reconciler = BestChainReconciler(
+        node_height=lambda: node_rpc("getblockcount"), node_hashes=node_block_hashes, store=store,
+        store_block=lambda h: process_block(h, is_new_block=False), mark_replaced=mark_replaced_blocks,
+        window=0, min_height=MIN_BLOCK_HEIGHT)
+    return BestChainHistoryCheck(
+        reconciler, node_height=lambda: node_rpc("getblockcount"), node_hashes=node_block_hashes,
+        store_block=lambda h: process_block_status(h, is_new_block=False),   # synced, not seen live
+        on_block_processor=lambda fn: block_processor.submit(fn).result(),   # only the fixes run there
+        fetcher=fetcher or gap_filler(), min_height=MIN_BLOCK_HEIGHT, chunk=BEST_CHAIN_HISTORY_CHUNK)
+
+
 def sync_then_fill_gaps():
-    """The startup sync, then the historical gap fill now and every BLOCK_GAP_FILL_INTERVAL_S seconds."""
+    """The startup sync, then the historical gap fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history
+    best-chain check (every BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
     sync_blocks()
-    if BLOCK_GAP_FILL_INTERVAL_S <= 0 or not store.enabled:
+    fill = BLOCK_GAP_FILL_INTERVAL_S > 0 and store.enabled
+    check = BEST_CHAIN_HISTORY_INTERVAL_S > 0 and store.enabled
+    if not fill:
         logger.info("Historical gap fill off (BLOCK_GAP_FILL_INTERVAL_S=%s)", BLOCK_GAP_FILL_INTERVAL_S)
+    if not check:
+        logger.info("Best-chain history check off (BEST_CHAIN_HISTORY_INTERVAL_S=%s)", BEST_CHAIN_HISTORY_INTERVAL_S)
+    if not (fill or check):
         return
     filler = gap_filler()
+    history = best_chain_history_check(filler) if check else None
     headers = None
-    if HEADER_FILL_MAX_BLOCKS > 0:
+    if fill and HEADER_FILL_MAX_BLOCKS > 0:
         from header_fill import BlockHeaderFiller
         headers = BlockHeaderFiller(rpc=node_rpc, store=store, header_fields=block_header_fields,
                                     max_blocks=HEADER_FILL_MAX_BLOCKS)
     coinbases = None
-    if COINBASE_FILL_MAX_BLOCKS > 0:
+    if fill and COINBASE_FILL_MAX_BLOCKS > 0:
         from coinbase_fill import BlockCoinbaseFiller
         coinbases = BlockCoinbaseFiller(rpc=node_rpc, store=store, max_blocks=COINBASE_FILL_MAX_BLOCKS)
+    next_fill = next_check = time.monotonic()
     while True:
-        try:
-            filler.run()
-        except Exception as e:
-            logger.error("Historical gap fill failed (retried next run): %s", e)
-        if coinbases is not None:
+        if fill and time.monotonic() >= next_fill:
             try:
-                coinbases.run()
+                filler.run()
             except Exception as e:
-                logger.error("Coinbase fill failed (retried next run): %s", e)
-        if headers is not None:
+                logger.error("Historical gap fill failed (retried next run): %s", e)
+            if coinbases is not None:
+                try:
+                    coinbases.run()
+                except Exception as e:
+                    logger.error("Coinbase fill failed (retried next run): %s", e)
+            if headers is not None:
+                try:
+                    headers.run()
+                except Exception as e:
+                    logger.error("Header fill failed (retried next run): %s", e)
+            next_fill = time.monotonic() + BLOCK_GAP_FILL_INTERVAL_S
+        if history is not None and time.monotonic() >= next_check:
             try:
-                headers.run()
+                history.run()
             except Exception as e:
-                logger.error("Header fill failed (retried next run): %s", e)
-        time.sleep(BLOCK_GAP_FILL_INTERVAL_S)
+                logger.error("Best-chain history check failed (retried next run): %s", e)
+            next_check = time.monotonic() + BEST_CHAIN_HISTORY_INTERVAL_S
+        due = [t for t, on in ((next_fill, fill), (next_check, history is not None)) if on]
+        time.sleep(max(1.0, min(due) - time.monotonic()))
 
 
 def start_background_workers():

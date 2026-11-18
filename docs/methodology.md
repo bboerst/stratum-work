@@ -132,6 +132,11 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
 - A block our node didn't announce, but which was found later when the stored chain was checked against the node's
   (after a reorganisation or an outage), is marked `seen_via = 'reconcile'`. Its time is only when it was found.
 - Blocks loaded from older history, or filled in later, have no seen time.
+- The block stored as "the block at a height" must be the one on our node's best chain. Recent heights are checked
+  after every block; every height in the stored history is checked once a day, because a history backfill can carry
+  a block that lost a race (it was briefly the tip where it was recorded) while the winner is missing. A block that
+  replaces such a block is stored without a seen time: it was found long after it arrived, so the detection time
+  would pass for an arrival time. The replaced block stays stored and is marked stale, not deleted.
 - Before 18 November 2026 the seen time was taken when the block had been processed and saved, typically 0.6 to 1
   second after it arrived (median 0.84 s). Those rows have `seen_via` NULL and run late by about that much.
 

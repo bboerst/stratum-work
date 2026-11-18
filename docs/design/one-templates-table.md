@@ -149,7 +149,7 @@ The variants:
 
    This works before and after the data move: until then `templates` simply has no non-Bitcoin rows, and the reads keep the `templates_other` part until step 4.
 2. **Collectors:** deploy them without classification and routing. From then on every template lands in `templates`. Old collectors keep working in the meantime, because `templates_other` still exists.
-3. **Move the rows** in one migration: `INSERT INTO templates SELECT <columns> FROM templates_other` (~1.16M rows), then `compress_chunk()` on the chunks it touched. TimescaleDB recompresses only the touched segments (one source in one chunk each).
+3. **Move the rows:** per source and 7-day range, one transaction deletes them from `templates_other` and inserts them into `templates` (~1.13M rows), writing each row's `chain` and `reason` to `template_routing_labels` (migration `20261118000007`); then `compress_chunk()` on the chunks it touched. TimescaleDB recompresses only the touched segments (one source in one chunk each).
    - **Measured:** 82,087 rows into 8 compressed chunks took 57 MB of WAL for the insert and 129 MB for the recompression (2.6 s + 2.4 s), and left no partially compressed chunks.
    - **Production:** the insert scales with rows, about 0.8 GB for 1.16M. The recompression scales with the compressed size of the touched (source, chunk) segments; measure it before the move with `SELECT count(DISTINCT (source_id, time_bucket('7 days', received_at))) FROM templates_other`.
    - Run it one chunk's time range at a time, with a `COMMIT` and a pause between, so WAL archiving keeps up and `PostgresWALArchiveBacklog` doesn't fire.
@@ -157,5 +157,5 @@ The variants:
 
 **Rollback:**
 - Steps 1–2 are code deploys, rolled back by redeploying.
-- Step 3 changes no existing row. Until step 4, reverting means deleting the moved rows from `templates`, which are exactly the rows still in `templates_other`.
+- Step 3 moves each batch in one transaction (the rows deleted from `templates_other` are the rows inserted into `templates`, checked by count and checksum), so a row is never in both tables. The collector's write-time `chain` and `reason` of every moved row are kept in `template_routing_labels`, keyed by the template's `(source_id, received_at, job_id)`. Until step 4, reverting means moving the labelled rows back.
 - After step 4 the old split can't come back without a classifier. That's intended.

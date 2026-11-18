@@ -13,4 +13,10 @@ describe('navItems', () => {
     expect(navItems.some(item => item.href === '/servers' || item.label === 'Servers')).toBe(false);
     expect(navItems.some(item => item.href === '/latency' || item.label === 'Latency')).toBe(false);
   });
+
+  test('lists the Other chains page (read-time judgement)', () => {
+    expect(navItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ href: '/other-chains', label: 'Other chains' }),
+    ]));
+  });
 });

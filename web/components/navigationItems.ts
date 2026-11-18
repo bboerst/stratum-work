@@ -1,4 +1,4 @@
-import { Activity, ScatterChart, Table, Workflow } from "lucide-react";
+import { Activity, Layers, ScatterChart, Table, Workflow } from "lucide-react";
 import { listedVisuals } from "@/visuals/registry";
 
 export const navItems = [
@@ -25,6 +25,12 @@ export const navItems = [
     label: "Infra",
     icon: Activity,
     description: "Realtime Stratum infrastructure metrics",
+  },
+  {
+    href: "/other-chains",
+    label: "Other chains",
+    icon: Layers,
+    description: "Templates from the last 90 days that don't build on a Bitcoin block we know, judged at read time",
   },
   // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>.
   ...listedVisuals().map((v) => ({

@@ -123,6 +123,11 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
 
 A block's header time is set by the miner and can be minutes off, so it isn't used as an arrival time.
 
+A block's header facts (transaction count, size, weight, version, merkle root, bits, nonce, difficulty) are what our
+Bitcoin node reports for it (**observed**): from the full block when the backend stores it, or, for blocks stored
+before these were recorded, from the node's block header. A header has no size or weight, so those stay empty for
+older blocks whose full data the node no longer keeps.
+
 ## Other chains
 
 Some pools serve other chains (for example Bitcoin Cash) on the same connections. A template whose height is far from

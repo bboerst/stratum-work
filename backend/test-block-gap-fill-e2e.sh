@@ -111,6 +111,22 @@ runs_logged() { docker logs "$BE" 2>&1 | grep -c "Gap fill:.*missing"; }
 sleep 6; RUNS=$(runs_logged); sleep 12   # two more runs (BLOCK_GAP_FILL_INTERVAL_S=5)
 check "later runs find no gaps (no new 'missing' log)" test "$(runs_logged)" = "$RUNS"
 
+echo "== header columns (header_fill.py)"
+check "every stored block has its header columns (from getblock)" \
+  sql_is "SELECT count(*) FROM blocks WHERE tx_count IS NULL OR merkle_root IS NULL OR bits IS NULL OR nonce IS NULL OR size IS NULL" 0
+# Blocks stored before the columns existed: clear them at a height B has pruned (263) and one it hasn't (600).
+sql "UPDATE blocks SET tx_count = NULL, size = NULL, weight = NULL, version = NULL, merkle_root = NULL, bits = NULL, nonce = NULL, difficulty = NULL WHERE height IN (263, 600)" >/dev/null
+check "263 is still pruned on B" pruned_on_b 263
+headers_back() { sql_is "SELECT count(*) FROM blocks WHERE height IN (263, 600) AND tx_count IS NOT NULL AND merkle_root IS NOT NULL AND bits IS NOT NULL" 2; }
+check "the header fill restores them (getblockheader, also for the pruned block)" retry 30 headers_back
+hdr() { cli "$BB" getblockheader "$(cli "$BB" getblockhash "$1")"; }
+H263=$(hdr 263)
+check "263's values are the node's (nTx, merkle root, bits, nonce)" sql_is \
+  "SELECT tx_count || ' ' || encode(merkle_root, 'hex') || ' ' || lpad(to_hex(bits), 8, '0') || ' ' || nonce FROM blocks WHERE height = 263" \
+  "$(echo "$H263" | python3 -c 'import json,sys; h=json.load(sys.stdin); print(h["nTx"], h["merkleroot"], h["bits"], h["nonce"])')"
+check "size and weight stay NULL (a header has none)" \
+  sql_is "SELECT count(*) FROM blocks WHERE height IN (263, 600) AND size IS NULL AND weight IS NULL" 2
+
 echo "== backend logs (gap fill)"
 docker logs "$BE" 2>&1 | grep -E "Gap fill" | head -30
 echo "RESULT: $ok passed, $bad failed"

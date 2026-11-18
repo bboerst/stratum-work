@@ -113,6 +113,13 @@ class MongoStore:
         """A replaced block that is on the node's active chain again."""
         self.db.blocks.update_many({"block_hash": block_hash, "stale": True}, {"$unset": {"stale": "", "stale_at": ""}})
 
+    # header fill (header_fill.py) is Postgres-only: MongoDB documents get the fields from new saves only
+    def blocks_missing_header(self, limit: int) -> List[str]:
+        return []
+
+    def fill_block_headers(self, docs: List[Dict[str, Any]]) -> int:
+        return 0
+
     # templates
     def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
         return list(self.db.mining_notify.find({"height": height, "chain_family": {"$exists": False}}))
@@ -124,6 +131,16 @@ class MongoStore:
 
     def load_pools(self) -> List[Dict[str, Any]]:
         return list(self.db.pools.find({}, {"_id": 0}))
+
+
+def _header_params(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """blocks' header columns from a block document's header fields (main.block_header_fields); missing = NULL."""
+    bits = doc.get("bits")
+    return dict(
+        tx_count=doc.get("transactions"), size=doc.get("size"), weight=doc.get("weight"), version=doc.get("version"),
+        merkle_root=_to_bytes(doc["merkle_root"]) if doc.get("merkle_root") else None,
+        bits=int(str(bits), 16) if bits is not None else None, nonce=doc.get("nonce"), difficulty=doc.get("difficulty"),
+    )
 
 
 def _to_bytes(hex_str: Optional[str]) -> bytes:
@@ -146,11 +163,18 @@ class PostgresStore:
 
     _BLOCK_UPSERT = """
         INSERT INTO blocks (block_hash, height, block_time, seen_at, seen_via, coinbase_script_sig, pool_id, mining_pool,
-                            analysis)
+                            analysis, tx_count, size, weight, version, merkle_root, bits, nonce, difficulty)
         VALUES (%(block_hash)s, %(height)s, %(block_time)s, %(seen_at)s, %(seen_via)s, %(coinbase_script_sig)s,
-                %(pool_id)s, %(mining_pool)s, %(analysis)s)
+                %(pool_id)s, %(mining_pool)s, %(analysis)s, %(tx_count)s, %(size)s, %(weight)s, %(version)s,
+                %(merkle_root)s, %(bits)s, %(nonce)s, %(difficulty)s)
         ON CONFLICT (block_hash) DO UPDATE SET
             height = EXCLUDED.height, block_time = EXCLUDED.block_time,
+            -- header facts never change for a hash: a save without one (e.g. a document from before they were
+            -- recorded) keeps what is stored
+            tx_count = COALESCE(EXCLUDED.tx_count, blocks.tx_count), size = COALESCE(EXCLUDED.size, blocks.size),
+            weight = COALESCE(EXCLUDED.weight, blocks.weight), version = COALESCE(EXCLUDED.version, blocks.version),
+            merkle_root = COALESCE(EXCLUDED.merkle_root, blocks.merkle_root), bits = COALESCE(EXCLUDED.bits, blocks.bits),
+            nonce = COALESCE(EXCLUDED.nonce, blocks.nonce), difficulty = COALESCE(EXCLUDED.difficulty, blocks.difficulty),
             -- the first time we saw it live is kept, with how we saw it (SET reads the row's old values)
             seen_at = COALESCE(blocks.seen_at, EXCLUDED.seen_at),
             seen_via = CASE WHEN blocks.seen_at IS NULL THEN EXCLUDED.seen_via ELSE blocks.seen_via END,
@@ -229,6 +253,7 @@ class PostgresStore:
             coinbase_script_sig=_to_bytes(doc.get("coinbase_script_sig")), pool_id=_pool_id(doc.get("mining_pool")),
             mining_pool=json.dumps(doc.get("mining_pool") or {}, default=str),
             analysis=json.dumps(doc.get("analysis") or {}, default=str),
+            **_header_params(doc),
         )
 
     def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
@@ -288,6 +313,34 @@ class PostgresStore:
 
     def has_block_at_height(self, height: int) -> bool:
         return self._run(lambda c: c.execute("SELECT EXISTS (SELECT 1 FROM blocks_best WHERE height = %s)", (height,)).fetchone()[0])
+
+    # header fill (header_fill.py): blocks stored before the header columns were written
+    def blocks_missing_header(self, limit: int) -> List[str]:
+        """Hashes (hex, as stored) of blocks with no tx_count yet, newest first. All blocks, stale ones too."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex') FROM blocks WHERE tx_count IS NULL ORDER BY height DESC LIMIT %s",
+            (limit,)).fetchall())
+        return [r[0] for r in rows]
+
+    _HEADER_FILL = """
+        UPDATE blocks SET
+            tx_count = COALESCE(tx_count, %(tx_count)s), size = COALESCE(size, %(size)s),
+            weight = COALESCE(weight, %(weight)s), version = COALESCE(version, %(version)s),
+            merkle_root = COALESCE(merkle_root, %(merkle_root)s), bits = COALESCE(bits, %(bits)s),
+            nonce = COALESCE(nonce, %(nonce)s), difficulty = COALESCE(difficulty, %(difficulty)s)
+        WHERE block_hash = %(block_hash)s"""
+
+    def fill_block_headers(self, docs: List[Dict[str, Any]]) -> int:
+        """Fill only the header columns that are still NULL, from {block_hash, <header fields>} documents. Returns the
+        rows updated."""
+        params = [dict(block_hash=_to_bytes(d["block_hash"]), **_header_params(d)) for d in docs]
+        if not params:
+            return 0
+        def run(c):
+            with c.cursor() as cur:
+                cur.executemany(self._HEADER_FILL, params)
+                return cur.rowcount
+        return self._run(run)
 
     def best_block_hashes_between(self, low: int, high: int) -> Dict[int, List[str]]:
         """{height: [hash, ...]} of the blocks_best rows in [low, high]."""

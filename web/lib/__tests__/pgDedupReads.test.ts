@@ -18,6 +18,7 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
   const name = `wtest-${h}`;
   const single = `wtest1-${h}`;
   const T0 = 1_794_437_000;                                            // receive times: T0 + seconds
+  const LATE = 86_400;                                                 // a day later: outside every window here
   let pg: typeof import('../db/postgres');
   let admin: Client;
   const sid: Record<string, number> = {};
@@ -63,13 +64,10 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     await insert('single', 1.0, h + 1, 's1', 'aa', 100, 'e1');
     await insert('single', 2.0, h + 1, 's2', 'aa', 101, 'e2');
     await insert('single', 3.0, h + 1, 's3', 'aa', 101, 'e3');
-    for (const [src, s, job] of [['ci/a', 2.0, 'oa'], ['ci/b', 1.0, 'ob']] as const) {
-      await admin.query(
-        `INSERT INTO templates_other (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
-                                      version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length, chain, reason)
-         VALUES (to_timestamp($1::float8), $2, $3, $4, '\\x0b', '\\x01', '\\x02', '', 1, 2, 3, true, '\\x03', 8, 'bch', 'bch')`,
-        [T0 + s, sid[src], h, job]);
-    }
+    // another chain's template at this height a day later (unknown parent, outside the height's window), on both
+    // connections: an exact copy, so R2 shows it once
+    await insert('ci/a', LATE + 2.0, h, 'oa', 'dd', 3, '0a');
+    await insert('ci/b', LATE + 1.0, h, 'ob', 'dd', 3, '0a');
   });
 
   afterAll(async () => {
@@ -102,10 +100,11 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     ]);
   });
 
-  it('R2: both tables de-duplicated', async () => {
+  it('R2: every row at the height, whenever received, de-duplicated; R1 leaves out the late one', async () => {
     const got = await pg.allTemplatesAtHeight(h);
-    expect(got.map(t => [jobId(t), t.chain_family])).toEqual([['a1', null], ['oa', 'bch'], ['a2', null], ['b9', null]]);
-    expect(got[1].timestamp).toBe(hexNs(1.0));
+    expect(got.map(t => [jobId(t), t.chain_family])).toEqual([['a1', null], ['a2', null], ['b9', null], ['oa', null]]);
+    expect(got[3].timestamp).toBe(hexNs(LATE + 1.0));   // first seen: the other connection's earlier exact copy
+    expect((await pg.templatesAtHeight(h)).map(jobId)).not.toContain('oa');
   });
 
   it('R4 / R4b: one entry per pool, first seen over all replicas and sites', async () => {

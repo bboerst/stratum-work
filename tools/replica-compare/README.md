@@ -2,7 +2,7 @@
 
 With redundant collection, a pool is collected by two (or more) collectors at the same site, each registering its own source (`sources.replica`, `a`, `b`, …) and writing its own rows. Reads that need one row per *job* must group those rows, and that needs a key the replicas agree on. This tool measures, for a time window and per pool, how two replicas' templates compare, so the key can be chosen (and re-checked later) from data.
 
-It reads a database with the stratum-work schema ([`db/migrations`](../../db/migrations)): `templates`, `templates_other` and `sources`. It only reads; any role with `SELECT` on those tables works (`stratum_backend`, `stratum_web`).
+It reads a database with the stratum-work schema ([`db/migrations`](../../db/migrations)): `templates`, `sources` and `bitcoin_parents` (the blocks we know). It only reads; any role with `SELECT` on those works (`stratum_backend`, `stratum_web`).
 
 ## What it reports
 Per pool (`sources.name`, comparing two `sources.replica` values):
@@ -41,7 +41,7 @@ Options:
 - **Pairing:** `--max-offset S` (default 2), `--tie-ms MS` (first-seen offsets up to this count as ties; default 0).
 - **Connection:** `--pg-host/--pg-port/--pg-database/--pg-user/--pg-sslmode`, or libpq's `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGSSLMODE`. The password only via `PGPASSWORD` or a `PGPASSFILE`. Connections take keyword arguments, never a URL, and the session is read-only.
 
-A window holds both tables' rows (`templates` and `templates_other`), so templates from other chains are included and counted per chain (`chains`). They have their own `prev_hash`, so they never pair with Bitcoin templates.
+A window holds every template in `templates`, other chains' included, counted per chain (`chains`), judged at read time: `btc` when its `prev_hash` is a block we know (`bitcoin_parents`), `unknown` otherwise. Other chains have their own `prev_hash`, so they never pair with Bitcoin templates.
 
 ## Test
 ```bash

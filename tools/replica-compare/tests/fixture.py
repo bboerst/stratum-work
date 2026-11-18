@@ -17,7 +17,8 @@ POOL1, POOL2 = "pool-one", "pool-two"
 
 def rows():
     """pool-one: replicas a and b, 30 jobs 10 s apart, b 7 ms behind, a 2-byte per-session tag in the scriptSig;
-    b misses job 12. One extra template is a non-Bitcoin one (templates_other). pool-two: replica a only."""
+    b misses job 12. One extra template is a non-Bitcoin one (a prev hash that is no block we know). pool-two: replica
+    a only."""
     out = []
     for i in range(30):
         merkle = bytes([i]) * 32
@@ -26,7 +27,7 @@ def rows():
                 continue
             out.append((POOL1, "btc", template(r, i * 10_000 + dt, merkle=merkle, en1=en1, sig_pre=b"/p/" + tag,
                                                job_id=f"{r}{i}", ntime=1_893_456_000 + i * 10)))
-    out.append((POOL1, "bch", template("a", 5_000, prev=b"\x44" * 32, height=6_000_000)))
+    out.append((POOL1, "unknown", template("a", 5_000, prev=b"\x44" * 32, height=6_000_000)))
     for i in range(5):
         out.append((POOL2, "btc", template("a", i * 10_000, merkle=bytes([i]) * 32)))
     return out
@@ -41,16 +42,15 @@ def load():
                 ids[(pool, t.replica)] = c.execute(
                     "INSERT INTO sources (name, site, replica) VALUES (%s, 'test', %s) RETURNING id",
                     (pool, t.replica)).fetchone()[0]
-        for pool, chain, t in rows():
+        # the block the Bitcoin templates build on (their prev hash, 32 identical bytes: byte order doesn't matter)
+        c.execute("INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig) "
+                  "VALUES (%s, 975000, now(), '\\x00')", (b"\x11" * 32,))
+        for pool, _chain, t in rows():
             cols = ("received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches, "
                     "version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length")
             vals = [t.received_at, ids[(pool, t.replica)], t.height, t.job_id, t.prev_hash, t.coinbase1, t.coinbase2,
                     t.merkle_branches, t.version, t.nbits, t.ntime, t.clean_jobs, t.extranonce1, t.extranonce2_length]
-            if chain == "btc":
-                c.execute(f"INSERT INTO templates ({cols}) VALUES ({', '.join(['%s'] * 14)})", vals)
-            else:
-                c.execute(f"INSERT INTO templates_other ({cols}, chain, reason) VALUES "
-                          f"({', '.join(['%s'] * 14)}, %s, 'bch')", vals + [chain])
+            c.execute(f"INSERT INTO templates ({cols}) VALUES ({', '.join(['%s'] * 14)})", vals)
     print(f"loaded {len(rows())} templates")
 
 
@@ -61,7 +61,7 @@ def check(path: str) -> int:
     tag = p1["coinbase"]["fields"][0]
     checks = {
         "pool-two skipped (one replica)": "skipped" in p2,
-        "pool-one counts": p1["templates"] == {"a": 31, "b": 29} and p1["chains"] == {"btc": 59, "bch": 1},
+        "pool-one counts": p1["templates"] == {"a": 31, "b": 29} and p1["chains"] == {"btc": 59, "unknown": 1},
         "pool-one pairs": p1["pairs"] == 29,
         "job key matches all but one": (k1["matched"], k1["only_a"], k1["only_b"]) == (29, 2, 0),
         "a always first by 7 ms": k1["a_first"] == 29 and abs(k1["offset_ms"]["p50"] - 7) < 0.01,
@@ -73,12 +73,13 @@ def check(path: str) -> int:
     dedup = {(r["pool"], r["site"]): r for r in json.load(open(path))["dedup"]}
     t1, t2 = dedup.get((POOL1, None), {}), dedup.get((POOL2, None), {})
     checks.update({
-        # b's templates are exact copies of a's (same ntime), 7 ms later: all hidden, no first-seen gains
+        # b's templates are exact copies of a's (same ntime), 7 ms later: all hidden, no first-seen gains; a also has the
+        # non-Bitcoin template (every template is in templates, so the report counts it: 31 primary rows)
         "dedup: pool-one exact copies hidden": (t1.get("primary_rows"), t1.get("secondary_rows"), t1.get("secondary_hidden"),
                                                 t1.get("secondary_shown"), t1.get("first_seen_gains"),
-                                                t1.get("exact_copies"), t1.get("secondary_stream")) == (30, 29, 29, 0, 0, 29, 0),
+                                                t1.get("exact_copies"), t1.get("secondary_stream")) == (31, 29, 29, 0, 0, 29, 0),
         "dedup: pool-two single source": (t2.get("primary_rows"), t2.get("secondary_rows")) == (5, 0),
-        "dedup: per-site row": dedup.get((POOL1, "test"), {}).get("rows") == 59,
+        "dedup: per-site row": dedup.get((POOL1, "test"), {}).get("rows") == 60,
     })
     for name, ok in checks.items():
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")

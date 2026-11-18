@@ -82,7 +82,7 @@ bch_confirmer = BCHConfirmer(
 )
 chain_classifier = ChainClassifier(
     tip_state=tip_state,
-    divergence_threshold=6,  # = the Postgres routing window (pgsink.TIP_AHEAD / TIP_BEHIND)
+    divergence_threshold=6,  # the tip window for the MongoDB chain tag (chain_family)
     confirmer=bch_confirmer,
 )
 tip_state_lock = threading.Lock()
@@ -910,7 +910,7 @@ def main():
             PostgresConfig(host=args.pg_host, port=args.pg_port, database=args.pg_database, user=args.pg_user,
                            password=args.pg_password, sslmode=args.pg_sslmode, site=args.collector_site,
                            replica=args.collector_replica),
-            source_name=args.pool_name, stratum_url=args.url, tip_provider=current_btc_tip,
+            source_name=args.pool_name, stratum_url=args.url,
         ).start()
 
     backends = []

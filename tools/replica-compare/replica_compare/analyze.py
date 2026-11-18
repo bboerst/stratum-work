@@ -34,7 +34,7 @@ class Template:
     clean_jobs: bool
     extranonce1: bytes
     extranonce2_length: int
-    chain: str = "btc"   # 'btc' (templates) or the templates_other classification
+    chain: str = "btc"   # 'btc' (its prev_hash is a block we know) or 'unknown', judged at read time
 
     _cb: Optional[Coinbase] = field(default=None, repr=False, compare=False)
     _cb_done: bool = field(default=False, repr=False, compare=False)

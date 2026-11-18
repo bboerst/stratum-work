@@ -5,7 +5,7 @@
 
 Postgres: --pg-host/--pg-port/--pg-database/--pg-user/--pg-sslmode or libpq's PGHOST/PGPORT/PGDATABASE/PGUSER/
 PGSSLMODE; the password only via PGPASSWORD or PGPASSFILE. Read-only: any role that can SELECT templates,
-templates_other and sources (e.g. stratum_backend or stratum_web). If the database has template_dedup_report, its
+sources and bitcoin_parents (e.g. stratum_backend or stratum_web). If the database has template_dedup_report, its
 per-pool, per-day, per-site summary of the read path's de-duplication is included (all sites; --site doesn't filter it). The output holds counts, shares, offsets and byte
 positions only, never coinbase, extranonce or job id values.
 """

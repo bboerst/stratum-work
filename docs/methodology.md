@@ -170,8 +170,13 @@ misfiled row then needed a data migration. It's now made when templates are read
 template's previous block hash is one of our stored blocks, and whether it arrived within its height's time window
 (derived from when the blocks at that height and the one below arrived). That way another chain's template, or an old
 job re-sent long after its block, isn't shown as a current Bitcoin template, and the judgement corrects itself when
-the stored facts improve ([design](design/one-templates-table.md)). Templates filed under the old rule are in
-`templates_other` until they're moved back.
+the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
+back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
+
+The "Other chains" view lists the last 90 days' templates whose previous block is no block we know (mostly other
+chains; for a few seconds after a new block, also Bitcoin templates built on it before we stored it), and templates
+built on a stale Bitcoin block. A template seen on several of a pool's connections counts once, and only as exact
+copies.
 
 ## First transaction fee rate
 

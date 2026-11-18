@@ -37,7 +37,7 @@ echo "== analyse (read-only role)"
 check "runs as stratum_web"                  'rc --since 2030-01-01T00:00:00Z --until 2030-01-01T01:00:00Z --site test --out /tmp/r.md --json /tmp/r.json'
 py python tests/fixture.py check /tmp/r.json; [ $? = 0 ] && ok=$((ok+1)) || bad=$((bad+1))
 check "markdown has the summary table"       'py grep -q "^| pool-one | 31 / 29 |" /tmp/r.md'
-check "markdown has the de-duplication table" 'py grep -q "^| 2030-01-01 | pool-one | \*all\* | 59 | 30 | 29 | 29 | 0 |" /tmp/r.md'
+check "markdown has the de-duplication table" 'py grep -q "^| 2030-01-01 | pool-one | \*all\* | 60 | 31 | 29 | 29 | 0 |" /tmp/r.md'
 check "--pool filters"                       'rc --since 2030-01-01T00:00:00Z --until 2030-01-01T01:00:00Z --pool pool-two | grep -q "pool-two" && ! rc --since 2030-01-01T00:00:00Z --until 2030-01-01T01:00:00Z --pool pool-two | grep -q "pool-one"'
 check "an empty window reports nothing"      'rc --since 2031-01-01T00:00:00Z --until 2031-01-02T00:00:00Z | grep -q "No pool has templates"'
 check "no extranonce1 value in the output"   '! py grep -q -e 01020304 -e 05060708 /tmp/r.json /tmp/r.md'

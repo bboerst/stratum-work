@@ -33,7 +33,7 @@ flowchart LR
   web -- "SSE /api/stream + JSON API" --> browser[Browser: decodes and draws]
 ```
 
-- **collector** (`collector/`, Python): one process per pool. Publishes each template to RabbitMQ for the live view and stores it. It asks the node for the current tip to tell Bitcoin templates from other chains' (some pools mine other chains on the same endpoints). **collector-go** (`collector-go/`) is a Go port that accepts the same flags, writes Postgres only, and stores every template in `templates` without asking a node: which chain a template belongs to is derived at read time ([design doc](docs/design/one-templates-table.md)), so it ignores the node and chain-detection flags. It also adds ingest hardening (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`).
+- **collector** (`collector/`, Python): one process per pool. Publishes each template to RabbitMQ for the live view and stores it. In MongoDB it tags other chains' templates (`chain_family`; some pools mine other chains on the same endpoints), asking the node for the current tip; in Postgres it stores every template in `templates`. **collector-go** (`collector-go/`) is a Go port that accepts the same flags, writes Postgres only, and stores every template in `templates` without asking a node: which chain a template belongs to is derived at read time ([design doc](docs/design/one-templates-table.md)), so it ignores the node and chain-detection flags. It also adds ingest hardening (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`).
 - **backend** (`backend/`, Python): follows the node (RPC + ZMQ `hashblock`), backfills blocks down to `MIN_BLOCK_HEIGHT`, identifies the pool of each block, runs the [analytics plug-ins](#adding-an-analyzer) over the templates of that height, tracks stale blocks, and publishes block events.
 - **web** (`web/`, Next.js): serves the UI, the live stream (`/api/stream`, Server-Sent Events) and a read-only JSON API (`web/app/api/`).
 - **mempool-recorder** (`mempool-recorder/`, Go): records the node's mempool so templates can be resolved against it (a template's `merkle_branches[0]` is the txid of its first transaction). See its [README](mempool-recorder/README.md).
@@ -63,7 +63,6 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
 | [`helm-charts/`](helm-charts/) | Charts for [collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md) and [webapp](helm-charts/stratum-work-webapp/README.md) | Helm |
-| [`tools/mongo-to-postgres/`](tools/mongo-to-postgres/README.md) | Backfill of MongoDB history into Postgres, with verification | Python |
 | [`tools/replica-compare/`](tools/replica-compare/README.md) | Compares two collector replicas of a pool in Postgres (field equality, coinbase structure, candidate job keys) | Python |
 | [`tools/site-compare/`](tools/site-compare/README.md) | Compares two deployed sites through their public API only | Python |
 | [`docs/`](docs/) | Field documentation and [design docs](docs/design/postgres-timescale.md) | |
@@ -204,7 +203,7 @@ COLLECTOR_PG_HOST=postgres      # collectors write Postgres too (in addition to 
 BACKEND_DB_BACKEND=postgres     # blocks, pools, analytics reads, stale blocks
 WEB_DB_BACKEND=postgres         # the web reads Postgres (as the read-only `web` user)
 ```
-With all three, the backend and web run fully on Postgres. The Python collector writes Bitcoin templates to `templates` and everything else (other chains, unparseable or implausible heights) to `templates_other`; collector-go writes every template to `templates` ([design doc](docs/design/one-templates-table.md)). The web's API responses are the same as in MongoDB mode except for ids and µs-precision timestamps (see `web/lib/db/pg-mapping.ts`); `npm run parity` (`web/scripts/read-parity.ts`) checks that both backends return the same data when both have it.
+With all three, the backend and web run fully on Postgres. Both collectors write every template to `templates`, other chains' and unparseable heights included: which chain a template belongs to, and whether it is current, is judged at read time ([design doc](docs/design/one-templates-table.md)). The web's API responses are the same as in MongoDB mode except for ids and µs-precision timestamps (see `web/lib/db/pg-mapping.ts`); `npm run parity` (`web/scripts/read-parity.ts`) checks that both backends return the same data when both have it.
 ```bash
 # needs data in both (e.g. collectors writing to both); the network is <project>_default
 docker run --rm --network stratum-work_default -v "$PWD/web:/app" -w /app \
@@ -235,7 +234,6 @@ psql postgres://web:web@localhost:5432/stratum                           # from 
 ### Getting data
 - **Collect your own.** Start the Postgres profile with the three switches above and a node, set `MIN_BLOCK_HEIGHT` near the tip, and let a few collectors run: `docker compose --profile postgres up -d --build web backend collector-f2pool collector-antpool`. A few hours give dozens of heights; every height has a few hundred templates per pool. Without a node you still get templates (but no blocks).
 - **From the public site.** The web's JSON API is read-only and public (below). [`tools/site-compare`](tools/site-compare/README.md) shows how to fetch it politely (rate limit, retries, cache).
-- **From your local MongoDB history.** [`tools/mongo-to-postgres`](tools/mongo-to-postgres/README.md) copies `mining_notify`, `blocks` and `pools` into the Postgres schema and verifies the copy.
 
 ### The schema in one table
 All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-timescale.md) explains the choices. Hashes and hex fields are `bytea`; `encode(x, 'hex')` shows them.
@@ -243,9 +241,10 @@ All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-t
 | Object | What |
 |---|---|
 | `sources` | One row per collector connection: `name` (the pool), `site`, `replica` |
-| `templates` | Bitcoin templates, one row per `mining.notify` (hypertable on `received_at`, indexed on `(height, source_id, received_at)`). `prev_hash` is in Stratum's word order |
-| `templates_other` | Everything not routed to `templates`, with `chain` (`btc`/`bch`/`unknown`) and `reason` |
-| `templates_dedup` / `templates_copies` | One stream per pool when a pool is collected over several connections: `templates_dedup` is what reads show, `templates_copies` classifies every row (`primary`, `copy`, `secondary_stream`, `gap_fill`). With one collector per pool, `templates_dedup` = the raw rows. Also `templates_other_dedup` / `_copies` |
+| `templates` | Every template, one row per `mining.notify`, whatever chain it is for (hypertable on `received_at`, indexed on `(height, source_id, received_at)`). `prev_hash` is in Stratum's word order; `height` is as the pool sent it (0 if unparseable) |
+| `bitcoin_parents` | The blocks we know (`blocks` and `stale_blocks`) by `prev_hash` in Stratum's order: a template whose `prev_hash` isn't here doesn't build on our Bitcoin chain |
+| `template_routing_labels` | The old write-time chain classification (`chain`, `reason`) of the rows that were in the former `templates_other` table, kept as a fact |
+| `templates_dedup` / `templates_copies` | One stream per pool when a pool is collected over several connections: `templates_dedup` is what reads show, `templates_copies` classifies every row (`primary`, `copy`, `secondary_stream`, `gap_fill`). With one collector per pool, `templates_dedup` = the raw rows. `templates_dedup(h1, h2, t1, t2)` / `templates_copies(…)` are the same with height and receive-time bounds (chunk exclusion); `height_window(h1, h2)` gives a height range's receive window |
 | `template_dedup_report(from_ts, to_ts)` | What the de-duplication did, per UTC day, pool and site |
 | `blocks`, `blocks_best` | Every block stored (keyed by hash, so stale and best blocks coexist); `blocks_best` hides the currently stale ones. `block_hash` is in display (explorer) order. `mining_pool` and `analysis` are jsonb |
 | `pools` | Pool definitions from mempool/mining-pools |
@@ -255,7 +254,7 @@ All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-t
 | `templates_rejected`, `ingest_events` | collector-go only: messages it couldn't store, and bursts / dropped templates |
 | `hash_display(bytea)`, `hash_from_display(text)`, `stratum_prev_hash_to_block_hash(bytea)` | Byte-order helpers: internal ↔ display hex, and Stratum `prev_hash` → block hash |
 
-**Gotchas.** Always filter template reads on `height` (or a height range): the views and functions push it down to the index, and without it they read the whole table. Take the Bitcoin tip from `blocks_best`, never from `max(height)` of templates (other chains land in `templates_other`, but in MongoDB `mining_notify` mixes them in). Templates at height `h` are work for the block after `h − 1`. With several collectors per pool, count from `templates_dedup`, or group raw rows by pool: one row per collector is not one template.
+**Gotchas.** Always filter template reads on `height` (or a height range): the views and functions push it down to the index, and without it they read the whole table. Take the Bitcoin tip from `blocks_best`, never from `max(height)` of templates: other chains' templates are stored too, at their own heights. For one height's templates, bound the receive time with `height_window(h, h)` (the web's height reads do), so a stuck feed's late re-send or another chain's template at a past height isn't counted. Templates at height `h` are work for the block after `h − 1`. With several collectors per pool, count from `templates_dedup`, or group raw rows by pool: one row per collector is not one template.
 
 ### Example queries
 ```sql
@@ -287,10 +286,12 @@ SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vs
   JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32)
  WHERE t.height = 925000;
 
--- Templates that weren't Bitcoin's, by chain and reason (last day; /api/other-chains summarizes all time)
-SELECT s.name AS pool, o.chain, o.reason, count(*)
-  FROM templates_other o JOIN sources s ON s.id = o.source_id
- WHERE o.received_at > now() - interval '1 day' GROUP BY 1, 2, 3;
+-- Templates that don't build on a block we know, per pool (last day; /api/other-chains summarizes 90 days)
+SELECT s.name AS pool, count(*), min(t.height), max(t.height)
+  FROM templates t JOIN sources s ON s.id = t.source_id
+ WHERE t.received_at > now() - interval '1 day'
+   AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)
+ GROUP BY 1;
 
 -- Pools that kept mining on a stale or unknown tip in the last 100 heights
 SELECT height, pool, tip, templates, mined_after_switch
@@ -303,7 +304,6 @@ SELECT day, pool, site, rows, secondary_hidden, gap_fills FROM template_dedup_re
 ### Tools
 - [`tools/replica-compare`](tools/replica-compare/README.md): two collectors of the same pool, field by field (what identifies "the same job" across connections). Reads Postgres; any role with `SELECT` works.
 - [`tools/site-compare`](tools/site-compare/README.md): two deployed sites through their public API only, height by height. Gentle by default (2 requests/s, retries honoring `Retry-After`, a response cache). Keep reports of real sites out of the repository.
-- [`tools/mongo-to-postgres`](tools/mongo-to-postgres/README.md): backfill and verification.
 
 ### Public API
 Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.work/api/...`). The public sites rate-limit per client; cache what you fetch, and prefer your own instance for bulk reads.
@@ -317,8 +317,8 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them (Postgres deployments) |
-| `GET /api/other-chains` | Templates that weren't Bitcoin's (`templates_other`), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes (Postgres deployments) |
-| `GET /api/other-chains?pool=P[&chain=bch\|unknown][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. One stream per pool, like the other template reads |
+| `GET /api/other-chains` | Templates of the last 90 days that don't build on our Bitcoin chain, judged at read time (`no_bitcoin_parent`: the previous block is no block we know; `stale_bitcoin_parent`: built on a stale block), per pool, chain and reason: count, height range, distinct heights and prev hashes, first / last seen, AuxPoW (merge-mining) share, templates per month. Recomputed every few minutes (Postgres deployments) |
+| `GET /api/other-chains?pool=P[&chain=unknown\|btc][&reason=R][&n=50][&before=µs]` | That group's templates, newest first, with the coinbase decoded (scriptSig height, tags, AuxPoW root, outputs); page with `before=<next_before>`. Exact copies on a pool's several connections count once (`copies`) |
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md); Postgres deployments) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 
@@ -348,7 +348,6 @@ backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork
 backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, MongoDB mode
 backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
-tools/mongo-to-postgres/test-e2e.sh    # backfill: unit tests + synthetic fixture
 tools/replica-compare/test-e2e.sh      # unit tests + synthetic fixture
 tools/site-compare/test-e2e.sh         # unit tests + two fake sites over HTTP
 ```
@@ -402,7 +401,7 @@ Guidelines: keep findings small (what the UI needs to render); keep the logic de
 ## Further reading
 - [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, backups, migration plan, redundant collection.
 - [How the data is measured](docs/methodology.md): what each value is, how it was taken, and its limits.
-- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [mongo-to-postgres](tools/mongo-to-postgres/README.md), [replica-compare](tools/replica-compare/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
+- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [replica-compare](tools/replica-compare/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 
 **License:** [MIT](LICENSE), © the stratum.work contributors.

@@ -1,6 +1,6 @@
 /**
  * Postgres rows → the JSON shapes the API has always returned from MongoDB (#113). Pure functions, unit-tested in
- * lib/__tests__/pgMapping.test.ts. Schema: db/migrations (templates/templates_other store hex as bytea and hex u32s
+ * lib/__tests__/pgMapping.test.ts. Schema: db/migrations (templates store hex as bytea and hex u32s
  * as bigint; re-encoding as lower-case hex gives back exactly what the pool sent, see the design doc section 3).
  *
  * IDs (Postgres has no MongoDB `_id`):
@@ -33,7 +33,6 @@ export interface TemplateRow {
   extranonce2_length: number;
   latency_ms?: number | null;
   latency_method?: string | null;
-  chain?: string | null;          // templates_other only (R2); null for Bitcoin templates
 }
 
 export interface BlockRow {
@@ -100,7 +99,7 @@ export function templateId(row: Pick<TemplateRow, 'source_id' | 'received_us' | 
 }
 
 /**
- * A templates / templates_other row → the MiningNotify shape (same keys and order as Prisma's MongoDB model).
+ * A templates row → the MiningNotify shape (same keys and order as Prisma's MongoDB model).
  * `timestamp` is the first-seen time when the read provides one (templates_dedup: a secondary replica's copy may have
  * arrived earlier); `id` always uses the row's own receive time, so it stays the table's de-duplication key.
  */
@@ -109,7 +108,8 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     id: templateId(row),
     height: row.height,
     pool_name: row.source_name,
-    chain_family: row.chain ?? null,
+    // MongoDB's collector tag. Postgres keeps no per-row chain: it's judged at read time (other-chains.ts).
+    chain_family: null,
     coinbase1: hex(row.coinbase1),
     coinbase2: hex(row.coinbase2),
     merkle_branches: splitBranches(row.merkle_branches),

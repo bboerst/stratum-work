@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 /**
- * The "Other chains" view: templates the collectors didn't store as Bitcoin's (/api/other-chains). The server does
+ * The "Other chains" view: recent templates that don't build on our Bitcoin chain (/api/other-chains). The server does
  * every aggregation and decoding; this component sorts the summary rows (a few hundred at most) and renders one page
  * of templates at a time.
  */
@@ -304,9 +304,11 @@ export default function OtherChains() {
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-1">Other chains</h1>
       <p className="text-xs text-muted-foreground mb-4 max-w-4xl">
-        Templates that aren&apos;t Bitcoin&apos;s: other chains some pools mine on the same connections, heights far from
-        Bitcoin&apos;s, and coinbases whose height couldn&apos;t be read. AuxPoW = the coinbase carries a merge-mining
-        commitment (<span className="font-mono">fabe6d6d</span>).
+        Templates from the last 90 days that don&apos;t build on our Bitcoin chain, judged from what is stored:{" "}
+        <span className="font-mono">no_bitcoin_parent</span> = the previous block is no Bitcoin block we know (mostly
+        other chains some pools mine on the same connections), <span className="font-mono">stale_bitcoin_parent</span>{" "}
+        = built on a Bitcoin block that went stale. Copies of a template on several connections count once. AuxPoW =
+        the coinbase carries a merge-mining commitment (<span className="font-mono">fabe6d6d</span>).
       </p>
       {body}
     </div>

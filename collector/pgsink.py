@@ -1,7 +1,8 @@
 """Postgres + TimescaleDB sink for mining.notify templates (#111; design: docs/design/postgres-timescale.md).
 
 The collector builds one document per mining.notify (create_notification_document). This module:
-  * routes it to `templates` (Bitcoin) or `templates_other` (everything else), see route();
+  * stores it in `templates`, whatever chain it is for: which chain a template belongs to is judged at read time from
+    stored facts (docs/design/one-templates-table.md), so nothing here classifies or routes;
   * converts it losslessly to the schema's types, see to_row();
   * writes it from a background thread with a bounded queue, so the Stratum loop never waits on the database and a
     database outage never crashes or stalls the collector (PostgresSink).
@@ -19,43 +20,10 @@ from typing import Callable, Optional
 
 LOG = logging.getLogger(__name__)
 
-# Plausible template heights relative to the collector's own Bitcoin tip (design doc, section 2: ingest rules).
-TIP_BEHIND = 6
-TIP_AHEAD = 6  # pools can be ahead of our node by more than a block (see collector-go/document.go)
-
 COLUMNS = (
     "received_at", "source_id", "height", "job_id", "prev_hash", "coinbase1", "coinbase2", "merkle_branches",
     "version", "nbits", "ntime", "clean_jobs", "extranonce1", "extranonce2_length", "latency_ms", "latency_method",
 )
-
-
-@dataclass(frozen=True)
-class Route:
-    table: str                    # "templates" or "templates_other"
-    chain: Optional[str] = None   # templates_other only: "bch" | "unknown"
-    reason: Optional[str] = None  # templates_other only
-
-
-BTC = Route("templates")
-
-
-def route(height: int, chain_family: Optional[str], tip: Optional[int]) -> Route:
-    """Decide which table a template belongs in.
-
-    height        BIP34 height from the collector (0 = could not be parsed).
-    chain_family  the collector's chain classifier result ("bch", "unknown", or None for Bitcoin).
-    tip           the collector's current Bitcoin tip, or None if unknown/stale (then height plausibility isn't
-                  checked, which preserves today's behavior for collectors without a node).
-    """
-    if not height or height <= 0:
-        return Route("templates_other", "unknown", "height_parse_failed")
-    if chain_family == "bch":
-        return Route("templates_other", "bch", "bch")
-    if chain_family:
-        return Route("templates_other", "unknown", "unknown_chain")
-    if tip is not None and not (tip - TIP_BEHIND <= height <= tip + TIP_AHEAD):
-        return Route("templates_other", "unknown", "height_implausible")
-    return BTC
 
 
 def _hex(value: str) -> bytes:
@@ -126,12 +94,11 @@ class PostgresSink:
     """
 
     def __init__(self, config: PostgresConfig, source_name: str, stratum_url: Optional[str] = None,
-                 tip_provider: Callable[[], Optional[int]] = lambda: None, max_queue: int = 50_000,
+                 max_queue: int = 50_000,
                  batch_size: int = 500, connect: Optional[Callable] = None, stats_interval: float = 600.0):
         self.config = config
         self.source_name = source_name
         self.stratum_url = stratum_url
-        self.tip_provider = tip_provider
         self.batch_size = batch_size
         self._connect = connect or self._psycopg_connect
         self._queue: deque = deque(maxlen=max_queue)
@@ -142,7 +109,7 @@ class PostgresSink:
         self._thread: Optional[threading.Thread] = None
         self.stats_interval = stats_interval
         self._last_stats_log = time.monotonic()
-        self.stats = {"submitted": 0, "written": 0, "written_other": 0, "dropped_queue_full": 0,
+        self.stats = {"submitted": 0, "written": 0, "dropped_queue_full": 0,
                       "dropped_invalid": 0, "db_errors": 0}
 
     # ── public ──────────────────────────────────────────────────────────────────────────────────────
@@ -219,8 +186,7 @@ class PostgresSink:
 
     def _write(self, batch: list) -> None:
         self._ensure_connected()
-        tip = self.tip_provider()
-        btc, other = [], []
+        rows = []
         for doc in batch:
             try:
                 row = to_row(doc, self._source_id)
@@ -228,18 +194,13 @@ class PostgresSink:
                 self.stats["dropped_invalid"] += 1
                 LOG.warning("Postgres sink: dropping malformed template (job_id=%r): %s", doc.get("job_id"), exc)
                 continue
-            r = route(row[2], doc.get("chain_family"), tip)
-            (btc if r is BTC else other).append(row if r is BTC else row + (r.chain, r.reason))
+            rows.append(row)
         cols = ", ".join(COLUMNS)
         with self._conn.cursor() as cur:
-            if btc:
-                cur.executemany(f"INSERT INTO templates ({cols}) VALUES ({', '.join(['%s'] * len(COLUMNS))})", btc)
-            if other:
-                cur.executemany(f"INSERT INTO templates_other ({cols}, chain, reason) "
-                                f"VALUES ({', '.join(['%s'] * (len(COLUMNS) + 2))})", other)
+            if rows:
+                cur.executemany(f"INSERT INTO templates ({cols}) VALUES ({', '.join(['%s'] * len(COLUMNS))})", rows)
         self._conn.commit()
-        self.stats["written"] += len(btc)
-        self.stats["written_other"] += len(other)
+        self.stats["written"] += len(rows)
 
     def _maybe_log_stats(self) -> None:
         if time.monotonic() - self._last_stats_log >= self.stats_interval:

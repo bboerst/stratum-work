@@ -11,14 +11,14 @@
  * chunks outside it at planning. Computed inside the same query it wouldn't.
  *
  * Redundant collection (several collectors per pool, `sources.replica`, possibly at several sites): reads that mean
- * "the templates" read the views `templates_dedup` / `templates_other_dedup`
- * (db/migrations/20261116200001_one_stream_per_pool.sql): one stream per pool. Per pool and height, every row of the
+ * "the templates" read `templates_dedup(h1, h2, t1, t2)` (db/migrations/20261118000006_one_table_reads.sql; the view
+ * of db/migrations/20261116200001_one_stream_per_pool.sql with bounds): one stream per pool. Per pool and height, every row of the
  * primary source (first by site, replica) is shown exactly as stored; another source's row is shown only as a gap
  * fill, while every lower-ranked source of the pool was silent (no row from 90 s before to 10 s after it). Exact
  * copies hidden this way give the primary row its first-seen time. With one collector per pool the result is the
  * raw rows. Per read:
  *   R1   templatesAtHeight     de-duplicated (realtime table history, realtime pre-fill)
- *   R2   allTemplatesAtHeight  de-duplicated, both tables (template details page)
+ *   R2   allTemplatesAtHeight  de-duplicated, every row at the height whenever received (template details page)
  *   R4   firstSeenByPool       raw rows: the earliest moment any of our connections to the pool got work for the
  *                              height. That's the shown rows' earliest first_seen, or earlier when another
  *                              connection's own job (hidden as 'secondary_stream') arrived first: the pool told us
@@ -64,7 +64,7 @@ const RECEIVED_US = '(extract(epoch FROM t.received_at) * 1000000)::bigint';
 const FIRST_SEEN_US = '(extract(epoch FROM j.first_seen) * 1000000)::bigint';
 const OWN_RECEIVED_US = '(extract(epoch FROM j.received_at) * 1000000)::bigint';
 
-// Columns the template responses use, from a templates_dedup / templates_other_dedup row (alias j). The coinbase and
+// Columns the template responses use, from a templates_dedup row (alias j). The coinbase and
 // branch columns are the expensive ones to decompress, but both responses include them; R4 below reads only three
 // columns. source_name is the pool (sources.name, the same for every replica and site). received_us is the row's own
 // receive time (part of the template id), first_seen_us the time shown (earliest over it and its hidden copies).
@@ -85,21 +85,15 @@ export async function templatesAtHeight(height: number): Promise<MiningNotify[]>
 }
 
 /**
- * R2: every template at a height, Bitcoin or not, received whenever (the template details page has always shown all
- * of them), one stream per pool across replicas. Rows from templates_other carry their chain as chain_family. Latency
- * isn't part of the R2 response, so it's not read.
+ * R2: every template at a height, received whenever (the template details page has always shown all of them: stuck
+ * feeds' late re-sends and other chains' templates at that height included), one stream per pool across replicas.
+ * Latency isn't part of the R2 response, so it's not read.
  */
 export async function allTemplatesAtHeight(height: number): Promise<MiningNotify[]> {
   const rows = await query<TemplateRow>(
-    `SELECT * FROM (
-       SELECT ${DEDUP_COLUMNS}, NULL::text AS chain
-         FROM templates_dedup($1, $1, '-infinity', 'infinity') j   -- every row at the height, whenever received
-       UNION ALL
-       SELECT ${DEDUP_COLUMNS}, j.chain::text AS chain
-         FROM templates_other_dedup j
-        WHERE j.height = $1
-     ) u
-     ORDER BY first_seen_us, source_id, job_id`,
+    `SELECT ${DEDUP_COLUMNS}
+       FROM templates_dedup($1, $1, '-infinity', 'infinity') j   -- every row at the height, whenever received
+      ORDER BY j.first_seen, j.source_id, j.job_id`,
     [height],
   );
   return rows.map(templateRowToMiningNotify);

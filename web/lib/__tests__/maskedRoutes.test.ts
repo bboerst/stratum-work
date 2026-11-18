@@ -94,7 +94,7 @@ describe('served templates carry masked extranonce1', () => {
       source_id: 1, source_name: pool, received_us: String(NOW_MS * 1000), height: 6_976_415, job_id: job,
       prev_hash: Buffer.alloc(32), coinbase1: Buffer.from(COINBASE1, 'hex'), coinbase2: Buffer.from(COINBASE2, 'hex'),
       merkle_branches: Buffer.alloc(0), version: 536870912, nbits: 386000000, ntime: 1_711_276_032, clean_jobs: true,
-      extranonce1: Buffer.from(RAW[pool], 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'height_implausible', copies: 1,
+      extranonce1: Buffer.from(RAW[pool], 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'no_bitcoin_parent', copies: 1,
     });
     vi.doMock('../db/other-chains', async importOriginal => ({
       ...(await importOriginal<object>()),

@@ -1,16 +1,23 @@
 /**
- * Templates that aren't Bitcoin's (`templates_other`: other chains mined on the same connections, implausible
- * heights, unknown chains, BIP34 parse failures), for the "Other chains" view. Postgres only: MongoDB mode mixes them
- * into mining_notify without a classification.
+ * Templates that don't build on our Bitcoin chain, for the "Other chains" view, judged at read time from stored facts
+ * (docs/design/one-templates-table.md): every template is in `templates`, and nothing stored says which chain it's for.
+ * Over the last OTHER_CHAINS_DAYS days of receive time:
+ *  - chain 'unknown', reason 'no_bitcoin_parent': its prev_hash is no block we know (bitcoin_parents: blocks and
+ *    stale_blocks). Other chains mined on the same connections, mostly; also a Bitcoin template built on a block
+ *    the backend hasn't stored yet (seconds, at a new block).
+ *  - chain 'btc', reason 'stale_bitcoin_parent': it builds on a Bitcoin block that is stale now (stale_blocks, not
+ *    reorged in again).
+ * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here (the height reads leave it out
+ * by their receive windows; the template details page shows it). Postgres only: MongoDB mode has no such view.
  *
- * Redundant collection: like the other template reads (lib/db/postgres.ts), rows come from the one-stream-per-pool
- * view `templates_other_dedup` (db/migrations/20261116200001_one_stream_per_pool.sql) so a pool collected over several
- * connections isn't counted twice. That view needs a height filter to be cheap (its windows partition by height and
- * pool), and both reads here span all heights, so:
- *  - Pools with ONE source read `templates_other` directly. The migration guarantees the view returns exactly the raw
- *    rows for them, so this is the same result without the view's sorts (most pools, most rows).
- *  - Pools with several sources read the view, filtered on those pool names (pushed down through the windows).
- * POOL_BLACKLIST pools are excluded in SQL from both reads, at every height (callers pass the names).
+ * The window is fixed: the anti-join reads every template received in it (about 1.5 s for 90 days on production;
+ * all of history takes about a minute), so the summary is cached by the route.
+ *
+ * Redundant collection: rows are de-duplicated on the candidates only, as exact copies across a pool's connections:
+ * the templates_copies key (height, pool, prev_hash, merkle_branches, version, nbits, ntime) plus the copy number per
+ * connection (the k-th such template on each connection matches the k-th on the others). One row per copy group, the
+ * first received; `copies` says how many connections had it. No tolerances.
+ * POOL_BLACKLIST pools are excluded in SQL (callers pass the names).
  *
  * All SQL is parameterized. Times are returned as ms (summary) or µs (template rows, the page cursor) since the epoch.
  */
@@ -18,7 +25,9 @@ import { getPgPool } from './pg';
 import type { TemplateRow } from './pg-mapping';
 
 export const OTHER_CHAINS_PAGE_MAX = 200;
-export const OTHER_CHAINS_CHAINS = ['btc', 'bch', 'unknown'] as const;
+export const OTHER_CHAINS_DAYS = 90;
+export const OTHER_CHAINS_CHAINS = ['btc', 'unknown'] as const;
+export const OTHER_CHAINS_REASONS = ['no_bitcoin_parent', 'stale_bitcoin_parent'] as const;
 
 // The merge-mining (AuxPoW) commitment magic in a coinbase scriptSig. coinbase1 and coinbase2 are checked separately:
 // the extranonce sits between them in the real coinbase, so a match across their boundary would be a false one.
@@ -42,6 +51,7 @@ export interface OtherChainsSummaryRow {
 }
 
 export interface OtherChainsSummary {
+  days: number;                  // the receive-time window, in days back from now
   months: string[];              // 'YYYY-MM' (UTC), first to last month with any row, no gaps
   groups: OtherChainsSummaryRow[];
 }
@@ -51,11 +61,37 @@ interface SummarySqlRow {
   prev_hashes: string; first_ms: string; last_ms: string; auxpow: string; monthly: Record<string, string | number>;
 }
 
-/** Pool names (sources.name) collected over more than one source (replicas, sites). */
-async function multiSourcePools(): Promise<string[]> {
-  const { rows } = await getPgPool().query<{ name: string }>(
-    `SELECT name FROM sources GROUP BY name HAVING count(*) > 1 ORDER BY name`);
-  return rows.map(r => r.name);
+/**
+ * The de-duplicated candidates (alias d), as CTEs. `poolFilter` narrows the templates read (e.g. one pool's name, so
+ * only its sources' segments are decompressed); $1 is always the excluded pool names.
+ */
+function candidates(poolFilter = 'TRUE'): string {
+  const window = `t.received_at >= now() - interval '${OTHER_CHAINS_DAYS} days'`;
+  return `stale AS (
+      SELECT stratum_prev_hash_to_block_hash(block_hash) AS prev_hash FROM stale_blocks WHERE reorged_in_at IS NULL
+    ), c AS MATERIALIZED (
+      SELECT t.*, s.name AS pool, 'unknown' AS chain, 'no_bitcoin_parent' AS reason
+        FROM templates t JOIN sources s ON s.id = t.source_id
+       WHERE ${window} AND s.name <> ALL ($1::text[]) AND ${poolFilter}
+         AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)
+      UNION ALL
+      SELECT t.*, s.name AS pool, 'btc' AS chain, 'stale_bitcoin_parent' AS reason
+        FROM templates t JOIN sources s ON s.id = t.source_id
+       WHERE ${window} AND s.name <> ALL ($1::text[]) AND ${poolFilter}
+         AND t.prev_hash IN (SELECT prev_hash FROM stale)
+    ), k AS (
+      SELECT c.*, row_number() OVER (PARTITION BY c.height, c.pool, c.source_id, c.prev_hash, c.merkle_branches,
+                                                  c.version, c.nbits, c.ntime
+                                     ORDER BY c.received_at, c.job_id, c.coinbase1, c.coinbase2) AS copy_no
+        FROM c
+    ), d AS (
+      SELECT DISTINCT ON (k.height, k.pool, k.prev_hash, k.merkle_branches, k.version, k.nbits, k.ntime, k.copy_no)
+             k.*, count(*) OVER w AS copies
+        FROM k
+      WINDOW w AS (PARTITION BY k.height, k.pool, k.prev_hash, k.merkle_branches, k.version, k.nbits, k.ntime, k.copy_no)
+       ORDER BY k.height, k.pool, k.prev_hash, k.merkle_branches, k.version, k.nbits, k.ntime, k.copy_no,
+                k.received_at, k.source_id, k.job_id
+    )`;
 }
 
 /** Every month from first to last (inclusive), 'YYYY-MM'. */
@@ -70,7 +106,7 @@ export function monthRange(first: string, last: string): string[] {
   return out;
 }
 
-export function summaryRowsToSummary(rows: SummarySqlRow[]): OtherChainsSummary {
+export function summaryRowsToSummary(rows: SummarySqlRow[]): Omit<OtherChainsSummary, 'days'> {
   const allMonths = rows.flatMap(r => Object.keys(r.monthly ?? {})).sort();
   const months = allMonths.length ? monthRange(allMonths[0], allMonths[allMonths.length - 1]) : [];
   const groups = rows.map(r => {
@@ -90,42 +126,33 @@ export function summaryRowsToSummary(rows: SummarySqlRow[]): OtherChainsSummary 
 
 /**
  * Per (pool, chain, reason): counts, height range, distinct heights and prev hashes, first / last receive time,
- * AuxPoW share, templates per month. One aggregate query over every row (the view's cost for multi-source pools is
- * a sort of their rows; see the module comment), so callers cache it.
+ * AuxPoW share, templates per month. One aggregate over the window's candidates, so callers cache it.
  */
 export async function getOtherChainsSummary(excludePools: string[]): Promise<OtherChainsSummary> {
-  const multi = (await multiSourcePools()).filter(p => !excludePools.includes(p));
   const { rows } = await getPgPool().query<SummarySqlRow>(
-    `WITH d AS MATERIALIZED (
-       SELECT s.name AS pool, t.chain, t.reason, t.height, t.prev_hash, t.received_at, ${AUXPOW('t')} AS auxpow
-         FROM templates_other t JOIN sources s ON s.id = t.source_id
-        WHERE s.name <> ALL ($1::text[]) AND s.name <> ALL ($2::text[])
-       UNION ALL
-       SELECT j.pool, j.chain, j.reason, j.height, j.prev_hash, j.received_at, ${AUXPOW('j')}
-         FROM templates_other_dedup j
-        WHERE j.pool = ANY ($2::text[])
-     ), g AS (
-       SELECT pool, chain::text AS chain, reason, count(*) AS n, min(height) AS min_h, max(height) AS max_h,
+    `WITH ${candidates()}, g AS (
+       SELECT pool, chain, reason, count(*) AS n, min(height) AS min_h, max(height) AS max_h,
               count(DISTINCT height) AS heights, count(DISTINCT prev_hash) AS prev_hashes,
               (extract(epoch FROM min(received_at)) * 1000)::bigint AS first_ms,
               (extract(epoch FROM max(received_at)) * 1000)::bigint AS last_ms,
-              count(*) FILTER (WHERE auxpow) AS auxpow
+              count(*) FILTER (WHERE ${AUXPOW('d')}) AS auxpow
          FROM d GROUP BY 1, 2, 3
      ), m AS (
        SELECT pool, chain, reason, jsonb_object_agg(month, n) AS monthly
-         FROM (SELECT pool, chain::text AS chain, reason,
+         FROM (SELECT pool, chain, reason,
                       to_char(date_trunc('month', received_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month, count(*) AS n
                  FROM d GROUP BY 1, 2, 3, 4) x
         GROUP BY 1, 2, 3
      )
      SELECT g.*, m.monthly FROM g JOIN m USING (pool, chain, reason)
       ORDER BY g.n DESC, g.pool, g.chain, g.reason`,
-    [excludePools, multi],
+    [excludePools],
   );
-  return summaryRowsToSummary(rows);
+  return { days: OTHER_CHAINS_DAYS, ...summaryRowsToSummary(rows) };
 }
 
 export interface OtherTemplateRow extends TemplateRow {
+  chain: string;
   reason: string;
   copies: number;
 }
@@ -146,22 +173,13 @@ export interface OtherTemplatesQuery {
 const US = (col: string) => `(extract(epoch FROM ${col}) * 1000000)::bigint`;
 const TS = (param: string) => `(timestamptz 'epoch' + ${param}::bigint * interval '1 microsecond')`;
 
-const RAW_COLUMNS = `t.source_id, s.name AS source_name, ${US('t.received_at')} AS received_us, t.height, t.job_id,
-  t.prev_hash, t.coinbase1, t.coinbase2, t.merkle_branches, t.version, t.nbits, t.ntime, t.clean_jobs, t.extranonce1,
-  t.extranonce2_length, t.latency_ms, t.latency_method::text AS latency_method, t.chain::text AS chain, t.reason,
-  1 AS copies`;
-const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${US('j.received_at')} AS received_us,
-  ${US('j.first_seen')} AS first_seen_us, j.height, j.job_id, j.prev_hash, j.coinbase1, j.coinbase2,
-  j.merkle_branches, j.version, j.nbits, j.ntime, j.clean_jobs, j.extranonce1, j.extranonce2_length, j.latency_ms,
-  j.latency_method::text AS latency_method, j.chain::text AS chain, j.reason, j.copies::int AS copies`;
-
-// Optional group filters, the same on the table (t) and the view (j). $1 pool, $2 chain, $3 reason.
-const GROUP = (a: string, pool: string) =>
-  `${pool} = $1 AND ($2::text IS NULL OR ${a}.chain::text = $2) AND ($3::text IS NULL OR ${a}.reason = $3)`;
-const ORDER = (a: string) => `${a}.received_at DESC, ${a}.source_id DESC, ${a}.job_id DESC`;
-
-/** At most this many raw rows are looked at to find one page of a multi-source pool (it stops much earlier). */
-const CANDIDATES_MAX = 50_000;
+const COLUMNS = `d.source_id, d.pool AS source_name, ${US('d.received_at')} AS received_us, d.height, d.job_id,
+  d.prev_hash, d.coinbase1, d.coinbase2, d.merkle_branches, d.version, d.nbits, d.ntime, d.clean_jobs, d.extranonce1,
+  d.extranonce2_length, d.latency_ms, d.latency_method::text AS latency_method, d.chain, d.reason,
+  d.copies::int AS copies`;
+// $1 excluded pools, $2 pool, $3 chain, $4 reason (optional)
+const GROUP = `($3::text IS NULL OR d.chain = $3) AND ($4::text IS NULL OR d.reason = $4)`;
+const ORDER = `d.received_at DESC, d.source_id DESC, d.job_id DESC`;
 
 /**
  * One page of a group's templates, newest first, keyset-paginated on the receive time (`before`, exclusive). Rows
@@ -172,50 +190,16 @@ export async function getOtherTemplates(q: OtherTemplatesQuery, excludePools: st
   const n = Math.min(Math.max(1, Math.floor(q.n)), OTHER_CHAINS_PAGE_MAX);
   if (excludePools.includes(q.pool)) return { rows: [], next_before: null };
   const pool = getPgPool();
-  const base = [q.pool, q.chain ?? null, q.reason ?? null];
-  const before = q.before ?? null;
-  const sources = Number((await pool.query<{ c: string }>(
-    `SELECT count(*) AS c FROM sources WHERE name = $1`, [q.pool])).rows[0].c);
-
-  if (sources <= 1) {
-    // One source: the raw rows are the de-duplicated rows.
-    const page = (await pool.query<OtherTemplateRow>(
-      `SELECT ${RAW_COLUMNS} FROM templates_other t JOIN sources s ON s.id = t.source_id
-        WHERE ${GROUP('t', 's.name')} AND ($4::bigint IS NULL OR t.received_at < ${TS('$4')})
-        ORDER BY ${ORDER('t')} LIMIT $5`, [...base, before, n + 1])).rows;
-    return finishPage(page, n, async us => (await pool.query<OtherTemplateRow>(
-      `SELECT ${RAW_COLUMNS} FROM templates_other t JOIN sources s ON s.id = t.source_id
-        WHERE ${GROUP('t', 's.name')} AND t.received_at = ${TS('$4')}
-        ORDER BY ${ORDER('t')}`, [...base, us])).rows);
-  }
-
-  // Several sources: the view, at the heights of the newest raw rows before the cursor. Every shown row is a raw row,
-  // so the shown rows received after the oldest candidate (`lower`, exclusive) are all at candidate heights; if fewer
-  // than a page, look at more candidates.
-  for (let limit = 4 * (n + 1); ; limit *= 4) {
-    const cand = (await pool.query<{ height: number; us: string }>(
-      `SELECT t.height, ${US('t.received_at')} AS us FROM templates_other t JOIN sources s ON s.id = t.source_id
-        WHERE ${GROUP('t', 's.name')} AND ($4::bigint IS NULL OR t.received_at < ${TS('$4')})
-        ORDER BY t.received_at DESC LIMIT $5`, [...base, before, limit])).rows;
-    const complete = cand.length < limit;           // every raw row before the cursor is a candidate
-    const lower = complete ? null : cand[cand.length - 1].us;
-    const heights = [...new Set(cand.map(c => c.height))];
-    const page = (await pool.query<OtherTemplateRow>(
-      `SELECT ${DEDUP_COLUMNS} FROM templates_other_dedup j
-        WHERE ${GROUP('j', 'j.pool')} AND j.height = ANY ($6::int[])
-          AND ($4::bigint IS NULL OR j.received_at < ${TS('$4')}) AND ($7::bigint IS NULL OR j.received_at > ${TS('$7')})
-        ORDER BY ${ORDER('j')} LIMIT $5`, [...base, before, n + 1, heights, lower])).rows;
-    if (page.length > n || complete) {
-      return finishPage(page, n, async us => (await pool.query<OtherTemplateRow>(
-        `SELECT ${DEDUP_COLUMNS} FROM templates_other_dedup j
-          WHERE ${GROUP('j', 'j.pool')} AND j.height = ANY ($5::int[]) AND j.received_at = ${TS('$4')}
-          ORDER BY ${ORDER('j')}`, [...base, us, heights])).rows);
-    }
-    if (limit >= CANDIDATES_MAX) {
-      // Mostly hidden rows (another connection's stream): return what was found; the next page starts at `lower`.
-      return { rows: page, next_before: String(BigInt(lower!) + BigInt(1)) };
-    }
-  }
+  const base = [excludePools, q.pool, q.chain ?? null, q.reason ?? null];
+  const cte = candidates('s.name = $2');
+  const page = (await pool.query<OtherTemplateRow>(
+    `WITH ${cte} SELECT ${COLUMNS} FROM d
+      WHERE ${GROUP} AND ($5::bigint IS NULL OR d.received_at < ${TS('$5')})
+      ORDER BY ${ORDER} LIMIT $6`, [...base, q.before ?? null, n + 1])).rows;
+  return finishPage(page, n, async us => (await pool.query<OtherTemplateRow>(
+    `WITH ${cte} SELECT ${COLUMNS} FROM d
+      WHERE ${GROUP} AND d.received_at = ${TS('$5')}
+      ORDER BY ${ORDER}`, [...base, us])).rows);
 }
 
 /** Cut a page fetched with LIMIT n + 1; rows tied with the last row's receive time are all included. */

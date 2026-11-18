@@ -10,7 +10,7 @@ const row = (pool: string, job: string): OtherTemplateRow => ({
   source_id: 1, source_name: pool, received_us: '1790000000123456', height: 6_976_415, job_id: job,
   prev_hash: Buffer.from('11'.repeat(32), 'hex'), coinbase1: Buffer.from('01', 'hex'), coinbase2: Buffer.from('02', 'hex'),
   merkle_branches: Buffer.alloc(64), version: 536870912, nbits: '386000000', ntime: '1790000000', clean_jobs: true,
-  extranonce1: Buffer.from('f00dface', 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'height_implausible', copies: 1,
+  extranonce1: Buffer.from('f00dface', 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'no_bitcoin_parent', copies: 1,
 });
 
 async function loadRoute({ historical = true, backend = 'postgres', blacklist = '' } = {}) {
@@ -54,14 +54,14 @@ describe('GET /api/other-chains', () => {
 
   it('validates parameters', async () => {
     const { route, getOtherTemplates } = await loadRoute();
-    for (const qs of ['?pool=', '?pool=P&chain=doge', '?pool=P&reason=DROP%20TABLE', '?pool=P&before=abc',
+    for (const qs of ['?pool=', '?pool=P&chain=bch', '?pool=P&reason=DROP%20TABLE', '?pool=P&before=abc',
                       '?pool=P&before=-1', '?pool=P&n=0', '?pool=P&n=1.5', '?pool=P&n=x', `?pool=${'x'.repeat(201)}`]) {
       expect((await get(route, qs)).status, qs).toBe(400);
     }
     expect(getOtherTemplates).not.toHaveBeenCalled();
-    expect((await get(route, '?pool=P&chain=bch&reason=bch&n=1000&before=1790000000000000')).status).toBe(200);
+    expect((await get(route, '?pool=P&chain=btc&reason=stale_bitcoin_parent&n=1000&before=1790000000000000')).status).toBe(200);
     expect(getOtherTemplates).toHaveBeenCalledWith(
-      { pool: 'P', chain: 'bch', reason: 'bch', before: '1790000000000000', n: 200 }, []);
+      { pool: 'P', chain: 'btc', reason: 'stale_bitcoin_parent', before: '1790000000000000', n: 200 }, []);
   });
 
   it('passes POOL_BLACKLIST to both reads', async () => {
@@ -81,7 +81,7 @@ describe('GET /api/other-chains', () => {
     const body = JSON.parse(text);
     expect(body.next_before).toBe('1790000000123456');
     expect(body.templates[0]).toMatchObject({
-      id: '1-1790000000123456-j1', pool_name: 'P', chain: 'unknown', reason: 'height_implausible', height: 6_976_415,
+      id: '1-1790000000123456-j1', pool_name: 'P', chain: 'unknown', reason: 'no_bitcoin_parent', height: 6_976_415,
       received_at: 1790000000123, merkle_branches: 2, version: '20000000', coinbase_ok: false, auxpow: false,
     });
     expect(body.templates[0].extranonce1).toHaveLength(8);

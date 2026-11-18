@@ -13,6 +13,18 @@ END $$;
 DROP VIEW templates_other_dedup;
 DROP VIEW templates_other_copies;
 DROP TABLE templates_other;
+-- A column elsewhere that still uses the type (e.g. a one-off tool's own record of what it did) keeps its values, as
+-- text, rather than blocking the drop or losing them.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT n.nspname, c.relname, a.attname
+             FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE a.atttypid = 'chain'::regtype AND NOT a.attisdropped AND c.relkind IN ('r', 'p') LOOP
+    RAISE NOTICE 'keeping %.%.% as text', r.nspname, r.relname, r.attname;
+    EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN %I TYPE text', r.nspname, r.relname, r.attname);
+  END LOOP;
+END $$;
 DROP TYPE chain;
 COMMENT ON COLUMN templates.height IS
     'BIP34 height from the coinbase as the pool sent it (0 if it could not be parsed). Not validated: which chain a '

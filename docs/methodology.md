@@ -176,8 +176,9 @@ Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and e
   because they lost before reaching it or are older than stale-block tracking, can still be proved by the templates:
   pools built on them. When templates from at least two pools at one height build on a previous block we don't know,
   that is a Bitcoin block we never stored. The [stale-blocks dataset](https://github.com/bitcoin-data/stale-blocks)
-  (public domain, CC0; [doi:10.5281/zenodo.22667157](https://doi.org/10.5281/zenodo.22667157)) collects such
-  blocks' headers, and some full blocks, from many nodes. A header from it is stored only if every check passes: it
+  (public domain, CC0; [doi:10.5281/zenodo.22667157](https://doi.org/10.5281/zenodo.22667157)) collects stale
+  headers and blocks observed on the Bitcoin network. Its headers are proven here by commitment: the templates name
+  the block's hash, and the header must hash to it. A header from it is stored only if every check passes: it
   hashes to the dataset's hash and to the hash the templates built on; the hash meets the proof of work its `bits`
   claim, within Bitcoin's limit, and those `bits` equal our best block's at the same height (where we have them); it
   builds on our best block at the height below; its height is the templates' height minus one; and our best block

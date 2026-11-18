@@ -22,7 +22,7 @@ A Helm chart for deploying the Pool Work Collector (Python, or the Go port)
 | arguments[7] | string | `"stratum_db"` |  |
 | arguments[8] | string | `"--db-username"` |  |
 | arguments[9] | string | `"admin"` |  |
-| env | list | `[]` | Extra container env, e.g. passwords from a Secret (the Go collector reads `RABBITMQ_PASSWORD`, `PG_PASSWORD`, `BITCOIN_RPC_PASSWORD` from the environment only) |
+| env | list | `[]` | Extra container env, e.g. passwords from a Secret (the Go collector reads `RABBITMQ_PASSWORD`, `PG_PASSWORD` from the environment only) |
 | envFrom | list | `[]` |  |
 | goImage.repository | string | `"bboerst/stratum-work-collector-go"` | Image for `implementation: go` |
 | goImage.tag | string | (required for go) | Pin a `sha-<7>` tag |

@@ -9,23 +9,20 @@ import (
 )
 
 // Golden test against the Python collector: testdata/golden.json holds, for each raw mining.notify line, what
-// Python's json.loads + create_notification_document + json.dumps (the RabbitMQ body) and pgsink.to_row + route
-// (the Postgres row) produce. Regenerate with testdata/gen_golden.py.
+// Python's json.loads + create_notification_document + json.dumps (the RabbitMQ body) and pgsink.to_row (the
+// Postgres row) produce. Regenerate with testdata/gen_golden.py.
 
 type goldenCase struct {
-	Name       string     `json:"name"`
-	Line       string     `json:"line"`
-	Sub        *string    `json:"sub"`
-	Latency    []any      `json:"latency"`
-	Chain      *string    `json:"chain"`
-	Tip        *int64     `json:"tip"`
-	Ts         int64      `json:"ts"`
-	Pool       string     `json:"pool"`
-	LoadsError string     `json:"loads_error"`
-	JSON       string     `json:"json"`
-	Row        string     `json:"row"`
-	RowError   string     `json:"row_error"`
-	Route      [3]*string `json:"route"`
+	Name       string  `json:"name"`
+	Line       string  `json:"line"`
+	Sub        *string `json:"sub"`
+	Latency    []any   `json:"latency"`
+	Ts         int64   `json:"ts"`
+	Pool       string  `json:"pool"`
+	LoadsError string  `json:"loads_error"`
+	JSON       string  `json:"json"`
+	Row        string  `json:"row"`
+	RowError   string  `json:"row_error"`
 }
 
 // Rows Python converts but Postgres would reject (Python then fails and retries the whole batch forever); the Go
@@ -133,9 +130,6 @@ func TestGoldenAgainstPython(t *testing.T) {
 			}
 			d := newDocument(params, c.Pool, en1, en2, c.Ts, lat)
 			d.ID = "00000000-0000-4000-8000-000000000000"
-			if c.Chain != nil {
-				d.ChainFamily = *c.Chain
-			}
 			if got := string(d.JSON()); got != c.JSON {
 				t.Errorf("RabbitMQ JSON differs\n go: %s\n py: %s", got, c.JSON)
 			}
@@ -157,18 +151,6 @@ func TestGoldenAgainstPython(t *testing.T) {
 			}
 			if got := rowJSON(row, d); got != c.Row {
 				t.Errorf("row differs\n go: %s\n py: %s", got, c.Row)
-			}
-			var tip int64
-			if c.Tip != nil {
-				tip = *c.Tip
-			}
-			r := route(int64(row.Height), d.ChainFamily, tip, c.Tip != nil)
-			want := Route{Table: *c.Route[0]}
-			if c.Route[1] != nil {
-				want.Chain, want.Reason = *c.Route[1], *c.Route[2]
-			}
-			if r != want {
-				t.Errorf("route %+v, Python %+v", r, want)
 			}
 		})
 	}

@@ -43,6 +43,5 @@ func FuzzIngest(f *testing.F) {
 				_ = r.values(1)
 			}
 		}
-		_ = route(d.Height, d.ChainFamily, 900000, true)
 	})
 }

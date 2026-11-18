@@ -26,12 +26,10 @@ type Document struct {
 	HasLatency     bool
 	LatencyMs      float64
 	LatencyMethod  string
-	ChainFamily    string // "" (Bitcoin / not classified), "bch", "unknown"
 	Site, Replica  string // the collector's --collector-site / --collector-replica, for the live stream's replica
 	// de-duplication (#178); RabbitMQ message only (the Postgres row has them via source_id), omitted when empty
 
-	AppTsNs  int64 // clock after the read returned (for the app-vs-kernel measurement only; never stored)
-	needsBCH bool  // chain classification waits for the BCH confirmation API (resolved off the read path)
+	AppTsNs int64 // clock after the read returned (for the app-vs-kernel measurement only; never stored)
 }
 
 const (
@@ -71,7 +69,8 @@ func uuid4() string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
-// newDocument mirrors create_notification_document, minus the chain classification (see Classifier).
+// newDocument mirrors create_notification_document, minus the chain classification: which chain a template belongs
+// to is derived at read time from stored facts (docs/design/one-templates-table.md).
 func newDocument(params [9]pyValue, poolName string, en1, en2 pyValue, tsNs int64, lat *latencyEstimate) *Document {
 	d := &Document{ID: uuid4(), TsNs: tsNs, PoolName: poolName, Params: params, Extranonce1: en1, Extranonce2Len: en2}
 	if params[pCoinbase1].kind == pyStr {
@@ -122,10 +121,6 @@ func (d *Document) JSON() []byte {
 		b.WriteString(pyFloatJSON(d.LatencyMs))
 		field(false, "lat_m")
 		pyEncodeString(&b, d.LatencyMethod)
-	}
-	if d.ChainFamily != "" {
-		field(false, "chain_family")
-		pyEncodeString(&b, d.ChainFamily)
 	}
 	if d.Site != "" {
 		field(false, "site")
@@ -274,33 +269,4 @@ func toRow(d *Document, sourceID int16) (Row, error) {
 		}
 	}
 	return r, nil
-}
-
-// ── routing (pgsink.py route) ────────────────────────────────────────────────────────────────────────────────────
-
-// A Bitcoin template's height is plausible within [tip-6, tip+6] of our node's tip at receive time. Ahead by more
-// than one is normal when pools see new blocks before our node does (blocks in quick succession, a node far away or
-// still validating): +2 misfiled real templates as height_implausible right after blocks. Other chains' heights are
-// tens of thousands or millions of blocks away, so the wider window doesn't let them in.
-const (
-	tipBehind = 6
-	tipAhead  = 6
-)
-
-type Route struct{ Table, Chain, Reason string }
-
-var routeBTC = Route{Table: "templates"}
-
-func route(height int64, chainFamily string, tip int64, tipOK bool) Route {
-	switch {
-	case height <= 0:
-		return Route{"templates_other", "unknown", "height_parse_failed"}
-	case chainFamily == "bch":
-		return Route{"templates_other", "bch", "bch"}
-	case chainFamily != "":
-		return Route{"templates_other", "unknown", "unknown_chain"}
-	case tipOK && (height < tip-tipBehind || height > tip+tipAhead): // not tip-6 <= height <= tip+6
-		return Route{"templates_other", "unknown", "height_implausible"}
-	}
-	return routeBTC
 }

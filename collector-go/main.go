@@ -38,13 +38,6 @@ type Config struct {
 	EnableStratumClient                                       bool
 	StratumClientPort                                         int
 	UserAgent                                                 *string
-	ZMQBlock                                                  string
-	RPCUser, RPCPassword, RPCHost, RPCPort, RPCScheme, RPCCA  string // RPCPassword: env BITCOIN_RPC_PASSWORD only
-	RPCTimeout                                                float64
-	Divergence                                                int64
-	TipStaleSeconds                                           int
-	BCHURL                                                    string
-	BCHTimeout                                                float64
 	ProbeInterval                                             float64
 	HandshakeTimeout, ReadTimeout                             float64
 	ReplicaStagger                                            float64
@@ -82,8 +75,9 @@ func envFloat(k string, def float64) float64 {
 }
 
 // parseConfig accepts the Python collector's flags (long and short forms) with the same defaults and env vars.
-// Differences: passwords come only from the environment (RABBITMQ_PASSWORD, PG_PASSWORD, BITCOIN_RPC_PASSWORD) and
-// passing one on the command line is an error; the MongoDB flags are accepted and ignored.
+// Differences: passwords come only from the environment (RABBITMQ_PASSWORD, PG_PASSWORD) and passing one on the
+// command line is an error; the MongoDB flags and the chain-classification flags (ignoredTipFlags) are accepted and
+// ignored.
 func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	c := &Config{}
 	fs := flag.NewFlagSet("collector", flag.ContinueOnError)
@@ -139,18 +133,14 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	integer(&c.StratumClientPort, []string{"stratum-client-port"}, 3333, "port for the mining device to connect to")
 	var userAgent string
 	str(&userAgent, []string{"stratum-user-agent"}, "", "client identifier sent with mining.subscribe (default: omitted)")
-	str(&c.ZMQBlock, []string{"bitcoin-zmq-block"}, envOr("BITCOIN_ZMQ_BLOCK", "tcp://bitcoin-node:28332"), "Bitcoin node ZMQ block endpoint (env BITCOIN_ZMQ_BLOCK)")
-	str(&c.RPCUser, []string{"bitcoin-rpc-user"}, envOr("BITCOIN_RPC_USER", "user"), "Bitcoin RPC user (env BITCOIN_RPC_USER)")
-	str(&rpcPassFlag, []string{"bitcoin-rpc-password"}, "", "not accepted: set env BITCOIN_RPC_PASSWORD")
-	str(&c.RPCHost, []string{"bitcoin-rpc-host"}, envOr("BITCOIN_RPC_HOST", "localhost"), "Bitcoin RPC host (env BITCOIN_RPC_HOST)")
-	str(&c.RPCPort, []string{"bitcoin-rpc-port"}, envOr("BITCOIN_RPC_PORT", "8332"), "Bitcoin RPC port (env BITCOIN_RPC_PORT)")
-	str(&c.RPCScheme, []string{"bitcoin-rpc-scheme"}, envOr("BITCOIN_RPC_SCHEME", "http"), "http or https (env BITCOIN_RPC_SCHEME)")
-	str(&c.RPCCA, []string{"bitcoin-rpc-ca-file"}, os.Getenv("BITCOIN_RPC_CA_FILE"), "PEM CA bundle for an https RPC endpoint (env BITCOIN_RPC_CA_FILE)")
-	fs.Float64Var(&c.RPCTimeout, "bitcoin-rpc-timeout", 3.0, "Bitcoin RPC timeout in seconds")
-	fs.Int64Var(&c.Divergence, "btc-chain-divergence-threshold", tipAhead, "height divergence before non-BTC confirmation (default: the routing window, tip ±6)")
-	fs.IntVar(&c.TipStaleSeconds, "btc-tip-stale-seconds", 1800, "seconds before the local BTC tip is considered stale")
-	fs.StringVar(&c.BCHURL, "bch-confirmation-url", "https://api.blockchair.com/bitcoin-cash/raw/block", "BCH block confirmation API base URL")
-	fs.Float64Var(&c.BCHTimeout, "bch-confirmation-timeout", 3.0, "BCH confirmation timeout in seconds")
+	// Chain classification moved to read time (docs/design/one-templates-table.md), so the collector no longer
+	// follows a node tip. Its flags stay accepted for one release: an unknown flag makes the parser exit, which would
+	// crash-loop a deployment that still passes one. String-typed, so no old value can fail to parse.
+	ignored := make([]string, len(ignoredTipFlags))
+	for i, n := range ignoredTipFlags {
+		fs.StringVar(&ignored[i], n, "", "ignored: chain classification moved to read time")
+	}
+	str(&rpcPassFlag, []string{"bitcoin-rpc-password"}, "", "not accepted (and no longer used)")
 	fs.Float64Var(&c.ProbeInterval, "latency-probe-interval", 60.0, "seconds between latency probes (0 disables)")
 	integer(&c.BurstThreshold, []string{"burst-threshold"}, envInt("COLLECTOR_BURST_THRESHOLD", defaultBurstConfig.Threshold),
 		"templates in one second that make it a burst second, recorded in ingest_events; templates are stored regardless; 0 = off (env COLLECTOR_BURST_THRESHOLD)")
@@ -172,12 +162,20 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	for _, p := range []struct {
 		names []string
 		env   string
-	}{{[]string{"rp", "rabbitmq-password"}, "RABBITMQ_PASSWORD"}, {[]string{"pg-password"}, "PG_PASSWORD"},
-		{[]string{"bitcoin-rpc-password"}, "BITCOIN_RPC_PASSWORD"}} {
+	}{{[]string{"rp", "rabbitmq-password"}, "RABBITMQ_PASSWORD"}, {[]string{"pg-password"}, "PG_PASSWORD"}} {
 		for _, n := range p.names {
 			if set[n] {
 				return nil, fmt.Errorf("--%s is not accepted on the command line (it would be visible in the process list); set the %s environment variable instead", p.names[len(p.names)-1], p.env)
 			}
+		}
+	}
+	// Was refused before as well (a password in the process list), so nothing passes it; keep refusing it.
+	if set["bitcoin-rpc-password"] {
+		return nil, errors.New("--bitcoin-rpc-password is not accepted on the command line (it would be visible in the process list); the collector no longer uses it")
+	}
+	for _, n := range ignoredTipFlags {
+		if set[n] {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("flag --%s is ignored: chain classification moved to read time (docs/design/one-templates-table.md)", n))
 		}
 	}
 	for i, n := range []string{"db-url", "db-name", "db-username", "db-password"} {
@@ -204,16 +202,25 @@ func parseConfig(args []string, stderr io.Writer) (*Config, error) {
 	default:
 		return nil, fmt.Errorf("invalid --log-level %q (DEBUG, INFO, WARNING, ERROR, CRITICAL)", c.LogLevel)
 	}
-	if c.RPCScheme != "http" && c.RPCScheme != "https" {
-		return nil, fmt.Errorf("invalid --bitcoin-rpc-scheme %q (http or https)", c.RPCScheme)
-	}
 	if c.Replica == "" {
 		return nil, errors.New("--collector-replica must not be empty")
 	}
 	c.RabbitPassword = os.Getenv("RABBITMQ_PASSWORD")
 	c.PGPassword = os.Getenv("PG_PASSWORD")
-	c.RPCPassword = envOr("BITCOIN_RPC_PASSWORD", "password")
 	return c, nil
+}
+
+// ignoredTipFlags were the node-tip and chain-classification settings (stratum-work#148 ported them from the
+// Python collector). Accepted and ignored for one release; remove them after that.
+var ignoredTipFlags = []string{"bitcoin-zmq-block", "bitcoin-rpc-user", "bitcoin-rpc-host", "bitcoin-rpc-port",
+	"bitcoin-rpc-scheme", "bitcoin-rpc-ca-file", "bitcoin-rpc-timeout", "btc-chain-divergence-threshold",
+	"btc-tip-stale-seconds", "bch-confirmation-url", "bch-confirmation-timeout"}
+
+// logStartupWarnings logs the accepted-but-ignored flags once, when the logger exists.
+func logStartupWarnings(log *slog.Logger, cfg *Config) {
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
+	}
 }
 
 func secs(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
@@ -233,34 +240,18 @@ func run(cfg *Config) int {
 	lvl := map[string]slog.Level{"DEBUG": slog.LevelDebug, "INFO": slog.LevelInfo, "WARNING": slog.LevelWarn,
 		"ERROR": slog.LevelError, "CRITICAL": slog.LevelError + 4}[cfg.LogLevel]
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})).With("pool", cfg.PoolName)
-	for _, w := range cfg.Warnings {
-		log.Warn(w)
-	}
+	logStartupWarnings(log, cfg)
 	log.Info("starting", "version", version, "site", cfg.Site, "replica", cfg.Replica, "node", cfg.Node)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	metrics := &Metrics{}
 
-	// Bitcoin tip: initial RPC, then ZMQ-triggered updates.
-	tip := NewTipState(time.Duration(cfg.TipStaleSeconds) * time.Second)
-	if rpc, err := NewRPC(cfg.RPCScheme, cfg.RPCHost, cfg.RPCPort, cfg.RPCUser, cfg.RPCPassword, cfg.RPCCA,
-		secs(cfg.RPCTimeout)); err != nil {
-		log.Warn("BTC tip disabled: RPC client setup failed", "err", err)
-	} else {
-		f := &TipFollower{Tip: tip, RPC: rpc, Endpoint: cfg.ZMQBlock, Retry: 5 * time.Second, log: log,
-			Updates: func() { metrics.TipUpdates.Add(1) }}
-		ictx, cancel := context.WithTimeout(ctx, secs(cfg.RPCTimeout)+time.Second)
-		f.Init(ictx)
-		cancel()
-		go f.Run(ctx)
-	}
-
 	var pg *PostgresSink
 	if cfg.PGHost != "" && cfg.PGUser != "" {
 		pg = NewPostgresSink(PGConfig{Host: cfg.PGHost, Port: cfg.PGPort, Database: cfg.PGDatabase, User: cfg.PGUser,
 			Password: cfg.PGPassword, SSLMode: cfg.PGSSLMode, Site: cfg.Site, Replica: cfg.Replica,
-			ConnectTimeout: 10 * time.Second}, cfg.PoolName, cfg.URL, tip.Current, log)
+			ConnectTimeout: 10 * time.Second}, cfg.PoolName, cfg.URL, log)
 		if cfg.PGMaxQueue > 0 {
 			pg.maxQueue = cfg.PGMaxQueue
 		}
@@ -301,9 +292,6 @@ func run(cfg *Config) int {
 			rmq.Submit(d)
 		}
 	}
-	classifier := NewClassifier(tip, cfg.Divergence, NewBCHConfirmer(cfg.BCHURL, secs(cfg.BCHTimeout)), toSinks, log)
-	classifier.Start()
-
 	collector, err := NewCollector(StratumConfig{
 		URL: cfg.URL, UserPass: cfg.UserPass, UserAgent: cfg.UserAgent, PoolName: cfg.PoolName,
 		Site: cfg.Site, Replica: cfg.Replica,
@@ -311,7 +299,7 @@ func run(cfg *Config) int {
 		HandshakeTimeout: secs(cfg.HandshakeTimeout), ReadTimeout: secs(cfg.ReadTimeout), RetryDelay: 5 * time.Second,
 		StartDelay:    replicaStartDelay(cfg.Replica, secs(cfg.ReplicaStagger)),
 		ProbeInterval: secs(cfg.ProbeInterval), KeepAlive: cfg.KeepAlive, KeepAliveEvery: 480 * time.Second,
-	}, log, metrics, classifier.Submit)
+	}, log, metrics, toSinks)
 	if err != nil {
 		log.Error("invalid configuration", "err", err)
 		return 2
@@ -336,7 +324,7 @@ func run(cfg *Config) int {
 
 	if cfg.HTTPPort > 0 {
 		hs := &HealthServer{Metrics: metrics, MaxAge: secs(cfg.ReadyMaxNotifyAgeMin * 60), PG: pg, RMQ: rmq,
-			Classifier: classifier, Tracker: collector.tracker, Tip: tip, log: log,
+			Tracker: collector.tracker, log: log,
 			Labels: map[string]string{"pool": cfg.PoolName, "site": cfg.Site, "replica": cfg.Replica, "version": version}}
 		if err := hs.Serve(ctx, fmt.Sprintf(":%d", cfg.HTTPPort)); err != nil {
 			log.Error("health server failed to start", "err", err)
@@ -354,7 +342,6 @@ func run(cfg *Config) int {
 		collector.Run(ctx)
 	}
 	log.Info("shutting down: flushing sinks")
-	classifier.Close()
 	if pg != nil {
 		pg.Close(5 * time.Second)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ import (
 const testNS = int64(1_794_437_000_123_456_789)
 
 var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+func hexLower(b []byte) string { return hex.EncodeToString(b) }
 
 // testDoc is test_pgsink.doc(): a valid template; over replaces raw JSON params by index or field name.
 func testDoc(over map[string]string) *Document {
@@ -59,42 +62,6 @@ func testDoc(over map[string]string) *Document {
 		d.TsNs, _ = strconv.ParseInt(ts, 10, 64)
 	}
 	return d
-}
-
-func TestRouteBitcoinWithAndWithoutAKnownTip(t *testing.T) {
-	for _, c := range []struct {
-		h, tip int64
-		ok     bool
-	}{{975_500, 975_499, true}, {975_493, 975_499, true}, {975_501, 975_499, true}, {975_500, 0, false}} {
-		if r := route(c.h, "", c.tip, c.ok); r != routeBTC {
-			t.Errorf("%+v -> %+v", c, r)
-		}
-	}
-}
-
-func TestRouteOtherTables(t *testing.T) {
-	cases := []struct {
-		h     int64
-		chain string
-		tip   int64
-		tipOK bool
-		want  Route
-	}{
-		{0, "", 975_499, true, Route{"templates_other", "unknown", "height_parse_failed"}},
-		{0, "", 0, false, Route{"templates_other", "unknown", "height_parse_failed"}},
-		{930_000, "bch", 975_499, true, Route{"templates_other", "bch", "bch"}},
-		{975_500, "unknown", 975_499, true, Route{"templates_other", "unknown", "unknown_chain"}},
-		{6_976_415, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}},
-		{975_492, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}},
-		{975_506, "", 975_499, true, Route{"templates_other", "unknown", "height_implausible"}}, // tip + 7
-		{975_502, "", 975_499, true, routeBTC},                                                  // tip + 3: pools ahead of our node by two blocks
-		{975_505, "", 975_499, true, routeBTC},                                                  // tip + 6
-	}
-	for _, c := range cases {
-		if r := route(c.h, c.chain, c.tip, c.tipOK); r != c.want {
-			t.Errorf("%+v -> %+v", c, r)
-		}
-	}
 }
 
 func TestLosslessConversion(t *testing.T) {
@@ -164,7 +131,7 @@ func (f *fakeDB) UpsertSource(_ context.Context, name, site, replica, url string
 	return 42, nil
 }
 
-func (f *fakeDB) WriteBatch(_ context.Context, btc, other [][]any) error {
+func (f *fakeDB) WriteBatch(_ context.Context, rows [][]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failWrites {
@@ -173,8 +140,7 @@ func (f *fakeDB) WriteBatch(_ context.Context, btc, other [][]any) error {
 	if f.rows == nil {
 		f.rows = map[string][][]any{}
 	}
-	f.rows["templates"] = append(f.rows["templates"], btc...)
-	f.rows["templates_other"] = append(f.rows["templates_other"], other...)
+	f.rows["templates"] = append(f.rows["templates"], rows...)
 	return nil
 }
 
@@ -225,35 +191,33 @@ func waitFor(cond func() bool, timeout time.Duration) bool {
 
 var testPGCfg = PGConfig{Host: "h", Port: "5432", Database: "d", User: "u", Password: "secret-pw", Site: "test", Replica: "b"}
 
-func newTestSink(connect func(context.Context, PGConfig) (pgConn, error), tip func() (int64, bool)) *PostgresSink {
-	if tip == nil {
-		tip = func() (int64, bool) { return 0, false }
-	}
-	s := NewPostgresSink(testPGCfg, "P", "stratum+tcp://x:3333", tip, quietLog)
+func newTestSink(connect func(context.Context, PGConfig) (pgConn, error)) *PostgresSink {
+	s := NewPostgresSink(testPGCfg, "P", "stratum+tcp://x:3333", quietLog)
 	s.connect = connect
 	return s
 }
 
-func TestSinkWritesRoutedRowsAndRegistersSource(t *testing.T) {
+// Every template lands in templates, including another chain's height and an unparseable one (0): which chain a
+// row belongs to is decided at read time (docs/design/one-templates-table.md).
+func TestSinkWritesEveryTemplateAndRegistersSource(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil },
-		func() (int64, bool) { return 975_499, true }).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	s.Submit(testDoc(nil))
 	s.Submit(testDoc(map[string]string{"height": "6976415"}))
 	s.Submit(testDoc(map[string]string{"height": "0"}))
-	if !waitFor(func() bool { st := s.Stats(); return st["written"]+st["written_other"] == 3 }, 5*time.Second) {
+	if !waitFor(func() bool { return s.Stats()["written"] == 3 }, 5*time.Second) {
 		t.Fatal(s.Stats())
 	}
 	s.Close(time.Second)
-	if len(db.rows["templates"]) != 1 {
-		t.Error(len(db.rows["templates"]))
+	var heights []string
+	for _, r := range db.rows["templates"] {
+		heights = append(heights, strconv.Itoa(int(r[2].(int32))))
 	}
-	var reasons []string
-	for _, r := range db.rows["templates_other"] {
-		reasons = append(reasons, r[len(r)-1].(string))
+	if strings.Join(heights, ",") != "975500,6976415,0" {
+		t.Error(heights)
 	}
-	if strings.Join(reasons, ",") != "height_implausible,height_parse_failed" {
-		t.Error(reasons)
+	if len(db.rows) != 1 {
+		t.Error("rows outside templates:", db.rows)
 	}
 	if db.upserts[0] != [4]string{"P", "test", "b", "stratum+tcp://x:3333"} {
 		t.Error(db.upserts)
@@ -274,7 +238,7 @@ func TestDatabaseDownNeverBlocksOrRaisesAndRecovers(t *testing.T) {
 			return nil, errors.New("connection refused")
 		}
 		return &fakeDB{}, nil
-	}, nil).Start()
+	}).Start()
 	t0 := time.Now()
 	for i := 0; i < 1000; i++ {
 		s.Submit(testDoc(map[string]string{"job_id": strconv.Quote(strconv.Itoa(i))}))
@@ -296,7 +260,7 @@ func TestBoundedQueueDropsOldestAndCounts(t *testing.T) {
 	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) {
 		<-gate
 		return nil, errors.New("down")
-	}, nil)
+	})
 	s.maxQueue, s.batchSize = 10, 1 // one in flight at most, like Python's first take of a near-empty queue
 	s.Start()
 	for i := 0; i < 25; i++ {
@@ -310,7 +274,7 @@ func TestBoundedQueueDropsOldestAndCounts(t *testing.T) {
 }
 
 func TestQueueOverflowKeepsTheNewest(t *testing.T) {
-	s := newTestSink(nil, nil) // not started
+	s := newTestSink(nil) // not started
 	s.maxQueue = 10
 	for i := 0; i < 25; i++ {
 		s.Submit(testDoc(map[string]string{"job_id": strconv.Quote(strconv.Itoa(i))}))
@@ -322,7 +286,7 @@ func TestQueueOverflowKeepsTheNewest(t *testing.T) {
 
 func TestMalformedDocumentsAreDroppedNotFatal(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	s.Submit(testDoc(map[string]string{"coinbase1": `"not-hex"`}))
 	s.Submit(testDoc(nil))
 	if !waitFor(func() bool { return s.Stats()["written"] == 1 }, 5*time.Second) {
@@ -336,7 +300,7 @@ func TestMalformedDocumentsAreDroppedNotFatal(t *testing.T) {
 
 func TestCloseFlushesWhatIsQueued(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil)
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil })
 	for i := 0; i < 1200; i++ {
 		s.Submit(testDoc(nil))
 	}
@@ -373,7 +337,7 @@ func TestPostgresIntegration(t *testing.T) {
 		User: os.Getenv("PG_TEST_USER"), Password: os.Getenv("PG_TEST_PASSWORD"), SSLMode: "disable", Site: "ci",
 		Replica: "b", ConnectTimeout: 5 * time.Second}
 	name := fmt.Sprintf("itest-go-%d", time.Now().UnixMilli())
-	s := NewPostgresSink(cfg, name, "stratum+tcp://example:3333", func() (int64, bool) { return 975_499, true }, quietLog)
+	s := NewPostgresSink(cfg, name, "stratum+tcp://example:3333", quietLog)
 	s.quar.b = QuarantineBudget{Window: time.Hour, FullRows: 3, MaxRaw: 1 << 10, MetaRows: 0, MetaPrefix: 0}
 	s.Start()
 	s.Submit(testDoc(nil))
@@ -390,14 +354,14 @@ func TestPostgresIntegration(t *testing.T) {
 	s.SubmitEvent(startEvent("node-ci", "test", evStart))
 	s.SubmitEvent(IngestEvent{Kind: "session", Start: evStart, End: evStart.Add(time.Minute), Templates: 2,
 		Detail: map[string]any{"subscribed_at": evStart.Add(time.Second).Format(time.RFC3339Nano), "end": "EOF"}})
-	other := testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"})
-	other.ChainFamily = "unknown"
-	s.Submit(other)
+	// Another chain's height and an unparseable one (0) go to templates like every other template.
+	s.Submit(testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"}))
+	s.Submit(testDoc(map[string]string{"job_id": `"noheight"`, "height": "0"}))
 	noLat := testDoc(map[string]string{"job_id": `"nolat"`, "no_latency": ""})
 	s.Submit(noLat)
 	if !waitFor(func() bool {
 		st := s.Stats()
-		return st["written"]+st["written_other"] == 3 && st["rejects_written"] == 4 && st["events_written"] == 3
+		return st["written"] == 4 && st["rejects_written"] == 4 && st["events_written"] == 3
 	}, 15*time.Second) {
 		t.Fatal(s.Stats())
 	}
@@ -438,10 +402,13 @@ func TestPostgresIntegration(t *testing.T) {
 		node != "node-ci" || sessEnd != "EOF" {
 		t.Error("start/session events:", err, node, sessEnd)
 	}
-	var oh int32
-	var chain, reason string
-	if err := c.QueryRow(context.Background(), `SELECT height, chain::text, reason FROM templates_other WHERE source_id = $1`, sid).Scan(&oh, &chain, &reason); err != nil || oh != 6_976_415 || chain != "unknown" || reason != "unknown_chain" {
-		t.Error(err, oh, chain, reason)
+	var other, noHeight, total int32
+	if err := c.QueryRow(context.Background(), `SELECT
+		(SELECT height FROM templates WHERE source_id = $1 AND job_id = 'other'),
+		(SELECT height FROM templates WHERE source_id = $1 AND job_id = 'noheight'),
+		(SELECT count(*) FROM templates WHERE source_id = $1)`, sid).Scan(&other, &noHeight, &total); err != nil ||
+		other != 6_976_415 || noHeight != 0 || total != 4 {
+		t.Error("templates:", err, other, noHeight, total)
 	}
 	var nulls int
 	if err := c.QueryRow(context.Background(), `SELECT count(*) FROM templates WHERE source_id = $1 AND job_id = 'nolat' AND latency_ms IS NULL AND latency_method IS NULL`, sid).Scan(&nulls); err != nil || nulls != 1 {

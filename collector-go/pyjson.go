@@ -112,7 +112,7 @@ type pyLimits struct {
 // poolLimits applies to every line received from a pool.
 var poolLimits = pyLimits{MaxDepth: 64, MaxValues: 10_000, MaxIntDigits: 4300}
 
-// defaultLimits applies to other JSON (the BCH lookup API, whose responses can be larger). Still bounded.
+// defaultLimits applies to JSON that does not come from a pool (tests, golden data). Still bounded.
 var defaultLimits = pyLimits{MaxDepth: 512, MaxValues: 200_000, MaxIntDigits: 4300}
 
 // pyLimitError is a decoding limit that was hit: the input may be valid JSON, but it isn't decoded.

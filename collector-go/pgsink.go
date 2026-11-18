@@ -12,9 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Port of collector/pgsink.py: route each document to `templates` or `templates_other` (route), convert it
-// losslessly (toRow), and write from a background goroutine with a bounded drop-oldest queue, so collection never
-// waits on the database and a database outage never stalls or crashes the collector.
+// Port of collector/pgsink.py: convert each document losslessly (toRow) and write it to `templates` from a background
+// goroutine with a bounded drop-oldest queue, so collection never waits on the database and a database outage never
+// stalls or crashes the collector. Every template goes to `templates`, whatever its chain or height: classification
+// happens at read time from stored facts (docs/design/one-templates-table.md), so a wrong tip can't misfile a row.
 
 type PGConfig struct {
 	Host, Port, Database, User, Password, SSLMode, Site, Replica string
@@ -24,7 +25,7 @@ type PGConfig struct {
 // pgConn is what the sink needs from a database connection (a fake in tests).
 type pgConn interface {
 	UpsertSource(ctx context.Context, name, site, replica, stratumURL string) (int16, error)
-	WriteBatch(ctx context.Context, btc, other [][]any) error
+	WriteBatch(ctx context.Context, rows [][]any) error
 	WriteRejects(ctx context.Context, rows [][]any) error
 	WriteEvents(ctx context.Context, rows [][]any) error
 	Close()
@@ -34,7 +35,6 @@ type PostgresSink struct {
 	cfg           PGConfig
 	sourceName    string
 	stratumURL    string
-	tip           func() (int64, bool)
 	maxQueue      int
 	batchSize     int
 	statsInterval time.Duration
@@ -65,12 +65,12 @@ type PostgresSink struct {
 }
 
 // dropped_invalid: not storable as a template; such a document is quarantined (rejected), not silently lost.
-var pgStatKeys = []string{"submitted", "written", "written_other", "dropped_queue_full", "dropped_invalid", "db_errors",
+var pgStatKeys = []string{"submitted", "written", "dropped_queue_full", "dropped_invalid", "db_errors",
 	"rejected", "rejects_written", "rejects_suppressed", "rejects_dropped", "rejects_db_errors",
 	"events", "events_written", "events_dropped", "events_db_errors"}
 
-func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, tip func() (int64, bool), log *slog.Logger) *PostgresSink {
-	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, tip: tip, maxQueue: 10_000,
+func NewPostgresSink(cfg PGConfig, sourceName, stratumURL string, log *slog.Logger) *PostgresSink {
+	s := &PostgresSink{cfg: cfg, sourceName: sourceName, stratumURL: stratumURL, maxQueue: 10_000,
 		batchSize: 500, statsInterval: 10 * time.Minute, connect: pgxConnect, log: log, stats: map[string]int64{},
 		done: make(chan struct{}), maxRejQueue: 1000, quar: quarantine{b: defaultQuarantineBudget}, wake: time.Minute}
 	for _, k := range pgStatKeys {
@@ -301,8 +301,7 @@ func (s *PostgresSink) write(ctx context.Context, batch []*Document) error {
 	if err := s.ensureConnected(ctx); err != nil {
 		return err
 	}
-	tip, tipOK := s.tip()
-	var btc, other [][]any
+	var rows [][]any
 	for _, d := range batch {
 		row, err := toRow(d, s.sourceID)
 		if err != nil {
@@ -313,18 +312,12 @@ func (s *PostgresSink) write(ctx context.Context, batch []*Document) error {
 				Raw: pyDumps(pyValue{kind: pyList, items: d.Params[:]})})
 			continue
 		}
-		r := route(int64(row.Height), d.ChainFamily, tip, tipOK)
-		if r == routeBTC {
-			btc = append(btc, row.values())
-		} else {
-			other = append(other, append(row.values(), r.Chain, r.Reason))
-		}
+		rows = append(rows, row.values())
 	}
-	if err := s.conn.WriteBatch(ctx, btc, other); err != nil {
+	if err := s.conn.WriteBatch(ctx, rows); err != nil {
 		return err
 	}
-	s.count("written", len(btc))
-	s.count("written_other", len(other))
+	s.count("written", len(rows))
 	return nil
 }
 
@@ -450,15 +443,14 @@ func pgxConnect(ctx context.Context, cfg PGConfig) (pgConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The enum columns (chain, latency_method) need their types registered for binary COPY.
-	for _, t := range []string{"chain", "latency_method"} {
-		typ, err := conn.LoadType(ctx, t)
-		if err != nil {
-			_ = conn.Close(ctx)
-			return nil, fmt.Errorf("loading type %s: %w", t, err)
-		}
-		conn.TypeMap().RegisterType(typ)
+	// The enum column latency_method needs its type registered for binary COPY. Not the chain enum: nothing writes
+	// it any more, and the migration that drops templates_other drops the type, so loading it would fail to connect.
+	typ, err := conn.LoadType(ctx, "latency_method")
+	if err != nil {
+		_ = conn.Close(ctx)
+		return nil, fmt.Errorf("loading type latency_method: %w", err)
 	}
+	conn.TypeMap().RegisterType(typ)
 	return &pgxConn{conn}, nil
 }
 
@@ -481,24 +473,13 @@ func (p *pgxConn) UpsertSource(ctx context.Context, name, site, replica, stratum
 	return id, err
 }
 
-func (p *pgxConn) WriteBatch(ctx context.Context, btc, other [][]any) error {
-	tx, err := p.c.Begin(ctx)
-	if err != nil {
-		return err
+// WriteBatch copies the rows into templates. One COPY is one statement, so it's atomic without a transaction.
+func (p *pgxConn) WriteBatch(ctx context.Context, rows [][]any) error {
+	if len(rows) == 0 {
+		return nil
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if len(btc) > 0 {
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates"}, pgColumns, pgx.CopyFromRows(btc)); err != nil {
-			return err
-		}
-	}
-	if len(other) > 0 {
-		cols := append(append([]string(nil), pgColumns...), "chain", "reason")
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"templates_other"}, cols, pgx.CopyFromRows(other)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	_, err := p.c.CopyFrom(ctx, pgx.Identifier{"templates"}, pgColumns, pgx.CopyFromRows(rows))
+	return err
 }
 
 func (p *pgxConn) WriteRejects(ctx context.Context, rows [][]any) error {

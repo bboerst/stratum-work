@@ -45,19 +45,6 @@ func TestDocumentFieldOrderAndTypes(t *testing.T) {
 	}
 }
 
-func TestChainFamilyOnlyWhenClassified(t *testing.T) {
-	d := docFromLine(t, notifyLine("job1"), nil)
-	if strings.Contains(string(d.JSON()), "chain_family") {
-		t.Error("BTC default must omit chain_family")
-	}
-	for _, fam := range []string{"bch", "unknown"} {
-		d.ChainFamily = fam
-		if !strings.HasSuffix(string(d.JSON()), `, "chain_family": "`+fam+`"}`) {
-			t.Error(string(d.JSON()))
-		}
-	}
-}
-
 func TestHeightParseFailureIsZero(t *testing.T) {
 	line := strings.Replace(notifyLine("j"), testCB1, "coinbase1", 1)
 	if d := docFromLine(t, line, nil); d.Height != 0 {
@@ -90,9 +77,8 @@ func TestSiteAndReplicaInTheLiveMessage(t *testing.T) {
 	if j := string(d.JSON()); strings.Contains(j, `"site"`) || strings.Contains(j, `"replica"`) {
 		t.Error("omitted when unset (golden parity with Python's document):", j)
 	}
-	d.ChainFamily = "bch"
 	d.Site, d.Replica = "s1", "b"
-	if j := string(d.JSON()); !strings.HasSuffix(j, `, "chain_family": "bch", "site": "s1", "replica": "b"}`) {
+	if j := string(d.JSON()); !strings.HasSuffix(j, `, "extranonce2_length": 4, "site": "s1", "replica": "b"}`) {
 		t.Error(j)
 	}
 }

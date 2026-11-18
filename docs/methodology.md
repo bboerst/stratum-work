@@ -163,9 +163,15 @@ compares them with the stored templates at read time:
 
 ## Other chains
 
-Some pools serve other chains (for example Bitcoin Cash) on the same connections. A template whose height is far from
-our Bitcoin node's tip is checked, and one that isn't Bitcoin is stored separately (`templates_other`) and not shown,
-so it can't be mistaken for a Bitcoin template.
+Some pools serve other chains (for example Bitcoin Cash) on the same connections. The collector stores every template
+it receives in `templates`, without judging which chain it belongs to. That judgement used to be made at receipt,
+against our node's tip at that moment, and it went wrong whenever the tip was stale or our block index had a gap; a
+misfiled row then needed a data migration. It's now made when templates are read, from stored facts only: whether a
+template's previous block hash is one of our stored blocks, and whether it arrived within its height's time window
+(derived from when the blocks at that height and the one below arrived). That way another chain's template, or an old
+job re-sent long after its block, isn't shown as a current Bitcoin template, and the judgement corrects itself when
+the stored facts improve ([design](design/one-templates-table.md)). Templates filed under the old rule are in
+`templates_other` until they're moved back.
 
 ## First transaction fee rate
 

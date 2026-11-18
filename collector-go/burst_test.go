@@ -156,7 +156,7 @@ func TestEventRowShape(t *testing.T) {
 
 func TestEventsAreWrittenAndNeverBlockTemplates(t *testing.T) {
 	db := &fakeDB{failEvents: true}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	s.SubmitEvent(IngestEvent{Kind: "burst", Start: t0, End: t0, Templates: 1})
 	s.Submit(testDoc(nil))
 	if !waitFor(func() bool { return db.count("templates") == 1 }, 3*time.Second) {
@@ -177,7 +177,7 @@ func TestEventsAreWrittenAndNeverBlockTemplates(t *testing.T) {
 
 func TestQueueOverflowIsRecordedAsAnEvent(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil)
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil })
 	s.maxQueue = 3
 	for i := 0; i < 10; i++ { // not started yet: 7 dropped
 		s.Submit(testDoc(nil))

@@ -42,15 +42,14 @@ func get(t *testing.T, h http.Handler, path string) (int, string) {
 
 func TestHealthEndpointsAndMetrics(t *testing.T) {
 	m := &Metrics{}
-	pg := NewPostgresSink(testPGCfg, "P", "", func() (int64, bool) { return 0, false }, quietLog)
+	pg := NewPostgresSink(testPGCfg, "P", "", quietLog)
 	rmq := NewRabbitMQPublisher(testRMQCfg, quietLog)
 	pg.Submit(testDoc(nil))
 	rmq.Submit(testDoc(nil))
 	tr := NewLatencyTracker(false)
 	tr.RecordTCPRTTUs(20_000, true)
-	hs := &HealthServer{Metrics: m, MaxAge: time.Minute, PG: pg, RMQ: rmq, Tracker: tr, Tip: NewTipState(time.Hour),
-		Classifier: NewClassifier(NewTipState(time.Hour), 5, NewBCHConfirmer("http://x", time.Second), nil, quietLog),
-		Labels:     map[string]string{"pool": `F2"Pool`, "site": "s", "replica": "b", "version": "dev"}, log: quietLog}
+	hs := &HealthServer{Metrics: m, MaxAge: time.Minute, PG: pg, RMQ: rmq, Tracker: tr,
+		Labels: map[string]string{"pool": `F2"Pool`, "site": "s", "replica": "b", "version": "dev"}, log: quietLog}
 	h := hs.Handler()
 	if code, _ := get(t, h, "/livez"); code != 200 {
 		t.Error("livez", code)
@@ -96,6 +95,12 @@ func TestHealthEndpointsAndMetrics(t *testing.T) {
 	} {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %q in\n%s", want, body)
+		}
+	}
+	// The collector no longer follows a tip or classifies chains (docs/design/one-templates-table.md).
+	for _, gone := range []string{"btc_tip", "bch_", "written_other"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("unexpected %q in\n%s", gone, body)
 		}
 	}
 }

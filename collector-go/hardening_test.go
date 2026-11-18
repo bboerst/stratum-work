@@ -157,7 +157,7 @@ func TestQuarantineReasonIsBounded(t *testing.T) {
 
 func TestUnstorableTemplateIsQuarantinedNotLost(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	s.Submit(testDoc(nil))
 	s.Submit(testDoc(map[string]string{"prev_hash": `"zz"`}))
 	if !waitFor(func() bool { return db.count("templates") == 1 && db.count("templates_rejected") == 1 }, 3*time.Second) {
@@ -178,7 +178,7 @@ func TestUnstorableTemplateIsQuarantinedNotLost(t *testing.T) {
 
 func TestQuarantineFailureNeverBlocksTemplates(t *testing.T) {
 	db := &fakeDB{failRejects: true} // e.g. the collector runs before the migration
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	for i := 0; i < 3; i++ {
 		s.SubmitReject(Rejection{TsNs: time.Now().UnixNano(), Stage: "json", Reason: "invalid JSON", Raw: []byte("{")})
 		s.Submit(testDoc(nil))
@@ -194,7 +194,7 @@ func TestQuarantineFailureNeverBlocksTemplates(t *testing.T) {
 
 func TestRejectsAloneAreWritten(t *testing.T) {
 	db := &fakeDB{}
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }, nil).Start()
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return db, nil }).Start()
 	s.SubmitReject(Rejection{TsNs: time.Now().UnixNano(), Stage: "line", Reason: "no newline", Raw: []byte("x")})
 	if !waitFor(func() bool { return db.count("templates_rejected") == 1 }, 3*time.Second) {
 		t.Fatal("not written")
@@ -203,7 +203,7 @@ func TestRejectsAloneAreWritten(t *testing.T) {
 }
 
 func TestRejectQueueIsBounded(t *testing.T) {
-	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return nil, errors.New("down") }, nil)
+	s := newTestSink(func(context.Context, PGConfig) (pgConn, error) { return nil, errors.New("down") })
 	s.maxRejQueue = 5
 	for i := 0; i < 20; i++ { // not started: nothing drains
 		s.SubmitReject(Rejection{Stage: "json", Reason: "x", Raw: []byte("y")})

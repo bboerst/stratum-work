@@ -69,7 +69,13 @@ export function templateKey(
   return `${t.pool_name}|${us.toString()}|${content}`;
 }
 
-/** Bitcoin templates only: the collector tags other chains' templates with chain_family (CLAUDE.md, #98). */
+/**
+ * Drops templates a collector tagged as another chain's (chain_family: the Python collector still tags them). The Go
+ * collector no longer classifies (docs/design/one-templates-table.md): its other-chain templates arrive untagged, and
+ * the buffer's own height bounds keep them out instead: at most MAX_HEIGHTS_ABOVE_TIP above the Bitcoin tip, and not
+ * below the kept height range. A template with a far height that arrives before the first tip is pruned when the tip
+ * arrives (setTip).
+ */
 export function isBitcoinTemplate(t: Pick<StratumV1Data, 'chain_family'>): boolean {
   return t.chain_family === undefined || t.chain_family === null || t.chain_family === '';
 }

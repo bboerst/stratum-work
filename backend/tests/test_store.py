@@ -329,6 +329,26 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertEqual(got[0], doc)
         self.assertEqual(int(timestamp, 16) // 1000, 1_794_437_000_123_456)   # hex ns, µs precision
 
+    def test_templates_at_height_reads_only_its_receive_window(self):
+        """A template for height h is received between the blocks at h - 1 and h arriving (height_window(), 2 h margin):
+        a stuck feed re-sending h's job a day later, or another chain's template at height h, isn't h's."""
+        h = self.h + 60
+        name = f"itest-{h}"
+        t0 = 1_794_500_000   # the block at h - 1 arrives here, the block at h 10 min later
+        with self.psycopg.connect(self.admin) as c:
+            for height, at in ((h - 1, t0), (h, t0 + 600)):
+                c.execute("INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig) "
+                          "VALUES (%s, %s, to_timestamp(%s), to_timestamp(%s), '\\x00')",
+                          (bytes.fromhex(f"{height:064x}"), height, at, at))
+            sid = c.execute("INSERT INTO sources (name, site) VALUES (%s, 'ci') ON CONFLICT (name, site, replica) "
+                            "DO UPDATE SET name = EXCLUDED.name RETURNING id", (name,)).fetchone()[0]
+            for job, at in (("in", t0 + 5), ("late-but-inside", t0 + 600 + 3600), ("stale", t0 + 86_400)):
+                c.execute("""INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2,
+                             merkle_branches, version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
+                             VALUES (to_timestamp(%s), %s, %s, %s, '\\x00', '\\x01', '\\x02', '\\x', 1, 1, 1, true, '\\x03', 4)""",
+                          (at, sid, h, job))
+        self.assertEqual([d["job_id"] for d in self.store.templates_at_height(h)], ["in", "late-but-inside"])
+
     def test_templates_at_height_returns_every_collectors_rows(self):
         """Analyses read every collector's rows, copies included (an anomaly only one collector received must still be
         analyzed), in receive order, each with its own receive time and its collector's site and replica."""

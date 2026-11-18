@@ -229,3 +229,26 @@ describe('entry identity', () => {
     expect(second[1].data).toBe(first[1].data);
   });
 });
+
+describe('untagged other-chain templates (the Go collector no longer tags chain_family)', () => {
+  it('are kept out by the tip bounds: far above the tip, and below the kept height range', () => {
+    const buf = new TemplateBuffer({ heights: 3 });
+    buf.setTip(976_400);
+    const added = buf.add([
+      tpl('btc', 976_401, 1),
+      tpl('other-high', 6_976_415, 2),   // another chain's height far above Bitcoin's
+      tpl('other-low', 915_000, 3),      // another chain far below the kept range
+    ]);
+    expect(added).toBe(1);
+    expect(buf.entries().map(e => e.data.pool_name)).toEqual(['btc']);
+  });
+
+  it('one that arrives before the first tip is pruned when the tip arrives, and Bitcoin work comes back', () => {
+    const buf = new TemplateBuffer({ heights: 3 });
+    buf.add([tpl('other-high', 6_976_415, 1)]);      // the live stream can beat the pre-fill's tip
+    buf.setTip(976_400);
+    expect(buf.entries()).toEqual([]);
+    expect(buf.add([tpl('btc', 976_401, 2)])).toBe(1); // the pre-fill (or the next live template) is accepted
+    expect(buf.currentHeight).toBe(976_401);
+  });
+});

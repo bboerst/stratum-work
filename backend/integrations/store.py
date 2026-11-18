@@ -403,7 +403,10 @@ class PostgresStore:
         """A replaced block that is on the node's active chain again (blocks_best shows it once more)."""
         self.mark_stale_block_reactivated(block_hash)
 
-    # templates (Bitcoin only by construction: other chains live in templates_other).
+    # templates at a height: only rows received inside the height's window (height_window(), from stored blocks; see
+    # docs/design/one-templates-table.md), which keeps out stuck-feed re-sends of old jobs and other chains' templates
+    # at that height. The window is fetched first and passed as values, unprepared, so the plan is custom and
+    # TimescaleDB drops the chunks outside it at planning (a prepared, generic plan would only exclude them at run time).
     # Redundant collection (several collectors per pool, sources.replica, possibly at several sites): analytics read
     # the RAW rows of every collector, not the templates_dedup view. The view shows one stream per pool for display;
     # an anomaly (a divergent prev_hash, an invalid coinbase) that only one collector received must still be
@@ -416,11 +419,15 @@ class PostgresStore:
                lpad(to_hex(t.ntime), 8, '0'), t.clean_jobs, encode(t.extranonce1, 'hex'), t.extranonce2_length,
                t.latency_ms, t.latency_method::text, (extract(epoch FROM t.received_at) * 1000000)::bigint, s.site, s.replica
           FROM templates t JOIN sources s ON s.id = t.source_id
-         WHERE t.height = %s
+         WHERE t.height = %s AND t.received_at >= %s AND t.received_at <= %s
          ORDER BY t.received_at, t.source_id, t.job_id"""
 
     def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
-        rows = self._run(lambda c: c.execute(self._TEMPLATES_AT_HEIGHT, (height,)).fetchall())
+        def run(c):
+            t_from, t_to = c.execute("SELECT t_from::text, t_to::text FROM height_window(%s, %s)", (height, height),
+                                     prepare=False).fetchone()
+            return c.execute(self._TEMPLATES_AT_HEIGHT, (height, t_from, t_to), prepare=False).fetchall()
+        rows = self._run(run)
         out = []
         for (pool_name, h, job_id, prev_hash, cb1, cb2, branches, version, nbits, ntime, clean, en1, en2len,
              lat_ms, lat_m, received_us, site, replica) in rows:

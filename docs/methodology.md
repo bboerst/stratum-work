@@ -13,6 +13,7 @@ details are in the other files in [`docs/`](./).
 - [Arrival times](#arrival-times)
 - [Clocks](#clocks)
 - [Latency adjustment](#latency-adjustment)
+- [Which templates belong to a height](#which-templates-belong-to-a-height)
 - [Several connections per pool](#several-connections-per-pool)
 - [Blocks](#blocks)
 - [Other chains](#other-chains)
@@ -98,6 +99,19 @@ Limits:
   server that builds the job.
 - It is refreshed about once a minute, not per template.
 - Templates without an estimate are shown unadjusted. Turn the setting off to see arrival times exactly as recorded.
+
+## Which templates belong to a height
+
+A template's height alone doesn't make it part of that height's race. A pool's stuck feed can re-send an old job
+hours later at its old height, and another chain's heights can pass through a height Bitcoin had long ago. What a
+template's **receive time** does say: work for height h is received after the block at h - 1 arrives and before
+the block at h arrives. So reads of the templates at a height keep only the rows received in that window, from our
+stored blocks: from the arrival of the block at h - 1 to the arrival of the block at h, widened by 2 hours on each
+side (the consensus limit on how far ahead a block header's time may run). At a height without a stored block the
+nearest stored ones are used, so the window widens but never opens; at the height being mined now it is open-ended.
+
+The window is a judgement made at read time from stored facts: nothing is moved or deleted, and the template details
+page still shows every row at a height, whenever it was received.
 
 ## Several connections per pool
 

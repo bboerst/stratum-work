@@ -44,6 +44,14 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
          ON CONFLICT (name, site, replica) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [pool, site, replica]);
       sid[pool === name ? `${site}/${replica}` : 'single'] = r.rows[0].id;
     }
+    // Blocks around the templates (h - 1 at T0, h and h + 1 ten minutes apart): height reads only return rows
+    // received inside the height's window (height_window()), as with a real chain.
+    for (const [height, at] of [[h - 1, T0], [h, T0 + 600], [h + 1, T0 + 1200]]) {
+      await admin.query(
+        `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig)
+         VALUES (decode(lpad(to_hex($1::bigint), 64, '0'), 'hex'), $1, to_timestamp($2::float8), to_timestamp($2::float8), '\\x00')
+         ON CONFLICT DO NOTHING`, [height, at]);
+    }
     // primary ci/a, secondaries ci/b and ci2/a
     await insert('ci/a', 0.020, h, 'a1', 'aa', 100, 'a1');
     await insert('ci/b', 0.010, h, 'b7', 'aa', 100, 'b1');    // exact copy of a1, earlier: hidden

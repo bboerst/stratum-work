@@ -47,6 +47,10 @@ class MongoStoreTests(unittest.TestCase):
         self.assertEqual(self.db.blocks.calls[0], ("update_one", ({"block_hash": "ab"}, {"$set": doc}), {"upsert": True}))
         self.assertEqual(self.db.blocks.calls[1], ("insert_one", (doc,), {}))
 
+    def test_header_fill_is_postgres_only(self):
+        self.assertEqual(self.store.blocks_missing_header(10), [])
+        self.assertEqual(self.store.fill_block_headers([{"block_hash": "ab"}]), 0)
+
     def test_replace_block(self):
         doc = {"block_hash": "ab", "height": 1}
         self.store.replace_block(doc)
@@ -170,6 +174,26 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             self.assertIn("Foundry USA", mp)
         hashes = [b["block_hash"] for b in self.store.block_hashes_by_height_desc() if b["height"] in (h, h + 1)]
         self.assertEqual(hashes, ["a2" * 32, "a1" * 32])
+
+    def test_header_columns_are_written_and_the_fill_only_touches_nulls(self):
+        h = self.h + 20
+        full = dict(self._block(h, "c1"), transactions=3123, size=1_550_000, weight=3_993_000, version=0x2000E000,
+                    merkle_root="cd" * 32, bits="17034219", nonce=123456789, difficulty=1.5e14)
+        self.store.save_block(full, is_new_block=True)
+        self.store.save_block(self._block(h, "c1"), is_new_block=False)     # a save without them keeps them
+        self.store.save_block(self._block(h + 1, "c2"), is_new_block=False)  # stored without header columns
+        self.assertIn("c2" * 32, self.store.blocks_missing_header(100_000))
+        self.assertNotIn("c1" * 32, self.store.blocks_missing_header(100_000))
+        n = self.store.fill_block_headers([{"block_hash": "c2" * 32, "transactions": 5, "version": 1,
+                                            "merkle_root": "ef" * 32, "bits": "1d00ffff", "nonce": 9, "difficulty": 1.0},
+                                           {"block_hash": "c1" * 32, "transactions": 999}])  # c1: already set, unchanged
+        self.assertEqual(n, 2)
+        with self.psycopg.connect(self.admin) as c:
+            rows = {r[0]: r[1:] for r in c.execute(
+                "SELECT height, tx_count, size, weight, version, encode(merkle_root, 'hex'), bits, nonce, difficulty "
+                "FROM blocks WHERE height IN (%s, %s)", (h, h + 1)).fetchall()}
+        self.assertEqual(rows[h], (3123, 1_550_000, 3_993_000, 0x2000E000, "cd" * 32, 0x17034219, 123456789, 1.5e14))
+        self.assertEqual(rows[h + 1], (5, None, None, 1, "ef" * 32, 0x1d00ffff, 9, 1.0))
 
     def test_seen_at_is_the_given_arrival_time_and_seen_via_is_kept_with_it(self):
         h = self.h + 7

@@ -68,6 +68,10 @@ BLOCK_GAP_FILL_INTERVAL_S = float(os.getenv("BLOCK_GAP_FILL_INTERVAL_S", "3600")
 BLOCK_GAP_FILL_MAX_BLOCKS = int(os.getenv("BLOCK_GAP_FILL_MAX_BLOCKS", "50"))
 BLOCK_GAP_FILL_PEERS = int(os.getenv("BLOCK_GAP_FILL_PEERS", "3"))
 BLOCK_GAP_FILL_PEER_TIMEOUT_S = float(os.getenv("BLOCK_GAP_FILL_PEER_TIMEOUT_S", "30"))
+# Header fill (header_fill.py): after each gap-fill run, up to HEADER_FILL_MAX_BLOCKS stored blocks without header
+# columns (tx_count, version, merkle_root, bits, nonce, difficulty, size, weight) get them from getblockheader.
+# 0 = off. Postgres only.
+HEADER_FILL_MAX_BLOCKS = int(os.getenv("HEADER_FILL_MAX_BLOCKS", "20000"))
 
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
@@ -287,9 +291,20 @@ def build_block_doc(block_hash: str) -> Dict[str, Any]:
         "block_hash": block_hash,
         "timestamp": block["time"],
         "mining_pool": mining_pool,
-        "analysis": analysis
+        "analysis": analysis,
     }
+    doc.update(block_header_fields(block))
     return doc
+
+
+def block_header_fields(block: Dict[str, Any]) -> Dict[str, Any]:
+    """The block's header facts as the node reports them (getblock / getblockheader), in the block document's field
+    names (the web reads the same names from MongoDB; Postgres stores them in blocks' header columns). Keys the node
+    didn't report are left out. getblockheader has no size or weight."""
+    out = {"transactions": block.get("nTx"), "size": block.get("size"), "weight": block.get("weight"),
+           "version": block.get("version"), "merkle_root": block.get("merkleroot"), "bits": block.get("bits"),
+           "nonce": block.get("nonce"), "difficulty": block.get("difficulty")}
+    return {k: v for k, v in out.items() if v is not None}
 
 def process_block(block_hash: str, is_new_block: bool = False, seen_at: Optional[datetime] = None,
                   seen_via: Optional[str] = None) -> bool:
@@ -859,11 +874,21 @@ def sync_then_fill_gaps():
         logger.info("Historical gap fill off (BLOCK_GAP_FILL_INTERVAL_S=%s)", BLOCK_GAP_FILL_INTERVAL_S)
         return
     filler = gap_filler()
+    headers = None
+    if HEADER_FILL_MAX_BLOCKS > 0:
+        from header_fill import BlockHeaderFiller
+        headers = BlockHeaderFiller(rpc=node_rpc, store=store, header_fields=block_header_fields,
+                                    max_blocks=HEADER_FILL_MAX_BLOCKS)
     while True:
         try:
             filler.run()
         except Exception as e:
             logger.error("Historical gap fill failed (retried next run): %s", e)
+        if headers is not None:
+            try:
+                headers.run()
+            except Exception as e:
+                logger.error("Header fill failed (retried next run): %s", e)
         time.sleep(BLOCK_GAP_FILL_INTERVAL_S)
 
 

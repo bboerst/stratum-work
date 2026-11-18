@@ -7,7 +7,7 @@ COPY *.go ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /collector . && /collector -h 2>&1 | head -1
 
 FROM scratch
-# CA bundle for https (Bitcoin RPC without a CA file, the BCH confirmation API).
+# CA bundle for TLS to Postgres (sslmode verify-ca / verify-full against a public CA).
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /collector /collector
 USER 65534:65534

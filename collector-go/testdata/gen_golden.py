@@ -1,9 +1,12 @@
 """Generate golden.json: what the Python collector produces for each test notification.
 
 For every case, the raw line goes through the same Python code the collector runs: json.loads (as get_msg does on
-bytes), create_notification_document (chain classification patched to the case's value, _id fixed), json.dumps
-(the RabbitMQ body), pgsink.to_row and pgsink.route (the Postgres row). collector-go's golden_test.go feeds the same
-lines through the Go pipeline and requires identical output.
+bytes), create_notification_document (_id fixed), json.dumps (the RabbitMQ body) and pgsink.to_row (the Postgres
+row). collector-go's golden_test.go feeds the same lines through the Go pipeline and requires identical output.
+
+The Go collector doesn't classify chains (docs/design/one-templates-table.md): every template goes to `templates`
+and the live message carries no chain_family. So the Python classification is patched to "not classified", and
+pgsink.route isn't compared.
 
 Run from the repo root in a throwaway container (needs collector/requirements.txt):
   docker run --rm -v "$PWD:/repo" -w /repo python:3.13 sh -c \
@@ -17,7 +20,7 @@ from unittest import mock
 
 sys.path.insert(0, ".")
 from collector.main import create_notification_document  # noqa: E402
-from collector.pgsink import to_row, route  # noqa: E402
+from collector.pgsink import to_row  # noqa: E402
 
 PREFIX = "01000000" + "01" + "00" * 32 + "ffffffff"
 CB1 = PREFIX + "4b0393e20e" + "2f4d696e65642062792074657374" + "00" * 8   # height 975507
@@ -37,20 +40,14 @@ def notify(job='"j1"', prev=f'"{PREV}"', cb1=f'"{CB1}"', cb2=f'"{CB2}"', br=json
 C = []
 
 
-def case(name, line, sub=SUB, latency=(12.5, "tcp"), chain=None, tip=975_506, ts=TS, pool="TestPool"):
+def case(name, line, sub=SUB, latency=(12.5, "tcp"), ts=TS, pool="TestPool"):
     if isinstance(line, str):
         line = line.encode()
-    C.append(dict(name=name, line=line, sub=sub, latency=latency, chain=chain, tip=tip, ts=ts, pool=pool))
+    C.append(dict(name=name, line=line, sub=sub, latency=latency, ts=ts, pool=pool))
 
 
 case("typical", notify())
-case("chain bch", notify(), chain="bch")
-case("chain unknown", notify(), chain="unknown")
 case("no latency", notify(), latency=None)
-case("no tip", notify(), tip=None)
-case("implausible height", notify(), tip=975_400)
-case("tip + 2", notify(), tip=975_505)
-case("tip - 6", notify(), tip=975_513)
 for i, lat in enumerate([0.0005, 1.0, 0.123456789, 1e-05, 5e-07, 12345678901234567.0, 1e16, 1234567890123456.0,
                          30.000000000000004, 0.1 + 0.2, 100.0, 2.5e-3]):
     case(f"latency float {i}", notify(), latency=(lat, "app" if i % 2 else "tcp"))
@@ -85,7 +82,7 @@ case("ts epoch", notify(), ts=1)
 case("height parse fails", notify(cb1='"zz"'))
 case("height parse fails, not str", notify(cb1='12'))
 case("height 0 push", notify(cb1=f'"{PREFIX}0a0100aabbcc"'))
-case("op_1 height", notify(cb1=f'"{PREFIX}0a51aabbcc"'), tip=None)
+case("op_1 height", notify(cb1=f'"{PREFIX}0a51aabbcc"'))
 case("other chain height", notify(cb1=f'"{PREFIX}0a03cf726a00"'))   # 6976207
 case("unicode pool", notify(), pool="Pööl ☃")
 case("bom", b"\xef\xbb\xbf" + notify().encode())
@@ -116,8 +113,7 @@ def ser(v):
 out = []
 for c in C:
     rec = dict(name=c["name"], line=base64.b64encode(c["line"]).decode(), sub=c["sub"],
-               latency=list(c["latency"]) if c["latency"] else None, chain=c["chain"], tip=c["tip"], ts=c["ts"],
-               pool=c["pool"])
+               latency=list(c["latency"]) if c["latency"] else None, ts=c["ts"], pool=c["pool"])
     try:
         msg = json.loads(c["line"])
     except Exception as e:  # get_msg skips the line
@@ -129,7 +125,7 @@ for c in C:
         r = json.loads(c["sub"].encode()).get("result")
         if r is not None:
             en1, en2 = r[-2:]
-    with mock.patch("collector.main.classify_notification_chain", return_value=c["chain"]):
+    with mock.patch("collector.main.classify_notification_chain", return_value=None):
         doc = create_notification_document(msg, c["pool"], en1, en2, hex(c["ts"])[2:],
                                            latency=tuple(c["latency"]) if c["latency"] else None)
     doc["_id"] = "00000000-0000-4000-8000-000000000000"
@@ -137,8 +133,6 @@ for c in C:
     try:
         row = to_row(doc, 7)
         rec["row"] = json.dumps([ser(v) for v in row])
-        r = route(row[2], doc.get("chain_family"), c["tip"])
-        rec["route"] = [r.table, r.chain, r.reason]
     except (KeyError, ValueError, TypeError) as e:
         rec["row_error"] = type(e).__name__ + ": " + str(e)
     out.append(rec)

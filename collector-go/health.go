@@ -30,7 +30,6 @@ type Metrics struct {
 	Bursts           atomic.Int64 // burst episodes (and segments) recorded (burst.go)
 	Subscribed       atomic.Bool
 	KernelTimestamps atomic.Bool
-	TipUpdates       atomic.Int64
 
 	rxDeltaMu    sync.Mutex
 	rxDeltaSum   float64 // seconds the post-read clock trailed the receive timestamp
@@ -70,15 +69,13 @@ func (m *Metrics) Ready(maxAge time.Duration) (bool, string) {
 }
 
 type HealthServer struct {
-	Metrics    *Metrics
-	MaxAge     time.Duration
-	Labels     map[string]string // info labels: pool, site, replica, version
-	PG         *PostgresSink
-	RMQ        *RabbitMQPublisher
-	Classifier *Classifier
-	Tracker    *LatencyTracker
-	Tip        *TipState
-	log        *slog.Logger
+	Metrics *Metrics
+	MaxAge  time.Duration
+	Labels  map[string]string // info labels: pool, site, replica, version
+	PG      *PostgresSink
+	RMQ     *RabbitMQPublisher
+	Tracker *LatencyTracker
+	log     *slog.Logger
 }
 
 func (h *HealthServer) Handler() http.Handler {
@@ -196,28 +193,9 @@ func (h *HealthServer) render() string {
 			p.sample(ns+"latency_estimate_seconds", map[string]string{"method": e.method}, e.ms/1000)
 		}
 	}
-	if h.Tip != nil {
-		tip, ok := h.Tip.Current()
-		p.metric(ns+"btc_tip_height", "gauge", "Bitcoin tip used for classification (0 = unknown or stale).")
-		if !ok {
-			tip = 0
-		}
-		p.sample(ns+"btc_tip_height", nil, float64(tip))
-		p.metric(ns+"btc_tip_updates_total", "counter", "Tip updates from ZMQ block notifications.")
-		p.sample(ns+"btc_tip_updates_total", nil, float64(m.TipUpdates.Load()))
-	}
-	if h.Classifier != nil {
-		p.metric(ns+"bch_lookups_total", "counter", "BCH confirmation API lookups.")
-		p.sample(ns+"bch_lookups_total", nil, float64(h.Classifier.Lookups.Load()))
-		p.metric(ns+"bch_lookups_skipped_total", "counter", "Lookups skipped (queue full); classified unknown.")
-		p.sample(ns+"bch_lookups_skipped_total", nil, float64(h.Classifier.SkippedFullQ.Load()))
-	}
 	// Each family's samples must directly follow its TYPE line.
 	p.metric(ns+"sink_queue_depth", "gauge", "Documents waiting in a sink queue.")
 	var events []string
-	if h.Classifier != nil {
-		p.sample(ns+"sink_queue_depth", map[string]string{"sink": "bch_lookup"}, float64(h.Classifier.Queued()))
-	}
 	if h.PG != nil {
 		p.sample(ns+"sink_queue_depth", map[string]string{"sink": "postgres"}, float64(h.PG.Queued()))
 		st := h.PG.Stats()

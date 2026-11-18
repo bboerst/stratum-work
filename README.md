@@ -33,7 +33,7 @@ flowchart LR
   web -- "SSE /api/stream + JSON API" --> browser[Browser: decodes and draws]
 ```
 
-- **collector** (`collector/`, Python): one process per pool. Publishes each template to RabbitMQ for the live view and stores it. It asks the node for the current tip to tell Bitcoin templates from other chains' (some pools mine other chains on the same endpoints). **collector-go** (`collector-go/`) is a Go port with the same flags that writes Postgres only and adds ingest hardening (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`).
+- **collector** (`collector/`, Python): one process per pool. Publishes each template to RabbitMQ for the live view and stores it. It asks the node for the current tip to tell Bitcoin templates from other chains' (some pools mine other chains on the same endpoints). **collector-go** (`collector-go/`) is a Go port that accepts the same flags, writes Postgres only, and stores every template in `templates` without asking a node: which chain a template belongs to is derived at read time ([design doc](docs/design/one-templates-table.md)), so it ignores the node and chain-detection flags. It also adds ingest hardening (line caps, quarantine of unstorable messages in `templates_rejected`, burst detection in `ingest_events`).
 - **backend** (`backend/`, Python): follows the node (RPC + ZMQ `hashblock`), backfills blocks down to `MIN_BLOCK_HEIGHT`, identifies the pool of each block, runs the [analytics plug-ins](#adding-an-analyzer) over the templates of that height, tracks stale blocks, and publishes block events.
 - **web** (`web/`, Next.js): serves the UI, the live stream (`/api/stream`, Server-Sent Events) and a read-only JSON API (`web/app/api/`).
 - **mempool-recorder** (`mempool-recorder/`, Go): records the node's mempool so templates can be resolved against it (a template's `merkle_branches[0]` is the txid of its first transaction). See its [README](mempool-recorder/README.md).
@@ -204,7 +204,7 @@ COLLECTOR_PG_HOST=postgres      # collectors write Postgres too (in addition to 
 BACKEND_DB_BACKEND=postgres     # blocks, pools, analytics reads, stale blocks
 WEB_DB_BACKEND=postgres         # the web reads Postgres (as the read-only `web` user)
 ```
-With all three, the backend and web run fully on Postgres. Collectors write Bitcoin templates to `templates` and everything else (other chains, unparseable or implausible heights) to `templates_other`. The web's API responses are the same as in MongoDB mode except for ids and µs-precision timestamps (see `web/lib/db/pg-mapping.ts`); `npm run parity` (`web/scripts/read-parity.ts`) checks that both backends return the same data when both have it.
+With all three, the backend and web run fully on Postgres. The Python collector writes Bitcoin templates to `templates` and everything else (other chains, unparseable or implausible heights) to `templates_other`; collector-go writes every template to `templates` ([design doc](docs/design/one-templates-table.md)). The web's API responses are the same as in MongoDB mode except for ids and µs-precision timestamps (see `web/lib/db/pg-mapping.ts`); `npm run parity` (`web/scripts/read-parity.ts`) checks that both backends return the same data when both have it.
 ```bash
 # needs data in both (e.g. collectors writing to both); the network is <project>_default
 docker run --rm --network stratum-work_default -v "$PWD/web:/app" -w /app \

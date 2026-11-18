@@ -20,8 +20,8 @@ import (
 // the clock right after the read returned, Python's method). Every line completed by the same read shares it.
 //
 // The read loop only reads, parses and hands documents off without blocking: latency probes and keep-alives are
-// sent from their own goroutine (their responses are matched by id in the read loop), the BCH lookup runs in the
-// Classifier, and the sinks take documents through bounded drop-oldest queues.
+// sent from their own goroutine (their responses are matched by id in the read loop), and the sinks take documents
+// through bounded drop-oldest queues.
 
 const maxLineBytes = 4 << 20 // a mining.notify is a few KB; a pool that sends 4 MiB without a newline is broken
 
@@ -123,7 +123,7 @@ type Collector struct {
 	log     *slog.Logger
 	tracker *LatencyTracker
 	metrics *Metrics
-	emit    func(*Document) // non-blocking hand-off (Classifier.Submit)
+	emit    func(*Document) // non-blocking hand-off to the sinks
 	// Reject quarantines what the pool sent that can't be stored as a template (quarantine.go); nil = log only.
 	// Must not block (PostgresSink.SubmitReject).
 	Reject func(Rejection)

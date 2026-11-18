@@ -3,6 +3,7 @@ import pathlib
 import sys
 import time
 import unittest
+from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests"))
 from test_btc_template_filtering import load_store_module  # noqa: E402
@@ -169,6 +170,23 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             self.assertIn("Foundry USA", mp)
         hashes = [b["block_hash"] for b in self.store.block_hashes_by_height_desc() if b["height"] in (h, h + 1)]
         self.assertEqual(hashes, ["a2" * 32, "a1" * 32])
+
+    def test_seen_at_is_the_given_arrival_time_and_seen_via_is_kept_with_it(self):
+        h = self.h + 7
+        arrived = datetime(2026, 11, 18, 0, 0, 1, 250_000, tzinfo=timezone.utc)
+        self.store.save_block(self._block(h, "b1"), is_new_block=True, seen_at=arrived, seen_via="zmq")
+        # later saves (the reconciliation, a re-sync) never move the first live sighting or its label
+        self.store.save_block(self._block(h, "b1"), is_new_block=True, seen_via="reconcile")
+        self.store.save_block(self._block(h, "b1"), is_new_block=False)
+        self.store.save_block(self._block(h + 1, "b2"), is_new_block=True, seen_via="reconcile")   # found, not announced
+        self.store.save_block(self._block(h + 2, "b3"), is_new_block=False)                         # synced: not seen live
+        with self.psycopg.connect(self.admin) as c:
+            rows = dict((r[0], r[1:]) for r in c.execute(
+                "SELECT height, seen_at, seen_via FROM blocks WHERE height BETWEEN %s AND %s", (h, h + 2)).fetchall())
+        self.assertEqual(rows[h], (arrived, "zmq"))
+        self.assertIsNotNone(rows[h + 1][0])
+        self.assertEqual(rows[h + 1][1], "reconcile")
+        self.assertEqual(rows[h + 2], (None, None))
 
     def _stale(self, c, hash_byte, h, reorged_in=False):
         c.execute("""INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,

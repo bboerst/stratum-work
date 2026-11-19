@@ -17,6 +17,7 @@ import {
 } from "@/utils/templateChangeDetection";
 import { getFormattedCoinbaseAsciiTag } from "@/utils/bitcoinUtils";
 import { Info } from "lucide-react";
+import { blockMarkers, formatUtcMillis, type BlockMarker } from "@/lib/blockMarkers";
 
 // Convert HSL color to RGB format for better canvas compatibility
 const hslToRgb = (hslString: string): string => {
@@ -284,6 +285,7 @@ function RealtimeChartBase({
   const {
     entries: bufferedTemplates,
     epoch: bufferEpoch,
+    tipHeight: bufferTipHeight,
   } = useTemplateBuffer();
   
   // Get historical data from context
@@ -313,6 +315,9 @@ function RealtimeChartBase({
   const sortByTimeReceived = propSortByTimeReceived !== undefined ? propSortByTimeReceived : localSortByTimeReceived;
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
+  const [hoveredMarker, setHoveredMarker] = useState<(BlockMarker & { x: number }) | null>(null);
+  // Block marker labels as drawn (canvas px), for hover hit-testing.
+  const markerLabelRectsRef = useRef<Array<BlockMarker & { x: number; left: number; right: number; bottom: number }>>([]);
   const uiFontScale = Math.max(0.65, Math.min(1.25, fontScale));
   const effectivePoolNamesWidth = useMemo(
     () => (showPoolNames ? Math.max(40, Math.min(300, poolNamesPanelWidth)) : 0),
@@ -349,6 +354,11 @@ function RealtimeChartBase({
   const visiblePoolNames = useMemo(
     () => allPoolNames.filter(n => isPoolVisible(n)),
     [allPoolNames, isPoolVisible]
+  );
+  // New-block markers: the first job any feed sends on each new parent, from all feeds (lib/blockMarkers.ts).
+  const markers = useMemo(
+    () => blockMarkers(chartData, isHistoricalBlock ? { completeHeight: filterBlockHeight } : { tipHeight: bufferTipHeight }),
+    [chartData, isHistoricalBlock, filterBlockHeight, bufferTipHeight]
   );
   const visibleMaxPoolCount = useMemo(
     () => Math.max(visiblePoolNames.length, 10),
@@ -456,6 +466,8 @@ function RealtimeChartBase({
     // Clear the canvas
     ctx.clearRect(0, 0, dimensions.width, dimensions.height);
     
+    markerLabelRectsRef.current = [];
+
     // Skip if no visible data
     if (visibleChartData.length === 0) {
       ctx.fillStyle = 'rgba(150, 150, 150, 0.5)';
@@ -674,6 +686,41 @@ function RealtimeChartBase({
       }
     });
     
+    // New-block markers: a thin dashed line over the bars at the first job on each new parent, height at the top.
+    if (markers.length > 0) {
+      const plotLeft = margin.left;
+      const plotRight = dimensions.width - margin.right;
+      const labelFontSize = Math.max(8, Math.round(10 * uiFontScale));
+      const labelTop = 2;
+      const labelBottom = labelTop + labelFontSize + 2;
+      ctx.save();
+      ctx.font = `${labelFontSize}px sans-serif`;
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      let lastLabelRight = -Infinity;
+      for (const marker of markers) {
+        const x = Math.round(timestampToPixel(marker.timestamp)) + 0.5;
+        if (x < plotLeft || x > plotRight) continue;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, labelBottom);
+        ctx.lineTo(x, dimensions.height - margin.bottom);
+        ctx.stroke();
+
+        const text = marker.height.toLocaleString('en-US');
+        const width = ctx.measureText(text).width;
+        const left = Math.max(plotLeft, Math.min(x - width / 2, plotRight - width));
+        if (left < lastLabelRight + 4) continue; // don't overlap the previous label
+        ctx.fillStyle = 'rgba(150, 150, 150, 0.9)';
+        ctx.fillText(text, left, labelTop);
+        lastLabelRight = left + width;
+        markerLabelRectsRef.current.push({ ...marker, x, left: left - 2, right: left + width + 2, bottom: labelBottom });
+      }
+      ctx.restore();
+    }
+
     // Draw pool names on the right side if enabled
     if (showPoolNames && stablePoolNames.length > 0) {
       // Draw vertical separator line
@@ -815,7 +862,7 @@ function RealtimeChartBase({
       });
     }
     
-  }, [dimensions, visibleChartData, hoveredPoint, showLabels, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
+  }, [dimensions, visibleChartData, markers, hoveredPoint, showLabels, visibleMaxPoolCount, isHistoricalBlock, isHistoricalDataLoaded, visiblePoolNames, showPoolNames, sortPoolNames, chartMargin, effectivePoolNamesWidth, poolNamesInnerPadding, showPoolAsciiTag, truncatePoolNames, uiFontScale]);
 
   // Draw the chart whenever dependencies change
   useEffect(() => {
@@ -1073,6 +1120,17 @@ function RealtimeChartBase({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    const marker = markerLabelRectsRef.current.find(m => x >= m.left && x <= m.right && y <= m.bottom + 2);
+    setHoveredMarker(prev =>
+      marker
+        ? (prev && prev.timestamp === marker.timestamp && prev.x === marker.x ? prev : { height: marker.height, timestamp: marker.timestamp, x: marker.x })
+        : null
+    );
+    if (marker) {
+      setHoveredPoint(null);
+      return;
+    }
+
     if (visibleChartData.length === 0) {
       setHoveredPoint(null);
       return;
@@ -1151,6 +1209,7 @@ function RealtimeChartBase({
   
   const handleCanvasMouseLeave = useCallback(() => {
     setHoveredPoint(null);
+    setHoveredMarker(null);
   }, []);
 
   // Handle outside click to close options menu
@@ -1623,6 +1682,20 @@ function RealtimeChartBase({
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         />
+        {hoveredMarker && (
+          <div
+            role="tooltip"
+            className="absolute pointer-events-none whitespace-nowrap bg-black/85 text-white px-1.5 py-0.5 rounded-sm shadow-xs z-10"
+            style={{
+              top: Math.round(16 * uiFontScale),
+              left: hoveredMarker.x,
+              transform: hoveredMarker.x > dimensions.width / 2 ? 'translateX(-100%)' : undefined,
+              fontSize: `${Math.max(9, Math.round(11 * uiFontScale))}px`,
+            }}
+          >
+            first job on block {hoveredMarker.height.toLocaleString('en-US')} at {formatUtcMillis(hoveredMarker.timestamp)} UTC
+          </div>
+        )}
       </div>
       
       {/* Fixed tooltip at the bottom of the chart */}
@@ -1851,8 +1924,11 @@ function RealtimeChartBase({
             className="bg-black/95 text-white p-3 rounded-lg shadow-xl min-w-max"
             style={{ fontSize: `${Math.max(11, Math.round(12 * uiFontScale))}px` }}
           >
-            <div className="mb-2 text-gray-300">
-              Letters on each bar show what changed since that pool&apos;s previous job.
+            {/* width 0 + min-width 100%: these lines wrap to the width of the columns below instead of widening the box */}
+            <div className="mb-2 text-gray-300 space-y-1" style={{ width: 0, minWidth: '100%' }}>
+              <div>Same colour = the same change (identical new values of the changed fields). Different colours don&apos;t prove different transactions.</div>
+              <div>Vertical lines: the first job on each new block. Bars often line up after a block because pools restart their refresh timers; that alone isn&apos;t coordination.</div>
+              <div>Letters on each bar show what changed since that pool&apos;s previous job.</div>
             </div>
             <div className="flex flex-row gap-6">
               <div className="flex flex-col space-y-0.5">

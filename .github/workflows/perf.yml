@@ -39,7 +39,8 @@ jobs:
       - name: Build the PR and its base
         run: |
           for d in pr base; do
-            (cd "$d/web" && npm ci --no-audit --no-fund && npx prisma generate && npm run build)
+            # The base may predate the removal of Prisma (MongoDB): generate its client only where it has a schema.
+            (cd "$d/web" && npm ci --no-audit --no-fund && { [ ! -f prisma/schema.prisma ] || npx prisma generate; } && npm run build)
           done
 
       - name: Install Chromium (the PR's Playwright version)

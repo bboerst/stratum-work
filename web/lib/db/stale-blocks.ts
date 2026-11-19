@@ -1,7 +1,7 @@
 /**
- * Stale (orphaned) blocks the node saw, with the templates pools built on them (#180, slice 3). Postgres only: the
- * backend records stale_blocks / chain_reorgs, and stale_tip_templates() finds the templates whose prev_hash is a
- * stale block (db/migrations/20261116100001_stale_blocks.sql). MongoDB mode has no such data.
+ * Stale (orphaned) blocks the node saw, with the templates pools built on them (#180, slice 3). The backend records
+ * stale_blocks / chain_reorgs, and stale_tip_templates() finds the templates whose prev_hash is a stale block
+ * (db/migrations/20261116100001_stale_blocks.sql).
  *
  * Hashes are lower-case hex in RPC / explorer byte order (like blocks). Templates built on a stale block at height h
  * are at height h + 1; each block's template summary is one stale_tip_templates(h + 1, h + 1) call, so the read stays

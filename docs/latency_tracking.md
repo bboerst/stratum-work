@@ -1,6 +1,7 @@
 # Latency Tracking
 
-> The code below is the Python collector (`collector/`); the Go collector (`collector-go/`) does the same (`latency.go`).
+> The code below is from the Python collector (`collector/`, removed; its last version is commit 0068eab in the git
+> history). The collector (`collector-go/`) does the same in `latency.go`.
 > What the estimate can and can't tell you (the window it comes from, and RTT/2 as its midpoint): [How the data is measured](methodology.md#latency-adjustment).
 
 The collector records when a `mining.notify` message arrives from a pool, then
@@ -282,7 +283,7 @@ forever.
 ## Web application adjustment
 
 The web app receives or fetches documents with raw `timestamp`, optional
-`lat_ms`, and optional `lat_m`. It does not modify MongoDB records or stream
+`lat_ms`, and optional `lat_m`. It does not modify stored templates or stream
 payloads.
 
 When latency adjustment is enabled, it subtracts `lat_ms` from the timestamp at

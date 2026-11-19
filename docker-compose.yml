@@ -3,9 +3,9 @@
 # For machine-specific compose changes (e.g. port bindings), use a docker-compose.override.yml.
 # Both files are gitignored.
 
-# Template for collector services
+# Template for collector services (collector-go: flags in collector-go/main.go, `--help` lists them)
 x-collector-base: &collector-base
-  build: ./collector
+  build: ./collector-go
   restart: unless-stopped
   deploy:
     restart_policy:
@@ -21,41 +21,23 @@ x-collector-base: &collector-base
   depends_on:
     rabbitmq:
       condition: service_healthy
-    mongodb:
-      condition: service_started
+    postgres-dev-users:
+      condition: service_completed_successfully
   environment:
-    ENABLE_HISTORICAL_DATA: ${ENABLE_HISTORICAL_DATA:-true}
     RABBITMQ_HOST: rabbitmq
     RABBITMQ_PORT: 5672
     RABBITMQ_USERNAME: mquser
-    RABBITMQ_PASSWORD: mqpassword
+    RABBITMQ_PASSWORD: mqpassword   # env only: the collector refuses passwords on the command line
     RABBITMQ_EXCHANGE: mining_notify_exchange
-    MONGODB_USERNAME: mongouser
-    MONGODB_PASSWORD: mongopassword
-    MONGODB_HOSTS: mongodb
-    SOCKET_URL: http://localhost:8000
-    # Bitcoin node for BTC/BCH chain detection (same node as the backend; see .env)
-    BITCOIN_RPC_SCHEME: ${BITCOIN_RPC_SCHEME:-http}
-    BITCOIN_RPC_CA_FILE: ${BITCOIN_RPC_CA_FILE:+/certs/bitcoin-rpc-ca.pem}
-    BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-host.docker.internal}
-    BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-8332}
-    BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-rpc_user}
-    BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-rpc_password}
-    BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
-    # Optional Postgres sink (#111), in addition to MongoDB. Enabled when COLLECTOR_PG_HOST is set; with
-    # `--profile postgres`, use COLLECTOR_PG_HOST=postgres and the local `collector` user (see .env.example).
-    PG_HOST: ${COLLECTOR_PG_HOST:-}
+    # Postgres: every template goes to `templates`, as the local `collector` user (see .env.example to override)
+    PG_HOST: ${COLLECTOR_PG_HOST:-postgres}
     PG_PORT: ${COLLECTOR_PG_PORT:-5432}
     PG_DATABASE: ${COLLECTOR_PG_DATABASE:-stratum}
-    PG_USER: ${COLLECTOR_PG_USER:-}
-    PG_PASSWORD: ${COLLECTOR_PG_PASSWORD:-}
+    PG_USER: ${COLLECTOR_PG_USER:-collector}
+    PG_PASSWORD: ${COLLECTOR_PG_PASSWORD:-collector}
     PG_SSLMODE: ${COLLECTOR_PG_SSLMODE:-prefer}
     COLLECTOR_SITE: ${COLLECTOR_SITE:-local}
     COLLECTOR_REPLICA: ${COLLECTOR_REPLICA:-a}
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  volumes:
-    - ${BITCOIN_RPC_CA_FILE:-/dev/null}:/certs/bitcoin-rpc-ca.pem:ro
 
 services:
   rabbitmq:
@@ -73,111 +55,60 @@ services:
       retries: 10
       start_period: 30s
 
-  mongodb:
-    image: mongo:7.0.24 # matches production
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=mongouser
-      - MONGO_INITDB_ROOT_PASSWORD=mongopassword
-      - MONGO_INITDB_DATABASE=stratum-logger
-
   collector-antpool:
     <<: *collector-base
     # Expose unique port for each collector if --enable-stratum-client
     # ports:
     #   - "3333:3333"
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "Antpool"
-      --url "stratum+tcp://ss.antpool.com:443"
-      --userpass "developer.001"
-      --rabbitmq-host "rabbitmq"
-      --rabbitmq-username "mquser"
-      --rabbitmq-password "mqpassword"
-      --db-url "mongodb"
-      --db-name "stratum-logger"
-      --db-username "mongouser"
-      --db-password "mongopassword"
-      --log-level "DEBUG"
+    command:
+      - --pool-name=Antpool
+      - --url=stratum+tcp://ss.antpool.com:443
+      - --userpass=developer.001
+      - --log-level=DEBUG
 
   collector-f2pool:
     <<: *collector-base
     # Expose unique port for each collector if --enable-stratum-client
     # ports:
     #   - "3333:3333"
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "F2Pool"
-      --url "stratum+tcp://btc-eu.f2pool.com:3333"
-      --userpass "developer1.001:1234567890"
-      --rabbitmq-host "rabbitmq"
-      --rabbitmq-username "mquser"
-      --rabbitmq-password "mqpassword"
-      --db-url "mongodb"
-      --db-name "stratum-logger"
-      --db-username "mongouser"
-      --db-password "mongopassword"
-      --log-level "DEBUG"
+    command:
+      - --pool-name=F2Pool
+      - --url=stratum+tcp://btc-eu.f2pool.com:3333
+      - --userpass=developer1.001:1234567890
+      - --log-level=DEBUG
 
   collector-poolin:
     <<: *collector-base
     # Expose unique port for each collector if --enable-stratum-client
     # ports:
     #   - "3333:3333"
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "Poolin"
-      --url "stratum+tcp://btc.ss.poolin.me:443"
-      --userpass "developer1.001:123"
-      --rabbitmq-host "rabbitmq"
-      --rabbitmq-username "mquser"
-      --rabbitmq-password "mqpassword"
-      --db-url "mongodb"
-      --db-name "stratum-logger"
-      --db-username "mongouser"
-      --db-password "mongopassword"
-      --log-level "DEBUG"
+    command:
+      - --pool-name=Poolin
+      - --url=stratum+tcp://btc.ss.poolin.me:443
+      - --userpass=developer1.001:123
+      - --log-level=DEBUG
 
   collector-secpool:
     <<: *collector-base
     # Expose unique port for each collector if --enable-stratum-client
     # ports:
     #   - "3333:3333"
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "SecPool"
-      --url "stratum+tcp://btc.secpool.com:3333"
-      --userpass "developer1.001:x"
-      --rabbitmq-host "rabbitmq"
-      --rabbitmq-username "mquser"
-      --rabbitmq-password "mqpassword"
-      --db-url "mongodb"
-      --db-name "stratum-logger"
-      --db-username "mongouser"
-      --db-password "mongopassword"
-      --log-level "DEBUG"
+    command:
+      - --pool-name=SecPool
+      - --url=stratum+tcp://btc.secpool.com:3333
+      - --userpass=developer1.001:x
+      - --log-level=DEBUG
 
   collector-256foundation:
     <<: *collector-base
     # Expose unique port for each collector if --enable-stratum-client
     # ports:
     #   - "3333:3333"
-    command: >
-      /usr/local/bin/python main.py
-      --pool-name "256Foundation"
-      --url "stratum+tcp://pool.256foundation.org:3333"
-      --userpass "developer1.001:x"
-      --rabbitmq-host "rabbitmq"
-      --rabbitmq-username "mquser"
-      --rabbitmq-password "mqpassword"
-      --db-url "mongodb"
-      --db-name "stratum-logger"
-      --db-username "mongouser"
-      --db-password "mongopassword"
-      --log-level "DEBUG"
+    command:
+      - --pool-name=256Foundation
+      - --url=stratum+tcp://pool.256foundation.org:3333
+      - --userpass=developer1.001:x
+      - --log-level=DEBUG
 
   web:
     build:
@@ -197,12 +128,7 @@ services:
       RABBITMQ_USERNAME: mquser
       RABBITMQ_PASSWORD: mqpassword
       RABBITMQ_EXCHANGE: mining_notify_exchange
-      MONGODB_USERNAME: mongouser
-      MONGODB_PASSWORD: mongopassword
-      MONGODB_HOSTS: mongodb
-      DATABASE_URL: "mongodb://mongouser:mongopassword@mongodb:27017/stratum-logger?authSource=admin"
-      # Reads (#113): mongodb (default) or postgres. With postgres, use `--profile postgres` and the local read-only `web` user.
-      DB_BACKEND: ${WEB_DB_BACKEND:-mongodb}
+      # Reads (#113), as the local read-only `web` user
       PG_HOST: ${WEB_PG_HOST:-postgres}
       PG_PORT: ${WEB_PG_PORT:-5432}
       PG_DATABASE: ${WEB_PG_DATABASE:-stratum}
@@ -214,8 +140,9 @@ services:
       STREAM_POOL_BURST: ${STREAM_POOL_BURST:-20}
       # Key for masking extranonce1 in served data (#105); optional, empty = random per start.
       EXTRANONCE1_MASK_KEY: ${EXTRANONCE1_MASK_KEY:-}
-      # Fee rates for the table (#198): auto = /api/tx in Postgres mode, else mempool.space.
-      TX_API_SOURCE: ${TX_API_SOURCE:-auto}
+      # Fee rates for the table (#198). This stack runs no mempool recorder, so the browser asks mempool.space;
+      # auto = this deployment's /api/tx.
+      TX_API_SOURCE: ${TX_API_SOURCE:-mempool.space}
       TX_API_MEMPOOL_SPACE_FALLBACK: ${TX_API_MEMPOOL_SPACE_FALLBACK:-false}
     volumes:
       - ./web:/app
@@ -224,8 +151,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      mongodb:
-        condition: service_started
+      postgres-dev-users:
+        condition: service_completed_successfully
       backend:
         condition: service_started
 
@@ -245,10 +172,6 @@ services:
       BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-host.docker.internal}
       BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-8332}
       BITCOIN_ZMQ_BLOCK: ${BITCOIN_ZMQ_BLOCK:-tcp://host.docker.internal:28332}
-      MONGODB_URL: "mongodb://mongodb:27017"
-      MONGODB_DB: "stratum-logger"
-      MONGODB_USERNAME: "mongouser"
-      MONGODB_PASSWORD: "mongopassword"
       MIN_BLOCK_HEIGHT: ${MIN_BLOCK_HEIGHT:-863998} # set near the tip in .env to keep the initial sync short
       BLOCK_GAP_WINDOW: ${BLOCK_GAP_WINDOW:-144}
       BLOCK_GAP_FILL_INTERVAL_S: ${BLOCK_GAP_FILL_INTERVAL_S:-3600}
@@ -262,8 +185,7 @@ services:
       RABBITMQ_PASSWORD: "mqpassword"
       RABBITMQ_EXCHANGE: blocks
       PORT: ${BACKEND_PORT:-8001}
-      # Storage (#112): mongodb (default) or postgres. With postgres, use `--profile postgres` and the local `backend` user.
-      DB_BACKEND: ${BACKEND_DB_BACKEND:-mongodb}
+      # Storage (#112), as the local `backend` user
       PG_HOST: ${BACKEND_PG_HOST:-postgres}
       PG_PORT: ${BACKEND_PG_PORT:-5432}
       PG_DATABASE: ${BACKEND_PG_DATABASE:-stratum}
@@ -279,16 +201,14 @@ services:
     expose:
       - "${BACKEND_PORT:-8001}"
     depends_on:
-      mongodb:
-        condition: service_started
+      postgres-dev-users:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
 
-  # ── Postgres + TimescaleDB (opt-in: docker compose --profile postgres up) ─────────────────────
-  # Migration target for #90 (design: docs/design/postgres-timescale.md). MongoDB stays the default until cutover.
+  # ── Postgres + TimescaleDB (design: docs/design/postgres-timescale.md) ─────────────────────────
   postgres:
     image: timescale/timescaledb:2.30.2-pg18
-    profiles: ["postgres"]
     command: ["postgres", "-c", "timescaledb.enable_chunk_skipping=on"]
     environment:
       POSTGRES_USER: stratum
@@ -307,7 +227,6 @@ services:
   # Applies db/migrations, then exits.
   postgres-migrate:
     image: ghcr.io/amacneil/dbmate:2.37.0
-    profiles: ["postgres"]
     command: ["--wait", "up"]
     environment:
       DATABASE_URL: postgres://stratum:stratum@postgres:5432/stratum?sslmode=disable
@@ -322,7 +241,6 @@ services:
   # Creates the local per-service login users (collector/backend/web), then exits.
   postgres-dev-users:
     image: timescale/timescaledb:2.30.2-pg18
-    profiles: ["postgres"]
     entrypoint: ["psql", "postgres://stratum:stratum@postgres:5432/stratum", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/db/dev-users.sql"]
     volumes:
       - ./db:/db:ro
@@ -332,5 +250,4 @@ services:
     restart: "no"
 
 volumes:
-  mongo-data:
   pg-data:

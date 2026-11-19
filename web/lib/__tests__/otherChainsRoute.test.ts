@@ -1,5 +1,5 @@
 /**
- * /api/other-chains against mocked database functions: MongoDB mode and disabled history touch no database,
+ * /api/other-chains against mocked database functions: disabled history touches no database,
  * parameter validation, POOL_BLACKLIST passed to both reads, the summary cache (one read per period, served stale
  * while a refresh runs, a failure not kept), and the template mapping.
  */
@@ -13,10 +13,9 @@ const row = (pool: string, job: string): OtherTemplateRow => ({
   extranonce1: Buffer.from('f00dface', 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'no_bitcoin_parent', copies: 1,
 });
 
-async function loadRoute({ historical = true, backend = 'postgres', blacklist = '' } = {}) {
+async function loadRoute({ historical = true, blacklist = '' } = {}) {
   vi.resetModules();
   vi.stubEnv('POOL_BLACKLIST', blacklist);
-  vi.stubEnv('DB_BACKEND', backend);
   vi.stubEnv('EXTRANONCE1_MASK_KEY', 'route-key');
   const getOtherChainsSummary = vi.fn<(exclude: string[]) => Promise<{ months: string[]; groups: never[] }>>(
     async () => ({ months: ['2026-10'], groups: [] }));
@@ -40,8 +39,8 @@ afterEach(() => {
 });
 
 describe('GET /api/other-chains', () => {
-  it('touches no database in MongoDB mode or with history disabled', async () => {
-    for (const [opts, enabled] of [[{ backend: 'mongodb' }, true], [{ historical: false }, false]] as const) {
+  it('touches no database with history disabled', async () => {
+    for (const [opts, enabled] of [[{ historical: false }, false]] as const) {
       const { route, getOtherChainsSummary, getOtherTemplates } = await loadRoute(opts);
       for (const qs of ['', '?pool=P']) {
         const body = await (await get(route, qs)).json();

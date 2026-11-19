@@ -21,7 +21,7 @@ const COINBASE2 = 'ffffffff0100f2052a01000000016a00000000';
 
 function template(pool: keyof typeof RAW, extra: Record<string, unknown> = {}) {
   return {
-    id: `${pool}-1`, height: 100001, pool_name: pool, chain_family: null, coinbase1: COINBASE1, coinbase2: COINBASE2,
+    id: `${pool}-1`, height: 100001, pool_name: pool, coinbase1: COINBASE1, coinbase2: COINBASE2,
     merkle_branches: [], version: '20000000', prev_hash: '00'.repeat(32), timestamp: tsHex(NOW_MS - 1000),
     nbits: '17034219', ntime: '66000000', clean_jobs: true, extranonce1: RAW[pool], extranonce2_length: 4,
     lat_ms: null, lat_m: null, ...extra,
@@ -88,7 +88,6 @@ describe('served templates carry masked extranonce1', () => {
   });
 
   it('/api/other-chains (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
-    vi.stubEnv('DB_BACKEND', 'postgres');
     vi.doMock('../db/blocks', () => ({ enableHistoricalData: true }));
     const pgRow = (pool: keyof typeof RAW, job: string) => ({
       source_id: 1, source_name: pool, received_us: String(NOW_MS * 1000), height: 6_976_415, job_id: job,

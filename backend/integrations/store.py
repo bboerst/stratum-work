@@ -1,14 +1,9 @@
-"""Storage for the backend: blocks, pools, and the templates analytics read (#112).
-
-One small interface, two implementations, selected by DB_BACKEND (default: mongodb):
-  * MongoStore     today's MongoDB queries, unchanged
-  * PostgresStore  Postgres + TimescaleDB (design: docs/design/postgres-timescale.md)
-
-Both return the same shapes, so main.py and the analytics plug-ins don't care which is in use:
-  * templates_at_height() returns dicts with the MongoDB field names and hex strings (pool_name, prev_hash,
-    coinbase1, coinbase2, extranonce1, extranonce2_length, merkle_branches [list of hex], version, nbits, ntime, ...),
-    plus the collector's site / replica (Postgres). Every row of every collector, copies included: an anomaly only
-    one collector received must still be analyzed (MongoDB has one collector per pool)
+"""Storage for the backend: blocks, pools, and the templates analytics read (#112), in Postgres + TimescaleDB
+(PostgresStore; design: docs/design/postgres-timescale.md). Shapes main.py and the analytics plug-ins use:
+  * templates_at_height() returns dicts with hex strings (pool_name, prev_hash, coinbase1, coinbase2, extranonce1,
+    extranonce2_length, merkle_branches [list of hex], version, nbits, ntime, ...), plus the collector's site /
+    replica. Every row of every collector, copies included: an anomaly only one collector received must still be
+    analyzed
   * blocks are dicts {height, block_hash (hex), timestamp (unix s), coinbase_script_sig (hex), mining_pool, analysis}
   * pools are the mempool/mining-pools `pools-v2.json` entries, as loaded
 """
@@ -23,120 +18,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
 
 logger = logging.getLogger("backend.store")
-
-
-class MongoStore:
-    """MongoDB queries (the original backend behavior, plus the best-chain `stale` flag, #212)."""
-
-    def __init__(self, db: Any):
-        self.db = db
-
-    @property
-    def enabled(self) -> bool:
-        return self.db is not None
-
-    # blocks
-    def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
-                   seen_via: Optional[str] = None) -> None:
-        # New blocks upsert (avoid duplicates); blocks synced during backfill were checked for existence first.
-        # seen_at / seen_via are Postgres-only (MongoDB documents never stored an arrival time).
-        if is_new_block:
-            self.db.blocks.update_one({"block_hash": doc["block_hash"]}, {"$set": doc}, upsert=True)
-        else:
-            self.db.blocks.insert_one(doc)
-
-    def replace_block(self, doc: Dict[str, Any]) -> None:
-        self.db.blocks.replace_one({"block_hash": doc["block_hash"]}, doc, upsert=True)
-
-    def block_hashes_by_height_desc(self) -> Iterator[Dict[str, Any]]:
-        return iter(self.db.blocks.find({}, {"block_hash": 1, "height": 1, "_id": 0}).sort("height", -1))
-
-    def blocks_for_reidentify(self) -> Iterator[Dict[str, Any]]:
-        """What pool identification needs, newest first: hash, height, coinbase scriptSig, current result (#135)."""
-        cursor = self.db.blocks.find({}, {"_id": 0, "block_hash": 1, "height": 1, "coinbase_script_sig": 1,
-                                          "mining_pool": 1, "analysis": 1}).sort("height", -1)
-        for d in cursor:
-            analysis = d.get("analysis")
-            yield {"block_hash": d.get("block_hash"), "height": d.get("height"),
-                   "coinbase_script_sig": d.get("coinbase_script_sig"), "mining_pool": d.get("mining_pool"),
-                   "pool_identification": analysis.get("pool_identification") if isinstance(analysis, dict) else None,
-                   "analysis_is_object": isinstance(analysis, dict)}
-
-    def update_block_pool(self, block_hash: str, mining_pool: Dict[str, Any], pool_identification: Dict[str, Any],
-                          analysis_is_object: bool = True) -> None:
-        """Update only the pool fields of one block; every other analysis result is kept (#135)."""
-        if analysis_is_object:
-            update = {"mining_pool": mining_pool, "analysis.pool_identification": pool_identification}
-        else:   # analysis missing or not an object: a dotted $set would fail on null
-            update = {"mining_pool": mining_pool, "analysis": {"pool_identification": pool_identification}}
-        self.db.blocks.update_one({"block_hash": block_hash}, {"$set": update})
-
-    # Best chain (#212): a block the best-chain reconciler replaced keeps its document, flagged `stale: true`
-    # (stale_at = when). Reads that mean "the block at height h", "the tip" or "is height h done" skip it
-    # ({"stale": {"$ne": True}} also matches documents without the field, i.e. every block stored before this).
-    # Per-block maintenance (full reindex, pool re-identification, known_block_hashes) reads every document by hash.
-    NOT_STALE = {"stale": {"$ne": True}}
-
-    def highest_block_height(self) -> Optional[int]:
-        b = self.db.blocks.find_one(self.NOT_STALE, sort=[("height", -1)])
-        return b["height"] if b else None
-
-    def lowest_block_height(self) -> Optional[int]:
-        b = self.db.blocks.find_one(self.NOT_STALE, sort=[("height", 1)])
-        return b["height"] if b else None
-
-    def block_heights_between(self, low: int, high_exclusive: int) -> Set[int]:
-        return {d["height"] for d in self.db.blocks.find({"height": {"$gte": low, "$lt": high_exclusive}, **self.NOT_STALE},
-                                                         {"height": 1, "_id": 0})}
-
-    def has_block_at_height(self, height: int) -> bool:
-        return self.db.blocks.find_one({"height": height, **self.NOT_STALE}) is not None
-
-    def best_block_hashes_between(self, low: int, high: int) -> Dict[int, List[str]]:
-        """{height: [hash, ...]} of the best-chain (not stale) blocks in [low, high]."""
-        out: Dict[int, List[str]] = {}
-        for d in self.db.blocks.find({"height": {"$gte": low, "$lte": high}, **self.NOT_STALE},
-                                     {"height": 1, "block_hash": 1, "_id": 0}):
-            out.setdefault(d["height"], []).append(d["block_hash"])
-        return out
-
-    def known_block_hashes(self, hashes: List[str]) -> Set[str]:
-        if not hashes:
-            return set()
-        return {d["block_hash"] for d in self.db.blocks.find({"block_hash": {"$in": list(hashes)}}, {"block_hash": 1, "_id": 0})}
-
-    def mark_blocks_stale(self, hashes: List[str]) -> None:
-        self.db.blocks.update_many({"block_hash": {"$in": list(hashes)}},
-                                   {"$set": {"stale": True, "stale_at": datetime.now(timezone.utc)}})
-
-    def mark_block_best(self, block_hash: str) -> None:
-        """A replaced block that is on the node's active chain again."""
-        self.db.blocks.update_many({"block_hash": block_hash, "stale": True}, {"$unset": {"stale": "", "stale_at": ""}})
-
-    # header fill (header_fill.py) is Postgres-only: MongoDB documents get the fields from new saves only
-    def blocks_missing_header(self, limit: int) -> List[str]:
-        return []
-
-    def fill_block_headers(self, docs: List[Dict[str, Any]]) -> int:
-        return 0
-
-    def blocks_missing_branches(self, limit: int) -> List[str]:
-        return []
-
-    def fill_block_coinbase(self, docs: List[Dict[str, Any]]) -> int:
-        return 0
-
-    # templates
-    def templates_at_height(self, height: int) -> List[Dict[str, Any]]:
-        return list(self.db.mining_notify.find({"height": height, "chain_family": {"$exists": False}}))
-
-    # pools
-    def replace_pools(self, pool_data: List[Dict[str, Any]]) -> None:
-        self.db.pools.delete_many({})
-        self.db.pools.insert_many(pool_data)
-
-    def load_pools(self) -> List[Dict[str, Any]]:
-        return list(self.db.pools.find({}, {"_id": 0}))
 
 
 def _header_params(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,7 +84,9 @@ class PostgresStore:
             coinbase_script_sig = EXCLUDED.coinbase_script_sig, pool_id = EXCLUDED.pool_id,
             mining_pool = EXCLUDED.mining_pool, analysis = EXCLUDED.analysis"""
 
-    def __init__(self, connect_kwargs: Dict[str, Any], connect=None):
+    def __init__(self, connect_kwargs: Dict[str, Any], connect=None, enabled: bool = True):
+        # enabled=False: historical data off (ENABLE_HISTORICAL_DATA=false); callers check it and never connect.
+        self.enabled = enabled
         self._connect_kwargs = connect_kwargs
         self._connect = connect or self._psycopg_connect
         self._conn = None
@@ -221,8 +104,6 @@ class PostgresStore:
         if os.getenv("PG_SSLROOTCERT"):
             kw["sslrootcert"] = os.environ["PG_SSLROOTCERT"]
         return cls(kw)
-
-    enabled = True
 
     @staticmethod
     def _psycopg_connect(**kwargs):
@@ -280,7 +161,7 @@ class PostgresStore:
 
     def save_block(self, doc: Dict[str, Any], is_new_block: bool, seen_at: Optional[datetime] = None,
                    seen_via: Optional[str] = None) -> None:
-        # Always an upsert keyed by hash: unlike the MongoDB insert during backfill, this can't create duplicates.
+        # Always an upsert keyed by hash, so it can't create duplicates.
         params = self._block_params(doc, seen_now=is_new_block, seen_at=seen_at, seen_via=seen_via)
         self._run(lambda c: c.execute(self._BLOCK_UPSERT, params))
 
@@ -437,7 +318,7 @@ class PostgresStore:
                 "merkle_branches": [branches[i:i + 64] for i in range(0, len(branches), 64)],
                 "version": version, "nbits": nbits, "ntime": ntime, "clean_jobs": clean,
                 "extranonce1": en1, "extranonce2_length": en2len,
-                "timestamp": format(received_us * 1000, "x"),   # same hex-ns format collectors write to MongoDB
+                "timestamp": format(received_us * 1000, "x"),   # receive time as hex nanoseconds, as the live stream has it
                 "site": site, "replica": replica,
             }
             if lat_ms is not None:
@@ -471,9 +352,7 @@ class PostgresStore:
         return [r[0] for r in rows]
 
     # stale blocks (#180; db/migrations/20261116100001_stale_blocks.sql). Hashes are hex in RPC byte order, stored
-    # as bytea like blocks.block_hash. MongoStore has none of this: the tracker only runs when supports_stale_blocks.
-    supports_stale_blocks = True
-
+    # as bytea like blocks.block_hash.
     def stale_block_states(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
         if not hashes:
             return {}
@@ -552,18 +431,11 @@ class PostgresStore:
         return self._run(tx)
 
 
-def make_store() -> Any:
-    """Pick the store from DB_BACKEND (mongodb | postgres). MongoDB is the default until the cutover (#90)."""
-    backend = os.getenv("DB_BACKEND", "mongodb").strip().lower()
-    if backend not in ("mongodb", "postgres"):
-        raise ValueError(f"DB_BACKEND must be 'mongodb' or 'postgres', got {backend!r}")
+def make_store() -> PostgresStore:
+    """The Postgres store from PG_* settings; a disabled one (enabled == False) with ENABLE_HISTORICAL_DATA=false."""
     if os.getenv("ENABLE_HISTORICAL_DATA", "true").strip().lower() in ("n", "no", "f", "false", "off", "0"):
-        logger.info("Historical data disabled; no storage backend")
-        return MongoStore(None)   # disabled store (enabled == False), same as MongoDB-disabled today
-    if backend == "postgres":
-        logger.info("Storage backend: Postgres (%s:%s/%s as %s)", os.getenv("PG_HOST", "postgres"),
-                    os.getenv("PG_PORT", "5432"), os.getenv("PG_DATABASE", "stratum"), os.getenv("PG_USER", "backend"))
-        return PostgresStore.from_env()
-    from .mongodb import db, is_enabled   # connects at import (MongoDB-only)
-    logger.info("Storage backend: MongoDB")
-    return MongoStore(db if is_enabled else None)
+        logger.info("Historical data disabled; no storage")
+        return PostgresStore({}, enabled=False)
+    logger.info("Storage: Postgres (%s:%s/%s as %s)", os.getenv("PG_HOST", "postgres"),
+                os.getenv("PG_PORT", "5432"), os.getenv("PG_DATABASE", "stratum"), os.getenv("PG_USER", "backend"))
+    return PostgresStore.from_env()

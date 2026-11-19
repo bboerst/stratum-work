@@ -25,7 +25,6 @@ interface BlockWithAnalysis {
 
 interface RawMiningNotify {
   pool_name?: string | null;
-  chain_family?: string | null;
   timestamp: string;
   prev_hash: string;
 }
@@ -106,26 +105,13 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     return block.analysis.flags as AnalysisFlag[];
   }, [block]);
 
-  const hasBchTemplate = useMemo(
-    () => miningNotifications.some((notification) => notification.chain_family === "bch"),
-    [miningNotifications]
-  );
-
-  const btcOnlyMiningNotifications = useMemo(
-    () =>
-      miningNotifications.filter(
-        (notification) => notification.chain_family == null || notification.chain_family !== "bch"
-      ),
-    [miningNotifications]
-  );
-
   const forkTimelineNotifications = useMemo(
     () =>
-      btcOnlyMiningNotifications.map((notification) => ({
+      miningNotifications.map((notification) => ({
         ...notification,
         prev_hash: reverseHex(notification.prev_hash),
       })),
-    [btcOnlyMiningNotifications]
+    [miningNotifications]
   );
 
   if (loading) {
@@ -190,17 +176,6 @@ export default function AnalyticsPanel({ height }: { height: number }) {
 
   return (
     <div className="border border-border rounded-md p-3 bg-card">
-      {hasBchTemplate ? (
-        <div className="mb-3">
-          <span
-            className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300"
-            title="Confirmed BCH template"
-            aria-label="Confirmed BCH template"
-          >
-            Confirmed BCH template
-          </span>
-        </div>
-      ) : null}
       {flags.length === 0 ? (
         <div className="text-xs opacity-70">None</div>
       ) : (

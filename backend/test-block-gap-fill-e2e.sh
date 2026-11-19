@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Historical gap fill end to end (gap_fill.py): the backend follows a PRUNED regtest node (B) that is connected to a
-# full node (A). Interior gaps are made by deleting rows from `blocks` (Postgres mode), some of them at heights B has
+# full node (A). Interior gaps are made by deleting rows from `blocks`, some of them at heights B has
 # pruned. The backend fills the unpruned ones from B directly and the pruned ones by having B download them from A
 # (getblockfrompeer). Needs Docker; everything runs in throwaway containers on a private network.
 #
@@ -65,7 +65,7 @@ cli "$BA" generatetodescriptor 280 "raw(51)" >/dev/null
 check "B synced to 280" retry 60 at "$BB" 280
 # Started while the chain is short, so the backfill (MIN..tip, paced) is quick; the rest arrives over ZMQ.
 docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" \
-  -e DB_BACKEND=postgres -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
+  -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
   -e BITCOIN_RPC_HOST="$BB" -e BITCOIN_RPC_PORT=18443 -e BITCOIN_RPC_USER=test -e BITCOIN_RPC_PASSWORD=test \
   -e BITCOIN_ZMQ_BLOCK="tcp://$BB:28332" -e STALE_BLOCKS_ENABLED=false -e BLOCK_GAP_WINDOW=10 \
   -e MIN_BLOCK_HEIGHT=$MIN -e BLOCK_GAP_FILL_INTERVAL_S=5 -e BLOCK_GAP_FILL_PEER_TIMEOUT_S=10 \

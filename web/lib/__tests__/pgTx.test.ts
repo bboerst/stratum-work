@@ -46,7 +46,7 @@ describe.skipIf(!enabled)('Postgres transaction read', () => {
   beforeAll(async () => {
     Object.assign(process.env, {
       PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
-      PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable', DB_BACKEND: 'postgres',
+      PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
     });
     mod = await import('../db/tx');
     lookup = await import('../txLookup');

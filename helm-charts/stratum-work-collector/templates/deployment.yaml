@@ -21,8 +21,7 @@ spec:
     spec:
       containers:
       - name: {{ .Chart.Name }}
-        {{- if eq .Values.implementation "go" }}
-        image: "{{ .Values.goImage.repository }}:{{ required "goImage.tag is required for implementation: go" .Values.goImage.tag }}"
+        image: "{{ .Values.image.repository }}:{{ required "image.tag is required (pin a sha-<7> tag)" .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args:
         {{- range .Values.arguments }}
@@ -70,30 +69,5 @@ spec:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
-        {{- else }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        command:
-        - "/usr/local/bin/python"
-        - "main.py"
-        args:
-        {{- range .Values.arguments }}
-        - {{ . | quote }}
-        {{- end }}
-        {{- with .Values.env }}
-        env:
-          {{- toYaml . | nindent 10 }}
-        {{- end }}
-        {{- with .Values.envFrom }}
-        envFrom:
-          {{- toYaml . | nindent 10 }}
-        {{- end }}
-        {{- if .Values.service.enabled }}
-        ports:
-          - name: "stratum"
-            containerPort: {{ .Values.service.ports.stratum }}
-            protocol: TCP
-        {{- end }}
-        {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}

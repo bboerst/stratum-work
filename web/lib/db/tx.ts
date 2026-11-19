@@ -1,7 +1,6 @@
 /**
  * Transaction lookups from the mempool recorder's tables (#198): what our own node saw of a transaction, so the web
- * doesn't need a third-party explorer for a template's first transaction. Postgres only (db/migrations/
- * 20261116000001_mempool.sql); MongoDB mode has no mempool data.
+ * doesn't need a third-party explorer for a template's first transaction (db/migrations/20261116000001_mempool.sql).
  *
  * txids are taken and returned in DISPLAY order (RPC / explorer hex). The tables store internal byte order;
  * hash_from_display() / hash_display() convert.

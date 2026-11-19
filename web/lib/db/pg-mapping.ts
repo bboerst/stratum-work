@@ -1,17 +1,35 @@
 /**
- * Postgres rows → the JSON shapes the API has always returned from MongoDB (#113). Pure functions, unit-tested in
- * lib/__tests__/pgMapping.test.ts. Schema: db/migrations (templates store hex as bytea and hex u32s
+ * Postgres rows → the JSON shapes the API returns (#113). Pure functions,
+ * unit-tested in lib/__tests__/pgMapping.test.ts. Schema: db/migrations (templates store hex as bytea and hex u32s
  * as bigint; re-encoding as lower-case hex gives back exactly what the pool sent, see the design doc section 3).
  *
- * IDs (Postgres has no MongoDB `_id`):
+ * IDs:
  *  - template `id` = `<source_id>-<received_at in µs since the epoch>-<job_id>`. That's the de-duplication key of
- *    `templates` (design doc section 2), so it's unique and stable for a given database. It isn't the MongoDB UUID.
+ *    `templates` (design doc section 2), so it's unique and stable for a given database.
  *  - block `id` = the block hash (the primary key of `blocks`).
- *  - pool `id` = the mempool/mining-pools id, as a string (MongoDB returned its ObjectId, which changed on every
- *    daily pool refresh).
+ *  - pool `id` = the mempool/mining-pools id, as a string.
  */
-import type { MiningNotify } from '@prisma/client';
 import { formatMiningPool, type MiningPool } from './mining-pool';
+
+/** A template as the API returns it: stratum's hex strings, `timestamp` = receive time as hex nanoseconds. */
+export interface MiningNotify {
+  id: string;
+  height: number;
+  pool_name: string | null;
+  coinbase1: string;
+  coinbase2: string;
+  merkle_branches: string[];
+  version: string;
+  prev_hash: string;
+  timestamp: string;
+  nbits: string;
+  ntime: string;
+  clean_jobs: boolean;
+  extranonce1: string;
+  extranonce2_length: number;
+  lat_ms: number | null;
+  lat_m: string | null;
+}
 
 // node-postgres returns bytea as Buffer, bigint as a string, real as a number.
 export interface TemplateRow {
@@ -87,8 +105,8 @@ export function splitBranches(buf: Buffer): string[] {
 }
 
 /**
- * Receive time in µs → the collector's MongoDB `timestamp`: nanoseconds since the epoch as unpadded lower-case hex.
- * Postgres keeps µs, so the last three decimal digits of the nanoseconds are zero.
+ * Receive time in µs → the template `timestamp` (as in the live stream): nanoseconds since the epoch as unpadded
+ * lower-case hex. Postgres keeps µs, so the last three decimal digits of the nanoseconds are zero.
  */
 export function timestampHexFromMicros(us: string | number | bigint): string {
   return (BigInt(us) * BigInt(1000)).toString(16);
@@ -99,7 +117,7 @@ export function templateId(row: Pick<TemplateRow, 'source_id' | 'received_us' | 
 }
 
 /**
- * A templates row → the MiningNotify shape (same keys and order as Prisma's MongoDB model).
+ * A templates row → the MiningNotify shape.
  * `timestamp` is the first-seen time when the read provides one (templates_dedup: a secondary replica's copy may have
  * arrived earlier); `id` always uses the row's own receive time, so it stays the table's de-duplication key.
  */
@@ -108,8 +126,6 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     id: templateId(row),
     height: row.height,
     pool_name: row.source_name,
-    // MongoDB's collector tag. Postgres keeps no per-row chain: it's judged at read time (other-chains.ts).
-    chain_family: null,
     coinbase1: hex(row.coinbase1),
     coinbase2: hex(row.coinbase2),
     merkle_branches: splitBranches(row.merkle_branches),
@@ -150,9 +166,8 @@ export interface PgBlock {
 }
 
 /**
- * A blocks row → the block object the MongoDB reader returns (same keys; MongoDB's `_id` has no equivalent).
- * The optional header columns (tx_count, size, …) are only emitted when set, as in MongoDB, where the backend never
- * writes them today.
+ * A blocks row → the block object the API returns. The optional header columns (tx_count, size, …) are only emitted
+ * when set (blocks stored before the backend recorded them may lack them).
  */
 export function blockRowToBlock(row: BlockRow): PgBlock {
   const block: PgBlock = {
@@ -178,7 +193,7 @@ export function blockRowToBlock(row: BlockRow): PgBlock {
   return block;
 }
 
-/** R3 item: raw (unformatted) mining_pool, as the MongoDB projection returns it. */
+/** R3 item: raw (unformatted) mining_pool. */
 export function blockRowToInterestingItem(row: Pick<BlockRow, 'block_hash' | 'height' | 'analysis' | 'mining_pool'>) {
   const item: { block_hash: string; analysis?: Record<string, unknown>; height: number; mining_pool?: Record<string, unknown> } = {
     block_hash: hex(row.block_hash),
@@ -189,12 +204,12 @@ export function blockRowToInterestingItem(row: Pick<BlockRow, 'block_hash' | 'he
   return item;
 }
 
-/** R7: the Prisma Pool model's shape ({id, name, tag, addresses}). */
+/** R7: a pool as the API returns it ({id, name, tag, addresses}). */
 export function poolRowToPool(row: PoolRow) {
   return { id: String(row.id), name: row.name, tag: row.tag ?? null, addresses: row.addresses ?? [] };
 }
 
-/** R4: same keys and order as the MongoDB aggregation's $project. */
+/** R4: one pool's first-seen item. */
 export function firstSeenRowToItem(row: FirstSeenRow) {
   return {
     firstSeenTimestamp: timestampHexFromMicros(row.received_us),

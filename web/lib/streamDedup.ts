@@ -14,7 +14,7 @@
  * * Among forwarded templates, exact copies are still dropped (#178): same pool, height, prev_hash,
  *   merkle_branches, version, nbits and ntime, paired one-to-one per source, so a source's own identical re-sends
  *   are forwarded and a template the next source already forwarded at the switch-over isn't shown twice.
- * * Templates without `site` and `replica` (older collectors, MongoDB mode) are never filtered, so a deployment with
+ * * Templates without `site` and `replica` (older collectors) are never filtered, so a deployment with
  *   one collector per pool behaves as before; a stream with one source per pool is never filtered either.
  *
  * Differences from the history views, which see the whole height: the stream can't look ahead, so it shows a

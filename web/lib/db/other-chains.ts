@@ -9,7 +9,7 @@
  * Work on a stale Bitcoin block is Bitcoin work, so it isn't here: the stale-blocks / fork view shows it
  * (stale_tip_templates()).
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here (the height reads leave it out
- * by their receive windows; the template details page shows it). Postgres only: MongoDB mode has no such view.
+ * by their receive windows; the template details page shows it).
  *
  * The window is fixed: the anti-join reads every template received in it (the summary takes about 15 s for 90 days on
  * production, all of history about a minute), so the route caches the summary for 30 min.

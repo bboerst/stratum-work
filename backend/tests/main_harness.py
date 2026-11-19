@@ -1,23 +1,13 @@
+"""Test helpers: backend/main.py imported with its external modules faked, and the real integrations/store.py."""
 import importlib
 import importlib.util
 import pathlib
 import sys
 import types
-import unittest
 
 
-class FakeMiningNotifyCollection:
-    def __init__(self):
-        self.queries = []
-
-    def find(self, query):
-        self.queries.append(query)
-        return []
-
-
-class FakeDB:
-    def __init__(self):
-        self.mining_notify = FakeMiningNotifyCollection()
+def _no_database(**kwargs):
+    raise AssertionError("tests must not connect to a database (replace main.store)")
 
 
 class FakeRPCConnection:
@@ -44,7 +34,8 @@ def load_store_module():
 
 
 def import_main_module():
-    fake_db = FakeDB()
+    """main.py with its external modules faked. main.store is a real PostgresStore that fails on any query: tests
+    replace it with their own fake. Returns (main, None)."""
     store_module = load_store_module()
 
     bitcoinrpc_module = types.ModuleType("bitcoinrpc")
@@ -53,7 +44,7 @@ def import_main_module():
     bitcoinrpc_module.authproxy = authproxy_module
 
     integrations_module = types.ModuleType("integrations")
-    integrations_module.store = store_module.MongoStore(fake_db)   # real MongoStore over a fake db
+    integrations_module.store = store_module.PostgresStore({}, connect=_no_database)
     integrations_module.publish_to_rabbitmq = lambda *args, **kwargs: None
     integrations_module.rabbitmq_manager = types.SimpleNamespace(connection=None)
     integrations_module.__path__ = []
@@ -99,20 +90,4 @@ def import_main_module():
     sys.modules["zmq"] = zmq_module
 
     sys.modules.pop("main", None)
-    return importlib.import_module("main"), fake_db
-
-
-class BTCTemplateFilteringTests(unittest.TestCase):
-    def test_run_block_analyses_queries_btc_only_templates(self):
-        main, fake_db = import_main_module()
-
-        main.run_block_analyses(123)
-
-        self.assertEqual(
-            fake_db.mining_notify.queries,
-            [{"height": 123, "chain_family": {"$exists": False}}],
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+    return importlib.import_module("main"), None

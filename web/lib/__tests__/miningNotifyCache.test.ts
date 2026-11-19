@@ -12,9 +12,6 @@ import { LRUCache } from 'lru-cache';
 async function load(final: boolean) {
   vi.resetModules();
   const fetchHeight = vi.fn(async (h: number) => [{ id: `${h}-${fetchHeight.mock.calls.length}`, height: h }]);
-  vi.doMock('../db/backend', () => ({ isPostgres: () => true }));
-  vi.doMock('../db/prisma', () => ({ prisma: {} }));
-  vi.doMock('../db/blocks', () => ({ getHighestBlock: vi.fn(async () => ({ height: 1000 })) }));
   vi.doMock('../db/postgres', () => ({
     isHeightFinal: vi.fn(async () => final),
     templatesAtHeight: fetchHeight,
@@ -25,7 +22,7 @@ async function load(final: boolean) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const m of ['../db/backend', '../db/prisma', '../db/blocks', '../db/postgres']) vi.doUnmock(m);
+  vi.doUnmock('../db/postgres');
 });
 
 describe('getMiningNotifyByHeight cache', () => {
@@ -47,19 +44,5 @@ describe('getMiningNotifyByHeight cache', () => {
     await mod.getMiningNotifyByHeight(1001);                    // within the TTL: served from the cache
     expect(fetchHeight).toHaveBeenCalledTimes(1);
     expect(set.mock.calls[0][2]).toEqual({ ttl: mod.UNFINISHED_TTL_MS });
-  });
-});
-
-describe('isHeightFinal in MongoDB mode', () => {
-  it('is final MONGO_FINAL_DEPTH blocks below the highest stored block', async () => {
-    vi.resetModules();
-    vi.doMock('../db/backend', () => ({ isPostgres: () => false }));
-    vi.doMock('../db/prisma', () => ({ prisma: {} }));
-    vi.doMock('../db/blocks', () => ({ getHighestBlock: vi.fn(async () => ({ height: 1000 })) }));
-    vi.doMock('../db/postgres', () => ({}));
-    const mod = await import('../db/mining-notify');
-    expect(await mod.isHeightFinal(1000 - mod.MONGO_FINAL_DEPTH)).toBe(true);
-    expect(await mod.isHeightFinal(1000 - mod.MONGO_FINAL_DEPTH + 1)).toBe(false);
-    expect(await mod.isHeightFinal(1001)).toBe(false);
   });
 });

@@ -22,12 +22,6 @@ env:
   BITCOIN_ZMQ_BLOCK: "tcp://bitcoin-node:28332"
   MIN_BLOCK_HEIGHT: "882000"
   
-  # MongoDB connection
-  MONGODB_URL: "mongodb://mongodb:27017"
-  MONGODB_DB: "stratum-logger"
-  MONGODB_USERNAME: "mongouser"
-  MONGODB_PASSWORD: "mongopassword"
-  
   # RabbitMQ connection
   RABBITMQ_HOST: "rabbitmq"
   RABBITMQ_PORT: "5672"
@@ -46,8 +40,7 @@ env:
   # BITCOIN_RPC_TIMEOUT: "30"          # seconds
   # ENABLE_HISTORICAL_DATA: "true"
   #
-  # Storage backend (#112): mongodb (default) or postgres. With postgres, the MONGODB_* settings are unused.
-  # DB_BACKEND: "mongodb"
+  # Storage (#112): Postgres + TimescaleDB, as separate fields (never a URL).
   # PG_HOST: "postgres"
   # PG_PORT: "5432"
   # PG_DATABASE: "stratum"
@@ -56,7 +49,7 @@ env:
   # PG_SSLROOTCERT: "/etc/postgres-ca/ca.crt"
   # PG_PASSWORD: take it from a Secret with envValueFrom instead of putting it here
   #
-  # Stale blocks (#180, Postgres mode only): getchaintips on every new block and on this timer. The node's RPC user
+  # Stale blocks (#180): getchaintips on every new block and on this timer. The node's RPC user
   # needs getchaintips, getblockheader, getblock and getblockhash (getchaintips and getblockheader also with the
   # tracker off: the best-chain reconciler, #212, records the blocks it replaces the same way).
   # STALE_BLOCKS_ENABLED: "true"

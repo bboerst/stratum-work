@@ -102,7 +102,7 @@ describe('StreamTemplateDedup: one stream per pool', () => {
     expect(d.accept(tpl({ pool_name: 'PoolB', replica: 'b' }), T + 1)).toBe(true);
   });
 
-  it('never filters templates without site and replica (one collector per pool, MongoDB mode)', () => {
+  it('never filters templates without site and replica (older collectors)', () => {
     const d = new StreamTemplateDedup();
     const legacy = tpl({ site: undefined, replica: undefined });
     for (let i = 0; i < 5; i++) expect(d.accept(legacy, T + i)).toBe(true);

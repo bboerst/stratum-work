@@ -81,7 +81,7 @@ export function maskExtranonce1(poolName: string | null | undefined, value: unkn
 }
 
 /**
- * A copy of a template with `extranonce1` masked; anything else is returned as is. Works on the MongoDB/Prisma shape
+ * A copy of a template with `extranonce1` masked; anything else is returned as is. Works on the API's template shape
  * and the stream messages (`pool_name`) and on raw Postgres rows (`source_name`, bytea Buffer).
  */
 export function maskTemplate<T>(template: T, masker: Masker = maskExtranonce1): T {

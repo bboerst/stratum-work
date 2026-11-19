@@ -1,4 +1,4 @@
--- LOCAL DEVELOPMENT ONLY (docker compose --profile postgres): per-service login users with throwaway passwords,
+-- LOCAL DEVELOPMENT ONLY (docker compose): per-service login users with throwaway passwords,
 -- granted the least-privilege roles from the migrations. Production users are CNPG-managed, with Secrets.
 DO $$
 DECLARE u record;

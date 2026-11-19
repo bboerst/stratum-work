@@ -81,14 +81,8 @@ class BlockHeaderFieldsTest(unittest.TestCase):
             "transactions": 3, "size": 1234, "weight": 4000, "version": 536870912, "merkle_root": "ab" * 32,
             "bits": "1d00ffff", "nonce": 4294967295, "difficulty": 4.656542373906925e-10})
 
-    def test_difficulty_is_a_float_so_mongodb_can_store_the_document(self):
-        doc = block_header_fields(self.BLOCK)
-        self.assertIs(type(doc["difficulty"]), float)
-        try:
-            import bson
-        except ImportError:  # pragma: no cover - pymongo is in backend/requirements.txt
-            self.skipTest("bson (pymongo) not installed")
-        bson.encode(doc)   # raised InvalidDocument for Decimal (every MongoDB block save since #234)
+    def test_difficulty_is_a_float(self):
+        self.assertIs(type(block_header_fields(self.BLOCK)["difficulty"]), float)
 
     def test_header_only_result_has_no_size_or_weight(self):
         header = {k: v for k, v in self.BLOCK.items() if k not in ("size", "weight", "nTx", "tx")}

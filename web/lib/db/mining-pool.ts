@@ -1,4 +1,4 @@
-// Mining-pool formatting shared by the MongoDB and Postgres block readers (moved unchanged from blocks.ts).
+// Mining-pool formatting for the block reads (moved unchanged from blocks.ts).
 
 // Define a type for the mining pool that matches the frontend expectation
 export interface MiningPool {
@@ -40,8 +40,7 @@ function readString(obj: unknown, key: string): string | undefined {
 export function formatMiningPool(poolData: Record<string, unknown> | null | undefined): MiningPool | undefined {
   if (!poolData) return undefined;
   
-  // In MongoDB, the pool field might be stored as 'pool' or 'mining_pool'
-  // Check if we're dealing with a nested structure
+  // Check if we're dealing with a nested structure ({mining_pool: {...}})
   const typedPoolData = poolData as PoolData;
   const pool = typedPoolData.mining_pool || typedPoolData;
   

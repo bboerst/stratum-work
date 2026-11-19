@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/staleBlocksRoute.test.ts)
 import { enableHistoricalData, getHighestBlock } from "../../../lib/db/blocks";
-import { isPostgres } from "../../../lib/db/backend";
 import { getRecentStaleBlocks, STALE_BLOCKS_MAX, type StaleBlock } from "../../../lib/db/stale-blocks";
 import { filterBlacklistedAboveTip } from "../../../lib/poolBlacklist";
 
@@ -9,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Recent stale (orphaned) blocks the node saw, each with the pools that built templates on it: how many templates,
- * first / last receive time, and how long after our node moved on (#180). Read-only, Postgres only (MongoDB mode
- * answers supported: false without touching a database).
+ * first / last receive time, and how long after our node moved on (#180). Read-only. With historical data disabled
+ * it answers enabled: false, supported: false without touching a database.
  *
  *   GET /api/stale-blocks?n=20   (1..100)
  *
@@ -31,7 +30,6 @@ const cache = new Map<number, { at: number; promise: Promise<StaleBlocksResponse
 
 async function build(n: number): Promise<StaleBlocksResponse> {
   if (!enableHistoricalData) return { enabled: false, supported: false, tip: null, stale_blocks: [] };
-  if (!isPostgres()) return { enabled: true, supported: false, tip: null, stale_blocks: [] };
   const [blocks, highest] = await Promise.all([getRecentStaleBlocks(n), getHighestBlock()]);
   const tip = highest ? Number(highest.height) : null;
   return {

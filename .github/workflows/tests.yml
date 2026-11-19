@@ -1,17 +1,17 @@
 # Unit tests and static checks that no other workflow runs:
-#   web           vitest, tsc --noEmit, eslint (Postgres-backed web tests skip without PG_TEST_*; db.yml covers the DB)
-#   collector     Python collector unit tests (pytest; the Postgres sink test runs in db.yml)
-#   collector-go  gofmt, go vet, go test (golden parity with the Python collector included)
+#   web           vitest, tsc --noEmit, eslint (Postgres-backed web tests skip without PG_TEST_*)
+#   collector-go  gofmt, go vet, go test (the golden test against the frozen Python collector fixture included; the
+#                 Postgres sink test runs in db.yml)
 #   backend       backend unit tests (pytest; Postgres-backed tests skip without PG_TEST_*, db.yml runs them)
 # Each job runs in the same pinned image as the component's Dockerfile, so CI matches what ships.
 name: tests
 
 on:
   pull_request:
-    paths: ["web/**", "collector/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+    paths: ["web/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "collector/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+    paths: ["web/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
 
 permissions:
   contents: read
@@ -30,15 +30,6 @@ jobs:
       - run: npx vitest run
       - run: npx tsc --noEmit
       - run: npm run lint
-
-  collector:
-    runs-on: ubuntu-24.04
-    container:
-      image: python:3.13.18-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: pip install -q --no-cache-dir -r collector/requirements.txt pytest
-      - run: python -m pytest -q collector/tests
 
   collector-go:
     runs-on: ubuntu-24.04

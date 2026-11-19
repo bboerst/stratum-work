@@ -1,4 +1,4 @@
-# Build the web, backend, collector, collector-go, mempool-recorder and postgres container images (multi-arch: amd64 +
+# Build the web, backend, collector-go, mempool-recorder and postgres container images (multi-arch: amd64 +
 # arm64). postgres = CloudNativePG Postgres + TimescaleDB (postgres/Dockerfile). collector-go = the Go collector (#148).
 # mempool-recorder = the mempool recorder (#180).
 #
@@ -15,17 +15,17 @@ name: images
 
 on:
   pull_request:
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "mempool-recorder/**", "postgres/**", ".github/workflows/images.yml", ".github/scripts/new_vulns.py"]
+    paths: ["web/**", "backend/**", "collector-go/**", "mempool-recorder/**", "postgres/**", ".github/workflows/images.yml", ".github/scripts/new_vulns.py"]
   push:
     branches: [main]
-    paths: ["web/**", "backend/**", "collector/**", "collector-go/**", "mempool-recorder/**", "postgres/**", ".github/workflows/images.yml"]
+    paths: ["web/**", "backend/**", "collector-go/**", "mempool-recorder/**", "postgres/**", ".github/workflows/images.yml"]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       components:
-        description: "Space-separated components to build (web backend collector collector-go mempool-recorder postgres)"
-        default: "web backend collector collector-go mempool-recorder postgres"
+        description: "Space-separated components to build (web backend collector-go mempool-recorder postgres)"
+        default: "web backend collector-go mempool-recorder postgres"
         required: true
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          all="web backend collector collector-go mempool-recorder postgres"
+          all="web backend collector-go mempool-recorder postgres"
           short=$(git rev-parse --short=7 HEAD)
 
           changed_components() {  # $1 = base commit

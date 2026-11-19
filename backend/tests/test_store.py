@@ -3,117 +3,24 @@ import pathlib
 import sys
 import time
 import unittest
+import unittest.mock
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests"))
-from test_btc_template_filtering import load_store_module  # noqa: E402
+from main_harness import load_store_module  # noqa: E402
 
 store_module = load_store_module()
-MongoStore, PostgresStore = store_module.MongoStore, store_module.PostgresStore
+PostgresStore = store_module.PostgresStore
 
 
-class Recorder:
-    """Records every MongoDB collection call as (method, args)."""
-    def __init__(self, results=None):
-        self.calls, self.results = [], results or {}
-    def __getattr__(self, name):
-        def call(*args, **kwargs):
-            self.calls.append((name, args, kwargs))
-            r = self.results.get(name)
-            return r() if callable(r) else r
-        return call
-
-
-class FakeCursor(list):
-    def sort(self, *a): self.sorted_by = a; return self
-
-
-class MongoStoreTests(unittest.TestCase):
-    """MongoStore must keep issuing exactly today's queries."""
-
-    def setUp(self):
-        self.db = type("DB", (), {})()
-        self.db.blocks, self.db.pools, self.db.mining_notify = Recorder(), Recorder(), Recorder({"find": lambda: []})
-        self.store = MongoStore(self.db)
-
-    def test_disabled_without_db(self):
-        self.assertFalse(MongoStore(None).enabled)
-        self.assertTrue(self.store.enabled)
-
-    def test_save_block_new_upserts_and_sync_inserts(self):
-        doc = {"block_hash": "ab", "height": 1}
-        self.store.save_block(doc, is_new_block=True)
-        self.store.save_block(doc, is_new_block=False)
-        self.assertEqual(self.db.blocks.calls[0], ("update_one", ({"block_hash": "ab"}, {"$set": doc}), {"upsert": True}))
-        self.assertEqual(self.db.blocks.calls[1], ("insert_one", (doc,), {}))
-
-    def test_header_fill_is_postgres_only(self):
-        self.assertEqual(self.store.blocks_missing_header(10), [])
-        self.assertEqual(self.store.blocks_missing_branches(10), [])
-        self.assertEqual(self.store.fill_block_coinbase([{"block_hash": "ab"}]), 0)
-        self.assertEqual(self.store.fill_block_headers([{"block_hash": "ab"}]), 0)
-
-    def test_replace_block(self):
-        doc = {"block_hash": "ab", "height": 1}
-        self.store.replace_block(doc)
-        self.assertEqual(self.db.blocks.calls[0], ("replace_one", ({"block_hash": "ab"}, doc), {"upsert": True}))
-
-    def test_blocks_for_reidentify_reads_stored_pool_inputs(self):
-        self.db.blocks.results["find"] = lambda: FakeCursor([
-            {"block_hash": "aa", "height": 2, "coinbase_script_sig": "03", "mining_pool": {"name": "A"},
-             "analysis": {"pool_identification": {"addresses_considered": ["bc1q"]}, "flags": []}},
-            {"block_hash": "bb", "height": 1, "coinbase_script_sig": "04", "mining_pool": {}, "analysis": None}])
-        got = list(self.store.blocks_for_reidentify())
-        self.assertEqual(got[0]["pool_identification"], {"addresses_considered": ["bc1q"]})
-        self.assertTrue(got[0]["analysis_is_object"])
-        self.assertIsNone(got[1]["pool_identification"])
-        self.assertFalse(got[1]["analysis_is_object"])
-
-    def test_update_block_pool_sets_only_pool_fields(self):
-        self.store.update_block_pool("aa", {"name": "B"}, {"method": "tag"})
-        self.store.update_block_pool("bb", {"name": "C"}, {"method": "none"}, analysis_is_object=False)
-        self.assertEqual(self.db.blocks.calls[0], ("update_one", ({"block_hash": "aa"},
-                         {"$set": {"mining_pool": {"name": "B"}, "analysis.pool_identification": {"method": "tag"}}}), {}))
-        self.assertEqual(self.db.blocks.calls[1], ("update_one", ({"block_hash": "bb"},
-                         {"$set": {"mining_pool": {"name": "C"}, "analysis": {"pool_identification": {"method": "none"}}}}), {}))
-
-    def test_templates_at_height_is_btc_only(self):
-        self.store.templates_at_height(123)
-        self.assertEqual(self.db.mining_notify.calls[0][1], ({"height": 123, "chain_family": {"$exists": False}},))
-
-    def test_heights(self):
-        self.db.blocks.results = {"find_one": lambda: {"height": 7}, "find": lambda: [{"height": 3}, {"height": 5}]}
-        self.assertEqual(self.store.highest_block_height(), 7)
-        self.assertEqual(self.store.block_heights_between(1, 9), {3, 5})
-        self.assertTrue(self.store.has_block_at_height(7))
-        # #212: best-chain reads skip documents the reconciler flagged stale
-        self.assertEqual(self.db.blocks.calls[0], ("find_one", ({"stale": {"$ne": True}},), {"sort": [("height", -1)]}))
-        self.assertEqual(self.db.blocks.calls[1][1], ({"height": {"$gte": 1, "$lt": 9}, "stale": {"$ne": True}},
-                                                      {"height": 1, "_id": 0}))
-        self.assertEqual(self.db.blocks.calls[2][1], ({"height": 7, "stale": {"$ne": True}},))
-        self.store.lowest_block_height()
-        self.assertEqual(self.db.blocks.calls[3], ("find_one", ({"stale": {"$ne": True}},), {"sort": [("height", 1)]}))
-
-    def test_best_chain_reconciliation_queries(self):
-        self.db.blocks.results = {"find": lambda: [{"height": 5, "block_hash": "aa"}, {"height": 5, "block_hash": "bb"},
-                                                   {"height": 6, "block_hash": "cc"}]}
-        self.assertEqual(self.store.best_block_hashes_between(5, 6), {5: ["aa", "bb"], 6: ["cc"]})
-        self.assertEqual(self.db.blocks.calls[0][1], ({"height": {"$gte": 5, "$lte": 6}, "stale": {"$ne": True}},
-                                                      {"height": 1, "block_hash": 1, "_id": 0}))
-        self.assertEqual(self.store.known_block_hashes(["aa", "cc"]), {"aa", "bb", "cc"})   # whatever find returns
-        self.assertEqual(self.db.blocks.calls[1][1], ({"block_hash": {"$in": ["aa", "cc"]}}, {"block_hash": 1, "_id": 0}))
-        self.assertEqual(self.store.known_block_hashes([]), set())
-        self.store.mark_blocks_stale(["aa"])
-        name, (flt, update), _ = self.db.blocks.calls[2]
-        self.assertEqual((name, flt, update["$set"]["stale"]), ("update_many", {"block_hash": {"$in": ["aa"]}}, True))
-        self.assertIsNotNone(update["$set"]["stale_at"].tzinfo)
-        self.store.mark_block_best("aa")
-        self.assertEqual(self.db.blocks.calls[3], ("update_many", ({"block_hash": "aa", "stale": True},
-                                                                   {"$unset": {"stale": "", "stale_at": ""}}), {}))
-
-    def test_pools(self):
-        self.store.replace_pools([{"id": 1}])
-        self.assertEqual([c[0] for c in self.db.pools.calls], ["delete_many", "insert_many"])
+class MakeStoreTests(unittest.TestCase):
+    def test_postgres_unless_historical_data_is_off(self):
+        with unittest.mock.patch.dict(os.environ, {"ENABLE_HISTORICAL_DATA": "true"}):
+            store = store_module.make_store()
+        self.assertIsInstance(store, PostgresStore)
+        self.assertTrue(store.enabled)
+        with unittest.mock.patch.dict(os.environ, {"ENABLE_HISTORICAL_DATA": "false"}):
+            self.assertFalse(store_module.make_store().enabled)
 
 
 class PostgresStoreFromEnvTests(unittest.TestCase):
@@ -308,7 +215,7 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.store.replace_pools(defs[:1])                  # B disappears upstream -> deleted
         self.assertNotIn(900002, {p["id"] for p in self.store.load_pools()})
 
-    def test_templates_at_height_matches_the_mongodb_document_shape(self):
+    def test_templates_at_height_document_shape(self):
         h = self.h + 10
         doc = {"pool_name": f"itest-{h}", "height": h, "job_id": "j1", "prev_hash": "11" * 32, "coinbase1": "01000000" + "00" * 8,
                "coinbase2": "ffffffff", "merkle_branches": ["aa" * 32, "bb" * 32], "version": "20000000", "nbits": "1702e5b4",

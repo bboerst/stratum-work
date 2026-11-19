@@ -10,7 +10,9 @@ import (
 
 // Golden test against the Python collector: testdata/golden.json holds, for each raw mining.notify line, what
 // Python's json.loads + create_notification_document + json.dumps (the RabbitMQ body) and pgsink.to_row (the
-// Postgres row) produce. Regenerate with testdata/gen_golden.py.
+// Postgres row) produce. The fixture is frozen: it was generated from the Python collector (collector/, since removed)
+// as of commit 0068eab, the last commit that changed it, and can't be regenerated. Change it only on purpose, when
+// the Go collector's output is meant to change.
 
 type goldenCase struct {
 	Name       string  `json:"name"`

@@ -45,7 +45,7 @@ class InvalidCoinbaseTests(unittest.TestCase):
         self.assertEqual(self.pools(flag), {"PoolA": 2})
 
     def test_one_collector_unchanged(self):
-        # MongoDB rows have no site/replica: every row counts, identical re-sends included, as before
+        # rows without a site/replica (one collector): every row counts, identical re-sends included
         legacy = dict(site=None, replica=None)
         flag = self.run_it([tpl(**legacy), tpl(**legacy), tpl(ntime="66000001", **legacy)])
         self.assertEqual(self.pools(flag), {"PoolA": 3})

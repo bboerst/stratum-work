@@ -3,7 +3,6 @@ import {
   blockRowToBlock, blockRowToInterestingItem, firstSeenRowToItem, poolRowToPool, splitBranches, templateId,
   templateRowToMiningNotify, timestampHexFromMicros, u32Hex, type BlockRow, type TemplateRow,
 } from '../db/pg-mapping';
-import { dbBackend } from '../db/backend';
 import { pgConfigFromEnv, pgSslFromEnv } from '../db/pg';
 
 const b = (hex: string) => Buffer.from(hex, 'hex');
@@ -57,13 +56,12 @@ describe('hex encodings', () => {
 });
 
 describe('templateRowToMiningNotify', () => {
-  it('rebuilds the MongoDB document shape', () => {
+  it('rebuilds the template shape', () => {
     const doc = templateRowToMiningNotify(templateRow());
     expect(doc).toEqual({
       id: '3-1794491650123456-2687119',
       height: 975560,
       pool_name: 'PoolA',
-      chain_family: null,
       coinbase1: '0100000001',
       coinbase2: 'ffffffff00',
       merkle_branches: [BRANCH_A, BRANCH_B],
@@ -78,17 +76,16 @@ describe('templateRowToMiningNotify', () => {
       lat_ms: 24.336,
       lat_m: 'tcp',
     });
-    // Same key order as Prisma's MiningNotify model
-    expect(Object.keys(doc)).toEqual(['id', 'height', 'pool_name', 'chain_family', 'coinbase1', 'coinbase2',
+    // Stable key order
+    expect(Object.keys(doc)).toEqual(['id', 'height', 'pool_name', 'coinbase1', 'coinbase2',
       'merkle_branches', 'version', 'prev_hash', 'timestamp', 'nbits', 'ntime', 'clean_jobs', 'extranonce1',
       'extranonce2_length', 'lat_ms', 'lat_m']);
   });
 
-  it('uses null for missing latency; chain_family is always null (Postgres judges chains at read time)', () => {
+  it('uses null for missing latency', () => {
     const doc = templateRowToMiningNotify(templateRow({ latency_ms: null, latency_method: undefined }));
     expect(doc.lat_ms).toBeNull();
     expect(doc.lat_m).toBeNull();
-    expect(doc.chain_family).toBeNull();
   });
 
   it('builds a stable id from the de-duplication key', () => {
@@ -118,7 +115,7 @@ function blockRow(overrides: Partial<BlockRow> = {}): BlockRow {
 }
 
 describe('blockRowToBlock', () => {
-  it('matches the MongoDB block shape, with the hash as id', () => {
+  it('builds the block shape, with the hash as id', () => {
     const block = blockRowToBlock(blockRow());
     expect(block).toEqual({
       block_hash: '000000000000000000000f4248771a27b166478bcf8e40354f035205ff238860',
@@ -174,12 +171,6 @@ describe('other rows', () => {
 });
 
 describe('configuration', () => {
-  it('DB_BACKEND defaults to mongodb and rejects unknown values', () => {
-    expect(dbBackend({})).toBe('mongodb');
-    expect(dbBackend({ DB_BACKEND: ' Postgres ' })).toBe('postgres');
-    expect(() => dbBackend({ DB_BACKEND: 'mysql' })).toThrow(/DB_BACKEND/);
-  });
-
   it('builds the pool config from separate fields', () => {
     const c = pgConfigFromEnv({ PG_HOST: 'db', PG_PORT: '6432', PG_DATABASE: 'd', PG_USER: 'u', PG_PASSWORD: 'p' });
     expect(c).toMatchObject({ host: 'db', port: 6432, database: 'd', user: 'u', password: 'p', ssl: false, max: 5 });

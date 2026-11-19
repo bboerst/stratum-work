@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stale blocks end to end (#180): two regtest bitcoind nodes, the backend in Postgres mode against a throwaway
+# Stale blocks end to end (#180): two regtest bitcoind nodes, the backend against a throwaway
 # TimescaleDB with all migrations. Needs Docker. Everything runs in throwaway containers on a private network.
 #
 #   backend/test-stale-blocks-e2e.sh
@@ -47,9 +47,9 @@ for i in $(seq 30); do [ "$(cli "$B2" getblockcount)" = 101 ] && break; sleep 1;
 check "node2 synced to 101" '[ "$(cli "$B2" getblockcount)" = 101 ]'
 for n in "$B1" "$B2"; do cli "$n" setnetworkactive false >/dev/null; done
 
-echo "== backend (Postgres mode)"
+echo "== backend"
 docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" \
-  -e DB_BACKEND=postgres -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
+  -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
   -e BITCOIN_RPC_HOST="$B1" -e BITCOIN_RPC_PORT=18443 -e BITCOIN_RPC_USER=test -e BITCOIN_RPC_PASSWORD=test \
   -e BITCOIN_ZMQ_BLOCK="tcp://$B1:28332" -e MIN_BLOCK_HEIGHT=99 -e STALE_POLL_INTERVAL_S=2 \
   -e RABBITMQ_HOST=127.0.0.1 -e RABBITMQ_MAX_RETRIES=1 -e RABBITMQ_RETRY_DELAY=0 \

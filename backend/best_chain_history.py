@@ -20,7 +20,7 @@ One run, in chunks of `chunk` heights from min_height up to min(node tip, stored
 A block stored here was not seen live: it is stored like the sync and the gap fill store blocks (seen_at and seen_via
 NULL), never with the detection time, which would pass for an arrival time.
 
-Postgres records a replaced block in stale_blocks through the stale-block tracker's record_replaced (blocks_best then
+A replaced block is recorded in stale_blocks through the stale-block tracker's record_replaced (blocks_best then
 hides it), which needs the block's header from the node (getblockheader). A node that never saw the stale block
 has no header for it; then nothing is recorded, the stale block stays best next to the node's block, the height
 counts as failed (logged), and the next run tries again. Nothing is recorded as done: every run checks every height.

@@ -1,6 +1,5 @@
 /**
- * Postgres + TimescaleDB implementations of the web reads R1–R7 (design doc section 1; #113), selected with
- * DB_BACKEND=postgres. Each function returns exactly what its MongoDB counterpart returns; pg-mapping.ts does the
+ * Postgres + TimescaleDB implementations of the web reads R1–R7 (design doc section 1; #113). pg-mapping.ts does the
  * row → JSON conversion. All SQL is parameterized.
  *
  * Height reads also bound receive time (docs/design/one-templates-table.md): a template for height h is received
@@ -25,7 +24,6 @@
  *                              then. Latency comes from the connection that saw it first.
  *   R4b  poolNamesAtHeight     raw rows: a set of names, copies can't change it
  *   R3, R5–R7                  blocks / pools: not affected by de-duplication (blocks: see Reorgs below)
- * MongoDB mode is unchanged (one collector per pool there).
  *
  * Reorgs (#194): `blocks` keeps blocks a reorg disconnected (keyed by hash, so the losing and the winning block at a
  * height coexist). Reads that mean "the block at height h", "recent blocks" or "the tip" read the view `blocks_best`
@@ -38,11 +36,10 @@
  *        getHighestBlock / getLowestBlock  best chain (the tip, also used by the realtime pre-fill and analysis)
  * With no stale_blocks rows the view is exactly `blocks`, so behavior is unchanged.
  */
-import type { MiningNotify } from '@prisma/client';
 import { getPgPool } from './pg';
 import {
   blockRowToBlock, blockRowToInterestingItem, firstSeenRowToItem, poolRowToPool, templateRowToMiningNotify,
-  type BlockRow, type FirstSeenRow, type PgBlock, type PoolRow, type TemplateRow,
+  type BlockRow, type FirstSeenRow, type MiningNotify, type PgBlock, type PoolRow, type TemplateRow,
 } from './pg-mapping';
 
 async function query<T>(text: string, values: unknown[] = []): Promise<T[]> {
@@ -106,8 +103,8 @@ export async function allTemplatesAtHeight(height: number): Promise<MiningNotify
 }
 
 /**
- * R4: each pool's first Bitcoin template at a height, ordered by time. Grouped by source name, like MongoDB's
- * pool_name, so all replicas and sites of a pool count as one (see the report for #113). Reads the table, not
+ * R4: each pool's first Bitcoin template at a height, ordered by time. Grouped by source name (the pool name), so
+ * all replicas and sites of a pool count as one (see the report for #113). Reads the table, not
  * templates_dedup: the earliest notification on any connection (see the header), and this skips the view's sorts.
  * Note: across sites the receive times come from different clocks and network paths (design doc section 5).
  */
@@ -162,9 +159,8 @@ export async function getBlockByHeight(height: number): Promise<PgBlock | null> 
 }
 
 /**
- * R6. Hashes are matched as stored (lower-case hex), like the MongoDB string match. Reads `blocks`, not the best
- * chain: a block a reorg disconnected is still found by its hash, with `stale: true` (the field is absent otherwise,
- * so the response is unchanged for best-chain blocks and in MongoDB mode).
+ * R6. Hashes are matched as stored (lower-case hex). Reads `blocks`, not the best chain: a block a reorg disconnected
+ * is still found by its hash, with `stale: true` (the field is absent otherwise).
  */
 /**
  * Which of these block hashes (display order, lower-case hex) we know: stored in `blocks`, or recorded in
@@ -195,7 +191,7 @@ export async function getBlockByHash(blockHash: string): Promise<PgBlock | null>
   return row ? blockRowToBlock(row) : null;
 }
 
-/** R5: the same three modes and pagination fields as the MongoDB getBlocks. */
+/** R5: blocks after / around / before a height (three modes), with pagination fields. */
 export async function getBlocks(n: number, before?: number, height?: number, after?: number) {
   if (after !== undefined) {
     const blocks = await blocksWhere('height > $1 AND height >= 1', 'height ASC, block_hash', n, [after]);

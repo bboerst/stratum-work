@@ -1,7 +1,7 @@
 """Full-history best-chain check (best_chain_history.py): a wrong stored best block deep below the reconciler's window
 is found in chunks outside the block processor and fixed on it, stored as synced (seen_at NULL), through the gap
-filler's getblockfrompeer path on a pruned node. Both database modes, against the simulated node and stores of
-test_reconcile.py (Postgres mode runs the real StaleBlockTracker.record_replaced)."""
+filler's getblockfrompeer path on a pruned node. Against the simulated node and store of test_reconcile.py (with the
+real StaleBlockTracker.record_replaced)."""
 import pathlib
 import sys
 import unittest
@@ -13,7 +13,7 @@ from best_chain_history import BestChainHistoryCheck  # noqa: E402
 from gap_fill import HistoricalGapFiller  # noqa: E402
 from reconcile import BestChainReconciler  # noqa: E402
 from stale_blocks import StaleBlockTracker  # noqa: E402
-from test_reconcile import BASE, MongoStore, PgStore  # noqa: E402
+from test_reconcile import BASE, PgStore  # noqa: E402
 from test_stale_blocks import NOW, FakeNode, bhash  # noqa: E402
 
 PRUNED = "-1: Block not available (pruned data)"
@@ -21,11 +21,10 @@ LENGTH = 40   # node heights 1000..1039
 
 
 class Harness:
-    def __init__(self, mode, chunk=8, window=3, min_height=BASE):
-        self.mode = mode
+    def __init__(self, chunk=8, window=3, min_height=BASE):
         self.node = FakeNode(base=BASE, length=LENGTH)
-        self.store = PgStore() if mode == "pg" else MongoStore()
-        self.tracker = StaleBlockTracker(self.node, self.store, now=lambda: NOW) if mode == "pg" else None
+        self.store = PgStore()
+        self.tracker = StaleBlockTracker(self.node, self.store, now=lambda: NOW)
         self.pruned, self.fail_store, self.peer_list = set(), set(), [{"id": 1, "servicesnames": ["NETWORK"]}]
         self.stored, self.marked, self.hash_calls, self.on_processor_calls = [], [], [], []
         self.in_processor = False
@@ -70,10 +69,7 @@ class Harness:
     def mark_replaced(self, hashes):
         assert self.in_processor
         self.marked.append(list(hashes))
-        if self.mode == "pg":
-            self.tracker.record_replaced(hashes)
-        else:
-            self.store.mark_blocks_stale(hashes)
+        self.tracker.record_replaced(hashes)
 
     def rpc(self, method, *args):   # the node as the gap filler's peer path sees it
         if method == "getpeerinfo":
@@ -106,11 +102,9 @@ class Harness:
         return all(self.store.best_at(h) == [self.node.rpc_getblockhash(h)] for h in range(BASE, self.tip() + 1))
 
 
-class HistoryTests:
-    mode = None
-
+class HistoryTests(unittest.TestCase):
     def h(self, **kw):
-        return Harness(self.mode, **kw)
+        return Harness(**kw)
 
     def test_mismatch_deep_below_the_window_is_found_and_fixed(self):
         t = self.h(window=3)
@@ -226,10 +220,6 @@ class HistoryTests:
         t.check.run()
         self.assertEqual(t.hash_calls, [])
 
-
-class PostgresHistoryTests(HistoryTests, unittest.TestCase):
-    mode = "pg"
-
     def test_stale_row_for_the_replaced_block(self):
         t = self.h()
         s, w = t.with_stale_at(1005)
@@ -249,10 +239,6 @@ class PostgresHistoryTests(HistoryTests, unittest.TestCase):
         stats = t.check.run()   # retried: nothing stored again, still failed
         self.assertEqual((stats["mismatched"], stats["stored"], stats["failed"]), (1, 0, 1))
         self.assertEqual(t.stored, [w])
-
-
-class MongoHistoryTests(HistoryTests, unittest.TestCase):
-    mode = "mongo"
 
 
 class ReconcileHeightsTests(unittest.TestCase):

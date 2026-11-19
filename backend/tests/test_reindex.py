@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests"))
-from test_btc_template_filtering import import_main_module  # noqa: E402
+from main_harness import import_main_module  # noqa: E402
 
 
 class FakeStore:

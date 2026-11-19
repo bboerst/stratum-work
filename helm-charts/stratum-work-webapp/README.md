@@ -18,9 +18,6 @@ Web frontend/backend for Pool Work
 | autoscaling.targetCPUUtilizationPercentage | int | `80` | Percent of the CPU request; null to disable |
 | autoscaling.targetMemoryUtilizationPercentage | int | `nil` | Percent of the memory request; null to disable |
 | env.CORS_ORIGINS | string | `"http://127.0.0.1:8000,http://localhost:8000"` |  |
-| env.MONGODB_HOSTS | string | `"mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017/"` |  |
-| env.MONGODB_PASSWORD | string | `"hunter1"` |  |
-| env.MONGODB_USERNAME | string | `"mongoadmin"` |  |
 | extraManifests | list | `[]` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |

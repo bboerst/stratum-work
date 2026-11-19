@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   const after = searchParams.get('after');
 
   try {
-    // Use our Prisma service to get blocks
+    // Read blocks from the database
     const data = await getBlocks(
       parseInt(n), 
       before ? parseInt(before) : undefined,

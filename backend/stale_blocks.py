@@ -1,4 +1,4 @@
-"""Stale (orphaned) blocks the node knows about (#180, slice 3). Postgres mode only.
+"""Stale (orphaned) blocks the node knows about (#180, slice 3).
 
 On every new block (ZMQ) and on a timer, StaleBlockTracker.poll() asks the node for getchaintips. Every tip that
 isn't the active one is a branch that forks off the active chain `branchlen` blocks below the tip. Its blocks are
@@ -66,7 +66,7 @@ def coinbase_outputs(block: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 class StaleBlockTracker:
-    """rpc(method, *args) calls the node; store is a PostgresStore (supports_stale_blocks)."""
+    """rpc(method, *args) calls the node; store is a PostgresStore."""
 
     def __init__(self, rpc: Callable[..., Any], store: Any,
                  identify_pool: Optional[Callable[[str, List[str]], Dict[str, Any]]] = None,

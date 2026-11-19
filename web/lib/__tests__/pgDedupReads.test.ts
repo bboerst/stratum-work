@@ -102,7 +102,7 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
 
   it('R2: every row at the height, whenever received, de-duplicated; R1 leaves out the late one', async () => {
     const got = await pg.allTemplatesAtHeight(h);
-    expect(got.map(t => [jobId(t), t.chain_family])).toEqual([['a1', null], ['a2', null], ['b9', null], ['oa', null]]);
+    expect(got.map(jobId)).toEqual(['a1', 'a2', 'b9', 'oa']);
     expect(got[3].timestamp).toBe(hexNs(LATE + 1.0));   // first seen: the other connection's earlier exact copy
     expect((await pg.templatesAtHeight(h)).map(jobId)).not.toContain('oa');
   });

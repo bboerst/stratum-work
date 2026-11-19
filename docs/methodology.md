@@ -4,7 +4,7 @@ stratum.work connects to mining pools as a miner would and records every block t
 `mining.notify` messages). People draw conclusions about how pools build blocks from this data, so this page explains
 what each value is, how it was taken, and where its limits are.
 
-It describes the current code in Postgres mode: the Go collector (`collector-go/`), the backend, the mempool recorder
+It describes the current code: the collector (`collector-go/`), the backend, the mempool recorder
 and the web app. Changes to how something is recorded, stored or shown update this page in the same change. Field-level
 details are in the other files in [`docs/`](./).
 
@@ -199,7 +199,7 @@ without revealing them. See [first_transaction](first_transaction.md).
 
 ## Older history
 
-Templates recorded before mid-November 2026 came from an earlier collector (`collector/`, Python):
+Templates recorded before mid-November 2026 came from an earlier collector (`collector/`, Python, since removed):
 
 - Their times were taken by that program right after reading from the network, not by the kernel.
 - Before January 2025 they were taken slightly later still, after the message was parsed.

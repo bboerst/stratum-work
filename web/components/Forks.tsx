@@ -99,7 +99,7 @@ interface DrillResponse {
   templates?: Template[];
   truncated?: boolean;
   clipped?: boolean;
-  blocks?: { hash: string; height: number; arrival_ms: number; best: boolean }[];
+  blocks?: { hash: string; height: number; arrival_ms: number; best: boolean; miner?: string | null }[];
   error?: string;
 }
 
@@ -405,7 +405,7 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
     return s.ticks(Math.max(2, Math.min(6, Math.floor(plotW / 120)))).map(d => ({ x: s(d), label: d3.utcFormat("%H:%M")(d) }));
   }, [start, end, plotW]);
   const lanesH = pools.length * LANE_H;
-  const top = 18;
+  const top = 32;   // room for two rows of block labels
   const h = top + lanesH + AXIS_H;
   const seg = hover ? segments[hover.i] : null;
 
@@ -428,22 +428,34 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
                 onMouseLeave={() => setHover(null)} />
             );
           })}
-          {(drill.blocks ?? []).map(b => {
+          {(() => {
+            // Labels of blocks that arrived moments apart would overlap: a label goes up a row when it sits within a
+            // label's width of the previous one (two blocks at one height arrive seconds apart in a race).
+            const rows = new Map<string, number>();
+            let lastX = -Infinity, lastRow = 1;
+            for (const b of [...(drill.blocks ?? [])].sort((a, c) => a.arrival_ms - c.arrival_ms)) {
+              const x = timeX(b.arrival_ms, start, end, plotW);
+              const row = x - lastX < 60 ? 1 - lastRow : 0;
+              rows.set(b.hash, row); lastX = x; lastRow = row;
+            }
+            return (drill.blocks ?? []).map(b => {
             const label = fmtInt(b.height);   // the block's own height (Bitcoin time), not h-relative shorthand
             const before = b.arrival_ms < start, after = b.arrival_ms > end;
             const x = timeX(b.arrival_ms, start, end, plotW);
+            const ly = -6 - 13 * (rows.get(b.hash) ?? 0);
             const cls = b.best ? "text-amber-600" : "text-[#1550a4] dark:text-blue-500";
             return (
               <g key={b.hash} className={cls}>
                 <title>{`block ${label} arrived · ${b.best ? "best chain" : "stale"} · ${fmtUtcS(b.arrival_ms)} UTC`}</title>
-                {!before && !after && <line x1={x} x2={x} y1={-4} y2={lanesH} stroke="currentColor" strokeWidth={1.5} />}
-                <text x={before ? 0 : after ? plotW : x} y={-6} fontSize={11} fill="currentColor"
+                {!before && !after && <line x1={x} x2={x} y1={ly + 2} y2={lanesH} stroke="currentColor" strokeWidth={1.5} />}
+                <text x={before ? 0 : after ? plotW : x} y={ly} fontSize={11} fill="currentColor"
                   textAnchor={after ? "end" : before ? "start" : "middle"}>
                   {before ? `‹ ${label}` : after ? `${label} ›` : label}
                 </text>
               </g>
             );
-          })}
+            });
+          })()}
         </g>
         {pools.map((p, i) => (
           <text key={p} x={labelW - 8} y={top + i * LANE_H + LANE_H / 2 + 4} fontSize={12} textAnchor="end" className="fill-foreground/60">
@@ -557,9 +569,9 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
-        {chain && prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
+        {chain && prev ? tile(xPrev, Y0, fmtInt(prev.height), prev.miner ?? short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)}${prev.miner ? ` · mined by ${prev.miner}` : ""} · ${prev.hash}`)
               : tile(chain ? xPrev : xNext, Y0, chain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", STRIP)}
-        {chain && next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), STRIP, false, `best block ${fmtInt(next.height)} · ${next.hash}`)
+        {chain && next ? tile(xNext, Y0, fmtInt(next.height), next.miner ?? short(next.hash), STRIP, false, `best block ${fmtInt(next.height)}${next.miner ? ` · mined by ${next.miner}` : ""} · ${next.hash}`)
               : chain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
         {!chain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
         {chain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}

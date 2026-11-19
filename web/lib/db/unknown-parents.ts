@@ -379,6 +379,7 @@ export interface DrillBlockRow {
   height: number;
   arrival_ms: string;                   // coalesce(seen_at, block_time); a stale-only block: first_seen
   best: boolean;
+  miner: string | null;                 // the block's identified pool (a stale block's: null when it's a hidden pool)
 }
 
 export interface DrillQuery {
@@ -433,13 +434,17 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
-            EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best
+            EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best,
+            nullif(b.mining_pool->>'name', '') AS miner
        FROM blocks b WHERE b.height BETWEEN $1::int - 1 AND $1::int
      UNION ALL
-     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false
+     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false,
+            nullif(s.mining_pool->>'name', '')
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)
       ORDER BY 2, 3`,
     [q.height])).rows;
+  const hidden = new Set(excludePools.map(p => p.toLowerCase()));
+  for (const b of blocks) if (!b.best && b.miner && hidden.has(b.miner.toLowerCase())) b.miner = null;
   return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
 }

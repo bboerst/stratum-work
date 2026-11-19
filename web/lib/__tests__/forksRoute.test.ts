@@ -34,7 +34,7 @@ const flag = (o: Partial<InvalidCoinbaseFlagSql> = {}): InvalidCoinbaseFlagSql =
 });
 const drillRows = (): DrillRows => ({
   truncated: false,
-  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', best: true }],
+  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', best: true, miner: 'P' }],
   templates: [{
     source_id: 1, source_name: 'P', received_us: '1000123', height: 900_001, job_id: 'j1',
     prev_hash: Buffer.from('11'.repeat(32), 'hex'), coinbase1: Buffer.from('01', 'hex'), coinbase2: Buffer.from('02', 'hex'),
@@ -207,7 +207,7 @@ describe('GET /api/forks', () => {
     expect(getDrillRows).toHaveBeenCalledWith(
       { parent: P1, height: 900_001, pools: ['P'], from_ms: 1000 - 300_000, to_ms: 5000 + 300_000 }, ['Hidden']);
     expect(body).toMatchObject({ from_ms: 1000 - 300_000, to_ms: 305_000, truncated: false, episode: { parent: P1 },
-      blocks: [{ hash: 'ab'.repeat(32), height: 900_000, arrival_ms: 900, best: true }] });
+      blocks: [{ hash: 'ab'.repeat(32), height: 900_000, arrival_ms: 900, best: true, miner: 'P' }] });
     expect(body.templates[0]).toMatchObject({ id: '1-1000123-j1', pool_name: 'P', parent: 'this', connections: ['a', 'b'],
       copies: 2, received_at: 1000, height: 900_001, merkle_branches: 2 });
     await get(route, `?parent=${P1}`);

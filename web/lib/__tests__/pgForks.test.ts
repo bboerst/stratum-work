@@ -132,6 +132,8 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
                'valid-fork', decode($1, 'hex'), $2 - 1, to_timestamp($4::float8))`, [S1, H - 1, B2, T0 + 5, BITS]);
     await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
       [S1, JSON.stringify({ name: 'Synthetic Miner' })]);
+    await admin.query(`UPDATE blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,   // a best block's miner
+      [B1, JSON.stringify({ name: 'Synthetic Pool' })]);
     // findings: invalid coinbases at H (A and S1 raced there) and at H - 1 (nothing forked there)
     const offender = (pool: string, total: number) => ({ pool_name: pool, total_sats: total, subsidy_sats: 312_500_000 });
     const finding = (offenders: object[]) => JSON.stringify({ flags: [{ key: 'invalid_coinbase_no_merkle', icon: 'error', details: { offenders } }] });
@@ -294,9 +296,9 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
       ['n2', 'this', 'b', 1], ['a2', 'this', 'a', 1], ['w3', 'best', 'a', 1], ['b1', 'other', 'a', 1], ['b2', 'other', 'a', 1],
     ]);
     expect(body.blocks).toEqual([
-      { hash: B1, height: H - 1, arrival_ms: T0 * 1000, best: true },
-      { hash: S1, height: H - 1, arrival_ms: (T0 + 5) * 1000, best: false },
-      { hash: B0, height: H, arrival_ms: (T0 + 120) * 1000, best: true },
+      { hash: B1, height: H - 1, arrival_ms: T0 * 1000, best: true, miner: 'Synthetic Pool' },
+      { hash: S1, height: H - 1, arrival_ms: (T0 + 5) * 1000, best: false, miner: 'Synthetic Miner' },
+      { hash: B0, height: H, arrival_ms: (T0 + 120) * 1000, best: true, miner: null },
     ]);
     const a2 = body.templates.find((t: { id: string }) => t.id.endsWith('-a2'));
     expect(a2).toMatchObject({ auxpow: true, auxpow_root: 'ab'.repeat(32), prev_hash: X_A, height: H, scriptsig_height: 1_000_000 });

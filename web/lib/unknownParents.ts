@@ -281,6 +281,7 @@ export interface DrillBlock {
   height: number;
   arrival_ms: number;            // when it reached us: coalesce(seen_at, block_time), or first seen as stale
   best: boolean;                 // on our best chain (else: a block we know that isn't)
+  miner: string | null;          // the block's identified pool
 }
 
 export interface Drill {
@@ -307,7 +308,7 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
   return {
     from_ms, to_ms, truncated: rows.truncated, clipped,
     templates: rows.templates.map(toUnknownParentTemplate),
-    blocks: rows.blocks.map(b => ({ hash: b.block_hash, height: b.height, arrival_ms: Number(b.arrival_ms), best: b.best })),
+    blocks: rows.blocks.map(b => ({ hash: b.block_hash, height: b.height, arrival_ms: Number(b.arrival_ms), best: b.best, miner: b.miner ?? null })),
   };
 }
 

@@ -202,12 +202,32 @@ job re-sent long after its block, isn't shown as a current Bitcoin template, and
 the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
-The "Unknown parents" view looks at the last 90 days' templates whose previous block is no block we know (neither
-in `blocks` nor recorded in `stale_blocks`). It groups them by that parent into **episodes**: one unknown parent, the
+The "Unknown parents" view looks at templates whose previous block is no block we know (neither in `blocks` nor
+recorded in `stale_blocks`), over the last 90 days, the last year or all history. It groups them by that parent into
+**episodes**: one unknown parent, the
 height its templates build, the pools that built on it and on which of their connections (labelled a, b, … in each
 pool's (site, replica) order, so a letter always names the same connection), when the first and last template
 arrived, and how many templates (a template seen on several of a pool's connections counts once, and only as an exact
 copy). Work on a stale Bitcoin block we recorded is Bitcoin work and is shown with the stale blocks, not here.
+
+Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
+keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the
+de-duplicated template count, the first and last receive time, how many carry a merge-mining commitment, which
+connections received them, and the templates per height and per `nbits`. It never stores a kind or any other
+judgement. Whether a parent is still unknown is checked each time the table is read, so a parent that is later
+recorded as a block or a stale block (for example from the public stale-blocks dataset) drops out of the page with no
+cleanup, while its row stays as true as the templates it counts. Each row is recomputed from all of the parent's
+stored templates, never added to, so it can always be checked against `templates`; the web's Postgres tests compare
+it field for field with the live read of templates that the page used before the table existed.
+
+After each new block (once the block is stored) the backend recomputes every unknown parent of the last two hours'
+templates, starting where its previous run ended if that was longer ago, and once over the last seven days after
+the startup sync (`backend/unknown_parents.py`). Each parent is read whole: the read covers the heights and receive
+times of its templates seen now plus those already in the table, an hour wider, so a parent that lasts longer than
+two hours keeps all its templates. History before that, or after a longer outage, comes from the backfill
+(`python -m unknown_parents --backfill`, in 7-day chunks). An episode is in a range when its last template is; it is
+shown with all its templates even if it began before the range. Until the table has rows, the 90-day view reads
+templates directly, as it did before.
 
 What each parent is gets **inferred** when the page is read, never stored, from these facts (`web/lib/parentKind.ts`):
 
@@ -226,7 +246,7 @@ The rules, in order:
 2. **Unrecorded Bitcoin block**: Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
    target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
    lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
-   seconds before the page was computed, before we stored it: the page is recomputed every 30 minutes, so such an
+   seconds before the page was computed, before we stored it: the page is recomputed every 5 minutes, so such an
    episode stays listed until then. Once its header is imported from the public stale-blocks dataset (see
    [Blocks](#blocks)) the parent is a known block and the episode leaves this view.
 3. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a

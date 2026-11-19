@@ -270,13 +270,13 @@ export async function getLowestBlock(): Promise<PgBlock | null> {
 }
 
 /**
- * R3: newest 200 best-chain blocks with any analysis besides pool identification (served by the blocks_interesting
+ * R3: newest 200 best-chain blocks with an analysis finding, analysis.flags (served by the blocks_interesting
  * index; blocks recorded as stale are skipped).
  */
 export async function getInterestingBlocks() {
   const rows = await query<Pick<BlockRow, 'block_hash' | 'height' | 'analysis' | 'mining_pool'>>(
     `SELECT block_hash, height, analysis, mining_pool FROM blocks_best
-      WHERE (analysis - 'pool_identification') <> '{}'::jsonb
+      WHERE analysis ? 'flags'
       ORDER BY height DESC, block_hash
       LIMIT 200`,
   );

@@ -301,7 +301,7 @@ class PostgresImportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import psycopg
-        from test_btc_template_filtering import load_store_module
+        from main_harness import load_store_module
         cls.psycopg = psycopg
         cls.store = load_store_module().PostgresStore(dict(
             host=os.environ["PG_TEST_HOST"], port=int(os.getenv("PG_TEST_PORT", "5432")),

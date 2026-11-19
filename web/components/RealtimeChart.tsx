@@ -713,6 +713,9 @@ function RealtimeChartBase({
         const width = ctx.measureText(text).width;
         const left = Math.max(plotLeft, Math.min(x - width / 2, plotRight - width));
         if (left < lastLabelRight + 4) continue; // don't overlap the previous label
+        // Dark backing: with few or tall rows the top row's bar reaches into the label strip
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(left - 2, labelTop - 1, width + 4, labelFontSize + 3);
         ctx.fillStyle = 'rgba(150, 150, 150, 0.9)';
         ctx.fillText(text, left, labelTop);
         lastLabelRight = left + width;

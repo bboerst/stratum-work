@@ -1,13 +1,15 @@
 /**
- * /api/unknown-parents against mocked database functions: disabled history touches no database, parameter
+ * /api/forks (and its alias /api/unknown-parents) against mocked database functions: disabled history touches no database, parameter
  * validation (parent, range, the legacy 90d / 1y values), POOL_BLACKLIST passed to every read, the range passed to
  * the summary read with its heights (blocks, tip_height, from_height), the summary cache per range (one read per
  * period, served stale while a refresh runs, a failure not kept), the drill-in looked up in its range's summary and
  * cached, the table-or-live choice (the live read only for the default range while the backend's table is empty), the
- * range's cutoff as a block count, and the episode assembly (draftEpisodes / finishEpisodes).
+ * range's cutoff as a block count, the episode assembly (draftEpisodes / finishEpisodes), stale parents' episodes
+ * (kind 'stale' from the recorded fact; their read: one bounded branch per stale block), and the invalid-coinbase
+ * findings (a badge on the episodes at that height, else a row of its own; excluded pools left out).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DrillRows, EpisodeFactsSql, EpisodePoolSql } from '../db/unknown-parents';
+import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql } from '../db/unknown-parents';
 
 const P1 = '00'.repeat(10) + '12'.repeat(22);   // meets the target of BITS
 const BITS = 0x17034219;
@@ -17,7 +19,19 @@ const poolRow = (o: Partial<EpisodePoolSql> = {}): EpisodePoolSql => ({
   heights: { 900001: 3 }, nbits: { [BITS]: 3 }, ...o,
 });
 const facts = (o: Partial<EpisodeFactsSql> = {}): EpisodeFactsSql =>
-  ({ i: 1, tip: 900_000, tip_last: 900_001, bits_prev: String(BITS), bits_at: String(BITS), in_stale: false, ...o });
+  ({ i: 1, tip: 900_000, tip_last: 900_001, bits_prev: String(BITS), bits_at: String(BITS), in_stale: false,
+     stale_height: null, stale_header_source: null, stale_miner: null, ...o });
+const P2 = '00'.repeat(10) + '34'.repeat(22);   // a stale parent (meets the target too)
+const BEST = 'cd'.repeat(32);
+const flag = (o: Partial<InvalidCoinbaseFlagSql> = {}): InvalidCoinbaseFlagSql => ({
+  height: 900_001, parent: BEST, parent_arrival_ms: '800', arrival_ms: '9000', tip: TIP,
+  offenders: [
+    { pool_name: 'P', total_sats: 328_000_000, subsidy_sats: 312_500_000 },
+    { pool_name: 'P', total_sats: 329_000_000, subsidy_sats: 312_500_000 },
+    { pool_name: 'Q', total_sats: 320_000_000, subsidy_sats: 312_500_000 },
+    { pool_name: 'Hidden', total_sats: 330_000_000, subsidy_sats: 312_500_000 },
+  ], ...o,
+});
 const drillRows = (): DrillRows => ({
   truncated: false,
   blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', best: true }],
@@ -37,16 +51,19 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getEpisodeFacts = vi.fn<(q: unknown[]) => Promise<EpisodeFactsSql[]>>(async () => [facts()]);
   const getDrillRows = vi.fn<(q: unknown, exclude: string[]) => Promise<DrillRows>>(async () => drillRows());
   const getBestTipHeight = vi.fn<() => Promise<number | null>>(async () => TIP);
+  const getStaleEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => []);
+  const getInvalidCoinbaseFlags = vi.fn<() => Promise<InvalidCoinbaseFlagSql[]>>(async () => []);
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
     ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight,
+    getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
   }));
-  const route = await import('../../app/api/unknown-parents/route');
-  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight };
+  const route = await import('../../app/api/forks/route');
+  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
-  route.GET(new Request(`http://localhost/api/unknown-parents${qs}`));
+  route.GET(new Request(`http://localhost/api/forks${qs}`));
 
 afterEach(() => {
   vi.useRealTimers();
@@ -55,7 +72,7 @@ afterEach(() => {
   vi.doUnmock('../db/unknown-parents');
 });
 
-describe('GET /api/unknown-parents', () => {
+describe('GET /api/forks', () => {
   it('touches no database with history disabled', async () => {
     const { route, getEpisodePoolRows, getDrillRows } = await loadRoute({ historical: false });
     for (const qs of ['', `?parent=${P1}`]) expect(await (await get(route, qs)).json()).toEqual({ enabled: false, supported: false });
@@ -79,9 +96,77 @@ describe('GET /api/unknown-parents', () => {
       parent: P1, height: 900_001, heights: [900_001], pools: [{ pool: 'P', connections: ['a'], templates: 3 }],
       first_ms: 1000, last_ms: 5000, duration_ms: 4000, templates: 3, auxpow_templates: 0, auxpow_share: 0,
       facts: { tip_at_first: 900_000, tip_at_last: 900_001, tip_offset: 0, nbits: ['17034219'], bitcoin_bits: '17034219',
-        bitcoin_bits_at: '17034219', bitcoin_difficulty: true, pow_ok: true, pow_bits: '17034219', in_stale_blocks: false },
-      kind: 'bitcoin_block',
+        bitcoin_bits_at: '17034219', bitcoin_difficulty: true, pow_ok: true, pow_bits: '17034219', in_stale_blocks: false,
+        stale_block: null },
+      kind: 'bitcoin_block', invalid_coinbase: null,
     }]);
+  });
+
+  it('serves the alias /api/unknown-parents from the same handler and caches', async () => {
+    const { route, getEpisodePoolRows } = await loadRoute();
+    const alias = await import('../../app/api/unknown-parents/route');
+    expect(alias.GET).toBe(route.GET);
+    expect(alias.dynamic).toBe('force-dynamic');
+    await get(route);
+    expect((await (await alias.GET(new Request('http://localhost/api/unknown-parents'))).json()).episodes).toHaveLength(1);
+    expect(getEpisodePoolRows).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves a recorded stale parent as kind stale, with its block, next to the unknown ones', async () => {
+    const { route, getEpisodeFacts, getStaleEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden' });
+    getStaleEpisodePoolRows.mockResolvedValueOnce([
+      poolRow({ parent: P2, pool: 'S', first_ms: '500', last_ms: '700', n: '2', auxpow: null, heights: { 900001: 2 } }),
+    ]);
+    getEpisodeFacts.mockImplementationOnce(async q => q.map((_, i) => i === 0
+      ? facts({ i: 1, in_stale: true, stale_height: 900_000, stale_header_source: 'node', stale_miner: 'M' }) : facts({ i: 2 })));
+    const body = await (await get(route)).json();
+    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith(['Hidden'], '6e');
+    expect(body.episodes.map((e: { parent: string; kind: string }) => [e.parent, e.kind])).toEqual([[P2, 'stale'], [P1, 'bitcoin_block']]);
+    expect(body.episodes[0]).toMatchObject({ auxpow_templates: null, auxpow_share: null, templates: 2,
+      facts: { in_stale_blocks: true, stale_block: { height: 900_000, header_source: 'node', miner: 'M' }, pow_ok: true } });
+  });
+
+  it('badges the episodes at a finding\'s height (per pool, excluded pools left out)', async () => {
+    const { route, getInvalidCoinbaseFlags } = await loadRoute({ blacklist: 'Hidden' });
+    getInvalidCoinbaseFlags.mockResolvedValueOnce([flag()]);
+    const body = await (await get(route)).json();
+    expect(body.episodes).toHaveLength(1);
+    expect(body.episodes[0].invalid_coinbase).toEqual({ height: 900_001, pools: [
+      { pool: 'P', templates: 2, total_sats: 329_000_000, subsidy_sats: 312_500_000 },
+      { pool: 'Q', templates: 1, total_sats: 320_000_000, subsidy_sats: 312_500_000 },
+    ] });
+  });
+
+  it('makes a finding with no episode at its height a row of its own; drops one left without offenders', async () => {
+    const { route, getInvalidCoinbaseFlags, getDrillRows } = await loadRoute({ blacklist: 'Hidden' });
+    getInvalidCoinbaseFlags.mockResolvedValue([
+      flag({ height: 900_005 }),
+      flag({ height: 900_006, parent: 'ef'.repeat(32), offenders: [{ pool_name: 'Hidden', total_sats: 1, subsidy_sats: 0 }] }),
+      flag({ height: TIP - 12_096, parent: 'ee'.repeat(32) }),     // below the range
+    ]);
+    const body = await (await get(route)).json();
+    expect(body.episodes).toHaveLength(2);
+    const row = body.episodes.find((e: { kind: string }) => e.kind === 'invalid_coinbase');
+    expect(row).toMatchObject({ parent: BEST, height: 900_005, first_ms: 800, last_ms: 9000, duration_ms: 8200, templates: 3,
+      pools: [{ pool: 'P', connections: [], templates: 2 }, { pool: 'Q', connections: [], templates: 1 }],
+      facts: { tip_at_first: 900_004, tip_offset: 0 }, invalid_coinbase: { height: 900_005 } });
+    expect(body.episodes.find((e: { kind: string }) => e.kind !== 'invalid_coinbase').invalid_coinbase).toBeNull();
+    // its drill-in labels our best block as the best chain, not "this parent"
+    expect((await get(route, `?parent=${BEST}`)).status).toBe(200);
+    expect(getDrillRows.mock.calls[0][0]).toMatchObject({ parent: '', height: 900_005, pools: ['P', 'Q'] });
+    expect((await (await get(route, '?range=all')).json()).episodes).toHaveLength(3);   // all history: the old one too
+  });
+
+  it('does not badge another chain\'s episode passing through the height, or one away from our tip', async () => {
+    const { route, getEpisodeFacts, getInvalidCoinbaseFlags } = await loadRoute();
+    getInvalidCoinbaseFlags.mockResolvedValue([flag()]);
+    getEpisodeFacts.mockResolvedValueOnce([facts({ bits_prev: '1', bits_at: '1' })]);          // other chain
+    const other = (await (await get(route)).json()).episodes;
+    expect(other.map((e: { kind: string; invalid_coinbase: unknown }) => [e.kind, e.invalid_coinbase === null]))
+      .toEqual([['invalid_coinbase', false], ['other_chain', true]]);   // oldest first
+    getEpisodeFacts.mockResolvedValueOnce([facts({ tip: 899_000 })]);                          // far below our tip
+    const far = (await (await get(route, '?range=26e')).json()).episodes;
+    expect(far.map((e: { kind: string }) => e.kind)).toEqual(['invalid_coinbase', 'bitcoin_block']);
   });
 
   it('leaves out an episode that began before our first stored block, and counts it', async () => {
@@ -118,10 +203,11 @@ describe('GET /api/unknown-parents', () => {
     expect(getDrillRows).toHaveBeenCalledTimes(1);
   });
 
-  it('passes POOL_BLACKLIST to the summary read', async () => {
-    const { route, getEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden, Other' });
+  it('passes POOL_BLACKLIST to the summary reads', async () => {
+    const { route, getEpisodePoolRows, getStaleEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden, Other' });
     await get(route);
     expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '6e');
+    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '6e');
   });
 
   it('reads the range asked for, with its heights, cached per range; rejects others', async () => {
@@ -252,6 +338,37 @@ describe('summary source', () => {
     expect(reads[0][0]).toContain('(SELECT max(height) FROM blocks_best) - $2::int');
     expect(reads.map(r => r[1])).toEqual([[['Hidden'], 12_096], [['Hidden'], 52_416], [['Hidden'], null]]);
     expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
+  });
+
+  it('reads stale parents in one bounded read: a branch per stale block with its height, window and hash as values', async () => {
+    vi.resetModules();
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('FROM stale_blocks s CROSS JOIN LATERAL template_height_windows')) return { rows: [
+        { parent: 'aa'.repeat(32), height: 900_001, w_from: '2026-01-01 00:00:00+00', w_to: '2026-01-01 03:00:00+00', cut_ms: '5000' },
+        { parent: 'bb'.repeat(32), height: 900_101, w_from: '2026-01-02 00:00:00+00', w_to: 'infinity', cut_ms: '5000' },
+      ] };
+      return { rows: [
+        poolRow({ parent: 'aa'.repeat(32), pool: 'A', last_ms: '4000' }),          // ended before the cutoff
+        poolRow({ parent: 'bb'.repeat(32), pool: 'A', last_ms: '4000' }),
+        poolRow({ parent: 'bb'.repeat(32), pool: 'B', last_ms: '6000' }),          // ... this pool's didn't: shown whole
+      ] };
+    });
+    vi.doMock('../db/pg', () => ({ getPgPool: () => ({ query }) }));
+    const db = await import('../db/unknown-parents');
+    const rows = await db.getStaleEpisodePoolRows(['Hidden'], '6e');
+    expect(rows.map(r => [r.parent.slice(0, 2), r.pool])).toEqual([['bb', 'A'], ['bb', 'B']]);
+    const [first, second] = query.mock.calls as unknown as [string, unknown[]][];
+    expect(first[0]).toContain('s.reorged_in_at IS NULL AND w.w_to >= cut.at');
+    expect(first[1]).toEqual([12_096]);
+    expect(second[0].match(/FROM templates t/g)).toHaveLength(2);
+    expect(second[0]).not.toContain('coinbase1');
+    expect(second[0]).toContain("t.prev_hash = stratum_prev_hash_to_block_hash(decode($5::text, 'hex'))");
+    expect(second[1]).toEqual([['Hidden'], 900_001, '2026-01-01 00:00:00+00', '2026-01-01 03:00:00+00', 'aa'.repeat(32),
+      900_101, '2026-01-02 00:00:00+00', 'infinity', 'bb'.repeat(32)]);
+    query.mockImplementationOnce(async () => ({ rows: [] }));
+    query.mockClear();
+    expect(await db.getStaleEpisodePoolRows([], 'all')).toEqual([]);           // no stale block: no templates read
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the live read of templates while the table is empty (the default range only)', async () => {

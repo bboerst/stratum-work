@@ -16,7 +16,7 @@ details are in the other files in [`docs/`](./).
 - [Which templates belong to a height](#which-templates-belong-to-a-height)
 - [Several connections per pool](#several-connections-per-pool)
 - [Blocks](#blocks)
-- [Unknown parents](#unknown-parents)
+- [Forks](#forks)
 - [First transaction fee rate](#first-transaction-fee-rate)
 - [Older history](#older-history)
 
@@ -200,7 +200,7 @@ Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and e
   reported and not stored. The importer is `backend/stale_import.py`; every candidate and every rejection is in its
   summary.
 
-## Unknown parents
+## Forks
 
 Some pools serve other chains (for example Bitcoin Cash) on the same connections. The collector stores every template
 it receives in `templates`, without judging which chain it belongs to. That judgement used to be made at receipt,
@@ -212,14 +212,18 @@ job re-sent long after its block, isn't shown as a current Bitcoin template, and
 the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
-The "Unknown parents" view looks at templates whose previous block is no block we know (neither in `blocks` nor
-recorded in `stale_blocks`), over the last 6 or 26 difficulty epochs (12,096 or 52,416 blocks) or all history. It
-groups them by that parent into
-**episodes**: one unknown parent, the
-height its templates build, the pools that built on it and on which of their connections (labelled a, b, … in each
-pool's (site, replica) order, so a letter always names the same connection), when the first and last template
-arrived, and how many templates (a template seen on several of a pool's connections counts once, and only as an exact
-copy). Work on a stale Bitcoin block we recorded is Bitcoin work and is shown with the stale blocks, not here.
+The "Forks" page shows every template built on a parent other than our best block, over the last 6 or 26 difficulty
+epochs (12,096 or 52,416 blocks) or all history, grouped by that parent into **episodes**: one parent, the height its
+templates build, the pools that built on it and on which of their connections (labelled a, b, … in each pool's (site,
+replica) order, so a letter always names the same connection), when the first and last template arrived, and how many
+templates (a template seen on several of a pool's connections counts once, and only as an exact copy). A parent is
+either a **stale block we recorded** (in `stale_blocks` and not reorged back in; kind `stale`, a fact) or **no block
+we know** (neither in `blocks` nor in `stale_blocks`; its kind is inferred, below).
+
+Templates on a recorded stale block are read directly from `templates` when the page is computed: for each block
+that is stale now, the templates at its height + 1 whose previous block is that block and that arrived inside that
+height's time window, de-duplicated like the rest (their merge-mining share isn't counted: it would mean reading every
+coinbase). Its episode shows the block's height, how its header reached us and, when identified, its miner.
 
 Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
 keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the
@@ -244,7 +248,8 @@ carry that chain's heights, so an episode is placed by our tip when its first an
 heights being mined then), read per episode as `tip_at_first` and `tip_at_last`; dates are only shown on hover.
 Until the table has rows, the default view reads templates directly, over the last 90 days, as it did before.
 
-What each parent is gets **inferred** when the page is read, never stored, from these facts (`web/lib/parentKind.ts`):
+What each unknown parent is gets **inferred** when the page is read, never stored, from these facts
+(`web/lib/parentKind.ts`):
 
 - **Bitcoin's difficulty**: whether the templates' `nbits` equal the `bits` of our best-chain block at height − 1
   (at a difficulty retarget height, the block at the height itself, since the template's target is the new
@@ -258,12 +263,12 @@ The rules, in order:
 1. **Another chain**: the difficulty isn't Bitcoin's, or it is unknown and the height is more than one block from our
    tip. This comes before the proof-of-work check on purpose: another chain's block at a lower difficulty fails
    Bitcoin's target, and would otherwise look like an invalid Bitcoin parent.
-2. **Unrecorded Bitcoin block**: Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
+2. **Unrecorded stale block** ("Stale · unrecorded"): Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
    target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
    lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
    seconds before the page was computed, before we stored it: the page is recomputed every 5 minutes, so such an
    episode stays listed until then. Once its header is imported from the public stale-blocks dataset (see
-   [Blocks](#blocks)) the parent is a known block and the episode leaves this view.
+   [Blocks](#blocks)) the parent is a recorded stale block and the episode's kind becomes `stale`.
 3. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a
    valid block at all.
 4. **Undetermined**: no stored block to compare with at all.
@@ -271,9 +276,15 @@ The rules, in order:
 An episode that began before our first stored block (collection started part-way through that height) has no tip and
 no stored block to compare with. It is left out of the page and counted in the API response (`before_first_block`).
 
-Each episode on the page shows these facts next to the inferred kind, and its details show every template from its
-pools around its minutes, each labelled by the parent it built on (our best chain, a stale block, this unknown parent,
-or another one), with the arrival of the blocks at height − 1 and at the height.
+Each episode on the page shows these facts next to its kind, and its details show every template from its pools
+around its minutes, each labelled by the parent it built on (our best chain, a stale block, this parent, or another
+one), with the arrival of the blocks at height − 1 and at the height.
+
+**Invalid coinbase**: the backend's analysis flags a block whose height had templates paying more than the subsidy
+with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.analysis`, one entry per template).
+Each episode at that height that was at our tip (within one block of it, and not another chain's) carries it as a
+badge: the pools and what they paid against the subsidy. A finding at a height where nothing forked is a row of its
+own (kind `invalid_coinbase`), so no finding is lost. Pools hidden from the site are left out of the badge too.
 
 ## First transaction fee rate
 

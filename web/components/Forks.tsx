@@ -7,14 +7,15 @@ import { useElementWidth } from "@/visuals/framework/useElementWidth";
 import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
 
 /**
- * Unknown parents (/api/unknown-parents): templates built on a block we don't know, as episodes (one per parent), in
+ * Forks (/api/forks): templates built on a block other than our best one, as episodes (one per parent), in
  * Bitcoin time: over the last 6 or 26 difficulty epochs or all history, on an axis of block heights (dates only on
  * hover; the drill-in's sub-block timing stays in clock time). The server aggregates, reads the facts, infers the kind and decodes;
- * this component draws the episodes (timeline, table) and one episode's pools as swimlanes. How the kinds are inferred is in
- * docs/methodology.md (linked from the header), not on the page.
+ * this component draws the episodes (timeline, table) and one episode's pools as swimlanes. A parent is a recorded stale
+ * block, or no block we know (its kind inferred); an invalid-coinbase finding at the height is a badge. How the kinds
+ * are inferred is in docs/methodology.md (linked from the header), not on the page.
  */
 
-type Kind = "bitcoin_block" | "other_chain" | "invalid_parent" | "undetermined";
+type Kind = "stale" | "bitcoin_block" | "other_chain" | "invalid_parent" | "invalid_coinbase" | "undetermined";
 type ParentLabel = "best" | "stale" | "this" | "other";
 type Range = "6e" | "26e" | "all";
 
@@ -27,8 +28,8 @@ interface Episode {
   last_ms: number;
   duration_ms: number;
   templates: number;
-  auxpow_templates: number;
-  auxpow_share: number;
+  auxpow_templates: number | null;
+  auxpow_share: number | null;
   facts: {
     tip_at_first: number | null;
     tip_at_last: number | null;
@@ -40,8 +41,15 @@ interface Episode {
     pow_ok: boolean;
     pow_bits: string;
     in_stale_blocks: boolean;
+    stale_block: { height: number; header_source: string | null; miner: string | null } | null;
   };
   kind: Kind;
+  invalid_coinbase: InvalidCoinbase | null;
+}
+
+interface InvalidCoinbase {
+  height: number;
+  pools: { pool: string; templates: number; total_sats: number; subsidy_sats: number | null }[];
 }
 
 interface SummaryResponse {
@@ -95,31 +103,38 @@ interface DrillResponse {
   error?: string;
 }
 
-const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#unknown-parents";
+const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#forks";
 
-const KINDS: Kind[] = ["bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
+const KINDS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "invalid_coinbase", "undetermined"];
 const RANGES: Range[] = ["6e", "26e", "all"];
 const DEFAULT_RANGE: Range = "6e";
 const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // earlier links' wall-clock values
 const RANGE_LABEL: Record<Range, string> = { "6e": "12,096 blocks", "26e": "52,416 blocks", all: "All" };
 const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
-  bitcoin_block: "Bitcoin block",
+  stale: "Stale",
+  bitcoin_block: "Stale · unrecorded",
   other_chain: "Other chain",
   invalid_parent: "Invalid",
+  invalid_coinbase: "Invalid coinbase",
   undetermined: "Undetermined",
 };
-// Validated categorical colours (light / dark): amber = Bitcoin, violet = another chain, rose = invalid
+// Categorical colours (light / dark): blue = a stale block (the fork view's stale blue; lighter when we never recorded
+// it: the same family), violet = another chain, rose = invalid (an outline for an invalid coinbase on our own chain)
 const KIND_FILL: Record<Kind, string> = {
-  bitcoin_block: "fill-amber-600",
+  stale: "fill-[#1550a4] dark:fill-blue-500",
+  bitcoin_block: "fill-sky-400",
   other_chain: "fill-violet-600 dark:fill-violet-500",
   invalid_parent: "fill-rose-600 dark:fill-rose-500",
+  invalid_coinbase: "fill-transparent stroke-rose-500",
   undetermined: "fill-gray-500",
 };
 const KIND_BG: Record<Kind, string> = {
-  bitcoin_block: "bg-amber-600",
+  stale: "bg-[#1550a4] dark:bg-blue-500",
+  bitcoin_block: "bg-sky-400",
   other_chain: "bg-violet-600 dark:bg-violet-500",
   invalid_parent: "bg-rose-600 dark:bg-rose-500",
+  invalid_coinbase: "border-2 border-rose-500",
   undetermined: "bg-gray-500",
 };
 // Drill-in: the episode's own parent in the text colour (the subject), amber = our best chain (as in the fork view),
@@ -159,17 +174,31 @@ const shortName = (p: string, narrow: boolean) => {
 /** One-line summary of the facts the kind rests on, for tooltips. */
 function factsTitle(e: Episode): string {
   const f = e.facts;
+  if (e.kind === "invalid_coinbase") return `${KIND_LABEL[e.kind]} · our best block's parent at height ${fmtInt(e.height - 1)}`;
   return [
-    `${KIND_LABEL[e.kind]} (inferred)`,
+    e.kind === "stale" ? `${KIND_LABEL[e.kind]} (recorded${f.stale_block?.miner ? `, mined by ${f.stale_block.miner}` : ""})` : `${KIND_LABEL[e.kind]} (inferred)`,
     `proof of work ${f.pow_ok ? "✓" : "✗"} (bits ${f.pow_bits})`,
     `Bitcoin difficulty ${f.bitcoin_difficulty === null ? "?" : f.bitcoin_difficulty ? "✓" : "✗"}`,
     `parent at height ${fmtInt(e.height - 1)} · our tip ${f.tip_at_first === null ? "none yet" : fmtInt(f.tip_at_first)}`,
   ].join(" · ");
 }
 
+const fmtBtc = (sats: number) => (sats / 1e8).toFixed(8);
+
+/** The invalid-coinbase finding at the episode's height: a small rose badge, the pools and amounts on hover. */
+function InvalidCoinbaseBadge({ ic }: { ic: InvalidCoinbase }) {
+  const title = ic.pools.map(p => `${p.pool}: ${p.templates} template${p.templates > 1 ? "s" : ""} · paid ${fmtBtc(p.total_sats)} BTC${p.subsidy_sats === null ? "" : ` vs subsidy ${fmtBtc(p.subsidy_sats)}`}`).join("\n");
+  return (
+    <span title={`Coinbase above the subsidy with no transactions, at height ${fmtInt(ic.height)}\n${title}`}
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-rose-600/50 px-2 py-0.5 text-[11px] text-rose-600 dark:text-rose-400">
+      ✗ invalid coinbase · {ic.pools.length} pool{ic.pools.length > 1 ? "s" : ""}
+    </span>
+  );
+}
+
 function KindChip({ kind, title }: { kind: Kind; title?: string }) {
   return (
-    <span title={title ?? "Inferred"} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
+    <span title={title ?? (kind === "stale" ? "Recorded" : "Inferred")} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
       <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[kind]}`} aria-hidden />
       {KIND_LABEL[kind]}
     </span>
@@ -246,7 +275,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
               <rect x={m.x - 4} y={m.row * ROW_H} width={m.w + 8} height={ROW_H} fill="transparent" />
               <rect x={m.x} y={m.row * ROW_H + (ROW_H - MARK_H) / 2} width={m.w} height={MARK_H} rx={2}
                 className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${selected === m.parent ? "stroke-foreground" : ""}`}
-                strokeWidth={selected === m.parent ? 2 : 0}
+                strokeWidth={selected === m.parent ? 2 : m.kind === "invalid_coinbase" ? 1.5 : 0}
                 opacity={selected && selected !== m.parent ? 0.35 : 1} />
             </g>
           ))}
@@ -313,6 +342,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
                 <KindChip kind={e.kind} title={factsTitle(e)} />
               </div>
               <div className="text-foreground/40" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</div>
+              {e.invalid_coinbase && e.kind !== "invalid_coinbase" && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
               <PoolChips e={e} max={4} />
             </button>
           </li>
@@ -336,7 +366,12 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
                 <td className="px-3 py-2.5 font-mono">{fmtInt(e.height)}</td>
                 <td className="px-3 py-2.5"><PoolChips e={e} /></td>
                 <td className="px-3 py-2.5 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
-                <td className="px-3 py-2.5"><KindChip kind={e.kind} title={factsTitle(e)} /></td>
+                <td className="px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KindChip kind={e.kind} title={factsTitle(e)} />
+                    {e.invalid_coinbase && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
+                  </div>
+                </td>
                 <td className="px-3 py-2.5 text-xs text-foreground/40 text-right whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
               </tr>
             ))}
@@ -463,10 +498,10 @@ const LIST_PAGE = 200;
 
 /**
  * Why an episode is here, drawn: our chain (the best blocks at the parent's height and the next, as tiles) and, hanging
- * below it at the height its templates claim, the parent they built on, which is no block we know. Three checks under
- * it carry the inference: the parent's proof of work, whether the templates use Bitcoin's difficulty, and that the
- * parent is in neither our node nor the stale-block records. An other-chain parent sits off our chain, its height
- * beside ours.
+ * below it at the height its templates claim, the parent they built on: a recorded stale block (a solid blue tile, a
+ * real block like ours, with its miner when known), or no block we know (a dashed outline). Four checks under it carry
+ * the kind: at our tip, the parent's proof of work, whether the templates use Bitcoin's difficulty, and whether the
+ * parent is a block we know. An other-chain parent sits off our chain, its height beside ours.
  */
 function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse }) {
   const f = episode.facts;
@@ -482,22 +517,26 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   const TW = 104, TH = 64, G = 4, X0 = 4, Y0 = 18, Y1 = Y0 + TH + 22;
   const chevron = (x: number, y: number) =>
     [[4, 32], [19, 0], [104, 0], [90, 32], [104, 64], [19, 64]].map(([px, py]) => `${x + px},${y + py}`).join(" ");
-  const tile = (x: number, y: number, label: string, sub: string, cls: string, dashed = false, title = "") => (
+  const tile = (x: number, y: number, label: string, sub: string, cls: string, dashed = false, title = "", onColour = false) => (
     <g>
       <title>{title}</title>
       <polygon points={chevron(x, y)} className={cls} strokeWidth={dashed ? 1.5 : 0}
         strokeDasharray={dashed ? "4 3" : undefined} />
       <text x={x + 54} y={y + 30} textAnchor="middle" fontSize={15} fontWeight={700}
-        className="font-mono fill-black dark:fill-[#d7d7d7]">{label}</text>
+        className={`font-mono ${onColour ? "fill-white" : "fill-black dark:fill-[#d7d7d7]"}`}>{label}</text>
       <text x={x + 54} y={y + 46} textAnchor="middle" fontSize={10}
-        className="font-mono fill-black/75 dark:fill-[#d7d7d7]/75">{sub}</text>
+        className={`font-mono ${onColour ? "fill-white/80" : "fill-black/75 dark:fill-[#d7d7d7]/75"}`}>{sub}</text>
     </g>
   );
   const STRIP = "fill-[#eceaea] dark:fill-[#313131]";
   const short = (h: string) => `${h.slice(0, 4)}…${h.slice(-6)}`;
   const xNext = X0, xPrev = X0 + TW + G;   // newest on the left, as in the strip
   const unknownX = xPrev;
-  const kindStroke = episode.kind === "other_chain" ? "stroke-violet-500" : episode.kind === "invalid_parent" ? "stroke-rose-500" : "stroke-amber-600";
+  const stale = episode.kind === "stale";
+  const sb = f.stale_block;
+  const kindStroke = episode.kind === "other_chain" ? "stroke-violet-500" : episode.kind === "invalid_parent" ? "stroke-rose-500"
+    : episode.kind === "bitcoin_block" ? "stroke-sky-400" : "stroke-gray-500";
+  const miner = sb?.miner ? (sb.miner.length > 14 ? `${sb.miner.slice(0, 13)}…` : sb.miner) : null;
   const pools = episode.pools.map(p => p.pool);
   const checks: { ok: boolean | null; label: string; title: string }[] = [
     { ok: onOurChain, label: "at our tip",
@@ -507,7 +546,10 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
     { ok: f.bitcoin_difficulty, label: "Bitcoin's difficulty",
       title: f.bitcoin_difficulty === null ? "no Bitcoin block stored to compare with"
         : `templates' nbits ${f.nbits[0] ?? "?"} ${f.bitcoin_difficulty ? "=" : "≠"} Bitcoin's bits ${f.bitcoin_bits ?? "?"} at height ${fmtInt(ph)}` },
-    { ok: false, label: "a block we know", title: "the parent is in neither our node's chain nor the stale-block records" },
+    stale
+      ? { ok: true, label: "a block we know",
+          title: `a stale block we recorded at height ${fmtInt(sb?.height ?? ph)}${sb?.header_source ? ` (header from ${sb.header_source})` : ""}${sb?.miner ? `, mined by ${sb.miner}` : ""}` }
+      : { ok: false, label: "a block we know", title: "the parent is in neither our node's chain nor the stale-block records" },
   ];
   const W = xPrev + TW + 330;
   return (
@@ -521,7 +563,10 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
               : chain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
         {!chain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
         {chain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}
-        {tile(chain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
+        {stale
+          ? tile(chain ? unknownX : xNext, Y1, fmtInt(sb?.height ?? ph), miner ?? short(episode.parent), "fill-[#1550a4] dark:fill-blue-600", false,
+              `stale block ${fmtInt(sb?.height ?? ph)} · ${episode.parent}${sb?.miner ? ` · mined by ${sb.miner}` : ""}`, true)
+          : tile(chain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
         <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 26} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
         <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 42} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
       </svg>
@@ -545,7 +590,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     const ctl = new AbortController();
-    fetch(`/api/unknown-parents?parent=${episode.parent}&range=${range}`, { signal: ctl.signal })
+    fetch(`/api/forks?parent=${episode.parent}&range=${range}`, { signal: ctl.signal })
       .then(r => r.json())
       .then((d: DrillResponse) => setDrill({ parent: episode.parent, data: d }))
       .catch(e => { if (e?.name !== "AbortError") setDrill({ parent: episode.parent, data: { error: String(e) } }); });
@@ -567,9 +612,12 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
         </button>
         <span className="text-xs text-foreground/60">{episode.pools.length} pool{episode.pools.length > 1 ? "s" : ""}</span>
         <span className="text-xs text-foreground/60">{fmtDuration(episode.duration_ms)}</span>
-        <span className="text-xs text-foreground/60" title={factsTitle(episode)}>
-          PoW {episode.facts.pow_ok ? "✓" : "✗"}
-        </span>
+        {episode.kind !== "invalid_coinbase" && (
+          <span className="text-xs text-foreground/60" title={factsTitle(episode)}>
+            PoW {episode.facts.pow_ok ? "✓" : "✗"}
+          </span>
+        )}
+        {episode.invalid_coinbase && <InvalidCoinbaseBadge ic={episode.invalid_coinbase} />}
         <span className="ml-auto flex flex-wrap gap-3 text-xs text-foreground/60">
           {LABELS.filter(l => present.has(l)).map(l => (
             <span key={l} className="inline-flex items-center gap-1.5">
@@ -582,7 +630,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
       {data?.error && <p className="text-sm text-red-500">{data.error}</p>}
       {data && !data.error && (
         <>
-          <WhyUnknown episode={episode} drill={data} />
+          {episode.kind !== "invalid_coinbase" && <WhyUnknown episode={episode} drill={data} />}
           <Swimlanes episode={episode} drill={data} />
           {data.clipped && <p className="mt-1 text-xs text-foreground/50">first 30 min of {fmtDuration(episode.duration_ms)}</p>}
           <button type="button" className="mt-4 text-xs text-foreground/60 hover:text-foreground"
@@ -616,7 +664,7 @@ function setUrl(key: string, value: string | null) {
   window.history.replaceState(null, "", url);
 }
 
-export default function UnknownParents() {
+export default function Forks() {
   const [range, setRange] = useState<Range>(DEFAULT_RANGE);
   // each range's last answer (switching back is instant; a late answer only fills its own range)
   const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
@@ -624,7 +672,7 @@ export default function UnknownParents() {
   const [selected, setSelected] = useState<string | null>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback((r: Range) => fetch(`/api/unknown-parents?range=${r}`)
+  const load = useCallback((r: Range) => fetch(`/api/forks?range=${r}`)
     .then(res => res.json())
     .then((d: SummaryResponse) => setLoaded(m => ({ ...m, [r]: d })))
     .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
@@ -718,13 +766,13 @@ export default function UnknownParents() {
     <div className="mx-auto max-w-7xl px-4 py-6">
       <div className="mb-5">
         <h1 className="flex items-center gap-2 text-xl font-semibold">
-          Unknown parents
+          Forks
           <a href={METHODOLOGY} target="_blank" rel="noreferrer" title="How the kinds are inferred"
             className="text-foreground/60 hover:text-foreground" aria-label="Methodology">
             <Info className="h-4 w-4" />
           </a>
         </h1>
-        <p className="mt-1 text-sm text-foreground/60">Templates built on a block we don&apos;t know · {RANGE_TEXT[shownRange]}</p>
+        <p className="mt-1 text-sm text-foreground/60">Templates built on a block other than our best one · {RANGE_TEXT[shownRange]}</p>
       </div>
       {body}
     </div>

@@ -1,5 +1,5 @@
 /**
- * /api/unknown-parents: episodes assembled from the per-(parent, pool) rows and their facts (kind inferred by
+ * /api/forks (alias /api/unknown-parents): episodes assembled from the per-(parent, pool) rows and their facts (kind inferred by
  * lib/parentKind.ts), and the drill-in's template rows.
  *
  * Template rows: the MiningNotify shape (pg-mapping), extranonce1 masked (connectionMask, #105),
@@ -12,10 +12,13 @@
 import { maskTemplate } from './connectionMask';
 import { templateRowToMiningNotify } from './db/pg-mapping';
 import {
-  DEFAULT_RANGE, DRILL_MARGIN_MS, getDrillRows, getEpisodeFacts, getEpisodePoolRows,
-  type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type ParentLabel, type UnknownParentsRange,
+  DEFAULT_RANGE, DRILL_MARGIN_MS, RANGE_BLOCKS, getDrillRows, getEpisodeFacts, getEpisodePoolRows, getInvalidCoinbaseFlags,
+  getStaleEpisodePoolRows, type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type InvalidCoinbaseFlagSql,
+  type ParentLabel, type UnknownParentsRange,
 } from './db/unknown-parents';
-import { bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind } from './parentKind';
+import {
+  NEAR_TIP, bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind,
+} from './parentKind';
 import { parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
 import { addressFromScript } from '../utils/addressFromScript';
 import { decodeOpReturnScript } from '../utils/mergeMining';
@@ -113,11 +116,37 @@ export interface EpisodeFacts {
   bitcoin_difficulty: boolean | null;  // the templates' nbits are Bitcoin's there (null: nothing to compare with)
   pow_ok: boolean;               // the parent meets the target of pow_bits
   pow_bits: string;              // the bits the PoW was checked against: Bitcoin's at height - 1, else the templates'
-  in_stale_blocks: boolean;      // the parent is a recorded stale block
+  in_stale_blocks: boolean;      // the parent is a recorded stale block (stale now)
+  stale_block: StaleBlockFacts | null;   // ... and what we recorded of it
 }
 
+export interface StaleBlockFacts {
+  height: number;
+  header_source: string | null;  // how its header reached us (stale_blocks.header_source)
+  miner: string | null;          // the pool that mined it, when identified (stale_blocks.mining_pool.name)
+}
+
+/**
+ * The invalid_coinbase_no_merkle finding of our best block at the episode's height: templates there whose coinbase paid
+ * more than the subsidy with no transactions to pay fees from. Per pool (the finding lists one entry per template).
+ */
+export interface InvalidCoinbase {
+  height: number;
+  pools: { pool: string; templates: number; total_sats: number; subsidy_sats: number | null }[];
+}
+
+/**
+ * An episode's kind: 'stale' when the parent is a recorded stale block (a fact), otherwise the kind lib/parentKind.ts
+ * infers for an unknown parent; 'invalid_coinbase' for a height whose only finding is invalid coinbases (no other
+ * parent there).
+ */
+export type EpisodeKind = 'stale' | ParentKind | 'invalid_coinbase';
+export const EPISODE_KINDS: readonly EpisodeKind[] =
+  ['stale', 'bitcoin_block', 'other_chain', 'invalid_parent', 'invalid_coinbase', 'undetermined'];
+
 export interface Episode {
-  parent: string;                // the unknown parent, display-order hex
+  parent: string;                // the parent (a block other than our best one), display-order hex; for an
+                                 // 'invalid_coinbase' row our best block at height - 1
   height: number;                // the templates' height (the most common one), so the parent is at height - 1
   heights: number[];             // every height its templates gave, ascending
   pools: EpisodePool[];          // by first template
@@ -125,14 +154,15 @@ export interface Episode {
   last_ms: number;
   duration_ms: number;
   templates: number;             // de-duplicated (exact copies across a pool's connections count once)
-  auxpow_templates: number;
-  auxpow_share: number;          // 0..1
+  auxpow_templates: number | null;   // null: not read (a stale parent's templates are read without their coinbases)
+  auxpow_share: number | null;   // 0..1
   facts: EpisodeFacts;
-  kind: ParentKind;              // INFERRED from the facts (lib/parentKind.ts)
+  kind: EpisodeKind;             // 'stale' recorded; otherwise INFERRED from the facts (lib/parentKind.ts)
+  invalid_coinbase: InvalidCoinbase | null;
 }
 
 /** An episode before its facts are read. */
-export type EpisodeDraft = Omit<Episode, 'facts' | 'kind'> & { nbitsCounts: Map<number, number> };
+export type EpisodeDraft = Omit<Episode, 'facts' | 'kind' | 'invalid_coinbase'> & { nbitsCounts: Map<number, number> };
 
 const hex32 = (n: number) => n.toString(16).padStart(8, '0');
 
@@ -153,14 +183,14 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
   const out: EpisodeDraft[] = [];
   for (const [parent, rs] of byParent) {
     const heights = new Map<number, number>(), nbits = new Map<number, number>();
-    let templates = 0, aux = 0, first = Infinity, last = -Infinity;
+    let templates = 0, aux: number | null = 0, first = Infinity, last = -Infinity;
     const pools: (EpisodePool & { first: number })[] = [];
     for (const r of rs) {
       add(heights, r.heights);
       add(nbits, r.nbits);
       const n = Number(r.n), f = Number(r.first_ms), l = Number(r.last_ms);
       templates += n;
-      aux += Number(r.auxpow);
+      aux = aux === null || r.auxpow === null ? null : aux + Number(r.auxpow);
       first = Math.min(first, f);
       last = Math.max(last, l);
       const conns = [...(r.conns ?? [])].sort((a, b) => a - b).map(connectionLabel);
@@ -171,17 +201,79 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
       parent, height: modeOf(heights), heights: [...heights.keys()].sort((a, b) => a - b),
       pools: pools.map(p => ({ pool: p.pool, connections: p.connections, templates: p.templates })),
       first_ms: first, last_ms: last, duration_ms: last - first, templates,
-      auxpow_templates: aux, auxpow_share: templates ? aux / templates : 0, nbitsCounts: nbits,
+      auxpow_templates: aux, auxpow_share: aux === null ? null : templates ? aux / templates : 0, nbitsCounts: nbits,
     });
   }
   return out.sort((a, b) => a.first_ms - b.first_ms || (a.parent < b.parent ? -1 : 1));
 }
 
-/** The range's episodes: the rows per parent and pool (getEpisodePoolRows), then the facts per episode. */
+/**
+ * The range's episodes: the rows per parent and pool, of unknown parents (getEpisodePoolRows) and of stale ones
+ * (getStaleEpisodePoolRows; the two sets of parents are disjoint: an unknown parent is in no block table), then the
+ * facts per episode, then the invalid-coinbase findings (withInvalidCoinbase).
+ */
 export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<Episode[]> {
-  const drafts = draftEpisodes(await getEpisodePoolRows(excludePools, range));
+  const [unknown, stale, flags] = await Promise.all([
+    getEpisodePoolRows(excludePools, range), getStaleEpisodePoolRows(excludePools, range), getInvalidCoinbaseFlags(),
+  ]);
+  const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  return finishEpisodes(drafts, facts);
+  return withInvalidCoinbase(finishEpisodes(drafts, facts), flags, excludePools, RANGE_BLOCKS[range]);
+}
+
+/** A finding's offenders per pool, without the excluded pools (null when none is left). */
+export function invalidCoinbaseOf(flag: InvalidCoinbaseFlagSql, excludePools: string[]): InvalidCoinbase | null {
+  const by = new Map<string, InvalidCoinbase['pools'][number]>();
+  for (const o of flag.offenders ?? []) {
+    const pool = o.pool_name || 'Unknown';
+    if (excludePools.includes(pool)) continue;
+    const p = by.get(pool) ?? { pool, templates: 0, total_sats: 0, subsidy_sats: null };
+    p.templates++;
+    p.total_sats = Math.max(p.total_sats, Number(o.total_sats ?? 0));
+    if (typeof o.subsidy_sats === 'number') p.subsidy_sats = o.subsidy_sats;
+    by.set(pool, p);
+  }
+  if (by.size === 0) return null;
+  return { height: flag.height, pools: [...by.values()].sort((a, b) => b.templates - a.templates || (a.pool < b.pool ? -1 : 1)) };
+}
+
+/**
+ * Attach each invalid-coinbase finding to the episodes at its height that were at our tip then (|tip offset| <=
+ * NEAR_TIP, and not another chain's: a foreign height can pass through a Bitcoin one). A finding with no such episode
+ * becomes its own 'invalid_coinbase' row (when its height is in the range: above tip - rangeBlocks), keyed by our best
+ * block at height - 1 and timed from its arrival to the flagged block's, so nothing the findings list shows is lost.
+ */
+export function withInvalidCoinbase(
+  episodes: Episode[], flags: InvalidCoinbaseFlagSql[], excludePools: string[], rangeBlocks: number | null,
+): Episode[] {
+  const out = episodes.map(e => ({ ...e, invalid_coinbase: e.invalid_coinbase ?? null }));
+  const extra: Episode[] = [];
+  for (const flag of flags) {
+    const ic = invalidCoinbaseOf(flag, excludePools);
+    if (!ic) continue;
+    const at = out.filter(e => e.height === flag.height && e.kind !== 'other_chain'
+      && e.facts.tip_offset !== null && Math.abs(e.facts.tip_offset) <= NEAR_TIP);
+    for (const e of at) e.invalid_coinbase = ic;
+    if (at.length > 0) continue;
+    const tip = flag.tip === null ? null : Number(flag.tip);
+    if (rangeBlocks !== null && (tip === null || flag.height <= tip - rangeBlocks)) continue;
+    const parent = flag.parent ?? '';
+    if (!parent || out.some(e => e.parent === parent) || extra.some(e => e.parent === parent)) continue;
+    const last = Number(flag.arrival_ms);
+    const first = flag.parent_arrival_ms === null ? last : Math.min(last, Number(flag.parent_arrival_ms));
+    const templates = ic.pools.reduce((n, p) => n + p.templates, 0);
+    extra.push({
+      parent, height: flag.height, heights: [flag.height],
+      pools: ic.pools.map(p => ({ pool: p.pool, connections: [], templates: p.templates })),
+      first_ms: first, last_ms: last, duration_ms: last - first, templates, auxpow_templates: null, auxpow_share: null,
+      facts: {
+        tip_at_first: flag.height - 1, tip_at_last: flag.height - 1, tip_offset: 0, nbits: [], bitcoin_bits: null,
+        bitcoin_bits_at: null, bitcoin_difficulty: null, pow_ok: true, pow_bits: '', in_stale_blocks: false, stale_block: null,
+      },
+      kind: 'invalid_coinbase', invalid_coinbase: ic,
+    });
+  }
+  return [...out, ...extra].sort((a, b) => a.first_ms - b.first_ms || (a.parent < b.parent ? -1 : 1));
 }
 
 export interface DrillBlock {
@@ -208,8 +300,10 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
   const clipped = e.last_ms - e.first_ms > DRILL_MAX_SPAN_MS;
   const from_ms = e.first_ms - DRILL_MARGIN_MS;
   const to_ms = (clipped ? e.first_ms + DRILL_MAX_SPAN_MS : e.last_ms) + DRILL_MARGIN_MS;
+  // an invalid-coinbase row's key is our best block: its templates are labelled 'best', not 'this'
+  const parent = e.kind === 'invalid_coinbase' ? '' : e.parent;
   const rows = await getDrillRows(
-    { parent: e.parent, height: e.height, pools: e.pools.map(p => p.pool), from_ms, to_ms }, excludePools);
+    { parent, height: e.height, pools: e.pools.map(p => p.pool), from_ms, to_ms }, excludePools);
   return {
     from_ms, to_ms, truncated: rows.truncated, clipped,
     templates: rows.templates.map(toUnknownParentTemplate),
@@ -217,7 +311,7 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
   };
 }
 
-/** Attach the facts (getEpisodeFacts rows, in the drafts' order) and infer the kind. */
+/** Attach the facts (getEpisodeFacts rows, in the drafts' order) and the kind: 'stale' when recorded, else inferred. */
 export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[]): Episode[] {
   return drafts.map((d, i) => {
     const f = facts[i];
@@ -236,8 +330,12 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[])
         bitcoin_bits: prev === null ? null : hex32(prev), bitcoin_bits_at: at === null ? null : hex32(at),
         bitcoin_difficulty: bitcoinDifficulty(pf), pow_ok: powOk, pow_bits: hex32(prev ?? nbitsMain),
         in_stale_blocks: Boolean(f?.in_stale),
+        stale_block: f?.in_stale && f.stale_height != null
+          ? { height: Number(f.stale_height), header_source: f.stale_header_source ?? null, miner: f.stale_miner ?? null }
+          : null,
       },
-      kind: parentKind(pf),
+      kind: f?.in_stale ? 'stale' : parentKind(pf),
+      invalid_coinbase: null,
     };
   });
 }

@@ -29,7 +29,7 @@ export function classifyPrevHashes(
 }
 
 /**
- * For each `unknown` parent, the kind lib/parentKind.ts infers (the same rules as /unknown-parents), from the height's
+ * For each `unknown` parent, the kind lib/parentKind.ts infers (the same rules as the Forks page), from the height's
  * templates: their most common nbits per parent, against the bits of our best blocks at h - 1 and h. A height page with
  * a fork has a best block at h - 1 (otherwise there is no status), so the tip is taken as h - 1: a competitor of it.
  * Bits are 8-digit hex as stored (blocks.bits, templates' nbits).

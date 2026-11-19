@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
       const prevHashStatus = prevHashes.length > 1
         ? classifyPrevHashes(prevHashes, previousBlock?.block_hash, await knownBlockHashes(prevHashes))
         : null;
-      // For the parents we have no block for: the kind /unknown-parents infers (other chain, unrecorded block, …).
+      // For the parents we have no block for: the kind the Forks page infers (other chain, unrecorded block, …).
       const prevHashKind = unknownParentKinds(prevHashStatus, processedData, height, previousBlock?.bits, currentBlock?.bits);
 
       // Return the result for this height

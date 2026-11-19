@@ -1,6 +1,6 @@
 /**
- * /api/unknown-parents (app/api/unknown-parents/route.ts, lib/unknownParents.ts, lib/db/unknown-parents.ts) against a
- * real, migrated database, as a user in the stratum_web role. Seeds a short Bitcoin chain and three episodes, one of
+ * /api/forks (app/api/forks/route.ts, alias /api/unknown-parents; lib/unknownParents.ts, lib/db/unknown-parents.ts)
+ * against a real, migrated database, as a user in the stratum_web role. Seeds a short Bitcoin chain and episodes of
  * each kind, plus a blacklisted pool on a shared parent and on a parent of its own:
  *  A  bitcoin_block   a competitor of our best block at H - 1, meeting its target, built on by two pools (one on two
  *                     connections, an exact copy counted once) and the blacklisted pool
@@ -10,6 +10,10 @@
  *                     26 epochs and all history, not in 6 epochs
  *  F  other_chain     a parent whose last template arrived before our block at tip - 52,416: in all history only
  *  E  a parent recorded as a block after the summary was written: gone at read time, its row untouched
+ *  S1 stale           a recorded stale block at H - 1 (miner identified), built on by one pool inside height H's window,
+ *                     plus a late re-send after the window and a blacklisted pool's template: neither counts
+ * and invalid-coinbase findings: on B0 (height H: a badge on A and S1, the blacklisted offender left out) and on B1
+ * (height H - 1, where nothing forked: a row of its own, keyed by B2).
  * Parent hashes are asymmetric (they meet the target only read in display order), so a byte-order slip fails here.
  * The summary is read through unknown_parent_pools, filled here (as the owner) by the function the backend calls
  * (unknown_parent_pools_refresh(), backend/unknown_parents.py), and compared field for field with the web's live
@@ -35,7 +39,7 @@ const KEY = 'pg-unknown-parents-test-key';
 /** Held by the suites that seed a block above every other suite's (this one, pgBlocksBest): one tip at a time. */
 const TIP_LOCK = 72_010_261;                // the same key in pgBlocksBest.test.ts
 
-describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, drill-in)', () => {
+describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, findings, drill-in)', () => {
   const run = Math.floor(Date.now() / 1000) % 40_000;
   const single = `wunk-${run}`;            // one connection
   const multi = `wunkm-${run}`;            // two connections (a, b)
@@ -67,7 +71,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     + scriptSigBytes.toString(16).padStart(2, '0') + '0340420f';
   const CB1 = cb1(12);
   const CB2 = 'ffffffff0100f2052a01000000016a00000000';
-  let route: typeof import('../../app/api/unknown-parents/route');
+  let route: typeof import('../../app/api/forks/route');
   let admin: Client;
   const sid: Record<string, number> = {};
 
@@ -86,11 +90,12 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     [hash, height, T0 + arrival, BITS]).then(() => undefined);
 
   const get = async (qs = '') => {
-    const res = await route.GET(new Request(`http://localhost/api/unknown-parents${qs}`));
+    const res = await route.GET(new Request(`http://localhost/api/forks${qs}`));
     return { status: res.status, text: await res.clone().text(), body: await res.json() };
   };
   type Ep = { parent: string; kind: string; height: number; templates: number; pools: { pool: string; connections: string[]; templates: number }[];
-    facts: Record<string, unknown>; first_ms: number; last_ms: number; duration_ms: number; auxpow_templates: number };
+    facts: Record<string, unknown>; first_ms: number; last_ms: number; duration_ms: number; auxpow_templates: number | null;
+    invalid_coinbase: { height: number; pools: { pool: string; templates: number; total_sats: number; subsidy_sats: number | null }[] } | null };
   const ALL = [X_A, X_B, X_C, X_H, X_D, X_E, X_F];
   const mine = (eps: Ep[]) => eps.filter(e => ALL.includes(e.parent));
   let db: typeof import('../db/unknown-parents');
@@ -125,6 +130,15 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
                                  chaintip_status, last_status, tip_hash, fork_height, first_seen)
        VALUES (decode($1, 'hex'), $2, decode($3, 'hex'), 1, to_timestamp($4::float8), $5, 1, '\\x00', 'valid-fork',
                'valid-fork', decode($1, 'hex'), $2 - 1, to_timestamp($4::float8))`, [S1, H - 1, B2, T0 + 5, BITS]);
+    await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
+      [S1, JSON.stringify({ name: 'Synthetic Miner' })]);
+    // findings: invalid coinbases at H (A and S1 raced there) and at H - 1 (nothing forked there)
+    const offender = (pool: string, total: number) => ({ pool_name: pool, total_sats: total, subsidy_sats: 312_500_000 });
+    const finding = (offenders: object[]) => JSON.stringify({ flags: [{ key: 'invalid_coinbase_no_merkle', icon: 'error', details: { offenders } }] });
+    await admin.query(`UPDATE blocks SET analysis = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
+      [B0, finding([offender(single, 328_000_000), offender(single, 328_000_000), offender(hidden, 330_000_000)])]);
+    await admin.query(`UPDATE blocks SET analysis = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
+      [B1, finding([offender(single, 327_000_000)])]);
 
     // A: at height H on X_A (the competitor of B1), T0 + 5 .. T0 + 65
     await insert(single, 5, H, 'a1', X_A);
@@ -136,6 +150,8 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     // Bitcoin work around it (drill-in labels): on B1 (best), on S1 (stale), then on B0 (best) at H + 1
     await insert(single, 2, H, 'w1', B1);
     await insert(`${multi}/a`, 30, H, 'w2', S1);
+    await insert(`${multi}/a`, 120 + 3 * 3600, H, 'w5', S1);  // a late re-send of work on S1, after height H's window
+    await insert(hidden, 31, H, 'x3', S1);                    // blacklisted
     await insert(single, 130, H + 1, 'w3', B0);
     await insert(`${multi}/a`, 3, H, 'w4', B1);
     // B: the all-ff parent at H + 1, T0 + 300 .. T0 + 320
@@ -160,7 +176,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
          FROM (SELECT prev_hash, array_agg(DISTINCT height) AS heights, min(received_at) AS t_from, max(received_at) AS t_to
                  FROM templates WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)
                 GROUP BY prev_hash) x`, [ALL]);
-    route = await import('../../app/api/unknown-parents/route');
+    route = await import('../../app/api/forks/route');
     db = await import('../db/unknown-parents');
   }, 120_000);                                   // may wait for the other suite's tip lock
 
@@ -241,7 +257,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     expect(a.kind).toBe('bitcoin_block');
     expect(a.facts).toEqual({
       tip_at_first: H - 1, tip_at_last: H - 1, tip_offset: 0, nbits: [bits], bitcoin_bits: bits, bitcoin_bits_at: bits,
-      bitcoin_difficulty: true, pow_ok: true, pow_bits: bits, in_stale_blocks: false,
+      bitcoin_difficulty: true, pow_ok: true, pow_bits: bits, in_stale_blocks: false, stale_block: null,
     });
     expect(b.kind).toBe('invalid_parent');
     expect(b.facts).toMatchObject({ tip_at_first: H, tip_at_last: H, tip_offset: 0, bitcoin_bits: bits, bitcoin_difficulty: true, pow_ok: false });
@@ -284,6 +300,61 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     ]);
     const a2 = body.templates.find((t: { id: string }) => t.id.endsWith('-a2'));
     expect(a2).toMatchObject({ auxpow: true, auxpow_root: 'ab'.repeat(32), prev_hash: X_A, height: H, scriptsig_height: 1_000_000 });
+  });
+
+  it('serves the recorded stale block S1 as a stale episode: its pool inside the window, not the blacklisted one', async () => {
+    for (const range of ['', '?range=26e', '?range=all']) {
+      const { body, text } = await get(range);
+      const s = (body.episodes as Ep[]).filter(e => e.parent === S1);
+      expect(s, range).toHaveLength(1);
+      expect(s[0]).toMatchObject({
+        kind: 'stale', height: H, heights: [H], templates: 1, auxpow_templates: null,
+        first_ms: (T0 + 30) * 1000, last_ms: (T0 + 30) * 1000,       // the late re-send (w5) is outside H's window
+        pools: [{ pool: multi, connections: ['a'], templates: 1 }],
+      });
+      expect(s[0].facts).toMatchObject({
+        tip_at_first: H - 1, tip_offset: 0, in_stale_blocks: true, pow_ok: true, bitcoin_difficulty: true,
+        stale_block: { height: H - 1, header_source: 'node', miner: 'Synthetic Miner' },
+      });
+      expect(text).not.toContain(hidden);
+    }
+    // its drill-in: S1 is "this parent"
+    const drill = await get(`?parent=${S1}`);
+    expect(drill.status).toBe(200);
+    const labels = Object.fromEntries(drill.body.templates.map((t: { id: string; parent: string }) => [t.id.split('-').pop(), t.parent]));
+    expect(labels).toMatchObject({ w2: 'this', m1: 'other', w4: 'best' });   // the episode's pool only
+    expect(drill.text).not.toContain(hidden);
+    // a stale block reorged back in is our best block again: no episode
+    await admin.query(`UPDATE stale_blocks SET reorged_in_at = now() WHERE block_hash = decode($1, 'hex')`, [S1]);
+    expect((await db.getStaleEpisodePoolRows([hidden], 'all')).some(r => r.parent === S1)).toBe(false);
+    await admin.query(`UPDATE stale_blocks SET reorged_in_at = NULL WHERE block_hash = decode($1, 'hex')`, [S1]);
+    expect((await db.getStaleEpisodePoolRows([hidden], 'all')).filter(r => r.parent === S1).map(r => r.pool)).toEqual([multi]);
+  });
+
+  it('badges the episodes at a finding\'s height, and makes one with no episode there a row of its own', async () => {
+    const eps = (await get()).body.episodes as Ep[];
+    const badge = { height: H, pools: [{ pool: single, templates: 2, total_sats: 328_000_000, subsidy_sats: 312_500_000 }] };
+    expect(eps.find(e => e.parent === X_A)!.invalid_coinbase).toEqual(badge);
+    expect(eps.find(e => e.parent === S1)!.invalid_coinbase).toEqual(badge);
+    expect(eps.find(e => e.parent === X_B)!.invalid_coinbase).toBeNull();    // H + 1
+    expect(eps.find(e => e.parent === X_C)!.invalid_coinbase).toBeNull();    // another chain
+    const row = eps.find(e => e.kind === 'invalid_coinbase' && e.height === H - 1);
+    expect(row).toMatchObject({
+      parent: B2, heights: [H - 1], templates: 1, pools: [{ pool: single, connections: [], templates: 1 }],
+      first_ms: (T0 - 600) * 1000, last_ms: T0 * 1000, facts: { tip_at_first: H - 2, tip_offset: 0 },
+      invalid_coinbase: { height: H - 1, pools: [{ pool: single, templates: 1, total_sats: 327_000_000 }] },
+    });
+    const drill = await get(`?parent=${B2}`);
+    expect(drill.status).toBe(200);
+    expect(drill.body.templates.every((t: { parent: string }) => t.parent !== 'this')).toBe(true);
+    expect(drill.body.templates.map((t: { id: string }) => t.id.split('-').pop())).toContain('w1');
+  });
+
+  it('answers on the alias /api/unknown-parents too', async () => {
+    const alias = await import('../../app/api/unknown-parents/route');
+    const res = await alias.GET(new Request('http://localhost/api/unknown-parents?range=all'));
+    expect(res.status).toBe(200);
+    expect(((await res.json()).episodes as Ep[]).some(e => e.parent === S1 && e.kind === 'stale')).toBe(true);
   });
 
   it('rejects a malformed parent and 404s an unknown one', async () => {

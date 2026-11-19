@@ -1,5 +1,5 @@
 /**
- * Layout math for the Unknown parents page (components/UnknownParents.tsx): the episode timeline in Bitcoin time (one
+ * Layout math for the Forks page (components/Forks.tsx): the episode timeline in Bitcoin time (one
  * row per pool, a mark per episode and pool, over the heights being mined while it lasted) and the drill-in swimlanes (one lane per pool, a bar per run of
  * templates on one parent). Pure functions, unit-tested in components/__tests__/unknownParentsLayout.test.ts.
  */

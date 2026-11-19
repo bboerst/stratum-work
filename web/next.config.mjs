@@ -8,9 +8,13 @@ const nextConfig = {
     .split(",")
     .map((host) => host.trim())
     .filter(Boolean),
-  // The Other chains page became Unknown parents (episodes per unknown parent).
+  // The Other chains page became Unknown parents (episodes per unknown parent), which became Forks (every parent other
+  // than our best block). Redirects keep the query string (?range=…&parent=…).
   async redirects() {
-    return [{ source: '/other-chains', destination: '/unknown-parents', permanent: true }];
+    return [
+      { source: '/other-chains', destination: '/forks', permanent: true },
+      { source: '/unknown-parents', destination: '/forks', permanent: true },
+    ];
   },
   // Rewrites configuration from next.config.mjs
   async rewrites() {

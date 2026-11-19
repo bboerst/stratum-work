@@ -280,7 +280,7 @@ SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vs
   FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000))) t
   JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32);
 
--- Templates that don't build on a block we know, per pool (last day; /api/unknown-parents groups 90 days by parent)
+-- Templates that don't build on a block we know, per pool (last day; /api/unknown-parents groups them by parent, from unknown_parent_pools)
 SELECT s.name AS pool, count(*), min(t.height), max(t.height)
   FROM templates t JOIN sources s ON s.id = t.source_id
  WHERE t.received_at > now() - interval '1 day'

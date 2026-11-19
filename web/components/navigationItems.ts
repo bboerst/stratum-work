@@ -30,7 +30,7 @@ export const navItems = [
     href: "/unknown-parents",
     label: "Unknown parents",
     icon: Layers,
-    description: "Templates of the last 90 days built on a block we don't know, as episodes, with what each parent most likely is",
+    description: "Templates built on a block we don't know, as episodes, with what each parent most likely is",
   },
   // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>.
   ...listedVisuals().map((v) => ({

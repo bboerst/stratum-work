@@ -531,17 +531,16 @@ function setUrl(key: string, value: string | null) {
 
 export default function UnknownParents() {
   const [range, setRange] = useState<Range>("90d");
-  // the last summary read, with its range: shown only while that range is chosen (a late answer for another range
-  // never replaces the chosen one's)
-  const [loaded, setLoaded] = useState<{ range: Range; data: SummaryResponse } | null>(null);
+  // each range's last answer (switching back is instant; a late answer only fills its own range)
+  const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
   const [kind, setKind] = useState<Kind | "all">("all");
   const [selected, setSelected] = useState<string | null>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback((r: Range) => fetch(`/api/unknown-parents?range=${r}`)
     .then(res => res.json())
-    .then((d: SummaryResponse) => setLoaded({ range: r, data: d }))
-    .catch(e => setLoaded({ range: r, data: { enabled: true, supported: true, error: String(e) } })), []);
+    .then((d: SummaryResponse) => setLoaded(m => ({ ...m, [r]: d })))
+    .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
 
   useEffect(() => {
     // a shared link's range and episode (?range=…&parent=…)
@@ -553,7 +552,7 @@ export default function UnknownParents() {
       if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
     });
   }, [load]);
-  const summary = loaded?.range === range ? loaded.data : null;
+  const summary = loaded[range] ?? null;
 
   const select = useCallback((parent: string) => {
     setSelected(parent);

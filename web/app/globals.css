@@ -6,6 +6,16 @@
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-border: var(--table-row-border-color);
+  /* The shadcn-style tokens the components use (bg-card, text-muted-foreground, …), from the variables in :root and
+     .dark below. Without these, Tailwind generates no class for them and those elements fall back to no colour. */
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
 
   --color-purple-800: #6b46c1;
 

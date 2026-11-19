@@ -165,6 +165,9 @@ def main(env: Optional[Dict[str, str]] = None, store: Any = None, fetcher=fetch,
         logger.error("Reported hashrate: the file failed its sanity checks, nothing written: %s (%s)",
                      "; ".join(problems), counts)
         return 1
+    starts = sorted({int(s) % HOUR for s in (_num(e.get("history_start")) for e in doc["data"]) if s is not None})
+    logger.info("Reported hashrate: history_start offsets past the hour: %s s (points are stored floored to the hour)",
+                starts)
     out = rows(doc, source, datetime.fromtimestamp(now, tz=timezone.utc))
     written = (store or _postgres_store()).upsert_reported_hashrate(out)
     logger.info("Reported hashrate (%s): %d pools in the file, %d with a comparable last point (%d match the 1h "

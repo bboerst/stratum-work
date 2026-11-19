@@ -314,7 +314,8 @@ site's own network estimate (about 104% in one sample), so they can't all be rig
 
 It is kept apart from block shares, which are measured from the blocks our node sees: the two are never merged into
 one figure. Each row is one hour of the site's hourly series for one pool (the site's hourly average, floored to the
-hour), stored with the site's network estimate at fetch time; a later fetch overwrites the hours it covers again.
+hour), stored with the site's network estimate at fetch time. It is the one table rewritten by design: a later fetch
+overwrites the hours it covers again with the site's latest values, and `fetched_at` says which fetch a row is from.
 Hours without a value have no row. A file that fails its sanity checks (too few pools, no network estimate, a series
 that doesn't reconstruct to the site's own last-hour average) is not written at all.
 

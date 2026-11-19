@@ -1,7 +1,7 @@
 /**
  * Layout math for the Unknown parents page (components/UnknownParents.tsx): the episode timeline (one row per pool, a
- * mark per episode and pool, as wide as the episode) and the drill-in swimlanes (one lane per pool, a tick per
- * template). Pure functions, unit-tested in components/__tests__/unknownParentsLayout.test.ts.
+ * mark per episode and pool, as wide as the episode) and the drill-in swimlanes (one lane per pool, a bar per run of
+ * templates on one parent). Pure functions, unit-tested in components/__tests__/unknownParentsLayout.test.ts.
  */
 
 export interface TimelineEpisode {
@@ -53,41 +53,45 @@ export function layoutTimeline(
   return { pools, marks };
 }
 
-export interface LaneTick {
-  x: number;
+export interface LaneSegment {
+  pool: string;
   label: string;
+  x: number;
+  w: number;
+  from: number;                  // ms: the first template of the run
+  to: number;                    // ms: the last template of the run
+  n: number;                     // templates in the run
 }
 
 /**
- * Drill-in ticks per pool lane, grouped by label, as one SVG path per (lane, label): "M x y v h" per tick, rounded to
- * half pixels so a few thousand templates draw as a handful of elements.
+ * Drill-in bars: per pool, consecutive templates on the same parent merged into one segment that lasts until the
+ * pool's next template on another parent (the pool was working on that parent meanwhile), or to its last template.
+ * `key` (optional) splits runs further: two best-chain blocks in a row are two segments. At least `minWidth` px, so a
+ * single template still shows.
  */
-export function lanePaths(
-  ticks: { pool: string; t: number; label: string }[], pools: string[], start: number, end: number, width: number,
-  laneHeight: number, tickHeight: number,
-): { pool: string; label: string; d: string }[] {
-  const lane = new Map(pools.map((p, i) => [p, i]));
-  const paths = new Map<string, { pool: string; label: string; parts: string[] }>();
+export function laneSegments(
+  ticks: { pool: string; t: number; label: string; key?: string | number }[], start: number, end: number, width: number,
+  minWidth = 2,
+): LaneSegment[] {
+  const byPool = new Map<string, { t: number; label: string; key?: string | number }[]>();
   for (const k of ticks) {
-    const i = lane.get(k.pool);
-    if (i === undefined) continue;
-    const key = `${k.pool}\u0000${k.label}`;
-    let p = paths.get(key);
-    if (!p) paths.set(key, p = { pool: k.pool, label: k.label, parts: [] });
-    const x = Math.round(timeX(k.t, start, end, width) * 2) / 2;
-    const y = i * laneHeight + (laneHeight - tickHeight) / 2;
-    p.parts.push(`M${x} ${y}v${tickHeight}`);
+    const l = byPool.get(k.pool) ?? [];
+    l.push(k);
+    byPool.set(k.pool, l);
   }
-  return [...paths.values()].map(p => ({ pool: p.pool, label: p.label, d: p.parts.join('') }));
-}
-
-/** Index of the tick nearest to x among sorted xs (binary search), or -1 when empty. */
-export function nearestIndex(xs: number[], x: number): number {
-  if (xs.length === 0) return -1;
-  let lo = 0, hi = xs.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (xs[mid] < x) lo = mid + 1; else hi = mid;
+  const out: LaneSegment[] = [];
+  for (const [pool, list] of byPool) {
+    list.sort((a, b) => a.t - b.t);
+    let i = 0;
+    while (i < list.length) {
+      let j = i;
+      while (j + 1 < list.length && list[j + 1].label === list[i].label && list[j + 1].key === list[i].key) j++;
+      const until = j + 1 < list.length ? list[j + 1].t : list[j].t;
+      const x = timeX(list[i].t, start, end, width);
+      const w = Math.max(minWidth, timeX(until, start, end, width) - x);
+      out.push({ pool, label: list[i].label, x: Math.min(x, width - w), w, from: list[i].t, to: list[j].t, n: j - i + 1 });
+      i = j + 1;
+    }
   }
-  return lo > 0 && Math.abs(xs[lo - 1] - x) <= Math.abs(xs[lo] - x) ? lo - 1 : lo;
+  return out;
 }

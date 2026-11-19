@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lanePaths, layoutTimeline, nearestIndex, timeX } from '../unknown-parents/layout';
+import { laneSegments, layoutTimeline, timeX } from '../unknown-parents/layout';
 
 const ep = (parent: string, first: number, last: number, pools: string[], kind = 'bitcoin_block') =>
   ({ parent, kind, first_ms: first, last_ms: last, pools: pools.map(pool => ({ pool })) });
@@ -40,26 +40,27 @@ describe('layoutTimeline', () => {
   });
 });
 
-describe('lanePaths', () => {
-  it('one path per lane and label, ticks centred in their lane', () => {
-    const paths = lanePaths([
-      { pool: 'A', t: 0, label: 'this' }, { pool: 'A', t: 50, label: 'this' }, { pool: 'B', t: 100, label: 'best' },
-      { pool: 'Z', t: 10, label: 'this' },             // not a lane: dropped
-    ], ['A', 'B'], 0, 100, 200, 20, 10);
-    expect(paths).toEqual([
-      { pool: 'A', label: 'this', d: 'M0 5v10M100 5v10' },
-      { pool: 'B', label: 'best', d: 'M200 25v10' },
+describe('laneSegments', () => {
+  it('merges a pool\'s consecutive templates on one parent, until its next parent', () => {
+    const segs = laneSegments([
+      { pool: 'A', t: 0, label: 'best' }, { pool: 'A', t: 10, label: 'best' }, { pool: 'A', t: 30, label: 'this' },
+      { pool: 'A', t: 50, label: 'this' }, { pool: 'A', t: 60, label: 'best' },
+      { pool: 'B', t: 40, label: 'this' },
+    ], 0, 100, 100, 2);
+    expect(segs).toEqual([
+      { pool: 'A', label: 'best', x: 0, w: 30, from: 0, to: 10, n: 2 },
+      { pool: 'A', label: 'this', x: 30, w: 30, from: 30, to: 50, n: 2 },
+      { pool: 'A', label: 'best', x: 60, w: 2, from: 60, to: 60, n: 1 },   // the last run: at least the minimum
+      { pool: 'B', label: 'this', x: 40, w: 2, from: 40, to: 40, n: 1 },
     ]);
   });
-});
-
-describe('nearestIndex', () => {
-  it('finds the nearest sorted x', () => {
-    expect(nearestIndex([], 3)).toBe(-1);
-    expect(nearestIndex([10, 20, 30], 0)).toBe(0);
-    expect(nearestIndex([10, 20, 30], 24)).toBe(1);
-    expect(nearestIndex([10, 20, 30], 26)).toBe(2);
-    expect(nearestIndex([10, 20, 30], 99)).toBe(2);
-    expect(nearestIndex([10, 20], 15)).toBe(0);       // a tie goes left
+  it('splits a run where the key (e.g. the parent block) changes', () => {
+    const segs = laneSegments([
+      { pool: 'A', t: 0, label: 'best', key: 1 }, { pool: 'A', t: 10, label: 'best', key: 1 }, { pool: 'A', t: 20, label: 'best', key: 2 },
+    ], 0, 100, 100, 2);
+    expect(segs.map(s => [s.from, s.to, s.w])).toEqual([[0, 10, 20], [20, 20, 2]]);
+  });
+  it('keeps a minimum-width run at the right edge inside the plot', () => {
+    expect(laneSegments([{ pool: 'A', t: 100, label: 'this' }], 0, 100, 100, 4)[0]).toMatchObject({ x: 96, w: 4 });
   });
 });

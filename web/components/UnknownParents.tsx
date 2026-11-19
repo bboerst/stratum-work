@@ -162,7 +162,7 @@ function factsTitle(e: Episode): string {
     `${KIND_LABEL[e.kind]} (inferred)`,
     `proof of work ${f.pow_ok ? "✓" : "✗"} (bits ${f.pow_bits})`,
     `Bitcoin difficulty ${f.bitcoin_difficulty === null ? "?" : f.bitcoin_difficulty ? "✓" : "✗"}`,
-    `${f.tip_offset === null ? "no tip" : f.tip_offset === 0 ? "at our tip" : `${f.tip_offset > 0 ? "+" : ""}${fmtInt(f.tip_offset)} from our tip`}`,
+    `parent at height ${fmtInt(e.height - 1)} · our tip ${f.tip_at_first === null ? "none yet" : fmtInt(f.tip_at_first)}`,
   ].join(" · ");
 }
 
@@ -393,13 +393,13 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
             );
           })}
           {(drill.blocks ?? []).map(b => {
-            const label = b.height === episode.height - 1 ? "h−1" : "h";
+            const label = fmtInt(b.height);   // the block's own height (Bitcoin time), not h-relative shorthand
             const before = b.arrival_ms < start, after = b.arrival_ms > end;
             const x = timeX(b.arrival_ms, start, end, plotW);
             const cls = b.best ? "text-amber-600" : "text-[#1550a4] dark:text-blue-500";
             return (
               <g key={b.hash} className={cls}>
-                <title>{`${label}${b.best ? "" : " (stale)"} ${fmtInt(b.height)} · ${fmtUtcS(b.arrival_ms)} UTC`}</title>
+                <title>{`block ${label} arrived · ${b.best ? "best chain" : "stale"} · ${fmtUtcS(b.arrival_ms)} UTC`}</title>
                 {!before && !after && <line x1={x} x2={x} y1={-4} y2={lanesH} stroke="currentColor" strokeWidth={1.5} />}
                 <text x={before ? 0 : after ? plotW : x} y={-6} fontSize={11} fill="currentColor"
                   textAnchor={after ? "end" : before ? "start" : "middle"}>

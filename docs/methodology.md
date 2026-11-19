@@ -34,6 +34,16 @@ Every value is one of three kinds:
 Stored data is never rewritten. Judgements such as "which pool was first" or "is this a duplicate" are made when the
 data is read, from the stored facts, so they can be recomputed and checked.
 
+Two derived results are stored, for speed, and recomputed rather than trusted:
+- **Per-block analyses** (`blocks.analysis`: the fork and invalid-coinbase flags, and the coinbase parse record) are
+  computed when a block is stored. When a check changes, they are recomputed over every stored block
+  (`python -m coinbase_reanalysis` for the coinbase checks). History converted from the earlier database has no fork
+  flag, so a block without one is not evidence that there was no fork; the fork view reads the templates themselves.
+- **The unknown-parents summary** (`unknown_parent_pools`) is kept up to date after each block and rebuilt from
+  the templates with `python -m unknown_parents --backfill`.
+
+Both are made only from stored facts, so recomputing them gives the same answer from the same data.
+
 ## What is recorded
 
 - Every `mining.notify` is stored losslessly: the hex fields as bytes, the numbers as numbers, so re-encoding gives

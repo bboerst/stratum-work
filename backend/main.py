@@ -500,7 +500,7 @@ def request_pool_reidentify():
         logger.info("A reindex is already running; pool re-identification will run (again) when it finishes")
 
 from analytics.prev_hash_divergence import analyze_prev_hash_divergence
-from analytics.invalid_coinbase_no_merkle import analyze_invalid_coinbase_without_merkle
+from analytics.invalid_coinbase_no_merkle import analyze_coinbases
 from analytics.pool_identification import analyze_pool_identification, identify_pool_from_data, load_pools
 
 def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coinbase_addresses: List[str] | None = None) -> Dict[str, Any]:
@@ -518,9 +518,11 @@ def run_block_analyses(height: int, coinbase_script_hex: str | None = None, coin
         prev_flag = analyze_prev_hash_divergence(templates, logger)
         if prev_flag:
             flags.append(prev_flag)
-        invalid_flag = analyze_invalid_coinbase_without_merkle(templates, height, logger)
+        invalid_flag, coinbase_report = analyze_coinbases(templates, height, logger)
         if invalid_flag:
             flags.append(invalid_flag)
+        if coinbase_report:
+            analysis["coinbase_parse"] = coinbase_report   # coinbases that needed another extranonce2 length, or none parse
     else:
         logger.info("Analysis: no templates available for height %d", height)
 

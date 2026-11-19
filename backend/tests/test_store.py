@@ -206,6 +206,32 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertEqual(analysis["pool_identification"]["method"], "tag")
         self.assertEqual(analysis["flags"], [{"type": "kept"}])        # other analysis results untouched
 
+    def test_coinbase_reanalysis_replaces_only_the_coinbase_keys_of_every_block_at_the_height(self):
+        h = self.h + 80
+        fork = {"key": "prev_hash_fork", "icon": "fork", "details": {}}
+        old_flag = {"key": "invalid_coinbase_no_merkle", "icon": "error", "details": {"offenders": [{"pool_name": "A"}]}}
+        for hb, analysis in (("f1", {"pool_identification": {"m": 1}, "flags": [fork, old_flag]}), ("f2", {})):
+            b = self._block(h, hb)
+            b["analysis"] = analysis
+            self.store.save_block(b, is_new_block=False)
+        new_flag = {"key": "invalid_coinbase_no_merkle", "icon": "error", "details": {"offenders": [{"pool_name": "B"}]}}
+        report = {"repaired": [], "unparsed": [{"pool_name": "B", "extranonce2_length": 4, "templates": 1, "sample_job_id": "j"}]}
+        self.assertEqual(len(self.store.update_coinbase_analysis(h, new_flag, report, dry_run=True)), 2)
+        with self.psycopg.connect(self.admin) as c:   # the dry run wrote nothing
+            self.assertEqual(c.execute("SELECT analysis FROM blocks WHERE block_hash = %s", (bytes.fromhex("f1" * 32),)).fetchone()[0]["flags"][1], old_flag)
+        changed = self.store.update_coinbase_analysis(h, new_flag, report)
+        self.assertEqual(sorted(ch["block_hash"] for ch in changed), ["f1" * 32, "f2" * 32])
+        self.assertEqual(next(ch for ch in changed if ch["block_hash"] == "f1" * 32)["before_flag"], old_flag)
+        with self.psycopg.connect(self.admin) as c:
+            rows = dict(c.execute("SELECT encode(block_hash, 'hex'), analysis FROM blocks WHERE height = %s", (h,)).fetchall())
+        self.assertEqual(rows["f1" * 32], {"pool_identification": {"m": 1}, "flags": [fork, new_flag], "coinbase_parse": report})
+        self.assertEqual(rows["f2" * 32], {"flags": [new_flag], "coinbase_parse": report})
+        self.assertEqual(self.store.update_coinbase_analysis(h, new_flag, report), [])   # unchanged: nothing written
+        self.store.update_coinbase_analysis(h, None, None)
+        with self.psycopg.connect(self.admin) as c:
+            rows = dict(c.execute("SELECT encode(block_hash, 'hex'), analysis FROM blocks WHERE height = %s", (h,)).fetchall())
+        self.assertEqual(rows, {"f1" * 32: {"pool_identification": {"m": 1}, "flags": [fork]}, "f2" * 32: {}})
+
     def test_pools_replace_keeps_full_definitions_and_deletes_missing(self):
         defs = [{"id": 900001, "name": "Test A", "addresses": ["bc1qa"], "tags": ["/A/"], "link": "https://a", "extra": {"x": 1}},
                 {"id": 900002, "name": "Test B", "addresses": [], "tags": ["/B/"], "link": "https://b"}]

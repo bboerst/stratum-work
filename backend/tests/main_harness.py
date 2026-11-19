@@ -60,6 +60,7 @@ def import_main_module():
 
     invalid_coinbase_module = types.ModuleType("analytics.invalid_coinbase_no_merkle")
     invalid_coinbase_module.analyze_invalid_coinbase_without_merkle = lambda templates, height, logger: None
+    invalid_coinbase_module.analyze_coinbases = lambda templates, height, logger: (None, None)
 
     pool_identification_module = types.ModuleType("analytics.pool_identification")
     pool_identification_module.analyze_pool_identification = lambda *args, **kwargs: {}

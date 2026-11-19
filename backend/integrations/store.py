@@ -199,6 +199,38 @@ class PostgresStore:
                       pool_identification=json.dumps(pool_identification or {}, default=str))
         self._run(lambda c: c.execute(self._BLOCK_POOL_UPDATE, params))
 
+    def update_coinbase_analysis(self, height: int, flag: Optional[Dict[str, Any]], report: Optional[Dict[str, Any]],
+                                 dry_run: bool = False) -> List[Dict[str, Any]]:
+        """Re-analysis (coinbase_reanalysis.py): set the coinbase results of every block stored at `height` (best and
+        stale; they share the height's templates). The invalid_coinbase_no_merkle flag is replaced by `flag` (removed
+        when None) and `coinbase_parse` by `report`; every other key and flag is kept. Returns, per block whose
+        analysis changed, {block_hash, before_flag, after_flag}; with dry_run nothing is written."""
+        def run(c):
+            lock = "" if dry_run else " FOR UPDATE"   # a dry run only reads (a read-only role can run it)
+            rows = c.execute("SELECT encode(block_hash, 'hex'), analysis FROM blocks WHERE height = %s" + lock,
+                             (height,)).fetchall()
+            changed = []
+            for block_hash, analysis in rows:
+                old = analysis if isinstance(analysis, dict) else {}
+                new = {k: v for k, v in old.items() if k not in ("flags", "coinbase_parse")}
+                old_flags = old.get("flags") if isinstance(old.get("flags"), list) else []
+                before = next((f for f in old_flags if isinstance(f, dict) and f.get("key") == "invalid_coinbase_no_merkle"), None)
+                flags = [f for f in old_flags if not (isinstance(f, dict) and f.get("key") == "invalid_coinbase_no_merkle")]
+                if flag:
+                    flags.append(flag)
+                if flags:
+                    new["flags"] = flags
+                if report:
+                    new["coinbase_parse"] = report
+                if new == analysis:
+                    continue
+                changed.append({"block_hash": block_hash, "before_flag": before, "after_flag": flag})
+                if not dry_run:
+                    c.execute("UPDATE blocks SET analysis = %s::jsonb WHERE block_hash = decode(%s, 'hex')",
+                              (json.dumps(new, default=str), block_hash))
+            return changed
+        return self._run(run)
+
     def highest_block_height(self) -> Optional[int]:
         # ORDER BY ... LIMIT 1, not max(): through the view's anti-join max() would scan the table (no min/max index
         # shortcut); this walks blocks_height from the top and stops at the first best-chain block.

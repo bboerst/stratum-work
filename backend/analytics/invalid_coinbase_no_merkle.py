@@ -9,25 +9,70 @@ def reconstruct_coinbase_raw(coinbase1: str, extranonce1: str, extranonce2_lengt
         return f"{coinbase1}{extranonce1}{coinbase2}"
 
 
-def parse_tx_total_output_value_sats(coinbase_raw_hex: str):
+def parse_tx_total_output_value_sats(coinbase_raw_hex: str) -> Optional[int]:
+    """Sum of the outputs of the reassembled coinbase, or None if it isn't a well-formed transaction (parse error, or
+    bytes left over / missing because the declared lengths don't match what was reassembled)."""
     try:
         from bitcoin.core import CTransaction  # local import to avoid hard dep at import-time
     except Exception:
-        CTransaction = None
-    if not CTransaction:
-        return 0
+        return None
     try:
         stream = BytesIO(bytes.fromhex(coinbase_raw_hex))
         tx = CTransaction.stream_deserialize(stream)
-        total = 0
-        for vout in tx.vout:
-            try:
-                total += int(vout.nValue)
-            except Exception:
-                continue
-        return total
+        if stream.read():  # trailing bytes: the declared lengths didn't line up
+            return None
+        return sum(int(vout.nValue) for vout in tx.vout)
     except Exception:
-        return 0
+        return None
+
+
+def _read_varint(b: bytes, i: int):
+    v = b[i]
+    if v < 0xFD:
+        return v, i + 1
+    if v == 0xFD:
+        return int.from_bytes(b[i + 1:i + 3], "little"), i + 3
+    if v == 0xFE:
+        return int.from_bytes(b[i + 1:i + 5], "little"), i + 5
+    return int.from_bytes(b[i + 1:i + 9], "little"), i + 9
+
+
+def parse_outputs_total_from_coinbase2(coinbase2_hex: str) -> Optional[int]:
+    """Fallback when the coinbase doesn't reassemble: some pools declare a scriptSig longer than coinbase1 +
+    extranonce1 + extranonce2 actually supply, so the reassembled transaction is malformed. The outputs always sit at
+    the end of coinbase2, so parse them from there: an output count either at the very start of coinbase2 (input
+    sequence inside coinbase1) or right after a 4-byte input sequence, followed by outputs that end exactly at the
+    4-byte locktime. Returns the total, or None if no position parses."""
+    try:
+        b = bytes.fromhex(coinbase2_hex)
+    except ValueError:
+        return None
+    starts = [0] + [i + 4 for i in range(len(b) - 3) if b[i:i + 4] in (b"\xff\xff\xff\xff", b"\xfe\xff\xff\xff", b"\x00\x00\x00\x00")]
+    for p in starts:
+        try:
+            n, i = _read_varint(b, p)
+            if n == 0 or n > 256:
+                continue
+            total = 0
+            for _ in range(n):
+                total += int.from_bytes(b[i:i + 8], "little")
+                i += 8
+                script_len, i = _read_varint(b, i)
+                i += script_len
+            if i + 4 == len(b):
+                return total
+        except IndexError:
+            continue
+    return None
+
+
+def coinbase_total_output_sats(coinbase1: str, extranonce1: str, extranonce2_length: int, coinbase2: str) -> Optional[int]:
+    """Total paid by a template's coinbase: the reassembled transaction if it parses, else the outputs read from
+    coinbase2 alone. None if neither works."""
+    total = parse_tx_total_output_value_sats(reconstruct_coinbase_raw(coinbase1, extranonce1, extranonce2_length, coinbase2))
+    if total is None:
+        total = parse_outputs_total_from_coinbase2(coinbase2)
+    return total
 
 
 def get_block_subsidy_sats(height: int) -> int:
@@ -53,6 +98,7 @@ def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], hei
     subsidy = get_block_subsidy_sats(height)
     # key -> {collector: [offender, ...]} in input order
     by_key: Dict[Any, Dict[Any, List[Dict[str, Any]]]] = {}
+    unparsed = 0
     for t in templates:
         merkle_branches = t.get("merkle_branches") or []
         if isinstance(merkle_branches, list) and len(merkle_branches) == 0:
@@ -60,8 +106,10 @@ def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], hei
             coinbase2 = str(t.get("coinbase2", ""))
             extranonce1 = str(t.get("extranonce1", ""))
             extranonce2_length = int(t.get("extranonce2_length", 0) or 0)
-            raw = reconstruct_coinbase_raw(coinbase1, extranonce1, extranonce2_length, coinbase2)
-            total = parse_tx_total_output_value_sats(raw)
+            total = coinbase_total_output_sats(coinbase1, extranonce1, extranonce2_length, coinbase2)
+            if total is None:
+                unparsed += 1
+                continue
             if total > subsidy:
                 collector = (t.get("site"), t.get("replica"))
                 by_key.setdefault(_template_key(t), {}).setdefault(collector, []).append(
@@ -71,6 +119,9 @@ def analyze_invalid_coinbase_without_merkle(templates: List[Dict[str, Any]], hei
                         "subsidy_sats": subsidy,
                     }
                 )
+    if unparsed:
+        logger.warning("Analysis(invalid_coinbase_without_merkle): %d empty templates at height %d have a coinbase that "
+                       "could not be parsed; they were not checked", unparsed, height)
     offenders: List[Dict[str, Any]] = []
     for per_collector in by_key.values():
         offenders.extend(max(per_collector.values(), key=len))

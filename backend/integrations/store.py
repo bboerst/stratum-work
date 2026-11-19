@@ -397,6 +397,22 @@ class PostgresStore:
     def first_template_received(self) -> Optional[datetime]:
         return self._run(lambda c: c.execute("SELECT min(received_at) FROM templates").fetchone()[0])
 
+    # reported hashrate (reported_hashrate.py; db/migrations/20261119000005_reported_hashrate.sql): a claim by each
+    # pool, kept apart from anything measured.
+    REPORTED_HASHRATE_UPSERT = (
+        "INSERT INTO reported_hashrate (source, pool_key, at, pool_url, hashrate, network_hashrate, fetched_at)"
+        " VALUES (%(source)s, %(pool_key)s, %(at)s, %(pool_url)s, %(hashrate)s, %(network_hashrate)s, %(fetched_at)s)"
+        " ON CONFLICT (source, pool_key, at) DO UPDATE SET pool_url = EXCLUDED.pool_url, hashrate = EXCLUDED.hashrate,"
+        " network_hashrate = EXCLUDED.network_hashrate, fetched_at = EXCLUDED.fetched_at")
+
+    def upsert_reported_hashrate(self, rows: List[Dict[str, Any]]) -> int:
+        """Insert or overwrite these points in one transaction (all or nothing). Returns the rows written."""
+        def tx(c):
+            with c.cursor() as cur:
+                cur.executemany(self.REPORTED_HASHRATE_UPSERT, rows)
+            return len(rows)
+        return self._run(tx) if rows else 0
+
     # pools: full pools-v2.json entries kept in pools.definition so nothing is lost
     def replace_pools(self, pool_data: List[Dict[str, Any]]) -> None:
         def tx(c):

@@ -269,9 +269,9 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   }, [start, end, plotW]);
   const h = layout.pools.length * ROW_H + AXIS_H;
   const hovered = hover ? byParent.get(hover.parent) : null;
-  // Hovering an episode brings it forward: its marks on every pool's row are outlined, the rest fade, and its pools'
-  // row labels light up, so episodes close in height can be told apart. The selected episode keeps its column and
-  // outline, without fading the others.
+  // Hovering an episode brings it forward: its marks on every pool's row are outlined over a column, the rest stay
+  // almost as they were (a light fade), and its pools' row labels light up, so episodes close in height can be told
+  // apart. The selected episode keeps its column and outline.
   const focus = hover?.parent ?? null;
   const focusPools = useMemo(() => new Set(focus ? (byParent.get(focus)?.pools ?? []).map(p => p.pool) : []), [focus, byParent]);
   const spanFor = focus ?? selected;
@@ -298,9 +298,9 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
           ))}
           {focusSpan && <rect x={focusSpan.x} y={0} width={focusSpan.w} height={h - AXIS_H} rx={3}
             className="fill-foreground/10" pointerEvents="none" />}
-          {/* faded marks in one group with one opacity, so overlapping marks don't add up to solid */}
+          {/* the other marks fade lightly, in one group with one opacity, so overlapping marks don't add up to solid */}
           {[false, true].map(isFocus => (
-            <g key={String(isFocus)} opacity={focus && !isFocus ? 0.15 : 1}>
+            <g key={String(isFocus)} opacity={focus && !isFocus ? 0.7 : 1}>
           {layout.marks.map((m, i) => ((focus === m.parent) !== isFocus ? null :
             <g key={i} className="cursor-pointer" data-episode={m.parent}
               onMouseEnter={() => setHover({ parent: m.parent, x: labelW + m.x, y: (m.row + 1) * ROW_H + 4 })}
@@ -324,7 +324,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
         {layout.pools.map((p, i) => (
           <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 4} fontSize={12} textAnchor="end"
             fontWeight={focusPools.has(p) ? 700 : 400}
-            className={focus ? (focusPools.has(p) ? "fill-foreground" : "fill-foreground/25") : "fill-foreground/60"}>
+            className={focus && focusPools.has(p) ? "fill-foreground" : "fill-foreground/60"}>
             <title>{p}</title>{shortName(p, labelW < 100)}
           </text>
         ))}

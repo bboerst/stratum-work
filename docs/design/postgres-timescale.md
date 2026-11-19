@@ -7,8 +7,8 @@ Tracking: #90 (epic). Status: **ready for review**. All five sections are drafte
 1. [Current data access](#1-current-data-access) ✅
 2. [Schema](#2-schema) ✅ (candidate A chosen in section 3)
 3. [Measurements on real data](#3-measurements-on-real-data) ✅
-4. [Backups and recovery](#4-backups-and-recovery) ✅ (draft; sizes filled in after section 3)
-5. [Migration plan](#5-migration-plan) ✅ (draft)
+4. [Backups and recovery](#4-backups-and-recovery)
+5. [History migration](#5-history-migration) ✅
 
 ---
 
@@ -44,7 +44,7 @@ Inventory of every MongoDB read and write in `collector/`, `backend/` and `web/`
 | R9 | `backend/main.py` startup sync | `blocks`: highest, lowest, heights in a range, by height | Backfill missing blocks | Startup |
 | R10 | `backend/main.py` `start_full_reindex_background` | all `blocks` by height, descending | Manual full reindex (off by default) | Rare |
 | R11 | `backend/analytics/pool_identification.py` | `pools` all | Pool identification cache | Startup / daily |
-| R12 | backups (`server-vps1`) | `mining_notify` by `height >=` *h*; full dumps | Weekly full, daily incremental | Daily |
+| R12 | backups (deployment) | `mining_notify` by `height >=` *h*; full dumps | Weekly full, daily incremental | Daily |
 
 **Summary:** every `mining_notify` read is "all templates at height *h*", sometimes BTC-only, sometimes grouped by pool. Nothing reads by time range, pool range, or content today.
 
@@ -245,114 +245,11 @@ Median of 7 runs, warm cache, candidate A compressed, vs. the same data in Mongo
 
 ## 4. Backups and recovery
 
-Goals, from #90:
-- the database survives node and volume loss without manual heroics
-- any point in time within the retention window can be restored
-- backups are off-site, automatic, protected against deletion, and **proven by regular restore drills**
+Backups, recovery and restore drills belong to the production deployment, which is managed in a separate repository. The database image they rely on is `postgres/` (Postgres 18 + TimescaleDB for CloudNativePG, built by CI).
 
-### Building blocks
-| Piece | Choice | Why |
-|---|---|---|
-| Operator | [CloudNativePG](https://cloudnative-pg.io/) (CNPG) | Kubernetes-native HA Postgres: automated failover, declarative backups, recovery as a `Cluster` bootstrap mode. |
-| Image | Postgres 18 + TimescaleDB 2.30, built by our CI image pipeline | CNPG needs its own image layout. There's no upstream CNPG + Timescale image, so we build `FROM` the CNPG Postgres image and add the TimescaleDB packages. To verify at implementation: extension packages and `shared_preload_libraries`. |
-| Backup engine | CNPG **Barman Cloud plugin** | Continuous WAL archiving plus base backups to S3-compatible storage. It's the supported path (the in-tree `barmanObjectStore` is deprecated). |
-| Storage | **Backblaze B2** (S3 API), a **dedicated bucket** for Postgres | Different provider from the cluster, so it's off-site by construction. Already used for the interim MongoDB backups, and Terraform-managed. |
-| Volumes | Hetzner Cloud Volumes (CSI), not node-local disks | They survive node replacement, can be resized, and aren't tied to one server's root disk (unlike today's local-path volumes). |
+## 5. History migration
 
-### Topology
-- **2 instances:** a primary and one streaming replica, on separate nodes (anti-affinity) in a dedicated database node pool, with a PodDisruptionBudget. Writes are only ~1.4/s, so a small replica keeps up easily. CNPG promotes it automatically if the primary fails.
-- **Replication:** asynchronous to start with. Synchronous would cut the failover RPO from seconds to zero, at the cost of write latency on every template insert. Revisit if it's needed.
-- **Server settings** (via `spec.postgresql.parameters`): `timescaledb.enable_chunk_skipping = on` (section 2), and `archive_timeout = 5min`. The latter bounds the RPO of a full restore: WAL is shipped at least every 5 minutes even during quiet periods.
-
-### Backups
-- **WAL archiving:** continuous. Every completed WAL segment is compressed and uploaded. This is what makes point-in-time recovery possible.
-- **Base backups:** weekly (`ScheduledBackup`), compressed. Taken from the replica when one is available, so the primary isn't loaded.
-- **Retention:** 30 days, enforced by Barman (`retentionPolicy: 30d`), which deletes base backups and WAL that are no longer needed. That gives PITR to any second in the last 30 days.
-- **Long-term monthly copies:** not needed from the physical backups; see "Logical exports".
-
-### Protection against deletion
-Barman must be able to delete expired backups, so its key needs delete permission. A stolen or misused key could then purge the backups, older versions included. Instead of withholding delete:
-- **B2 Object Lock on the bucket**, governance mode, with a default retention **slightly shorter than Barman's** (e.g. 29 days vs 30). Every object is undeletable until its lock expires, so Barman's own deletions (always of objects past the retention window) succeed. A compromised key can't remove anything younger than the lock.
-- **Keys** (all Terraform-generated and prefix-scoped):
-  - **writer:** read, write, delete. Used by the cluster. **No `bypassGovernance`**, so it can't override the lock.
-  - **drill reader:** read-only. Used by restore drills, in a separate namespace from production.
-  - Only the account's master key can bypass governance in an emergency.
-- **Encryption:** server-side (SSE-B2), like the interim backups.
-
-### Recovery scenarios
-| Scenario | What happens | RTO | RPO |
-|---|---|---|---|
-| Primary pod or node lost | CNPG promotes the replica, and a new replica rebuilds from it | ~1 min (automatic) | seconds (async replication) |
-| A volume lost or corrupted | The affected instance is rebuilt from the other one, or from backup | minutes (automatic) | 0 |
-| Both instances / the whole cluster lost | New `Cluster` with `bootstrap.recovery` from the latest base backup + WAL | download + WAL replay: roughly tens of minutes for a ~50 GB database (to measure in drills) | ≤ 5 min (`archive_timeout`) |
-| Bad migration, bug or accidental delete | **PITR** to a timestamp just before it, into a *new* cluster; then cut over, or copy the affected rows back | same as above | to the second |
-| Hosting provider or region lost | Terraform builds a new cluster elsewhere and restores from B2 (a different provider) | hours (rebuild-dominated) | ≤ 5 min |
-| Backup credentials compromised | Object Lock: nothing younger than the lock can be deleted. Rotate keys with Terraform. | — | — |
-
-### Restore drills (automated)
-A backup that has never been restored isn't a backup. So, **monthly**, plus after any backup-config change:
-1. In a dedicated `pg-restore-drill` namespace, with the read-only drill key, create a CNPG `Cluster` bootstrapped from the **latest backup**. Recovery target: the latest consistent point.
-2. Run checks:
-   - `templates` row counts per day for the last 7 days match the source within the WAL lag
-   - `max(received_at)` is within `archive_timeout` of the drill's recovery target
-   - `blocks` max height matches
-   - the schema migration version matches
-3. Record duration and size, which become the measured RTO. Then delete the drill cluster.
-4. **Alert on failure.** Also alert separately on the last archived WAL age (> 15 min), the last successful base backup age (> 8 days), and archiving errors. These are CNPG metrics, wired into the new cluster's monitoring.
-
-Implementation: a CronJob (or Flux-managed manifests on a schedule) whose ServiceAccount may only manage CNPG `Cluster` objects in the drill namespace.
-
-### Logical exports (optional, later)
-Physical backups restore only to a compatible Postgres + TimescaleDB version. A **monthly logical export** would be an independent, long-term, version-agnostic copy: completed days of `templates` as **Parquet** files, plus `blocks`/`pools`/`sources` as CSV, written to B2 with a longer retention (e.g. 1 year). It overlaps with the bulk exports planned for the LLM data API (#92), so build it once for both.
-
-### Cost (measured in section 3)
-- A base backup is roughly the database size: **~45–50 GB**, already compressed by the columnstore.
-- B2 stores ~5 weekly base backups (~240 GB) plus 30 days of WAL (~30–60 GB, rough).
-- **≈ 0.3 TB ≈ $2/month.** Upload is ~50 GB per base backup plus WAL.
-
-### Transition from the interim MongoDB backups
-1. Keep the MongoDB weekly-full + daily-incremental backups running until Postgres is primary **and** its backups have passed one full restore drill.
-2. Take a base backup right after the migration (section 5), then run a drill.
-3. Then stop the MongoDB backup jobs, and let the bucket's lifecycle rules age out the old dumps. Keep the last full as a final cold copy, on a longer lifecycle rule, until the migration is beyond doubt.
-
----
-
-## 5. Migration plan
-
-**Constraints:**
-- no gap in collection
-- no extra load on the production MongoDB, whose host is memory- and disk-constrained
-- a rollback path until the move is proven
-- the migration coincides with moving to the new Terraform-built cluster (bboerst/server-vps1#1, #2)
-
-### Approach: parallel collection plus backfill from backups
-Avoid dual-writing from one collector to two databases. Instead:
-1. **Run a second, independent set of collectors on the new cluster that write only to Postgres,** while the existing collectors keep writing to MongoDB. The overlap is a built-in comparison period, and the old stack is a ready rollback.
-2. **Backfill history from the B2 backups,** not the live database: restore the latest weekly full and the daily incrementals into a throwaway MongoDB *inside the new cluster*, and convert from there. Production MongoDB isn't touched. About 35 GiB is downloaded from B2, which is free up to 3× the stored volume, instead of 255 GB of raw data crossing the public network.
-3. **Switch reads by switching clusters.** The web app on the new cluster reads Postgres. Cut over DNS once it's verified; roll back by pointing DNS back.
-
-```
-time ─────────────────────────────────────────────────────────────────────────────►
-old cluster:  collectors → MongoDB ────────────────────────────────────┤ retire
-new cluster:                 collectors → Postgres ────────────────────────────────►
-                             ▲ T0
-backfill:     [ … history < T0 from B2 backups … ] → Postgres
-web:          stratum.work → old ────────────────────┤ DNS cutover → new ───────────►
-                                   dev on new cluster ▲ (compare side by side)
-```
-
-### Steps
-| # | Step | Done when |
-|---|---|---|
-| 0 | **Prerequisites:** the new cluster (#1) with a DB node pool, CNPG and backups (section 4); the schema as migrations (section 2, dbmate); the CI-built Postgres + TimescaleDB image | A restore drill on the *empty* database passes |
-| 1 | **Postgres support in the code:** collector sink (ingest routing rules from section 2, `sources` upsert); backend (`blocks`, `pools`, analytics reads); web data layer (R1–R11 from section 1). Selected by configuration; MongoDB stays the default until cutover | Local docker-compose runs fully on Postgres, and the tests pass on both backends |
-| 2 | **Start the new collectors** on the new cluster → Postgres. Record **T0**, the first template received | Every source is inserting, and per-height counts are close to the old collectors' |
-| 3 | **Backfill templates with `received_at < T0`:** restore full + incrementals into a scratch MongoDB on the new cluster, then convert and load (below) | Verification passes (below) |
-| 4 | **Backfill `blocks`** with their `analysis` results (~129k rows) from the same restore. `pools` is regenerated by the backend's daily refresh | Block counts and heights match |
-| 5 | **Dev on the new cluster:** dev.stratum.work moves to the new cluster, reading Postgres. Compare it with prod (still old) page by page | Dev is signed off |
-| 6 | **Cutover:** lower the DNS TTL a day ahead, then point stratum.work at the new cluster. The old web and collectors keep running | Prod serves from Postgres; error rates and latency are normal |
-| 7 | **Soak (≥ 1–2 weeks):** old collectors still running, so rollback is a DNS change with no data loss | No rollback needed |
-| 8 | **Retire:** stop the old collectors, take a final MongoDB full backup (kept as a cold copy, section 4), and decommission the old cluster (#2) | The old stack is gone |
+The history (about 136M templates since June 2024) was converted from the MongoDB backups into Postgres, while new collectors wrote to Postgres from **T0**, the first template they received. The rules below are how every historical row was derived, so they are part of the dataset's provenance.
 
 ### Backfill conversion
 Per document → row (all lossless):
@@ -398,22 +295,3 @@ Per document → row (all lossless):
 ### Collector site
 New collectors run from a different place on the network, so **absolute latency and first-seen times change at T0**. Comparisons between pools at the same height stay valid, because every pool is measured from the same site.
 - Add **`sources.site`** (e.g. `old-cluster` for backfilled history, plus the new cluster's name), so analyses and charts can split or annotate at T0.
-- Where the new cluster runs, and which region, is a decision in #1. Staying near the current location keeps timing data comparable; another region may have cheaper traffic but changes everyone's latency.
-
-### Risks
-| Risk | Mitigation |
-|---|---|
-| The backfill misses or corrupts data | Exact per-day counts, the byte-exact sample, and the old MongoDB kept as a cold copy |
-| Read-path behavior changes (a page renders differently) | Dev on the new cluster first, plus scripted read parity |
-| Postgres ingest falls behind in bursts (block found → all sources at once) | ~40 inserts/s peak is trivial for Postgres; the sink logs and counts failures without dropping into MongoDB code paths |
-| Timing data discontinuity at T0 | `sources.site`, and an annotation in charts |
-| A rollback after cutover loses data | During the soak the old collectors still write MongoDB, so nothing is lost by pointing DNS back |
-
-### Slices (for #90)
-1. Schema and migrations (dbmate), CNPG + TimescaleDB image, local docker-compose on Postgres
-2. Collector Postgres sink (routing rules, `sources`)
-3. Backend on Postgres
-4. Web data layer on Postgres
-5. Backfill + verification tool (`tools/mongo-to-postgres`), measured first on the section 3 sample
-6. New-cluster deployment, parallel collection, backfill run, dev on the new cluster
-7. Cutover, soak, retire

@@ -27,10 +27,10 @@ export const navItems = [
     description: "Realtime Stratum infrastructure metrics",
   },
   {
-    href: "/other-chains",
-    label: "Other chains",
+    href: "/unknown-parents",
+    label: "Unknown parents",
     icon: Layers,
-    description: "Templates from the last 90 days that don't build on a Bitcoin block we know, judged at read time",
+    description: "Templates of the last 90 days built on a block we don't know, as episodes, with what each parent most likely is",
   },
   // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>.
   ...listedVisuals().map((v) => ({

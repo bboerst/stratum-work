@@ -50,7 +50,7 @@ afterEach(() => {
   vi.doUnmock('../db/blocks');
   vi.doUnmock('../db/mining-notify');
   vi.doUnmock('../rabbitmq');
-  vi.doUnmock('../db/other-chains');
+  vi.doUnmock('../db/unknown-parents');
   resetConnectionMaskForTests();
 });
 
@@ -87,23 +87,26 @@ describe('served templates carry masked extranonce1', () => {
     expect(a.coinbaseRaw).toBe(COINBASE1 + a.extranonce1 + '00'.repeat(4) + COINBASE2);
   });
 
-  it('/api/other-chains (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
+  it('/api/unknown-parents drill-in (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
     vi.doMock('../db/blocks', () => ({ enableHistoricalData: true }));
+    const parent = '00'.repeat(32);
     const pgRow = (pool: keyof typeof RAW, job: string) => ({
       source_id: 1, source_name: pool, received_us: String(NOW_MS * 1000), height: 6_976_415, job_id: job,
       prev_hash: Buffer.alloc(32), coinbase1: Buffer.from(COINBASE1, 'hex'), coinbase2: Buffer.from(COINBASE2, 'hex'),
       merkle_branches: Buffer.alloc(0), version: 536870912, nbits: 386000000, ntime: 1_711_276_032, clean_jobs: true,
-      extranonce1: Buffer.from(RAW[pool], 'hex'), extranonce2_length: 4, chain: 'unknown', reason: 'no_bitcoin_parent', copies: 1,
+      extranonce1: Buffer.from(RAW[pool], 'hex'), extranonce2_length: 4, copies: 1, conns: [1], parent_label: 'this',
     });
-    vi.doMock('../db/other-chains', async importOriginal => ({
+    vi.doMock('../db/unknown-parents', async importOriginal => ({
       ...(await importOriginal<object>()),
-      getOtherTemplates: vi.fn(async (q: { pool: keyof typeof RAW }) => ({ rows: [pgRow(q.pool, 'j1')], next_before: null })),
+      getEpisodePoolRows: vi.fn(async () => Object.keys(RAW).map(pool => ({ parent, pool, n: '1', first_ms: String(NOW_MS),
+        last_ms: String(NOW_MS), auxpow: '0', conns: [1], heights: { 6976415: 1 }, nbits: { 386000000: 1 } }))),
+      getEpisodeFacts: vi.fn(async () => [{ i: 1, tip: null, bits_prev: null, bits_at: null, in_stale: false }]),
+      getDrillRows: vi.fn(async () => ({ truncated: false, blocks: [],
+        templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'j1')) })),
     }));
-    const { GET } = await import('../../app/api/other-chains/route');
-    for (const pool of Object.keys(RAW)) {
-      const text = await (await GET(new Request(`http://test/api/other-chains?pool=${pool}`))).text();
-      expectMasked(text, JSON.parse(text).templates);
-    }
+    const { GET } = await import('../../app/api/unknown-parents/route');
+    const text = await (await GET(new Request(`http://test/api/unknown-parents?parent=${parent}`))).text();
+    expectMasked(text, JSON.parse(text).templates);
   });
 
   it('/api/stream (direct and throttle-held templates)', async () => {

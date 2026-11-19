@@ -1,0 +1,222 @@
+/**
+ * /api/unknown-parents (app/api/unknown-parents/route.ts, lib/unknownParents.ts, lib/db/unknown-parents.ts) against a
+ * real, migrated database, as a user in the stratum_web role. Seeds a short Bitcoin chain and three episodes, one of
+ * each kind, plus a blacklisted pool on a shared parent and on a parent of its own:
+ *  A  bitcoin_block   a competitor of our best block at H - 1, meeting its target, built on by two pools (one on two
+ *                     connections, an exact copy counted once) and the blacklisted pool
+ *  B  invalid_parent  an (almost) all-ff hash at H + 1 with Bitcoin's nbits
+ *  C  other_chain     a parent at a height far below our tip, with other nbits
+ * Parent hashes are asymmetric (they meet the target only read in display order), so a byte-order slip fails here.
+ * Covered: episodes, pools and a/b connections, counts, facts, kinds, blacklist exclusion (counts, chips, drill-in,
+ * site names never returned), the drill-in's parent labels and blocks, and extranonce1 masking.
+ *
+ * Shared database: other suites insert blocks too. The tip is "the highest best block that had arrived by the first
+ * template", so this suite's blocks sit above every other suite's heights except pgBlocksBest's top (9,000,000 +),
+ * which arrives at a fixed time (1,794,437,400 s, mid-November 2026) after this suite's T0 (80 days ago). From about
+ * the end of January 2027 that block precedes T0, and while both suites' rows exist at once (parallel runs) it becomes
+ * this suite's tip: give pgBlocksBest relative times then. Skipped unless a test database is configured:
+ *
+ *   PG_TEST_HOST=… PG_TEST_USER=web PG_TEST_PASSWORD=… PG_TEST_ADMIN_DSN=postgresql://… npm test
+ */
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Client } from 'pg';
+import { createMasker } from '../connectionMask';
+
+const env = process.env;
+const enabled = !!env.PG_TEST_HOST;
+const KEY = 'pg-unknown-parents-test-key';
+
+describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, drill-in)', () => {
+  const run = Math.floor(Date.now() / 1000) % 40_000;
+  const single = `wunk-${run}`;            // one connection
+  const multi = `wunkm-${run}`;            // two connections (a, b)
+  const hidden = `wunkx-${run}`;           // blacklisted
+  const H = 8_000_000 + run * 20;          // our chain: best blocks at H - 2, H - 1, H; the race is at H - 1
+  const HC = 5_000_000 + run * 20;         // the other chain's height
+  const DAY = 86_400;
+  const T0 = Math.floor(Date.now() / 1000) - 80 * DAY;   // the best block at H - 1 arrives (inside the 90-day window)
+  const BITS = 0x207fffff;                 // target 0x7fffff << 232: a hash starting 00 meets it, one starting ff doesn't
+  const OTHER_NBITS = 0x1d00ffff;
+  const r3 = run.toString(16).padStart(6, '0');
+  // display-order hashes; the last word is ff, so the stratum (word-reversed) order would start with ff and fail
+  const X_A = '00' + r3 + '5a'.repeat(24) + 'ffffffff';
+  const X_B = 'ff'.repeat(29) + r3;                          // all ff but this run's bytes (episodes are per parent)
+  const X_C = '00000000' + r3 + '3c'.repeat(21) + 'ffffffff';
+  const X_H = '00' + r3 + '77'.repeat(24) + 'ffffffff';       // only the blacklisted pool builds on it
+  const blk = (k: string) => '0000' + r3 + k.repeat(26) + '00';   // our blocks (display order)
+  const [B2, B1, B0, S1] = [blk('b2'), blk('b1'), blk('b0'), blk('51')];  // H - 2, H - 1, H; S1: stale at H - 1
+  const EN1 = { [single]: 'c0ffee11', [`${multi}/a`]: 'c0ffee12', [`${multi}/b`]: 'c0ffee13', [hidden]: 'c0ffee14' } as Record<string, string>;
+  const SITE = `zz-site-${run}`;
+  const AUX = 'fabe6d6d' + 'ab'.repeat(32) + '0100000000000000';
+  const cb1 = (scriptSigBytes: number) => '01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff'
+    + scriptSigBytes.toString(16).padStart(2, '0') + '0340420f';
+  const CB1 = cb1(12);
+  const CB2 = 'ffffffff0100f2052a01000000016a00000000';
+  let route: typeof import('../../app/api/unknown-parents/route');
+  let admin: Client;
+  const sid: Record<string, number> = {};
+
+  const insert = (src: string, s: number, height: number, job: string, parent: string, o: {
+    nbits?: number; cb1?: string; ntime?: number } = {}) =>
+    admin.query(
+      `INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
+                              version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
+       VALUES (to_timestamp($1::float8), $2, $3, $4, stratum_prev_hash_to_block_hash(decode($5, 'hex')), decode($6, 'hex'),
+               decode($7, 'hex'), decode(repeat('11', 32), 'hex'), 536870912, $8, $9, true, decode($10, 'hex'), 4)`,
+      [T0 + s, sid[src], height, job, parent, o.cb1 ?? CB1, CB2, o.nbits ?? BITS, o.ntime ?? 1_790_000_000 + Math.floor(s),
+       EN1[src]]);
+  const block = (hash: string, height: number, arrival: number) => admin.query(
+    `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig, bits)
+     VALUES (decode($1, 'hex'), $2, to_timestamp($3::float8), to_timestamp($3::float8), '\\x00', $4)`,
+    [hash, height, T0 + arrival, BITS]).then(() => undefined);
+
+  const get = async (qs = '') => {
+    const res = await route.GET(new Request(`http://localhost/api/unknown-parents${qs}`));
+    return { status: res.status, text: await res.clone().text(), body: await res.json() };
+  };
+  type Ep = { parent: string; kind: string; height: number; templates: number; pools: { pool: string; connections: string[]; templates: number }[];
+    facts: Record<string, unknown>; first_ms: number; last_ms: number; duration_ms: number; auxpow_templates: number };
+  const mine = (eps: Ep[]) => eps.filter(e => [X_A, X_B, X_C, X_H].includes(e.parent));
+
+  beforeAll(async () => {
+    vi.resetModules();
+    Object.assign(process.env, {
+      PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
+      PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
+      POOL_BLACKLIST: hidden, EXTRANONCE1_MASK_KEY: KEY,
+    });
+    admin = new Client({ connectionString: env.PG_TEST_ADMIN_DSN });   // the web role can't write; insert as admin
+    await admin.connect();
+    // multi's b is registered first (a lower id): the letters follow (site, replica), not ids
+    for (const [pool, replica] of [[single, 'a'], [multi, 'b'], [multi, 'a'], [hidden, 'a']]) {
+      const r = await admin.query(
+        `INSERT INTO sources (name, site, replica) VALUES ($1, $2, $3)
+         ON CONFLICT (name, site, replica) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [pool, SITE, replica]);
+      sid[pool === multi ? `${pool}/${replica}` : pool] = r.rows[0].id;
+    }
+    // our chain: H - 2 long before, H - 1 at T0, H at T0 + 120; a recorded stale block S1 at H - 1
+    await block(B2, H - 2, -600);
+    await block(B1, H - 1, 0);
+    await block(B0, H, 120);
+    await admin.query(
+      `INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
+                                 chaintip_status, last_status, tip_hash, fork_height, first_seen)
+       VALUES (decode($1, 'hex'), $2, decode($3, 'hex'), 1, to_timestamp($4::float8), $5, 1, '\\x00', 'valid-fork',
+               'valid-fork', decode($1, 'hex'), $2 - 1, to_timestamp($4::float8))`, [S1, H - 1, B2, T0 + 5, BITS]);
+
+    // A: at height H on X_A (the competitor of B1), T0 + 5 .. T0 + 65
+    await insert(single, 5, H, 'a1', X_A);
+    await insert(single, 65, H, 'a2', X_A, { cb1: cb1(56) + AUX });
+    await insert(`${multi}/a`, 10, H, 'm1', X_A, { ntime: 1_790_000_100 });
+    await insert(`${multi}/b`, 10.5, H, 'n1', X_A, { ntime: 1_790_000_100 });   // exact copy of m1: counted once
+    await insert(`${multi}/b`, 40, H, 'n2', X_A);                                 // only on connection b
+    await insert(hidden, 1, H, 'x1', X_A);        // blacklisted, and first: a leak would show in counts, chips and first_ms
+    // Bitcoin work around it (drill-in labels): on B1 (best), on S1 (stale), then on B0 (best) at H + 1
+    await insert(single, 2, H, 'w1', B1);
+    await insert(`${multi}/a`, 30, H, 'w2', S1);
+    await insert(single, 130, H + 1, 'w3', B0);
+    await insert(`${multi}/a`, 3, H, 'w4', B1);
+    // B: the all-ff parent at H + 1, T0 + 300 .. T0 + 320
+    await insert(single, 300, H + 1, 'b1', X_B);
+    await insert(single, 320, H + 1, 'b2', X_B);
+    // C: another chain, far below our tip, other nbits
+    await insert(`${multi}/a`, 1000, HC, 'c1', X_C, { nbits: OTHER_NBITS });
+    await insert(`${multi}/a`, 1003, HC, 'c2', X_C, { nbits: OTHER_NBITS });
+    await insert(`${multi}/a`, 1004, HC + 1, 'c3', X_C, { nbits: OTHER_NBITS }); // a second height, outvoted
+    // only the blacklisted pool: no episode at all
+    await insert(hidden, 2000, HC, 'x2', X_H, { nbits: OTHER_NBITS });
+    route = await import('../../app/api/unknown-parents/route');
+  });
+
+  afterAll(async () => {
+    await admin?.query(`DELETE FROM stale_blocks WHERE height = $1`, [H - 1]);
+    await admin?.query(`DELETE FROM blocks WHERE height BETWEEN $1 AND $2`, [H - 2, H]);
+    await admin?.end();
+    const { getPgPool } = await import('../db/pg');
+    await getPgPool().end();
+  });
+
+  it('groups the window into episodes with pools, a/b connections and counts', async () => {
+    const { status, body } = await get();
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ enabled: true, supported: true, days: 90 });
+    const eps = mine(body.episodes);
+    expect(eps.map(e => e.parent)).toEqual([X_A, X_B, X_C]);               // oldest first; X_H (blacklisted only) absent
+    const [a, b, c] = eps;
+    expect(a).toMatchObject({
+      height: H, templates: 4, auxpow_templates: 1, first_ms: (T0 + 5) * 1000, last_ms: (T0 + 65) * 1000,
+      duration_ms: 60_000,
+      pools: [{ pool: single, connections: ['a'], templates: 2 }, { pool: multi, connections: ['a', 'b'], templates: 2 }],
+    });
+    expect(b).toMatchObject({ height: H + 1, templates: 2, pools: [{ pool: single, connections: ['a'], templates: 2 }] });
+    expect(c).toMatchObject({ height: HC, templates: 3, pools: [{ pool: multi, connections: ['a'], templates: 3 }] });
+    expect((c as unknown as { heights: number[] }).heights).toEqual([HC, HC + 1]);
+  });
+
+  it('reads the facts and infers one kind of each', async () => {
+    const [a, b, c] = mine((await get()).body.episodes);
+    const bits = BITS.toString(16);
+    expect(a.kind).toBe('bitcoin_block');
+    expect(a.facts).toEqual({
+      tip_at_first: H - 1, tip_offset: 0, nbits: [bits], bitcoin_bits: bits, bitcoin_bits_at: bits,
+      bitcoin_difficulty: true, pow_ok: true, pow_bits: bits, in_stale_blocks: false,
+    });
+    expect(b.kind).toBe('invalid_parent');
+    expect(b.facts).toMatchObject({ tip_at_first: H, tip_offset: 0, bitcoin_bits: bits, bitcoin_difficulty: true, pow_ok: false });
+    expect(c.kind).toBe('other_chain');
+    expect(c.facts).toMatchObject({
+      tip_at_first: H, tip_offset: HC - 1 - H, nbits: ['1d00ffff'], bitcoin_bits: null, bitcoin_difficulty: null,
+      pow_ok: true, pow_bits: '1d00ffff',                                  // meets its own target: still not Bitcoin's
+    });
+  });
+
+  it('leaves the blacklisted pool out: counts, chips, episodes, and never returns site names', async () => {
+    const { text, body } = await get();
+    expect(text).not.toContain(hidden);
+    expect(text).not.toContain(SITE);
+    expect(body.episodes.some((e: Ep) => e.parent === X_H)).toBe(false);
+    expect((await get(`?parent=${X_H}`)).status).toBe(404);
+    const drill = await get(`?parent=${X_A}`);
+    expect(drill.text).not.toContain(hidden);
+    expect(drill.text).not.toContain(SITE);
+    expect(drill.text).not.toContain(EN1[hidden]);
+  });
+
+  it('drills into an episode: its pools at H - 1 .. H + 1 around its minutes, labelled by parent, with the blocks', async () => {
+    const { status, body } = await get(`?parent=${X_A.toUpperCase()}`);
+    expect(status).toBe(200);
+    expect(body.episode.parent).toBe(X_A);
+    expect(body.from_ms).toBe((T0 + 5) * 1000 - 300_000);
+    expect(body.to_ms).toBe((T0 + 65) * 1000 + 300_000);
+    expect(body.truncated).toBe(false);
+    const got = body.templates.map((t: { id: string; parent: string; connections: string[]; copies: number }) =>
+      [t.id.split('-').pop(), t.parent, t.connections.join(''), t.copies]);
+    expect(got).toEqual([
+      ['w1', 'best', 'a', 1], ['w4', 'best', 'a', 1], ['a1', 'this', 'a', 1], ['m1', 'this', 'ab', 2], ['w2', 'stale', 'a', 1],
+      ['n2', 'this', 'b', 1], ['a2', 'this', 'a', 1], ['w3', 'best', 'a', 1], ['b1', 'other', 'a', 1], ['b2', 'other', 'a', 1],
+    ]);
+    expect(body.blocks).toEqual([
+      { hash: B1, height: H - 1, arrival_ms: T0 * 1000, best: true },
+      { hash: S1, height: H - 1, arrival_ms: (T0 + 5) * 1000, best: false },
+      { hash: B0, height: H, arrival_ms: (T0 + 120) * 1000, best: true },
+    ]);
+    const a2 = body.templates.find((t: { id: string }) => t.id.endsWith('-a2'));
+    expect(a2).toMatchObject({ auxpow: true, auxpow_root: 'ab'.repeat(32), prev_hash: X_A, height: H, scriptsig_height: 1_000_000 });
+  });
+
+  it('rejects a malformed parent and 404s an unknown one', async () => {
+    expect((await get('?parent=xyz')).status).toBe(400);
+    expect((await get(`?parent=${'0'.repeat(63)}`)).status).toBe(400);
+    expect((await get(`?parent=${'12'.repeat(32)}`)).status).toBe(404);
+  });
+
+  it('masks extranonce1', async () => {
+    const mask = createMasker(KEY);
+    const { body, text } = await get(`?parent=${X_A}`);
+    for (const raw of Object.values(EN1)) expect(text).not.toContain(raw);
+    for (const t of body.templates as { pool_name: string; id: string; extranonce1: string }[]) {
+      const src = t.pool_name === multi ? `${multi}/${t.id.split('-').pop()!.startsWith('n') ? 'b' : 'a'}` : t.pool_name;
+      expect(t.extranonce1).toBe(mask(t.pool_name, EN1[src]));
+    }
+  });
+});

@@ -14,6 +14,15 @@ npm run dev                                 # open http://localhost:3000/v/fee-b
 ```
 Then edit `selectors.ts` (data) and `<Name>.tsx` (drawing), and set `status` when it's ready.
 
+## Design principle
+Simple, in the spirit of mempool.space: a visual should be clear enough from its data that it needs no explanation.
+- **Minimal text.** A title and at most one short line. No explanatory paragraphs: link the reasoning in
+  [`docs/methodology.md`](../../docs/methodology.md) instead (a small info icon).
+- **Colour and shape carry the meaning**, with a tiny legend of coloured dots. Few numbers; large, clear marks.
+- **Details on hover or click**, never inline: compact tooltips, a selected item's one-line header, lists collapsed
+  behind a toggle.
+- Calm, dark-first styling with the app's theme tokens and generous spacing.
+
 ## The contract
 `index.ts` exports `defineVisual({...})` (`framework/types.ts`):
 

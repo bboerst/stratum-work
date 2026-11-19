@@ -1111,6 +1111,34 @@ export default function Blocks({ onBlockClick, selectedBlockHeight }: BlocksProp
         .block-3d:hover {
           opacity: 0.9;
         }
+        /* Several blocks at one height (BlockItem): a 64px slot holding the best block, 6px shorter and at the bottom,
+           with the stale ones behind it, offset up and right, so they show along its top and right edges. */
+        .block-stack {
+          position: relative;
+          width: 104px;
+          height: 64px;
+          margin-right: -6px;
+        }
+        .block-stack > .block-3d.stacked {
+          position: absolute;
+          left: 0;
+          top: 6px;
+          margin-right: 0;
+        }
+        .block-3d.stacked,
+        .block-3d.stacked::before,
+        .block-3d.stacked::after,
+        .block-stack-layer {
+          height: 58px;
+          clip-path: polygon(4px 29px, 19px 0px, 104px 0px, 90px 29px, 104px 58px, 19px 58px);
+        }
+        .block-stack-layer {
+          position: absolute;
+          top: 0;
+          width: 104px;
+          background: #1550a4;
+          z-index: 0;
+        }
         .selected-block {
           z-index: 5;
           box-shadow: 0 0 10px 2px rgba(255, 165, 0, 0.8);

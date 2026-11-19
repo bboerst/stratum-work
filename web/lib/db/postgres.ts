@@ -39,7 +39,7 @@
 import { getPgPool } from './pg';
 import {
   blockRowToBlock, blockRowToInterestingItem, firstSeenRowToItem, poolRowToPool, templateRowToMiningNotify,
-  type BlockRow, type FirstSeenRow, type MiningNotify, type PgBlock, type PoolRow, type TemplateRow,
+  type BlockRow, type FirstSeenRow, type MiningNotify, type PgBlock, type PoolRow, type StaleSibling, type TemplateRow,
 } from './pg-mapping';
 
 async function query<T>(text: string, values: unknown[] = []): Promise<T[]> {
@@ -191,8 +191,34 @@ export async function getBlockByHash(blockHash: string): Promise<PgBlock | null>
   return row ? blockRowToBlock(row) : null;
 }
 
-/** R5: blocks after / around / before a height (three modes), with pagination fields. */
-export async function getBlocks(n: number, before?: number, height?: number, after?: number) {
+/**
+ * The stale side blocks recorded at these blocks' heights (`stale_blocks`, currently stale), attached to each best
+ * block as `stale_siblings`: other blocks found at the same height. For the blocks strip's stacked tiles. One query
+ * per page of blocks; a block without siblings gets no field.
+ */
+export async function withStaleSiblings<T extends { height: number; block_hash: string; stale_siblings?: StaleSibling[] }>(blocks: T[]): Promise<T[]> {
+  if (blocks.length === 0) return blocks;
+  const heights = [...new Set(blocks.map(b => b.height))];
+  const rows = await query<{ height: number; h: string; pool: string | null }>(
+    `SELECT height, encode(block_hash, 'hex') AS h, mining_pool->>'name' AS pool FROM stale_blocks
+      WHERE reorged_in_at IS NULL AND height = ANY($1::int[]) ORDER BY height, first_seen, block_hash`,
+    [heights],
+  );
+  const byHeight = new Map<number, StaleSibling[]>();
+  for (const r of rows) {
+    const list = byHeight.get(r.height) ?? [];
+    list.push({ block_hash: r.h, pool: r.pool || null });
+    byHeight.set(r.height, list);
+  }
+  for (const b of blocks) {
+    const siblings = (byHeight.get(b.height) ?? []).filter(x => x.block_hash !== b.block_hash);
+    if (siblings.length > 0) b.stale_siblings = siblings;
+  }
+  return blocks;
+}
+
+/** R5 without stale siblings. */
+async function getBlocksBare(n: number, before?: number, height?: number, after?: number) {
   if (after !== undefined) {
     const blocks = await blocksWhere('height > $1 AND height >= 1', 'height ASC, block_hash', n, [after]);
     const reversed = [...blocks].sort((a, b) => b.height - a.height);
@@ -224,6 +250,12 @@ export async function getBlocks(n: number, before?: number, height?: number, aft
   const hasMore = blocks.length > n;
   const result = hasMore ? blocks.slice(0, n) : blocks;
   return { blocks: result, has_more: hasMore, next_height: result.length > 0 ? result[result.length - 1].height : null };
+}
+
+/** R5: blocks after / around / before a height (three modes), with pagination fields and stale siblings. */
+export async function getBlocks(n: number, before?: number, height?: number, after?: number) {
+  const page = await getBlocksBare(n, before, height, after);
+  return { ...page, blocks: await withStaleSiblings(page.blocks) };
 }
 
 /** The best-chain tip (a reorged-out block at a greater height than the new tip is not the tip). */

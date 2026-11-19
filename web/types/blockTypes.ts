@@ -15,6 +15,8 @@ export interface Block {
   timestamp: number;
   mining_pool?: MiningPool;
   isRealtime?: boolean; // Flag to indicate if this block came from real-time updates
+  /** Other blocks found at this height, now stale (from /api/blocks; absent when there are none). */
+  stale_siblings?: Array<{ block_hash: string; pool: string | null }>;
   analysis?: {
     flags?: Array<{
       key: string;

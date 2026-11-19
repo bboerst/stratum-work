@@ -709,7 +709,8 @@ function RealtimeChartBase({
         ctx.lineTo(x, dimensions.height - margin.bottom);
         ctx.stroke();
 
-        const text = marker.height.toLocaleString('en-US');
+        // labelled with the block found (one below the height its templates work on), as the blocks strip labels it
+        const text = String(marker.height - 1);
         const width = ctx.measureText(text).width;
         const left = Math.max(plotLeft, Math.min(x - width / 2, plotRight - width));
         if (left < lastLabelRight + 4) continue; // don't overlap the previous label
@@ -1696,7 +1697,7 @@ function RealtimeChartBase({
               fontSize: `${Math.max(9, Math.round(11 * uiFontScale))}px`,
             }}
           >
-            first job on block {hoveredMarker.height.toLocaleString('en-US')} at {formatUtcMillis(hoveredMarker.timestamp)} UTC
+            block {hoveredMarker.height - 1} found: first job on it at {formatUtcMillis(hoveredMarker.timestamp)} UTC
           </div>
         )}
       </div>
@@ -1930,7 +1931,7 @@ function RealtimeChartBase({
             {/* width 0 + min-width 100%: these lines wrap to the width of the columns below instead of widening the box */}
             <div className="mb-2 text-gray-300 space-y-1" style={{ width: 0, minWidth: '100%' }}>
               <div>Same colour = the same change (identical new values of the changed fields). Different colours don&apos;t prove different transactions.</div>
-              <div>Vertical lines: the first job on each new block. Bars often line up after a block because pools restart their refresh timers; that alone isn&apos;t coordination.</div>
+              <div>Vertical lines: a block found, labelled with its height, at the first job built on it. Bars often line up after a block because pools restart their refresh timers; that alone isn&apos;t coordination.</div>
               <div>Letters on each bar show what changed since that pool&apos;s previous job.</div>
             </div>
             <div className="flex flex-row gap-6">

@@ -253,17 +253,19 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   }, [start, end, plotW]);
   const h = layout.pools.length * ROW_H + AXIS_H;
   const hovered = hover ? byParent.get(hover.parent) : null;
-  // The episode in focus (hovered, else selected): its marks on every pool's row stand out, the rest fade, and its
-  // pools' row labels light up, so episodes close in height can be told apart.
-  const focus = hover?.parent ?? selected;
+  // Hovering an episode brings it forward: its marks on every pool's row are outlined, the rest fade, and its pools'
+  // row labels light up, so episodes close in height can be told apart. The selected episode keeps its column and
+  // outline, without fading the others.
+  const focus = hover?.parent ?? null;
   const focusPools = useMemo(() => new Set(focus ? (byParent.get(focus)?.pools ?? []).map(p => p.pool) : []), [focus, byParent]);
+  const spanFor = focus ?? selected;
   const focusSpan = useMemo(() => {
-    if (!focus) return null;
-    const ms = layout.marks.filter(m => m.parent === focus);
+    if (!spanFor) return null;
+    const ms = layout.marks.filter(m => m.parent === spanFor);
     if (ms.length === 0) return null;
     const x0 = Math.min(...ms.map(m => m.x)), x1 = Math.max(...ms.map(m => m.x + m.w));
     return { x: x0 - 3, w: x1 - x0 + 6 };
-  }, [focus, layout]);
+  }, [spanFor, layout]);
 
   return (
     <div ref={ref} className="relative w-full">
@@ -290,8 +292,8 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
               onClick={() => onSelect(m.parent)}>
               <rect x={m.x - 4} y={m.row * ROW_H} width={m.w + 8} height={ROW_H} fill="transparent" />
               <rect x={m.x} y={m.row * ROW_H + (ROW_H - MARK_H) / 2} width={m.w} height={MARK_H} rx={2}
-                className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${focus === m.parent ? "stroke-foreground" : ""}`}
-                strokeWidth={focus === m.parent ? 1.5 : m.kind === "invalid_coinbase" ? 1.5 : 0}
+                className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${focus === m.parent || selected === m.parent ? "stroke-foreground" : ""}`}
+                strokeWidth={focus === m.parent || selected === m.parent ? 1.5 : m.kind === "invalid_coinbase" ? 1.5 : 0}
                 />
             </g>
           ))}
@@ -725,11 +727,13 @@ export default function Forks() {
   }, [load]);
   const summary = loaded[range] ?? null;
 
+  // Clicking the selected episode again deselects it (and closes its details).
   const select = useCallback((parent: string) => {
-    setSelected(parent);
-    setUrl("parent", parent);
-    requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }, []);
+    const next = selected === parent ? null : parent;
+    setSelected(next);
+    setUrl("parent", next);
+    if (next) requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [selected]);
   const chooseRange = (r: Range) => {
     if (r === range) return;
     setRange(r);

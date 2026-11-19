@@ -19,8 +19,8 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
   const h = 4_000_000 + off * 4;
   const top = 9_000_000 + off;
   const hash = (k: string) => '00000000' + k.repeat(28);
-  const [lost, won, back, plain, topStale, belowTop, sideOnly, nowhere] =
-    ['a4', 'b4', 'c4', 'd4', 'e4', 'f4', '1a', '2b'].map(hash);
+  const [lost, won, back, plain, topStale, belowTop, sideOnly, nowhere, parseOnly] =
+    ['a4', 'b4', 'c4', 'd4', 'e4', 'f4', '1a', '2b', '3c'].map(hash);
   const T0 = 1_794_437_000;
   let pg: typeof import('../db/postgres');
   let admin: Client;
@@ -49,6 +49,7 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     await block(back, h + 1, 200);
     await block(plain, h + 2, 300);
     await block(belowTop, top - 1, 400, flagged);
+    await block(parseOnly, top - 2, 450, '{"coinbase_parse": {"repaired": [], "unparsed": []}}');   // a diagnostic, not a finding
     await block(topStale, top, 500, flagged);
     await stale(lost, h, false);
     await stale(back, h + 1, true);
@@ -58,7 +59,7 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
 
   afterAll(async () => {
     await admin?.query(`DELETE FROM stale_blocks WHERE height = ANY($1::int[])`, [[h, h + 1, top]]);
-    await admin?.query(`DELETE FROM blocks WHERE height = ANY($1::int[])`, [[h, h + 1, h + 2, top - 1, top]]);
+    await admin?.query(`DELETE FROM blocks WHERE height = ANY($1::int[])`, [[h, h + 1, h + 2, top - 2, top - 1, top]]);
     await admin?.end();
     const { getPgPool } = await import('../db/pg');
     await getPgPool().end();
@@ -116,5 +117,6 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     const interesting = (await pg.getInterestingBlocks()).map(b => b.block_hash);
     expect(interesting).toContain(belowTop);
     expect(interesting).not.toContain(topStale);
+    expect(interesting).not.toContain(parseOnly);
   });
 });

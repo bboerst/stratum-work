@@ -8,9 +8,9 @@
  * Work on a stale Bitcoin block we recorded is Bitcoin work: the stale-blocks / fork view shows it (stale_tip_templates()).
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here either.
  *
- * One scan: the anti-join reads every template received in the window (seconds on a large table), aggregated per
- * (parent, pool); the route caches the summary for 30 min. The per-episode facts (tip, Bitcoin bits) are looked up on
- * the aggregated episodes only, by height through blocks_height. The drill-in reads one episode's pools at heights
+ * Two reads of the window (getEpisodePoolRows): a narrow anti-join finds where the candidates are, then a wide read
+ * fetches only those, aggregated per (parent, pool); the route caches the summary for 30 min. The per-episode facts
+ * (tip, Bitcoin bits) are looked up on the aggregated episodes only, by height through blocks_height. The drill-in reads one episode's pools at heights
  * h - 1 .. h + 1 within its receive times (± a margin): bounded by source, height and time.
  *
  * Redundant collection: rows are de-duplicated as exact copies across a pool's connections: the templates_copies key
@@ -82,12 +82,39 @@ export interface EpisodePoolSql {
   nbits: Record<string, string | number>;     // nbits -> templates
 }
 
-/** The rows per (unknown parent, pool) over the window, one scan of templates. */
+const ANTI_JOIN = `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)`;
+
+/**
+ * The rows per (unknown parent, pool) over the window, in two reads of templates:
+ *  1. narrow: the (height, source_id) pairs with candidates, and their receive-time range. It reads only received_at,
+ *     source_id, height and prev_hash, so it runs in parallel and decompresses little (one wide read of every column
+ *     of every row in the window ran serially and took about 30 s on production; this one takes a second or two);
+ *  2. wide: every column of the candidates, restricted to those pairs and that time range, passed as values, so
+ *     TimescaleDB skips chunks and compressed batches by their source_id segment and height / received_at metadata.
+ *     The window and the anti-join are applied again, so the candidates are exactly those of a single read.
+ * The window starts at the same instant in both reads (`since`).
+ */
 export async function getEpisodePoolRows(excludePools: string[]): Promise<EpisodePoolSql[]> {
-  const window = `t.received_at >= now() - interval '${UNKNOWN_PARENTS_DAYS} days'`;
-  const { rows } = await getPgPool().query<EpisodePoolSql>(
-    `WITH ${dedup(`SELECT t.*, s.name AS pool, s.conn FROM templates t JOIN src s ON s.id = t.source_id
-                    WHERE ${window} AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)`)},
+  const pool = getPgPool();
+  const since = new Date(Date.now() - UNKNOWN_PARENTS_DAYS * 86_400_000).toISOString();
+  const excludedIds = excludePools.length === 0 ? [] : (await pool.query<{ id: number }>(
+    `SELECT id FROM sources WHERE name = ANY ($1::text[])`, [excludePools])).rows.map(r => r.id);
+  // the receive-time range over all pairs as text (exact to the µs; a JS Date would round to ms)
+  const pairs = (await pool.query<{ height: number; source_id: number; t_from: string; t_to: string }>(
+    `SELECT t.height, t.source_id,
+            (min(min(t.received_at)) OVER ())::text AS t_from, (max(max(t.received_at)) OVER ())::text AS t_to
+       FROM templates t
+      WHERE t.received_at >= $1::timestamptz AND t.source_id <> ALL ($2::int[]) AND ${ANTI_JOIN}
+      GROUP BY 1, 2`, [since, excludedIds])).rows;
+  if (pairs.length === 0) return [];
+  const heights = pairs.map(p => p.height), sourceIds = pairs.map(p => p.source_id);
+  const { rows } = await pool.query<EpisodePoolSql>(
+    `WITH q AS (SELECT DISTINCT * FROM unnest($3::int[], $4::int[]) AS q(height, source_id)),
+     ${dedup(`SELECT t.*, s.name AS pool, s.conn FROM templates t JOIN src s ON s.id = t.source_id
+                    JOIN q ON q.height = t.height AND q.source_id = t.source_id
+                    WHERE t.received_at >= $5::timestamptz AND t.received_at <= $6::timestamptz
+                      AND t.source_id = ANY ($4::int[]) AND t.height = ANY ($3::int[])
+                      AND t.received_at >= $2::timestamptz AND ${ANTI_JOIN}`)},
      g AS (
        SELECT prev_hash, pool, count(*) AS n,
               (extract(epoch FROM min(received_at)) * 1000)::bigint AS first_ms,
@@ -107,7 +134,7 @@ export async function getEpisodePoolRows(excludePools: string[]): Promise<Episod
             g.auxpow, cc.conns, hc.heights, nc.nbits
        FROM g JOIN hc USING (prev_hash, pool) JOIN nc USING (prev_hash, pool) JOIN cc USING (prev_hash, pool)
       ORDER BY g.first_ms, parent, g.pool`,
-    [excludePools],
+    [excludePools, since, heights, sourceIds, pairs[0].t_from, pairs[0].t_to],
   );
   return rows;
 }

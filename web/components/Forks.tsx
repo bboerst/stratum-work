@@ -253,6 +253,17 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   }, [start, end, plotW]);
   const h = layout.pools.length * ROW_H + AXIS_H;
   const hovered = hover ? byParent.get(hover.parent) : null;
+  // The episode in focus (hovered, else selected): its marks on every pool's row stand out, the rest fade, and its
+  // pools' row labels light up, so episodes close in height can be told apart.
+  const focus = hover?.parent ?? selected;
+  const focusPools = useMemo(() => new Set(focus ? (byParent.get(focus)?.pools ?? []).map(p => p.pool) : []), [focus, byParent]);
+  const focusSpan = useMemo(() => {
+    if (!focus) return null;
+    const ms = layout.marks.filter(m => m.parent === focus);
+    if (ms.length === 0) return null;
+    const x0 = Math.min(...ms.map(m => m.x)), x1 = Math.max(...ms.map(m => m.x + m.w));
+    return { x: x0 - 3, w: x1 - x0 + 6 };
+  }, [focus, layout]);
 
   return (
     <div ref={ref} className="relative w-full">
@@ -267,21 +278,30 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
                 textAnchor={t.x > plotW - 50 ? "end" : "start"}>{t.label}</text>
             </g>
           ))}
-          {layout.marks.map((m, i) => (
+          {focusSpan && <rect x={focusSpan.x} y={0} width={focusSpan.w} height={h - AXIS_H} rx={3}
+            className="fill-foreground/10" pointerEvents="none" />}
+          {/* faded marks in one group with one opacity, so overlapping marks don't add up to solid */}
+          {[false, true].map(isFocus => (
+            <g key={String(isFocus)} opacity={focus && !isFocus ? 0.15 : 1}>
+          {layout.marks.map((m, i) => ((focus === m.parent) !== isFocus ? null :
             <g key={i} className="cursor-pointer" data-episode={m.parent}
               onMouseEnter={() => setHover({ parent: m.parent, x: labelW + m.x, y: (m.row + 1) * ROW_H + 4 })}
               onMouseLeave={() => setHover(null)}
               onClick={() => onSelect(m.parent)}>
               <rect x={m.x - 4} y={m.row * ROW_H} width={m.w + 8} height={ROW_H} fill="transparent" />
               <rect x={m.x} y={m.row * ROW_H + (ROW_H - MARK_H) / 2} width={m.w} height={MARK_H} rx={2}
-                className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${selected === m.parent ? "stroke-foreground" : ""}`}
-                strokeWidth={selected === m.parent ? 2 : m.kind === "invalid_coinbase" ? 1.5 : 0}
-                opacity={selected && selected !== m.parent ? 0.35 : 1} />
+                className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${focus === m.parent ? "stroke-foreground" : ""}`}
+                strokeWidth={focus === m.parent ? 1.5 : m.kind === "invalid_coinbase" ? 1.5 : 0}
+                />
+            </g>
+          ))}
             </g>
           ))}
         </g>
         {layout.pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 4} fontSize={12} textAnchor="end" className="fill-foreground/60">
+          <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 4} fontSize={12} textAnchor="end"
+            fontWeight={focusPools.has(p) ? 700 : 400}
+            className={focus ? (focusPools.has(p) ? "fill-foreground" : "fill-foreground/25") : "fill-foreground/60"}>
             <title>{p}</title>{shortName(p, labelW < 100)}
           </text>
         ))}
@@ -291,6 +311,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
           <KindChip kind={hovered.kind} />
           <div className="mt-1 font-mono">{fmtInt(hovered.height)}</div>
           <div className="text-foreground/60">{hovered.pools.length} pool{hovered.pools.length > 1 ? "s" : ""} · {fmtDuration(hovered.duration_ms)}</div>
+          <div className="mt-0.5 text-foreground/80">{hovered.pools.map(p => p.pool).join(", ")}</div>
           <div className="text-foreground/40">{fmtUtc(hovered.first_ms)} UTC</div>
         </Tooltip>
       )}

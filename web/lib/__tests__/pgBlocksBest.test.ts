@@ -93,6 +93,17 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     expect(latest.blocks.map(b => b.block_hash)).not.toContain(topStale);
   });
 
+  it('R5: stale siblings at a block\'s height, in the order they were seen; none elsewhere', async () => {
+    const page = await pg.getBlocks(3, h + 2);
+    const at = (height: number) => page.blocks.find(b => b.height === height);
+    expect(at(h)?.stale_siblings?.map(s => s.block_hash).sort()).toEqual([lost, sideOnly].sort());
+    expect(at(h)?.stale_siblings?.every(s => s.pool === null)).toBe(true);
+    expect(at(h + 1)?.stale_siblings).toBeUndefined();   // stale once, active again: not a sibling
+    expect(at(h + 2)?.stale_siblings).toBeUndefined();
+    const around = await pg.getBlocks(4, undefined, h + 1);
+    expect(around.blocks.find(b => b.height === h)?.stale_siblings).toHaveLength(2);
+  });
+
   it('fork visual (#212): known block hashes are blocks and currently stale side blocks', async () => {
     const known = await pg.knownBlockHashes([lost, won, sideOnly, nowhere, won.toUpperCase(), 'not-hex']);
     expect([...known].sort()).toEqual([lost, sideOnly, won].sort());

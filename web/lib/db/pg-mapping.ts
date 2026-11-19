@@ -163,6 +163,13 @@ export interface PgBlock {
   difficulty?: number;
   id: string;
   stale?: true;                   // lookup by hash only: a block a reorg disconnected (absent otherwise)
+  stale_siblings?: StaleSibling[]; // R5 only: other (stale) blocks recorded at this height
+}
+
+/** A stale side block at the same height as a best block (stale_blocks; pool is null when unidentified). */
+export interface StaleSibling {
+  block_hash: string;
+  pool: string | null;
 }
 
 /**

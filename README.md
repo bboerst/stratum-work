@@ -40,6 +40,8 @@ flowchart LR
 **Storage.** Everything is stored in **Postgres + TimescaleDB** ([design doc](docs/design/postgres-timescale.md); the project moved there from MongoDB). The local `docker compose` stack runs it too, see [Postgres + TimescaleDB](#postgres--timescaledb).
 
 ### How the data is measured
+The words we use, and what each does and does not claim: [docs/glossary.md](docs/glossary.md).
+
 What each value is (observed, verified or modelled), how arrival times and clocks are measured and how far they can be off, what the latency adjustment assumes, how several connections per pool and duplicates are handled, and the limits of older history: [docs/methodology.md](docs/methodology.md).
 
 ### Trustless processing

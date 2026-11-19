@@ -27,10 +27,10 @@ export const navItems = [
     description: "Realtime Stratum infrastructure metrics",
   },
   {
-    href: "/unknown-parents",
-    label: "Unknown parents",
+    href: "/forks",
+    label: "Forks",
     icon: Layers,
-    description: "Templates built on a block we don't know, as episodes, with what each parent most likely is",
+    description: "Templates built on a block other than our best one, as episodes, with what each parent is",
   },
   // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>.
   ...listedVisuals().map((v) => ({

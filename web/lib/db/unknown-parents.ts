@@ -1,17 +1,18 @@
 /**
- * Unknown parents (/unknown-parents), read at read time from stored facts (docs/design/one-templates-table.md): templates
+ * Unknown parents (the Forks page, /forks), read at read time from stored facts (docs/design/one-templates-table.md): templates
  * of the last UNKNOWN_PARENTS_DAYS days whose prev_hash is no block we know (bitcoin_parents: blocks and stale_blocks),
  * grouped by that parent into EPISODES. An unknown parent is another chain mined on the same connection, a Bitcoin
  * block we never recorded (a lost race, a pool's own block that lost), or not a valid block at all; which one is
  * inferred from the facts returned here (lib/parentKind.ts), never stored.
  *
- * Work on a stale Bitcoin block we recorded is Bitcoin work: the stale-blocks / fork view shows it (stale_tip_templates()).
- * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here either.
+ * Work on a stale Bitcoin block we recorded isn't an unknown parent: the Forks page reads it live from templates
+ * (getStaleEpisodePoolRows, below). A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here.
  *
  * The summary per (parent, pool) is read from unknown_parent_pools (getEpisodePoolRows), counted facts the backend keeps
- * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range of 90 days, a year or all
- * history; "still unknown" is judged here, at read time, against bitcoin_parents. Until that table is filled, 90 days
- * fall back to the live read of templates (getLiveEpisodePoolRows: a narrow anti-join finds where the candidates are,
+ * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range in Bitcoin time: the last 6
+ * or 26 difficulty epochs (12,096 or 52,416 blocks) or all history; "still unknown" is judged here, at read time,
+ * against bitcoin_parents. Until that table is filled, the default range falls back to the live read of templates
+ * (getLiveEpisodePoolRows, over the last 90 days: a narrow anti-join finds where the candidates are,
  * then a wide read fetches only those, aggregated per (parent, pool), the same aggregation the backend stores). The
  * per-episode facts (tip, Bitcoin bits) are looked up on the aggregated episodes only, by height through
  * blocks_height. The drill-in reads one episode's pools at heights h - 1 .. h + 1 within its receive times (± a
@@ -33,12 +34,19 @@
 import { getPgPool } from './pg';
 import type { TemplateRow } from './pg-mapping';
 
-export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window, and the default range
+export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window (wall-clock: it reads templates by time)
+export const EPOCH_BLOCKS = 2016;                  // a difficulty epoch
 
-/** The page's ranges: the episodes whose last template is within the last 90 or 365 days, or all of them. */
-export const UNKNOWN_PARENTS_RANGES = ['90d', '1y', 'all'] as const;
+/**
+ * The page's ranges, in Bitcoin time: the episodes whose last template arrived after the best-chain block 6 or 26
+ * epochs below our tip did, or all of them.
+ */
+export const UNKNOWN_PARENTS_RANGES = ['6e', '26e', 'all'] as const;
 export type UnknownParentsRange = typeof UNKNOWN_PARENTS_RANGES[number];
-export const RANGE_DAYS: Record<UnknownParentsRange, number | null> = { '90d': UNKNOWN_PARENTS_DAYS, '1y': 365, all: null };
+export const DEFAULT_RANGE: UnknownParentsRange = '6e';
+export const RANGE_BLOCKS: Record<UnknownParentsRange, number | null> = { '6e': 6 * EPOCH_BLOCKS, '26e': 26 * EPOCH_BLOCKS, all: null };
+/** Earlier, wall-clock range values, still accepted (shared links) and read as their nearest range. */
+export const LEGACY_RANGES: Record<string, UnknownParentsRange> = { '90d': '6e', '1y': '26e' };
 export const DRILL_MARGIN_MS = 5 * 60_000;      // receive-time margin around an episode in the drill-in
 export const DRILL_MAX_TEMPLATES = 5000;
 
@@ -57,13 +65,15 @@ const SOURCES = `src AS (
 
 /**
  * Exact-copy de-duplication of `c` (templates joined with src as pool / conn) into k (with copy_no) and d (one row per
- * copy group, the first received, with `copies` and `conns`: the connection ranks that had it).
+ * copy group, the first received, with `copies` and `conns`: the connection ranks that had it). `coinbase: false` for a
+ * `c` without the coinbase columns: they only break ties between rows received at the same instant with the same job
+ * id, which changes no count, first or last time.
  */
-function dedup(cBody: string): string {
+function dedup(cBody: string, { coinbase = true } = {}): string {
   return `${SOURCES}, c AS (${cBody}), k AS (
       SELECT c.*, row_number() OVER (PARTITION BY c.height, c.pool, c.source_id, c.prev_hash, c.merkle_branches,
                                                   c.version, c.nbits, c.ntime
-                                     ORDER BY c.received_at, c.job_id, c.coinbase1, c.coinbase2) AS copy_no
+                                     ORDER BY c.received_at, c.job_id${coinbase ? ', c.coinbase1, c.coinbase2' : ''}) AS copy_no
         FROM c
     ), d AS (
       SELECT DISTINCT ON (k.height, k.pool, k.prev_hash, k.merkle_branches, k.version, k.nbits, k.ntime, k.copy_no)
@@ -85,7 +95,7 @@ export interface EpisodePoolSql {
   n: string;                            // templates (de-duplicated)
   first_ms: string;
   last_ms: string;
-  auxpow: string;
+  auxpow: string | null;                // NULL: not read (getStaleEpisodePoolRows)
   conns: number[];                      // connection ranks that received templates on this parent
   heights: Record<string, string | number>;   // height -> templates
   nbits: Record<string, string | number>;     // nbits -> templates
@@ -95,20 +105,25 @@ const ANTI_JOIN = `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash
 
 /**
  * The rows per (unknown parent, pool) of the range, from unknown_parent_pools: every pool's row of each parent that is
- * no block we know now (bitcoin_parents) and whose last template (over the pools not excluded) is in the range. A
- * stored row covers all of the parent's templates, so an episode that began before the range is shown whole. Same
- * shape and order as the live read. Until the backend has filled the table, 90 days are read live.
+ * no block we know now (bitcoin_parents) and whose last template (over the pools not excluded) arrived at or after the
+ * best-chain block at height tip - N did (coalesce(seen_at, block_time); tip: the highest best-chain block; no such
+ * block, or all history: no cutoff). A stored row covers all of the parent's templates, so an episode that began
+ * before the range is shown whole. Same shape and order as the live read. Until the backend has filled the table, the
+ * default range is read live (over the last UNKNOWN_PARENTS_DAYS days: the live read selects templates by receive time).
  */
-export async function getEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = '90d'): Promise<EpisodePoolSql[]> {
+export async function getEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
   const pool = getPgPool();
-  const days = RANGE_DAYS[range];
-  if (range === '90d') {
+  if (range === DEFAULT_RANGE) {
     const { rows } = await pool.query<{ filled: boolean }>(`SELECT EXISTS (SELECT 1 FROM unknown_parent_pools) AS filled`);
     if (!rows[0]?.filled) return getLiveEpisodePoolRows(excludePools);
   }
-  const since = days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString();
   const { rows } = await pool.query<EpisodePoolSql>(
-    `WITH u AS (
+    `WITH cut AS (
+       SELECT coalesce((SELECT coalesce(b.seen_at, b.block_time) FROM blocks_best b
+                         WHERE $2::int IS NOT NULL AND b.height <= (SELECT max(height) FROM blocks_best) - $2::int
+                         ORDER BY b.height DESC, coalesce(b.seen_at, b.block_time) LIMIT 1),
+                       '-infinity'::timestamptz) AS at
+     ), u AS (
        SELECT u.*, max(u.last_received) OVER (PARTITION BY u.prev_hash) AS parent_last
          FROM unknown_parent_pools u
         WHERE u.pool <> ALL ($1::text[]) AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = u.prev_hash)
@@ -117,12 +132,18 @@ export async function getEpisodePoolRows(excludePools: string[], range: UnknownP
             (extract(epoch FROM u.first_received) * 1000)::bigint AS first_ms,
             (extract(epoch FROM u.last_received) * 1000)::bigint AS last_ms,
             u.auxpow::bigint AS auxpow, u.conns, u.heights, u.nbits
-       FROM u
-      WHERE $2::timestamptz IS NULL OR u.parent_last >= $2::timestamptz
+       FROM u, cut
+      WHERE u.parent_last >= cut.at
       ORDER BY first_ms, parent, u.pool`,
-    [excludePools, since],
+    [excludePools, RANGE_BLOCKS[range]],
   );
   return rows;
+}
+
+/** Our Bitcoin tip: the highest best-chain block (null with no blocks). */
+export async function getBestTipHeight(): Promise<number | null> {
+  const { rows } = await getPgPool().query<{ tip: number | null }>(`SELECT max(height) AS tip FROM blocks_best`);
+  return rows[0]?.tip ?? null;
 }
 
 /**
@@ -156,11 +177,22 @@ export async function getLiveEpisodePoolRows(excludePools: string[]): Promise<Ep
                     WHERE t.received_at >= $5::timestamptz AND t.received_at <= $6::timestamptz
                       AND t.source_id = ANY ($4::int[]) AND t.height = ANY ($3::int[])
                       AND t.received_at >= $2::timestamptz AND ${ANTI_JOIN}`)},
-     g AS (
+     ${aggregate()}`,
+    [excludePools, since, heights, sourceIds, pairs[0].t_from, pairs[0].t_to],
+  );
+  return rows;
+}
+
+/**
+ * The rows per (parent, pool) from the de-duplicated `d` / `k` (dedup()): the summary's aggregation, the backend's for
+ * unknown_parent_pools. `auxpow: false` for a `d` read without the coinbase columns: the AuxPoW count is then NULL.
+ */
+function aggregate({ auxpow = true } = {}): string {
+  return `g AS (
        SELECT prev_hash, pool, count(*) AS n,
               (extract(epoch FROM min(received_at)) * 1000)::bigint AS first_ms,
               (extract(epoch FROM max(received_at)) * 1000)::bigint AS last_ms,
-              count(*) FILTER (WHERE ${AUXPOW('d')}) AS auxpow
+              ${auxpow ? `count(*) FILTER (WHERE ${AUXPOW('d')})` : 'NULL::bigint'} AS auxpow
          FROM d GROUP BY 1, 2
      ), hc AS (
        SELECT prev_hash, pool, jsonb_object_agg(height, n) AS heights
@@ -174,8 +206,100 @@ export async function getLiveEpisodePoolRows(excludePools: string[]): Promise<Ep
      SELECT encode(stratum_prev_hash_to_block_hash(g.prev_hash), 'hex') AS parent, g.pool, g.n, g.first_ms, g.last_ms,
             g.auxpow, cc.conns, hc.heights, nc.nbits
        FROM g JOIN hc USING (prev_hash, pool) JOIN nc USING (prev_hash, pool) JOIN cc USING (prev_hash, pool)
-      ORDER BY g.first_ms, parent, g.pool`,
-    [excludePools, since, heights, sourceIds, pairs[0].t_from, pairs[0].t_to],
+      ORDER BY g.first_ms, parent, g.pool`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Stale parents: templates built on a recorded stale block
+
+/** The best-chain block at height tip - N, whose arrival is a range's cutoff (none: all history, or no blocks). */
+const CUT = `cut AS (
+       SELECT coalesce((SELECT coalesce(b.seen_at, b.block_time) FROM blocks_best b
+                         WHERE $1::int IS NOT NULL AND b.height <= (SELECT max(height) FROM blocks_best) - $1::int
+                         ORDER BY b.height DESC, coalesce(b.seen_at, b.block_time) LIMIT 1),
+                       '-infinity'::timestamptz) AS at
+     )`;
+
+/**
+ * The rows per (stale parent, pool) of the range, read live, in the summary's shape: for every block that is stale now
+ * (stale_blocks, reorged_in_at IS NULL; a non-best row of blocks is one of them by blocks_best's definition), the
+ * templates built on it at its height + 1, received inside that height's window (template_height_windows()), from the
+ * pools not excluded, de-duplicated and aggregated like the unknown parents' rows (no AuxPoW count: the coinbase
+ * columns aren't read, they are most of a template's bytes).
+ *
+ * Two reads: the blocks and their height's window (only blocks whose window ends after the range's cutoff: an earlier
+ * one can't have a template after it), then one read of templates with one branch per block, each with its height,
+ * window and parent hash as values, so TimescaleDB excludes chunks and batches per branch (one range covering
+ * every block would span the whole history). A parent is in the range when its last template arrived at or after the
+ * cutoff, the unknown parents' rule.
+ */
+export async function getStaleEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
+  const pool = getPgPool();
+  const { rows: blocks } = await pool.query<{ parent: string; height: number; w_from: string; w_to: string; cut_ms: string | null }>(
+    `WITH ${CUT}
+     SELECT encode(s.block_hash, 'hex') AS parent, s.height + 1 AS height, w.w_from::text AS w_from, w.w_to::text AS w_to,
+            CASE WHEN cut.at = '-infinity' THEN NULL ELSE (extract(epoch FROM cut.at) * 1000)::bigint END AS cut_ms
+       FROM stale_blocks s CROSS JOIN LATERAL template_height_windows(s.height + 1, s.height + 1) w, cut
+      WHERE s.reorged_in_at IS NULL AND w.w_to >= cut.at
+      ORDER BY s.height, s.block_hash`,
+    [RANGE_BLOCKS[range]],
+  );
+  if (blocks.length === 0) return [];
+  const params: unknown[] = [excludePools];
+  const branches = blocks.map(b => {
+    params.push(b.height, b.w_from, b.w_to, b.parent);
+    const n = params.length;
+    return `SELECT t.height, t.source_id, t.prev_hash, t.received_at, t.merkle_branches, t.version, t.nbits, t.ntime,
+                   t.job_id, s.name AS pool, s.conn
+              FROM templates t JOIN src s ON s.id = t.source_id
+             WHERE t.height = $${n - 3}::int AND t.received_at >= $${n - 2}::timestamptz AND t.received_at <= $${n - 1}::timestamptz
+               AND t.prev_hash = stratum_prev_hash_to_block_hash(decode($${n}::text, 'hex'))`;
+  });
+  const { rows } = await pool.query<EpisodePoolSql>(
+    `WITH ${dedup(branches.join('\n             UNION ALL\n'), { coinbase: false })}, ${aggregate({ auxpow: false })}`, params);
+  const cut = blocks[0].cut_ms === null ? null : Number(blocks[0].cut_ms);
+  if (cut === null) return rows;
+  const last = new Map<string, number>();
+  for (const r of rows) last.set(r.parent, Math.max(last.get(r.parent) ?? -Infinity, Number(r.last_ms)));
+  return rows.filter(r => last.get(r.parent)! >= cut);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Invalid coinbase findings
+
+export interface InvalidCoinbaseOffender {
+  pool_name?: string;
+  total_sats?: number;
+  subsidy_sats?: number;
+}
+
+export interface InvalidCoinbaseFlagSql {
+  height: number;                       // the best block's height = the height of the templates it was found in
+  offenders: InvalidCoinbaseOffender[] | null;
+  parent: string | null;                // display hex of the best block at height - 1
+  parent_arrival_ms: string | null;
+  arrival_ms: string;                   // the flagged block's arrival
+  tip: number | null;                   // our best-chain tip now
+}
+
+/**
+ * The invalid_coinbase_no_merkle findings (blocks.analysis.flags, the backend's analysis of the templates at a height:
+ * a coinbase paying more than the subsidy with no transactions to pay the fees) of best-chain blocks, with the best
+ * block at height - 1 and the arrivals. A handful of rows, through the blocks_interesting index.
+ */
+export async function getInvalidCoinbaseFlags(): Promise<InvalidCoinbaseFlagSql[]> {
+  const arrival = (a: string) => `(extract(epoch FROM coalesce(${a}.seen_at, ${a}.block_time)) * 1000)::bigint`;
+  const { rows } = await getPgPool().query<InvalidCoinbaseFlagSql>(
+    `SELECT b.height, f->'details'->'offenders' AS offenders,
+            (SELECT encode(p.block_hash, 'hex') FROM blocks_best p WHERE p.height = b.height - 1
+              ORDER BY coalesce(p.seen_at, p.block_time), p.block_hash LIMIT 1) AS parent,
+            (SELECT ${arrival('p')} FROM blocks_best p WHERE p.height = b.height - 1
+              ORDER BY coalesce(p.seen_at, p.block_time), p.block_hash LIMIT 1) AS parent_arrival_ms,
+            ${arrival('b')} AS arrival_ms,
+            (SELECT max(height) FROM blocks_best) AS tip
+       FROM blocks_best b, jsonb_array_elements(b.analysis->'flags') f
+      WHERE b.analysis ? 'flags' AND f->>'key' = 'invalid_coinbase_no_merkle'
+      ORDER BY b.height, b.block_hash`,
   );
   return rows;
 }
@@ -184,19 +308,24 @@ export interface EpisodeFactsQuery {
   parent: string;                       // display hex
   height: number;
   first_ms: number;
+  last_ms: number;
 }
 
 export interface EpisodeFactsSql {
   i: number;
   tip: number | null;                   // best-chain tip when the first template arrived
+  tip_last: number | null;              // ... when the last one did
   bits_prev: string | null;             // bits of the best block at h - 1 (NULL bits count as no block)
   bits_at: string | null;               // ... at h
-  in_stale: boolean;                    // the parent is in stale_blocks
+  in_stale: boolean;                    // the parent is a stale block now (stale_blocks, reorged_in_at IS NULL)
+  stale_height: number | null;          // ... its height, how its header reached us, and its miner when identified
+  stale_header_source: string | null;
+  stale_miner: string | null;
 }
 
 /**
- * Per episode: the tip at its first template (the highest best-chain block whose arrival, coalesce(seen_at,
- * block_time), is at or before it: walks blocks_height from the top), Bitcoin's bits at h - 1 and h (the earliest
+ * Per episode: the tip at its first and at its last template (the highest best-chain block whose arrival,
+ * coalesce(seen_at, block_time), is at or before it; also at its last template, tip_last), Bitcoin's bits at h - 1 and h (the earliest
  * arrival when a height has two best rows), and whether the parent is a recorded stale block. With the summary's
  * candidates that last one is false by construction (bitcoin_parents includes stale_blocks); it is read, not assumed,
  * so the badge stays true if the candidate rule changes.
@@ -205,16 +334,31 @@ export async function getEpisodeFacts(eps: EpisodeFactsQuery[]): Promise<Episode
   if (eps.length === 0) return [];
   const bits = (h: string) => `(SELECT b.bits FROM blocks_best b WHERE b.height = ${h} AND b.bits IS NOT NULL
                                  ORDER BY coalesce(b.seen_at, b.block_time), b.block_hash LIMIT 1)::text`;
+  // The tip at a time t: the highest best-chain block that had arrived by t. Computed for every episode's first and last
+  // template in one pass, as a running maximum over blocks and episode times in arrival order (a block arriving at the
+  // same instant counts as arrived), not one walk of blocks_height per lookup (~0.3 s vs ~17 s for 600 episodes).
   const { rows } = await getPgPool().query<EpisodeFactsSql>(
-    `SELECT e.i::int AS i,
-            (SELECT b.height FROM blocks_best b
-              WHERE coalesce(b.seen_at, b.block_time) <= timestamptz 'epoch' + e.first_ms * interval '1 millisecond'
-              ORDER BY b.height DESC LIMIT 1) AS tip,
+    `WITH e AS (
+       SELECT * FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, last_ms, i)
+     ), ev AS (
+       SELECT coalesce(b.seen_at, b.block_time) AS t, b.height, NULL::bigint AS i, 0 AS w FROM blocks_best b
+       UNION ALL SELECT timestamptz 'epoch' + e.first_ms * interval '1 millisecond', NULL, e.i, 1 FROM e
+       UNION ALL SELECT timestamptz 'epoch' + e.last_ms * interval '1 millisecond', NULL, e.i, 2 FROM e
+     ), tips AS (
+       SELECT i, w, max(height) OVER (ORDER BY t, (height IS NULL) ROWS UNBOUNDED PRECEDING) AS tip FROM ev
+     ), et AS (
+       SELECT i, max(tip) FILTER (WHERE w = 1) AS tip, max(tip) FILTER (WHERE w = 2) AS tip_last
+         FROM tips WHERE i IS NOT NULL GROUP BY i
+     )
+     SELECT e.i::int AS i,
+            et.tip, et.tip_last,
             ${bits('e.h - 1')} AS bits_prev, ${bits('e.h')} AS bits_at,
-            EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = decode(e.parent, 'hex')) AS in_stale
-       FROM unnest($1::text[], $2::int[], $3::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, i)
+            s.block_hash IS NOT NULL AS in_stale, s.height AS stale_height, s.header_source AS stale_header_source,
+            s.mining_pool->>'name' AS stale_miner
+       FROM e LEFT JOIN et ON et.i = e.i
+       LEFT JOIN stale_blocks s ON s.block_hash = decode(e.parent, 'hex') AND s.reorged_in_at IS NULL
       ORDER BY e.i`,
-    [eps.map(e => e.parent), eps.map(e => e.height), eps.map(e => e.first_ms)],
+    [eps.map(e => e.parent), eps.map(e => e.height), eps.map(e => e.first_ms), eps.map(e => e.last_ms)],
   );
   return rows;
 }
@@ -235,6 +379,7 @@ export interface DrillBlockRow {
   height: number;
   arrival_ms: string;                   // coalesce(seen_at, block_time); a stale-only block: first_seen
   best: boolean;
+  miner: string | null;                 // the block's identified pool (a stale block's: null when it's a hidden pool)
 }
 
 export interface DrillQuery {
@@ -272,23 +417,34 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
      SELECT d.source_id, d.pool AS source_name, ${US('d.received_at')} AS received_us, d.height, d.job_id, d.prev_hash,
             d.coinbase1, d.coinbase2, d.merkle_branches, d.version, d.nbits, d.ntime, d.clean_jobs, d.extranonce1,
             d.extranonce2_length, d.latency_ms, d.latency_method::text AS latency_method, d.copies::int AS copies,
-            ARRAY(SELECT DISTINCT x FROM unnest(d.conns) x ORDER BY x) AS conns,
-            CASE WHEN d.prev_hash = stratum_prev_hash_to_block_hash(decode($6, 'hex')) THEN 'this'
-                 WHEN EXISTS (SELECT 1 FROM blocks_best b WHERE b.block_hash = stratum_prev_hash_to_block_hash(d.prev_hash)) THEN 'best'
-                 WHEN EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = d.prev_hash) THEN 'stale'
-                 ELSE 'other' END AS parent_label
-       FROM d ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
+            ARRAY(SELECT DISTINCT x FROM unnest(d.conns) x ORDER BY x) AS conns, l.parent_label
+       FROM d JOIN (
+         -- each distinct parent labelled once, by hash lookups on blocks / stale_blocks (the bitcoin_parents view would
+         -- convert every stored block's hash per row: ~0.6 s a lookup, which a long episode repeats hundreds of times)
+         SELECT x.prev_hash,
+                CASE WHEN x.prev_hash = stratum_prev_hash_to_block_hash(decode($6, 'hex')) THEN 'this'
+                     WHEN EXISTS (SELECT 1 FROM blocks_best b WHERE b.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash)) THEN 'best'
+                     WHEN EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash))
+                       OR EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash)) THEN 'stale'
+                     ELSE 'other' END AS parent_label
+           FROM (SELECT DISTINCT prev_hash FROM d) x
+       ) l ON l.prev_hash = d.prev_hash
+      ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
     [excludePools, ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1])).rows;
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
-            EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best
+            EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best,
+            nullif(b.mining_pool->>'name', '') AS miner
        FROM blocks b WHERE b.height BETWEEN $1::int - 1 AND $1::int
      UNION ALL
-     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false
+     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false,
+            nullif(s.mining_pool->>'name', '')
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)
       ORDER BY 2, 3`,
     [q.height])).rows;
+  const hidden = new Set(excludePools.map(p => p.toLowerCase()));
+  for (const b of blocks) if (!b.best && b.miner && hidden.has(b.miner.toLowerCase())) b.miner = null;
   return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
 }

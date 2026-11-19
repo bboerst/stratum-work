@@ -36,7 +36,7 @@ interface Options {
 function parseArgs(argv: string[]): Options {
   const o: Options = {
     baseUrl: process.env.PERF_BASE_URL ?? "http://127.0.0.1:3000",
-    pages: ["/", "/timing", "/sankey", "/v/pool-clocks", "/unknown-parents"],
+    pages: ["/", "/timing", "/sankey", "/v/pool-clocks", "/forks"],
     runs: 3,
     settleSeconds: 5,
     streamSeconds: 30,
@@ -178,7 +178,7 @@ async function measure(browser: Browser, o: Options, t: Target, fixture: Fixture
         return json(fixture.blocks(nowS, Math.min(Number(url.searchParams.get("n") ?? 20), 50)));
       case "/api/analysis-data":
         return json(url.searchParams.get("interesting") ? { items: [] } : { results: [] });
-      case "/api/unknown-parents": {
+      case "/api/forks": {
         const parent = url.searchParams.get("parent");
         return json(parent ? fixture.unknownParentDrill(nowS, parent) : fixture.unknownParents(nowS));
       }

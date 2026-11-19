@@ -31,10 +31,10 @@ const PREV_HASH_COLORS = [
 const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
 const STALE_HASH_COLOR = "#1550a4"; // slate-500 (muted/disabled look)
 const UNKNOWN_HASH_COLOR = "#6b7280"; // gray-500: a parent we have no block for, kind undetermined
-// Unknown parents by inferred kind, in /unknown-parents' colours: a Bitcoin block we never recorded is a stale block
-// all the same (blue), another chain's block violet, a parent that isn't a valid block rose.
+// Unknown parents by inferred kind, in the Forks page's colours: a Bitcoin block we never recorded is a stale block
+// all the same (a lighter blue: the stale family), another chain's block violet, a parent that isn't a valid block rose.
 const KIND_COLOR: Record<ParentKind, string> = {
-  bitcoin_block: STALE_HASH_COLOR,
+  bitcoin_block: "#38bdf8", // sky-400
   other_chain: "#7c3aed", // violet-600
   invalid_parent: "#e11d48", // rose-600
   undetermined: UNKNOWN_HASH_COLOR,

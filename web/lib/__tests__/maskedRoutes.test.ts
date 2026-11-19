@@ -87,7 +87,7 @@ describe('served templates carry masked extranonce1', () => {
     expect(a.coinbaseRaw).toBe(COINBASE1 + a.extranonce1 + '00'.repeat(4) + COINBASE2);
   });
 
-  it('/api/unknown-parents drill-in (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
+  it('/api/forks drill-in (Postgres rows: bytea extranonce1, decoded coinbase fields)', async () => {
     vi.doMock('../db/blocks', () => ({ enableHistoricalData: true }));
     const parent = '00'.repeat(32);
     const pgRow = (pool: keyof typeof RAW, job: string) => ({
@@ -100,12 +100,16 @@ describe('served templates carry masked extranonce1', () => {
       ...(await importOriginal<object>()),
       getEpisodePoolRows: vi.fn(async () => Object.keys(RAW).map(pool => ({ parent, pool, n: '1', first_ms: String(NOW_MS),
         last_ms: String(NOW_MS), auxpow: '0', conns: [1], heights: { 6976415: 1 }, nbits: { 386000000: 1 } }))),
-      getEpisodeFacts: vi.fn(async () => [{ i: 1, tip: null, bits_prev: null, bits_at: null, in_stale: false }]),
+      getStaleEpisodePoolRows: vi.fn(async () => []),
+      getInvalidCoinbaseFlags: vi.fn(async () => []),
+      getEpisodeFacts: vi.fn(async () => [{ i: 1, tip: 900000, tip_last: 900000, bits_prev: null, bits_at: null, in_stale: false,
+        stale_height: null, stale_header_source: null, stale_miner: null }]),
+      getBestTipHeight: vi.fn(async () => null),
       getDrillRows: vi.fn(async () => ({ truncated: false, blocks: [],
         templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'j1')) })),
     }));
-    const { GET } = await import('../../app/api/unknown-parents/route');
-    const text = await (await GET(new Request(`http://test/api/unknown-parents?parent=${parent}`))).text();
+    const { GET } = await import('../../app/api/forks/route');
+    const text = await (await GET(new Request(`http://test/api/forks?parent=${parent}`))).text();
     expectMasked(text, JSON.parse(text).templates);
   });
 

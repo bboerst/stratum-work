@@ -18,6 +18,7 @@ describe.skipIf(!enabled)('Postgres stale-block read', () => {
   const stale = '00000000' + 'a1'.repeat(28);
   const best = '00000000' + 'b1'.repeat(28);
   const parent = '00000000' + 'c1'.repeat(28);
+  const next = '00000000' + 'd1'.repeat(28);
   const T0 = 1_794_437_000;
   let mod: typeof import('../db/stale-blocks');
   let admin: Client;
@@ -36,6 +37,12 @@ describe.skipIf(!enabled)('Postgres stale-block read', () => {
     await admin.query(
       `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig)
        VALUES (decode($1, 'hex'), $2, to_timestamp($3), to_timestamp($3 + 10), '\\x00')`, [best, h, T0]);
+    // and the block at h + 1, so height h + 1's receive window ends at our own block: without it, the nearest block
+    // above is another suite's (pgForks seeds blocks between this height and its tip that arrived months before T0),
+    // and the window would close before these templates
+    await admin.query(
+      `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig)
+       VALUES (decode($1, 'hex'), $2, to_timestamp($3), to_timestamp($3 + 60), '\\x00')`, [next, h + 1, T0]);
     await admin.query(
       `INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
                                  chaintip_status, last_status, tip_hash, fork_height, full_block, mining_pool)
@@ -60,7 +67,7 @@ describe.skipIf(!enabled)('Postgres stale-block read', () => {
 
   afterAll(async () => {
     await admin?.query(`DELETE FROM stale_blocks WHERE height = $1`, [h]);
-    await admin?.query(`DELETE FROM blocks WHERE height = $1`, [h]);
+    await admin?.query(`DELETE FROM blocks WHERE height = ANY ($1::int[])`, [[h, h + 1]]);
     await admin?.end();
     const { getPgPool } = await import('../db/pg');
     await getPgPool().end();

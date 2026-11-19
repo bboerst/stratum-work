@@ -1,5 +1,5 @@
 /**
- * Unknown parents (/unknown-parents): what a parent hash that matches no block we know most likely is, INFERRED at
+ * Unknown parents (the Forks page, /forks): what a parent hash that matches no block we know most likely is, INFERRED at
  * read time from stored facts. Pure functions, unit-tested in lib/__tests__/parentKind.test.ts. Nothing here is stored:
  * the kind is a judgement, and the page shows it as "inferred" next to the facts it rests on.
  *

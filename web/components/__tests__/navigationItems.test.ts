@@ -14,9 +14,10 @@ describe('navItems', () => {
     expect(navItems.some(item => item.href === '/latency' || item.label === 'Latency')).toBe(false);
   });
 
-  test('lists the Unknown parents page', () => {
+  test('lists the Forks page (formerly Unknown parents)', () => {
     expect(navItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ href: '/unknown-parents', label: 'Unknown parents' }),
+      expect.objectContaining({ href: '/forks', label: 'Forks' }),
     ]));
+    expect(navItems.some(item => item.href === '/unknown-parents')).toBe(false);
   });
 });

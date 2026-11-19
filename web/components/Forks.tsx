@@ -105,6 +105,11 @@ interface DrillResponse {
 
 const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#forks";
 
+/** "Invalid coinbase" is also a badge on the race it happened in: filtering and counting take both, kind or badge. */
+function matchesKind(e: Episode, k: Kind): boolean {
+  return e.kind === k || (k === "invalid_coinbase" && e.invalid_coinbase !== null);
+}
+
 const KINDS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "invalid_coinbase", "undetermined"];
 const RANGES: Range[] = ["6e", "26e", "all"];
 const DEFAULT_RANGE: Range = "6e";
@@ -742,10 +747,10 @@ export default function Forks() {
   };
 
   const all = useMemo(() => summary?.episodes ?? [], [summary]);
-  const episodes = useMemo(() => (kind === "all" ? all : all.filter(e => e.kind === kind)), [all, kind]);
+  const episodes = useMemo(() => (kind === "all" ? all : all.filter(e => matchesKind(e, kind))), [all, kind]);
   const counts = useMemo(() => {
     const c: Partial<Record<Kind, number>> = {};
-    for (const e of all) c[e.kind] = (c[e.kind] ?? 0) + 1;
+    for (const e of all) for (const k of KINDS) if (matchesKind(e, k)) c[k] = (c[k] ?? 0) + 1;
     return c;
   }, [all]);
   const selectedEpisode = all.find(e => e.parent === selected) ?? null;

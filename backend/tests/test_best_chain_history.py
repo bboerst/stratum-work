@@ -288,7 +288,8 @@ class MainWiringTests(unittest.TestCase):
         store = mock.Mock(enabled=True)
         with mock.patch.multiple(self.main, BLOCK_GAP_FILL_INTERVAL_S=fill_s, BEST_CHAIN_HISTORY_INTERVAL_S=history_s,
                                  HEADER_FILL_MAX_BLOCKS=0, COINBASE_FILL_MAX_BLOCKS=0, store=store,
-                                 sync_blocks=mock.DEFAULT, gap_filler=lambda: filler,
+                                 sync_blocks=mock.DEFAULT, start_unknown_parents_refresher=mock.DEFAULT,
+                                 gap_filler=lambda: filler,
                                  best_chain_history_check=mock.Mock(return_value=history)), \
                 mock.patch.object(self.main.time, "sleep", sleep), \
                 mock.patch.object(self.main.time, "monotonic", lambda: t[0]):

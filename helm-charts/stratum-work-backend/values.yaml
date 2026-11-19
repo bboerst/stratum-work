@@ -65,6 +65,11 @@ env:
   # Full-history best-chain check (best_chain_history.py): every stored best block between MIN_BLOCK_HEIGHT and the
   # stored tip against the node's chain, after the startup sync and on this timer (0 = off). Same RPC methods as above.
   # BEST_CHAIN_HISTORY_INTERVAL_S: "86400"
+  #
+  # Unknown-parents summary (unknown_parents.py): unknown_parent_pools, read by the web's /unknown-parents page, after
+  # each new block (last 2 hours) and once after the startup sync (last 7 days); history via
+  # `python -m unknown_parents --backfill`. "false" = off.
+  # UNKNOWN_PARENTS_ENABLED: "true"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

@@ -328,6 +328,43 @@ class PostgresStore:
             out.append(doc)
         return out
 
+    # unknown parents (unknown_parents.py; db/migrations/20261119000003_unknown_parent_pools.sql). prev_hash is
+    # bytes as stored in templates (stratum word order). Bounds are passed as values, unprepared, so TimescaleDB
+    # excludes chunks at planning.
+    def unknown_parents_received_between(self, t_from: datetime, t_to: datetime) -> List[Dict[str, Any]]:
+        """The parents of templates received in [t_from, t_to] that are no block we know (bitcoin_parents), each with
+        the heights and first / last receive time of its templates in that range. Reads only received_at, height
+        and prev_hash of the range."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT t.prev_hash, array_agg(DISTINCT t.height ORDER BY t.height), min(t.received_at), max(t.received_at)"
+            "  FROM templates t"
+            " WHERE t.received_at >= %s AND t.received_at <= %s"
+            "   AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)"
+            " GROUP BY t.prev_hash ORDER BY min(t.received_at), t.prev_hash", (t_from, t_to), prepare=False).fetchall())
+        return [{"prev_hash": bytes(p), "heights": list(h), "first": f, "last": la} for p, h, f, la in rows]
+
+    def unknown_parent_extents(self, prev_hashes: List[bytes]) -> Dict[bytes, Dict[str, Any]]:
+        """What unknown_parent_pools already holds for these parents: heights and first / last receive time over
+        all pools."""
+        if not prev_hashes:
+            return {}
+        rows = self._run(lambda c: c.execute(
+            "SELECT u.prev_hash, array_agg(DISTINCT h.key::int ORDER BY h.key::int), min(u.first_received),"
+            "       max(u.last_received)"
+            "  FROM unknown_parent_pools u, jsonb_each(u.heights) h"
+            " WHERE u.prev_hash = ANY(%s) GROUP BY u.prev_hash", (list(prev_hashes),)).fetchall())
+        return {bytes(p): {"heights": list(h), "first": f, "last": la} for p, h, f, la in rows}
+
+    def refresh_unknown_parent(self, prev_hash: bytes, heights: List[int], t_from: datetime, t_to: datetime) -> int:
+        """Recompute one parent's unknown_parent_pools rows from its templates at these heights in [t_from, t_to]
+        (unknown_parent_pools_refresh()). Returns the (parent, pool) rows written."""
+        return self._run(lambda c: c.execute(
+            "SELECT unknown_parent_pools_refresh(%s, %s::int[], %s, %s)", (prev_hash, list(heights), t_from, t_to),
+            prepare=False).fetchone()[0])
+
+    def first_template_received(self) -> Optional[datetime]:
+        return self._run(lambda c: c.execute("SELECT min(received_at) FROM templates").fetchone()[0])
+
     # pools: full pools-v2.json entries kept in pools.definition so nothing is lost
     def replace_pools(self, pool_data: List[Dict[str, Any]]) -> None:
         def tx(c):

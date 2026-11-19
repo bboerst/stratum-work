@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for AI coding agents (and humans) working in this repo. Start with the [README](README.md) for architecture, local setup, Postgres, data analysis (schema, example SQL, public API) and CI.
+Guidance for AI coding agents (and humans) working in this repo. Use the words in [docs/glossary.md](docs/glossary.md). Start with the [README](README.md) for architecture, local setup, Postgres, data analysis (schema, example SQL, public API) and CI.
 
 ## Components
 | Path | What | Stack |

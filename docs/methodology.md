@@ -1,5 +1,7 @@
 # How the data is measured
 
+Words as defined in the [glossary](glossary.md).
+
 stratum.work connects to mining pools as a miner would and records every block template a pool sends (its Stratum
 `mining.notify` messages). People draw conclusions about how pools build blocks from this data, so this page explains
 what each value is, how it was taken, and where its limits are.

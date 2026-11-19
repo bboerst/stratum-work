@@ -258,3 +258,8 @@ Templates recorded before mid-November 2026 came from an earlier collector (`col
 
 They were converted as recorded, in UTC, and checked for time-zone shifts; none were found. Treat millisecond-level
 differences in that period with care.
+
+**Extranonce values before January 2025 can be stale.**
+- **The cause.** That collector took `extranonce1` and `extranonce2_length` only from the response to its first request (JSON-RPC id 1). Whenever it reconnected without restarting (keep-alive reconnects and retries, from June 2024 on), the new subscribe had a different id. Templates from the new connection kept the previous connection's values. This was fixed in January 2025 (#26).
+- **The effect.** When the new connection's extranonce sizes differed, `coinbase1 + extranonce1 + extranonce2 + coinbase2` no longer forms a valid transaction. A scan of every feed, sampling the first 15 s of each hour from June 2024 to November 2026, found this for a few feeds between July 2024 and February 2025, and only for isolated templates after that. When the sizes matched, the stored `extranonce1` is simply the old connection's, and nothing in the data reveals it.
+- **What it doesn't affect.** The coinbase outputs sit in `coinbase2` and are unaffected. Where the coinbase doesn't reassemble, the invalid-coinbase analysis reads them from `coinbase2` alone.

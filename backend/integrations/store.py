@@ -430,6 +430,78 @@ class PostgresStore:
             return reorg_id
         return self._run(tx)
 
+    # stale blocks our node never saw, imported from the public dataset (#243, backend/stale_import.py)
+    def block_height_range(self):
+        return tuple(self._run(lambda c: c.execute("SELECT min(height), max(height) FROM blocks").fetchone()))
+
+    def unknown_parent_candidates(self, h_from: int, h_to: int) -> List[Dict[str, Any]]:
+        """Per (height, prev_hash) in [h_from, h_to]: templates received inside the height's window whose prev_hash
+        is no block we know (in neither blocks nor stale_blocks, as bitcoin_parents), with the number of distinct
+        pools (sources.name) and the earliest receive time. The window's overall range is read first and passed as
+        values, unprepared (as in templates_at_height), so TimescaleDB excludes chunks at planning; as text, since it
+        can be +-infinity."""
+        def tx(c):
+            t_from, t_to = c.execute("SELECT t_from::text, t_to::text FROM height_window(%s, %s)", (h_from, h_to),
+                                     prepare=False).fetchone()
+            if t_from is None:
+                return []
+            return c.execute("""
+                WITH g AS (
+                    SELECT t.height, t.prev_hash, count(DISTINCT s.name) AS pools, min(t.received_at) AS first_at
+                      FROM templates t
+                      JOIN sources s ON s.id = t.source_id
+                      JOIN template_height_windows(%(a)s, %(b)s) w ON w.height = t.height
+                     WHERE t.height BETWEEN %(a)s AND %(b)s
+                       AND t.received_at >= %(tf)s::timestamptz AND t.received_at <= %(tt)s::timestamptz
+                       AND t.received_at BETWEEN w.w_from AND w.w_to
+                     GROUP BY t.height, t.prev_hash
+                )
+                -- bitcoin_parents' predicate, written as primary-key probes of its two tables (no view-wide hash)
+                SELECT g.height, encode(g.block_hash, 'hex'), g.pools, g.first_at
+                  FROM (SELECT g.*, stratum_prev_hash_to_block_hash(g.prev_hash) AS block_hash FROM g) g
+                 WHERE g.block_hash IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = g.block_hash)
+                   AND NOT EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = g.block_hash)
+                 ORDER BY g.height, g.first_at""", dict(a=h_from, b=h_to, tf=t_from, tt=t_to),
+                prepare=False).fetchall()
+        return [{"height": h, "block_hash": bh, "pools": n, "first_seen": first} for h, bh, n, first in self._run(tx)]
+
+    def best_blocks_at(self, heights: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        """{height: [{block_hash, bits}]} of blocks_best at these heights (bits None when not stored)."""
+        if not heights:
+            return {}
+        rows = self._run(lambda c: c.execute(
+            "SELECT height, encode(block_hash, 'hex'), bits FROM blocks_best WHERE height = ANY(%s)",
+            (list(heights),)).fetchall())
+        out: Dict[int, List[Dict[str, Any]]] = {}
+        for h, bh, bits in rows:
+            out.setdefault(h, []).append({"block_hash": bh, "bits": bits})
+        return out
+
+    def insert_imported_stale_block(self, r: Dict[str, Any]) -> bool:
+        """One imported stale block (header_source 'bitcoin-data/stale-blocks'). An existing row is left as it is
+        (never updated); returns whether it was inserted."""
+        full = r.get("full_block", False)
+        return self._run(lambda c: c.execute("""
+            INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
+                chaintip_status, last_status, tip_hash, fork_height, first_seen, was_active, header_source, full_block,
+                block_fetched_at, coinbase_script_sig, coinbase_outputs, tx_count, size, weight, pool_id, mining_pool)
+            VALUES (%(block_hash)s, %(height)s, %(prev_hash)s, %(version)s, %(block_time)s, %(bits)s, %(nonce)s,
+                %(merkle_root)s, 'not-in-node', 'not-in-node', %(tip_hash)s, %(fork_height)s, %(first_seen)s, false,
+                'bitcoin-data/stale-blocks', %(full_block)s, %(block_fetched_at)s, %(coinbase_script_sig)s,
+                %(coinbase_outputs)s, %(tx_count)s, %(size)s, %(weight)s, %(pool_id)s, %(mining_pool)s)
+            ON CONFLICT (block_hash) DO NOTHING""", dict(
+                block_hash=_to_bytes(r["block_hash"]), height=r["height"], prev_hash=_to_bytes(r["prev_hash"]),
+                version=r["version"], block_time=r["block_time"], bits=r["bits"], nonce=r["nonce"],
+                merkle_root=_to_bytes(r["merkle_root"]), tip_hash=_to_bytes(r["tip_hash"]),
+                fork_height=r["fork_height"], first_seen=r["first_seen"], full_block=full,
+                block_fetched_at=r.get("block_fetched_at"),
+                coinbase_script_sig=_to_bytes(r["coinbase_script_sig"]) if full else None,
+                coinbase_outputs=json.dumps(r["coinbase_outputs"]) if full else None,
+                tx_count=r.get("tx_count"), size=r.get("size"), weight=r.get("weight"),
+                pool_id=_pool_id(r.get("mining_pool")) if full else None,
+                mining_pool=json.dumps(r.get("mining_pool") or {}, default=str) if full else None)).rowcount == 1)
+
 
 def make_store() -> PostgresStore:
     """The Postgres store from PG_* settings; a disabled one (enabled == False) with ENABLE_HISTORICAL_DATA=false."""

@@ -158,4 +158,30 @@ SET ROLE stratum_backend;
 SELECT pg_temp.ts_check();
 RESET ROLE;
 
+-- Imported from the public dataset (20261119000002, backend/stale_import.py): u99, the tip p3 built on that our node
+-- never had, recorded with header_source and status 'not-in-node', no reorg, never active. The stale-tip read then
+-- links p3's templates to it; our node moved past it when it had b99.
+INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root, chaintip_status,
+                          last_status, tip_hash, fork_height, first_seen, header_source)
+VALUES (pg_temp.h('u99'), 975699, '\x01', 536870912, '2026-11-16 00:00:02+00', 386000000, 4, '\x02', 'not-in-node',
+        'not-in-node', pg_temp.h('u99'), 975698, '2026-11-16 00:00:12+00', 'bitcoin-data/stale-blocks');
+CREATE FUNCTION pg_temp.ts_check_imported() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE j record; n integer;
+BEGIN
+  SELECT * INTO j FROM stale_tip_templates(975700, 975700) s WHERE s.pool = 'ts-p3';
+  ASSERT j.tip = 'stale' AND j.stale_block_hash = pg_temp.h('u99') AND j.reorg_id IS NULL AND NOT j.stale_was_active
+         AND NOT j.stale_full_block AND j.node_switch_at = '2026-11-16 00:00:10+00'
+         AND j.mined_after_switch = interval '2 s', format('p3 on an imported stale block %s', row_to_json(j));
+  SELECT count(*) INTO n FROM stale_blocks WHERE header_source = 'node';
+  ASSERT n = 3, 'rows recorded from the node default to header_source node';
+  SELECT count(*) INTO n FROM bitcoin_parents WHERE block_hash = pg_temp.h('u99') AND source = 'stale_blocks';
+  ASSERT n = 1, 'bitcoin_parents knows the imported block';
+END $$;
+SET ROLE stratum_web;
+SELECT pg_temp.ts_check_imported();
+RESET ROLE;
+SET ROLE stratum_backend;
+SELECT pg_temp.ts_check_imported();
+RESET ROLE;
+
 ROLLBACK;

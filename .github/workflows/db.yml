@@ -11,10 +11,10 @@ name: db
 
 on:
   pull_request:
-    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/stale_import.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
   push:
     branches: [main]
-    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
+    paths: ["db/**", "postgres/**", "collector-go/**", "backend/integrations/store.py", "backend/requirements.txt", "backend/tests/**", "backend/stale_blocks.py", "backend/stale_import.py", "backend/reconcile.py", "backend/best_chain_history.py", "backend/gap_fill.py", "backend/main.py", "backend/test-stale-blocks-e2e.sh", "backend/test-reorg-reconcile-e2e.sh", "backend/test-block-gap-fill-e2e.sh", ".github/workflows/db.yml"]
 
 permissions:
   contents: read

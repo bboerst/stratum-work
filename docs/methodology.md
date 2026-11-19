@@ -286,6 +286,9 @@ with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.a
 Each episode at that height that was at our tip (within one block of it, and not another chain's) carries it as a
 badge: the pools and what they paid against the subsidy. A finding at a height where nothing forked is a row of its
 own (kind `invalid_coinbase`), so no finding is lost. Pools hidden from the site are left out of the badge too.
+The page's "Invalid" filter takes all invalid work, work that could never make a valid block: invalid parents and
+invalid coinbases. In an episode's details, each pool's run of invalid templates is marked on its lane where the
+coinbase parses.
 
 ## First transaction fee rate
 

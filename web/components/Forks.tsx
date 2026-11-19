@@ -105,9 +105,15 @@ interface DrillResponse {
 
 const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#forks";
 
-/** "Invalid coinbase" is also a badge on the race it happened in: filtering and counting take both, kind or badge. */
+/**
+ * The filter chips. "Invalid" is all invalid work, work that could never make a valid block: an invalid parent, or an
+ * invalid coinbase (an episode of its own, or a badge on the race it happened in).
+ */
+const CHIPS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
+const CHIP_LABEL: Partial<Record<Kind, string>> = { invalid_parent: "Invalid" };
 function matchesKind(e: Episode, k: Kind): boolean {
-  return e.kind === k || (k === "invalid_coinbase" && e.invalid_coinbase !== null);
+  if (k === "invalid_parent") return e.kind === "invalid_parent" || e.kind === "invalid_coinbase" || e.invalid_coinbase !== null;
+  return e.kind === k;
 }
 
 const KINDS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "invalid_coinbase", "undetermined"];
@@ -120,7 +126,7 @@ const KIND_LABEL: Record<Kind, string> = {
   stale: "Stale",
   bitcoin_block: "Stale · unrecorded",
   other_chain: "Other chain",
-  invalid_parent: "Invalid",
+  invalid_parent: "Invalid parent",
   invalid_coinbase: "Invalid coinbase",
   undetermined: "Undetermined",
 };
@@ -427,6 +433,38 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
   const segments = useMemo(() => laneSegments((drill.templates ?? []).map(t => ({ pool: t.pool_name, t: t.received_at, label: t.parent, key: t.height })),
     start, end, plotW, 2), [drill, start, end, plotW]);
   const lane = useMemo(() => new Map(pools.map((p, i) => [p, i])), [pools]);
+  // Invalid coinbase: an empty template (no merkle branches) paying more than the block subsidy, as the backend's
+  // analysis flags it. Runs of such templates per pool are drawn over the lanes; templates whose coinbase didn't parse
+  // can't be judged here (the episode's badge, from the backend, names their pools).
+  const invalid = useMemo(() => {
+    const subsidy = (h: number) => Math.floor(5_000_000_000 / 2 ** Math.floor(h / 210_000));
+    const byPool = new Map<string, Template[]>();
+    for (const t of drill.templates ?? []) {
+      const l = byPool.get(t.pool_name) ?? []; l.push(t); byPool.set(t.pool_name, l);
+    }
+    const runs: { pool: string; x: number; w: number; n: number; total: number; subsidy: number }[] = [];
+    for (const [pool, ts] of byPool) {
+      ts.sort((a, b) => a.received_at - b.received_at);
+      let cur: { from: number; to: number; n: number; total: number; subsidy: number } | null = null;
+      ts.forEach((t, i) => {
+        const bad = t.merkle_branches === 0 && t.coinbase_ok && t.output_total > subsidy(t.height);
+        const next = ts[i + 1]?.received_at ?? t.received_at + 1000;
+        if (bad) {
+          if (cur) { cur.to = next; cur.n++; } else cur = { from: t.received_at, to: next, n: 1, total: t.output_total, subsidy: subsidy(t.height) };
+        } else if (cur) {
+          const x0 = timeX(cur.from, start, end, plotW), x1 = timeX(cur.to, start, end, plotW);
+          runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: cur.n, total: cur.total, subsidy: cur.subsidy }); cur = null;
+        }
+      });
+      if (cur) {
+        const c: { from: number; to: number; n: number; total: number; subsidy: number } = cur;
+        const x0 = timeX(c.from, start, end, plotW), x1 = timeX(c.to, start, end, plotW);
+        runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: c.n, total: c.total, subsidy: c.subsidy });
+      }
+    }
+    return runs;
+  }, [drill, start, end, plotW]);
+  const offenders = useMemo(() => new Set([...(episode.invalid_coinbase?.pools ?? []).map(p => p.pool), ...invalid.map(r => r.pool)]), [episode, invalid]);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const ticks = useMemo(() => {
     const s = d3.scaleUtc().domain([start, end]).range([0, plotW]);
@@ -454,6 +492,16 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
                 className={LABEL_FILL[s.label as ParentLabel]} opacity={hover && hover.i !== i ? 0.75 : 1}
                 onMouseEnter={() => setHover({ i, x: labelW + s.x, y: top + (row + 1) * LANE_H + 2 })}
                 onMouseLeave={() => setHover(null)} />
+            );
+          })}
+          {invalid.map((r, i) => {
+            const row = lane.get(r.pool);
+            if (row === undefined) return null;
+            return (
+              <rect key={`ic${i}`} x={r.x} y={row * LANE_H + (LANE_H - BAR_H) / 2 - 2} width={r.w} height={BAR_H + 4} rx={2}
+                className="fill-rose-500 stroke-rose-300" strokeWidth={1}>
+                <title>{`${r.pool}: ${r.n} empty job${r.n > 1 ? "s" : ""} paying ${(r.total / 1e8).toFixed(8)} BTC, over the ${(r.subsidy / 1e8).toFixed(3)} BTC subsidy (invalid coinbase)`}</title>
+              </rect>
             );
           })}
           {(() => {
@@ -486,8 +534,9 @@ function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse 
           })()}
         </g>
         {pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={top + i * LANE_H + LANE_H / 2 + 4} fontSize={12} textAnchor="end" className="fill-foreground/60">
-            <title>{p}</title>{shortName(p, labelW < 100)}
+          <text key={p} x={labelW - 8} y={top + i * LANE_H + LANE_H / 2 + 4} fontSize={12} textAnchor="end"
+            className={offenders.has(p) ? "fill-rose-500" : "fill-foreground/60"}>
+            <title>{offenders.has(p) ? `${p}: invalid coinbase` : p}</title>{offenders.has(p) ? "✗ " : ""}{shortName(p, labelW < 100)}
           </text>
         ))}
       </svg>
@@ -609,6 +658,13 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
           : tile(chain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
         <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 26} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
         <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 42} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
+        {episode.invalid_coinbase && (() => {
+          const ic = episode.invalid_coinbase.pools.map(p => p.pool);
+          return <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 58} fontSize={10} className="fill-rose-500">
+            <title>{episode.invalid_coinbase.pools.map(p => `${p.pool}: ${(p.total_sats / 1e8).toFixed(8)} BTC${p.subsidy_sats ? ` vs ${(p.subsidy_sats / 1e8).toFixed(3)} subsidy` : ""}`).join("\n")}</title>
+            ✗ invalid coinbase: {ic.slice(0, 3).join(", ")}{ic.length > 3 ? ` +${ic.length - 3}` : ""}
+          </text>;
+        })()}
       </svg>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         {checks.map(c => (
@@ -664,6 +720,11 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
               <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[l]}`} aria-hidden />{LABEL_TEXT[l]}
             </span>
           ))}
+          {episode.invalid_coinbase && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" aria-hidden />invalid coinbase
+            </span>
+          )}
         </span>
       </div>
       {!data && <p className="py-8 text-center text-xs text-foreground/60">Loading…</p>}
@@ -750,7 +811,7 @@ export default function Forks() {
   const episodes = useMemo(() => (kind === "all" ? all : all.filter(e => matchesKind(e, kind))), [all, kind]);
   const counts = useMemo(() => {
     const c: Partial<Record<Kind, number>> = {};
-    for (const e of all) for (const k of KINDS) if (matchesKind(e, k)) c[k] = (c[k] ?? 0) + 1;
+    for (const e of all) for (const k of CHIPS) if (matchesKind(e, k)) c[k] = (c[k] ?? 0) + 1;
     return c;
   }, [all]);
   const selectedEpisode = all.find(e => e.parent === selected) ?? null;
@@ -779,11 +840,11 @@ export default function Forks() {
   else body = (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by kind">
-        {(["all", ...KINDS] as const).filter(k => k === "all" || counts[k]).map(k => (
+        {(["all", ...CHIPS] as const).filter(k => k === "all" || counts[k]).map(k => (
           <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
             className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${kind === k ? "border-foreground/60 bg-foreground/10" : "border-border hover:bg-foreground/5"}`}>
             {k !== "all" && <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[k]}`} aria-hidden />}
-            {k === "all" ? "All" : KIND_LABEL[k]}
+            {k === "all" ? "All" : CHIP_LABEL[k] ?? KIND_LABEL[k]}
             <span className="font-mono text-foreground/60">{k === "all" ? all.length : counts[k]}</span>
           </button>
         ))}

@@ -474,6 +474,9 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   const ours = (h: number) => (drill.blocks ?? []).find(b => b.height === h && b.best);
   const prev = ours(ph), next = ours(episode.height);
   const onOurChain = f.tip_at_first !== null && Math.abs(ph - f.tip_at_first) <= 1;
+  // Our blocks at the parent's height only when the episode was at our tip; otherwise our tip at the time, with the
+  // parent below it (another chain's height can sit close to Bitcoin's: those blocks were mined long before).
+  const chain = onOurChain;
   // The blocks strip's tile (components/Blocks.tsx .block-3d): a 104 x 64 chevron, its point toward the newer block,
   // newest on the left; the height in bold monospace over a smaller line.
   const TW = 104, TH = 64, G = 4, X0 = 4, Y0 = 18, Y1 = Y0 + TH + 22;
@@ -498,7 +501,7 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   const pools = episode.pools.map(p => p.pool);
   const checks: { ok: boolean | null; label: string; title: string }[] = [
     { ok: onOurChain, label: "at our tip",
-      title: `parent at height ${fmtInt(ph)} · our tip ${f.tip_at_first === null ? "none" : fmtInt(f.tip_at_first)}${onOurChain ? "" : ": not Bitcoin's height now"}` },
+      title: `parent at height ${fmtInt(ph)} · our tip ${f.tip_at_first === null ? "none" : fmtInt(f.tip_at_first)}${onOurChain ? "" : `: ${fmtInt(Math.abs(ph - (f.tip_at_first ?? ph)))} blocks ${ph < (f.tip_at_first ?? ph) ? "below" : "above"} our tip when it arrived`}` },
     { ok: f.pow_ok, label: "proof of work",
       title: f.pow_ok ? `the parent's hash meets the target of bits ${f.pow_bits}` : `the parent's hash misses the target of bits ${f.pow_bits}: not a valid block` },
     { ok: f.bitcoin_difficulty, label: "Bitcoin's difficulty",
@@ -512,15 +515,15 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
-        {prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
-              : tile(onOurChain ? xPrev : xNext, Y0, onOurChain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", STRIP)}
-        {next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), STRIP, false, `best block ${fmtInt(next.height)} · ${next.hash}`)
-              : onOurChain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
-        {!onOurChain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
-        {onOurChain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}
-        {tile(onOurChain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
-        <text x={(onOurChain ? unknownX : xNext) + TW + 12} y={Y1 + 26} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
-        <text x={(onOurChain ? unknownX : xNext) + TW + 12} y={Y1 + 42} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
+        {chain && prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
+              : tile(chain ? xPrev : xNext, Y0, chain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", STRIP)}
+        {chain && next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), STRIP, false, `best block ${fmtInt(next.height)} · ${next.hash}`)
+              : chain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
+        {!chain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
+        {chain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}
+        {tile(chain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
+        <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 26} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
+        <text x={(chain ? unknownX : xNext) + TW + 12} y={Y1 + 42} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
       </svg>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         {checks.map(c => (

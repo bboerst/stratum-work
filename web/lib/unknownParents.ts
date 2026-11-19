@@ -218,7 +218,7 @@ export async function getEpisodes(excludePools: string[], range: UnknownParentsR
   ]);
   const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  return withInvalidCoinbase(finishEpisodes(drafts, facts), flags, excludePools, RANGE_BLOCKS[range]);
+  return withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
 }
 
 /** A finding's offenders per pool, without the excluded pools (null when none is left). */
@@ -311,8 +311,12 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
   };
 }
 
-/** Attach the facts (getEpisodeFacts rows, in the drafts' order) and the kind: 'stale' when recorded, else inferred. */
-export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[]): Episode[] {
+/**
+ * Attach the facts (getEpisodeFacts rows, in the drafts' order) and the kind: 'stale' when recorded, else inferred.
+ * A stale block's miner that is one of the excluded pools (compared case-insensitively) isn't named.
+ */
+export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[], excludePools: string[] = []): Episode[] {
+  const excluded = new Set(excludePools.map(p => p.toLowerCase()));
   return drafts.map((d, i) => {
     const f = facts[i];
     const nbitsMain = modeOf(d.nbitsCounts);
@@ -331,7 +335,8 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[])
         bitcoin_difficulty: bitcoinDifficulty(pf), pow_ok: powOk, pow_bits: hex32(prev ?? nbitsMain),
         in_stale_blocks: Boolean(f?.in_stale),
         stale_block: f?.in_stale && f.stale_height != null
-          ? { height: Number(f.stale_height), header_source: f.stale_header_source ?? null, miner: f.stale_miner ?? null }
+          ? { height: Number(f.stale_height), header_source: f.stale_header_source ?? null,
+              miner: f.stale_miner && !excluded.has(f.stale_miner.toLowerCase()) ? f.stale_miner : null }
           : null,
       },
       kind: f?.in_stale ? 'stale' : parentKind(pf),

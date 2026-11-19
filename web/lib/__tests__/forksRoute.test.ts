@@ -126,6 +126,17 @@ describe('GET /api/forks', () => {
       facts: { in_stale_blocks: true, stale_block: { height: 900_000, header_source: 'node', miner: 'M' }, pow_ok: true } });
   });
 
+  it('does not name a stale block\'s miner that is an excluded pool', async () => {
+    const { route, getEpisodeFacts, getStaleEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden' });
+    getStaleEpisodePoolRows.mockResolvedValueOnce([poolRow({ parent: P2, pool: 'S', first_ms: '500', last_ms: '700', auxpow: null })]);
+    getEpisodeFacts.mockImplementationOnce(async q => q.map((_, i) => i === 0
+      ? facts({ i: 1, in_stale: true, stale_height: 900_000, stale_header_source: 'node', stale_miner: 'HIDDEN' }) : facts({ i: 2 })));
+    const res = await get(route);
+    const text = await res.clone().text();
+    expect(text.toLowerCase()).not.toContain('hidden');
+    expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: null });
+  });
+
   it('badges the episodes at a finding\'s height (per pool, excluded pools left out)', async () => {
     const { route, getInvalidCoinbaseFlags } = await loadRoute({ blacklist: 'Hidden' });
     getInvalidCoinbaseFlags.mockResolvedValueOnce([flag()]);

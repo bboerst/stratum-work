@@ -223,7 +223,8 @@ we know** (neither in `blocks` nor in `stale_blocks`; its kind is inferred, belo
 Templates on a recorded stale block are read directly from `templates` when the page is computed: for each block
 that is stale now, the templates at its height + 1 whose previous block is that block and that arrived inside that
 height's time window, de-duplicated like the rest (their merge-mining share isn't counted: it would mean reading every
-coinbase). Its episode shows the block's height, how its header reached us and, when identified, its miner.
+coinbase). Its episode shows the block's height, how its header reached us and, when identified, its miner (not
+named when it is a pool hidden from the site).
 
 Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
 keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the

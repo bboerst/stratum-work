@@ -331,6 +331,23 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect((await db.getStaleEpisodePoolRows([hidden], 'all')).filter(r => r.parent === S1).map(r => r.pool)).toEqual([multi]);
   });
 
+  it('does not name a stale block\'s miner that is a blacklisted pool, in the summary or the drill-in', async () => {
+    await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
+      [S1, JSON.stringify({ name: hidden })]);
+    try {
+      // the episodes as the route builds them (its summary is cached per range), and the drill-in
+      const up = await import('../unknownParents');
+      const eps = await up.getEpisodes([hidden], 'all');
+      const s1 = eps.find(e => e.parent === S1)!;
+      expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: null });
+      expect(JSON.stringify(eps)).not.toContain(hidden);
+      expect(JSON.stringify(await up.getDrill(s1, [hidden]))).not.toContain(hidden);
+    } finally {
+      await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
+        [S1, JSON.stringify({ name: 'Synthetic Miner' })]);
+    }
+  });
+
   it('badges the episodes at a finding\'s height, and makes one with no episode there a row of its own', async () => {
     const eps = (await get()).body.episodes as Ep[];
     const badge = { height: H, pools: [{ pool: single, templates: 2, total_sats: 328_000_000, subsidy_sats: 312_500_000 }] };

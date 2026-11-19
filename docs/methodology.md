@@ -20,6 +20,7 @@ details are in the other files in [`docs/`](./).
 - [Blocks](#blocks)
 - [Forks](#forks)
 - [First transaction fee rate](#first-transaction-fee-rate)
+- [Reported hashrate](#reported-hashrate)
 - [Older history](#older-history)
 
 ## Kinds of values
@@ -303,6 +304,21 @@ does and saw the same mempool our node saw, so it's shown beside the own rate ra
 
 Only the first transaction can be identified from a template: the merkle path reveals its id and commits to the rest
 without revealing them. See [first_transaction](first_transaction.md).
+
+## Reported hashrate
+
+`reported_hashrate` holds each pool's hashrate **as the pool reports it**, collected once a day from a third-party
+pool-statistics site (`python -m reported_hashrate`, off unless configured). It is neither observed nor verified: it
+is a claim the pool publishes about itself, and nothing here checks it. Summed over all pools, the claims exceed the
+site's own network estimate (about 104% in one sample), so they can't all be right.
+
+It is kept apart from block shares, which are measured from the blocks our node sees: the two are never merged into
+one figure. Each row is one hour of the site's hourly series for one pool (the site's hourly average, floored to the
+hour), stored with the site's network estimate at fetch time. It is the one table rewritten by design: a later fetch
+overwrites the hours it covers again with the site's latest values, and `fetched_at` says which fetch a row is from.
+Hours without a value have no row. A file that fails its sanity checks (too few pools, no network estimate, a series
+that doesn't reconstruct to the site's own last-hour average) is not written at all, nor is anything when the site's
+page names no `last_time` token (the data file is fetched with it).
 
 ## Older history
 

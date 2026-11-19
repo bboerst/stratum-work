@@ -474,18 +474,25 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   const ours = (h: number) => (drill.blocks ?? []).find(b => b.height === h && b.best);
   const prev = ours(ph), next = ours(episode.height);
   const onOurChain = f.tip_at_first !== null && Math.abs(ph - f.tip_at_first) <= 1;
-  const TW = 118, TH = 46, G = 30, X0 = 4, Y0 = 18, Y1 = Y0 + TH + 34;
+  // The blocks strip's tile (components/Blocks.tsx .block-3d): a 104 x 64 chevron, its point toward the newer block,
+  // newest on the left; the height in bold monospace over a smaller line.
+  const TW = 104, TH = 64, G = 4, X0 = 4, Y0 = 18, Y1 = Y0 + TH + 22;
+  const chevron = (x: number, y: number) =>
+    [[4, 32], [19, 0], [104, 0], [90, 32], [104, 64], [19, 64]].map(([px, py]) => `${x + px},${y + py}`).join(" ");
   const tile = (x: number, y: number, label: string, sub: string, cls: string, dashed = false, title = "") => (
     <g>
       <title>{title}</title>
-      <rect x={x} y={y} width={TW} height={TH} rx={4} className={cls} strokeWidth={dashed ? 1.5 : 0}
+      <polygon points={chevron(x, y)} className={cls} strokeWidth={dashed ? 1.5 : 0}
         strokeDasharray={dashed ? "4 3" : undefined} />
-      <text x={x + TW / 2} y={y + 20} textAnchor="middle" fontSize={13} className="fill-foreground font-mono">{label}</text>
-      <text x={x + TW / 2} y={y + 36} textAnchor="middle" fontSize={10} className="fill-foreground/60 font-mono">{sub}</text>
+      <text x={x + 54} y={y + 30} textAnchor="middle" fontSize={15} fontWeight={700}
+        className="font-mono fill-black dark:fill-[#d7d7d7]">{label}</text>
+      <text x={x + 54} y={y + 46} textAnchor="middle" fontSize={10}
+        className="font-mono fill-black/75 dark:fill-[#d7d7d7]/75">{sub}</text>
     </g>
   );
+  const STRIP = "fill-[#eceaea] dark:fill-[#313131]";
   const short = (h: string) => `${h.slice(0, 4)}…${h.slice(-6)}`;
-  const xPrev = X0, xNext = X0 + TW + G;
+  const xNext = X0, xPrev = X0 + TW + G;   // newest on the left, as in the strip
   const unknownX = xPrev;
   const kindStroke = episode.kind === "other_chain" ? "stroke-violet-500" : episode.kind === "invalid_parent" ? "stroke-rose-500" : "stroke-amber-600";
   const pools = episode.pools.map(p => p.pool);
@@ -499,22 +506,21 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
         : `templates' nbits ${f.nbits[0] ?? "?"} ${f.bitcoin_difficulty ? "=" : "≠"} Bitcoin's bits ${f.bitcoin_bits ?? "?"} at height ${fmtInt(ph)}` },
     { ok: false, label: "a block we know", title: "the parent is in neither our node's chain nor the stale-block records" },
   ];
-  const W = xNext + TW + 200;
+  const W = xPrev + TW + 330;
   return (
     <div className="mb-5">
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
-        {prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), "fill-amber-600/25", false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
-              : tile(xPrev, Y0, onOurChain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", "fill-foreground/5")}
-        {onOurChain && <line x1={xPrev + TW} x2={xNext} y1={Y0 + TH / 2} y2={Y0 + TH / 2} className="stroke-foreground/30" />}
-        {next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), "fill-amber-600/25", false, `best block ${fmtInt(next.height)} · ${next.hash}`)
-              : onOurChain ? tile(xNext, Y0, fmtInt(episode.height), "", "fill-foreground/5") : null}
-        {!onOurChain && <text x={xPrev + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
-        {onOurChain && <path d={`M${xPrev + 18} ${Y0 + TH} C ${xPrev + 18} ${Y1 - 6}, ${xPrev + 18} ${Y1 - 6}, ${xPrev + 26} ${Y1}`} fill="none" className="stroke-foreground/30" strokeDasharray="3 3" />}
-        {tile(unknownX, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
-        <text x={unknownX + TW + 10} y={Y1 + 18} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
-        <text x={unknownX + TW + 10} y={Y1 + 34} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
+        {prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
+              : tile(onOurChain ? xPrev : xNext, Y0, onOurChain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", STRIP)}
+        {next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), STRIP, false, `best block ${fmtInt(next.height)} · ${next.hash}`)
+              : onOurChain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
+        {!onOurChain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
+        {onOurChain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}
+        {tile(onOurChain ? unknownX : xNext, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
+        <text x={(onOurChain ? unknownX : xNext) + TW + 12} y={Y1 + 26} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
+        <text x={(onOurChain ? unknownX : xNext) + TW + 12} y={Y1 + 42} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
       </svg>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         {checks.map(c => (

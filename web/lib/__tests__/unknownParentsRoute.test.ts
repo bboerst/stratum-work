@@ -1,21 +1,23 @@
 /**
  * /api/unknown-parents against mocked database functions: disabled history touches no database, parameter
- * validation (parent, range), POOL_BLACKLIST passed to every read, the range passed to the summary read with its
- * window, the summary cache per range (one read per period, served stale while a refresh runs, a failure not kept),
- * the drill-in looked up in its range's summary and cached, the table-or-live choice (the live 90-day read only while
- * the backend's table is empty), and the episode assembly (draftEpisodes / finishEpisodes).
+ * validation (parent, range, the legacy 90d / 1y values), POOL_BLACKLIST passed to every read, the range passed to
+ * the summary read with its heights (blocks, tip_height, from_height), the summary cache per range (one read per
+ * period, served stale while a refresh runs, a failure not kept), the drill-in looked up in its range's summary and
+ * cached, the table-or-live choice (the live read only for the default range while the backend's table is empty), the
+ * range's cutoff as a block count, and the episode assembly (draftEpisodes / finishEpisodes).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrillRows, EpisodeFactsSql, EpisodePoolSql } from '../db/unknown-parents';
 
 const P1 = '00'.repeat(10) + '12'.repeat(22);   // meets the target of BITS
 const BITS = 0x17034219;
+const TIP = 900_010;
 const poolRow = (o: Partial<EpisodePoolSql> = {}): EpisodePoolSql => ({
   parent: P1, pool: 'P', n: '3', first_ms: '1000', last_ms: '5000', auxpow: '0', conns: [1],
   heights: { 900001: 3 }, nbits: { [BITS]: 3 }, ...o,
 });
 const facts = (o: Partial<EpisodeFactsSql> = {}): EpisodeFactsSql =>
-  ({ i: 1, tip: 900_000, bits_prev: String(BITS), bits_at: String(BITS), in_stale: false, ...o });
+  ({ i: 1, tip: 900_000, tip_last: 900_001, bits_prev: String(BITS), bits_at: String(BITS), in_stale: false, ...o });
 const drillRows = (): DrillRows => ({
   truncated: false,
   blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', best: true }],
@@ -34,12 +36,13 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => [poolRow()]);
   const getEpisodeFacts = vi.fn<(q: unknown[]) => Promise<EpisodeFactsSql[]>>(async () => [facts()]);
   const getDrillRows = vi.fn<(q: unknown, exclude: string[]) => Promise<DrillRows>>(async () => drillRows());
+  const getBestTipHeight = vi.fn<() => Promise<number | null>>(async () => TIP);
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
-    ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows,
+    ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight,
   }));
   const route = await import('../../app/api/unknown-parents/route');
-  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows };
+  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
@@ -65,13 +68,16 @@ describe('GET /api/unknown-parents', () => {
     const res = await get(route);
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
     const body = await res.json();
-    expect(body).toMatchObject({ enabled: true, supported: true, range: '90d', days: 90 });
-    expect(body.generated_at - body.window_start).toBe(90 * 86_400_000);
-    expect(getEpisodeFacts).toHaveBeenCalledWith([{ parent: P1, height: 900_001, first_ms: 1000 }]);
+    expect(body).toMatchObject({ enabled: true, supported: true, range: '6e', blocks: 12_096, tip_height: TIP,
+      from_height: TIP - 12_096 });
+    expect(body).not.toHaveProperty('days');
+    expect(body).not.toHaveProperty('window_start');
+    expect(Math.abs(Date.now() - body.generated_at)).toBeLessThan(60_000);
+    expect(getEpisodeFacts).toHaveBeenCalledWith([{ parent: P1, height: 900_001, first_ms: 1000, last_ms: 5000 }]);
     expect(body.episodes).toEqual([{
       parent: P1, height: 900_001, heights: [900_001], pools: [{ pool: 'P', connections: ['a'], templates: 3 }],
       first_ms: 1000, last_ms: 5000, duration_ms: 4000, templates: 3, auxpow_templates: 0, auxpow_share: 0,
-      facts: { tip_at_first: 900_000, tip_offset: 0, nbits: ['17034219'], bitcoin_bits: '17034219',
+      facts: { tip_at_first: 900_000, tip_at_last: 900_001, tip_offset: 0, nbits: ['17034219'], bitcoin_bits: '17034219',
         bitcoin_bits_at: '17034219', bitcoin_difficulty: true, pow_ok: true, pow_bits: '17034219', in_stale_blocks: false },
       kind: 'bitcoin_block',
     }]);
@@ -106,24 +112,46 @@ describe('GET /api/unknown-parents', () => {
   it('passes POOL_BLACKLIST to the summary read', async () => {
     const { route, getEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden, Other' });
     await get(route);
-    expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '90d');
+    expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '6e');
   });
 
-  it('reads the range asked for, with its window, cached per range; rejects others', async () => {
+  it('reads the range asked for, with its heights, cached per range; rejects others', async () => {
     const { route, getEpisodePoolRows } = await loadRoute();
-    const y = await (await get(route, '?range=1y')).json();
-    expect(y).toMatchObject({ range: '1y', days: 365 });
-    expect(y.generated_at - y.window_start).toBe(365 * 86_400_000);
+    const y = await (await get(route, '?range=26e')).json();
+    expect(y).toMatchObject({ range: '26e', blocks: 52_416, tip_height: TIP, from_height: TIP - 52_416 });
     const all = await (await get(route, '?range=all')).json();
-    expect(all).toMatchObject({ range: 'all', days: null, window_start: 1000 });   // the first episode's first template
-    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['1y', 'all']);
-    await get(route, '?range=1y');
+    // all history starts at the lowest tip an episode was first seen at
+    expect(all).toMatchObject({ range: 'all', blocks: null, tip_height: TIP, from_height: 900_000 });
+    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['26e', 'all']);
+    await get(route, '?range=26e');
     await get(route);
-    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['1y', 'all', '90d']);
-    for (const qs of ['?range=30d', '?range=', `?range=ALL&parent=${P1}`]) expect((await get(route, qs)).status, qs).toBe(400);
+    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['26e', 'all', '6e']);
+    for (const qs of ['?range=30d', '?range=', '?range=toString', '?range=6E', `?range=ALL&parent=${P1}`]) {
+      expect((await get(route, qs)).status, qs).toBe(400);
+    }
     getEpisodePoolRows.mockImplementation(async () => []);
     const none = await (await get(route, '?range=all&x=1')).json();          // cached: still the first result
     expect(none.episodes).toHaveLength(1);
+  });
+
+  it('reads the earlier wall-clock values as epochs (shared links), and names the new ones', async () => {
+    const { route, getEpisodePoolRows, getDrillRows } = await loadRoute();
+    expect(await (await get(route, '?range=1y')).json()).toMatchObject({ range: '26e', blocks: 52_416 });
+    expect(await (await get(route, '?range=90d')).json()).toMatchObject({ range: '6e', blocks: 12_096 });
+    await get(route, '?range=26e');
+    await get(route);
+    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['26e', '6e']);   // one cache entry each
+    expect((await get(route, `?parent=${P1}&range=90d`)).status).toBe(200);
+    expect((await get(route, `?parent=${P1}`)).status).toBe(200);
+    expect(getDrillRows).toHaveBeenCalledTimes(1);                                  // one drill-in cache entry too
+  });
+
+  it('starts all history at the tip without episodes; no heights without blocks', async () => {
+    const { route, getEpisodePoolRows, getBestTipHeight } = await loadRoute();
+    getEpisodePoolRows.mockImplementation(async () => []);
+    expect(await (await get(route, '?range=all')).json()).toMatchObject({ episodes: [], tip_height: TIP, from_height: TIP });
+    getBestTipHeight.mockImplementation(async () => null);
+    expect(await (await get(route, '?range=26e')).json()).toMatchObject({ tip_height: null, from_height: null, blocks: 52_416 });
   });
 
   it('looks a drill-in up in its range', async () => {
@@ -178,11 +206,12 @@ describe('episode assembly', () => {
     expect(d).toMatchObject({ height: 900_001, heights: [900_001, 900_002], first_ms: 1000, last_ms: 9000,
       duration_ms: 8000, templates: 6, auxpow_templates: 1, auxpow_share: 1 / 6 });
     expect(d.pools).toEqual([{ pool: 'A', connections: ['a'], templates: 3 }, { pool: 'B', connections: ['a', 'b'], templates: 3 }]);
-    const [ff, e] = finishEpisodes(drafts, [facts({ tip: null, bits_prev: null, bits_at: null }), facts()]);
+    const [ff, e] = finishEpisodes(drafts, [facts({ tip: null, tip_last: null, bits_prev: null, bits_at: null }), facts()]);
     expect(e.facts.nbits).toEqual(['17034219', '00000001']);
     expect(e.kind).toBe('bitcoin_block');
     expect(ff.kind).toBe('undetermined');
-    expect(ff.facts).toMatchObject({ tip_at_first: null, tip_offset: null, bitcoin_bits: null, pow_ok: false, pow_bits: '17034219' });
+    expect(e.facts).toMatchObject({ tip_at_first: 900_000, tip_at_last: 900_001 });
+    expect(ff.facts).toMatchObject({ tip_at_first: null, tip_at_last: null, tip_offset: null, bitcoin_bits: null, pow_ok: false, pow_bits: '17034219' });
   });
 });
 
@@ -203,26 +232,26 @@ describe('summary source', () => {
     return { db, sql, query };
   }
 
-  it('reads the table, with the range as a bound, judging "unknown" at read time', async () => {
+  it('reads the table, with the range as a block count below the tip, judging "unknown" at read time', async () => {
     const { db, sql, query } = await load(true);
-    await db.getEpisodePoolRows(['Hidden'], '90d');
+    await db.getEpisodePoolRows(['Hidden'], '6e');
+    await db.getEpisodePoolRows(['Hidden'], '26e');
     await db.getEpisodePoolRows(['Hidden'], 'all');
     const reads = query.mock.calls.filter(c => c[0].includes('FROM unknown_parent_pools u'));
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(3);
     expect(reads[0][0]).toContain('NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = u.prev_hash)');
-    expect(reads[0][1]![0]).toEqual(['Hidden']);
-    expect(Date.now() - Date.parse(reads[0][1]![1] as string)).toBeGreaterThanOrEqual(90 * 86_400_000);
-    expect(reads[1][1]).toEqual([['Hidden'], null]);
+    expect(reads[0][0]).toContain('(SELECT max(height) FROM blocks_best) - $2::int');
+    expect(reads.map(r => r[1])).toEqual([[['Hidden'], 12_096], [['Hidden'], 52_416], [['Hidden'], null]]);
     expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
   });
 
-  it('falls back to the live 90-day read of templates while the table is empty (90 days only)', async () => {
+  it('falls back to the live read of templates while the table is empty (the default range only)', async () => {
     const { db, sql } = await load(false);
-    await db.getEpisodePoolRows([], '90d');
+    await db.getEpisodePoolRows([], '6e');
     expect(sql.some(t => t.includes('FROM templates t'))).toBe(true);
     expect(sql.some(t => t.includes('FROM unknown_parent_pools u'))).toBe(false);
     sql.length = 0;
-    await db.getEpisodePoolRows([], '1y');
+    await db.getEpisodePoolRows([], '26e');
     expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
     expect(sql.some(t => t.includes('FROM unknown_parent_pools u'))).toBe(true);
   });

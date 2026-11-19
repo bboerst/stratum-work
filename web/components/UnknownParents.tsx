@@ -4,18 +4,19 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as d3 from "d3";
 import { Info } from "lucide-react";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
-import { laneSegments, layoutTimeline, timeX } from "./unknown-parents/layout";
+import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
 
 /**
- * Unknown parents (/api/unknown-parents): templates built on a block we don't know, as episodes (one per parent), over
- * the last 90 days, the last year or all history. The server aggregates, reads the facts, infers the kind and decodes;
+ * Unknown parents (/api/unknown-parents): templates built on a block we don't know, as episodes (one per parent), in
+ * Bitcoin time: over the last 6 or 26 difficulty epochs or all history, on an axis of block heights (dates only on
+ * hover; the drill-in's sub-block timing stays in clock time). The server aggregates, reads the facts, infers the kind and decodes;
  * this component draws the episodes (timeline, table) and one episode's pools as swimlanes. How the kinds are inferred is in
  * docs/methodology.md (linked from the header), not on the page.
  */
 
 type Kind = "bitcoin_block" | "other_chain" | "invalid_parent" | "undetermined";
 type ParentLabel = "best" | "stale" | "this" | "other";
-type Range = "90d" | "1y" | "all";
+type Range = "6e" | "26e" | "all";
 
 interface Episode {
   parent: string;
@@ -30,6 +31,7 @@ interface Episode {
   auxpow_share: number;
   facts: {
     tip_at_first: number | null;
+    tip_at_last: number | null;
     tip_offset: number | null;
     nbits: string[];
     bitcoin_bits: string | null;
@@ -46,8 +48,9 @@ interface SummaryResponse {
   enabled: boolean;
   supported: boolean;
   range?: Range;
-  days?: number | null;
-  window_start?: number;
+  blocks?: number | null;
+  tip_height?: number | null;
+  from_height?: number | null;
   generated_at?: number;
   episodes?: Episode[];
   error?: string;
@@ -94,9 +97,11 @@ interface DrillResponse {
 const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#unknown-parents";
 
 const KINDS: Kind[] = ["bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
-const RANGES: Range[] = ["90d", "1y", "all"];
-const RANGE_LABEL: Record<Range, string> = { "90d": "90d", "1y": "1y", all: "All" };
-const RANGE_TEXT: Record<Range, string> = { "90d": "last 90 days", "1y": "last year", all: "all history" };
+const RANGES: Range[] = ["6e", "26e", "all"];
+const DEFAULT_RANGE: Range = "6e";
+const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // earlier links' wall-clock values
+const RANGE_LABEL: Record<Range, string> = { "6e": "6 epochs", "26e": "26 epochs", all: "All" };
+const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
   bitcoin_block: "Bitcoin block",
   other_chain: "Other chain",
@@ -201,22 +206,20 @@ const ROW_H = 24;
 const MARK_H = 16;
 const AXIS_H = 20;
 
+/** The timeline in Bitcoin time: x = block height, from `start` to `end` (our tip). */
 function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   episodes: Episode[]; start: number; end: number; selected: string | null; onSelect: (p: string) => void;
 }) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const labelW = width < 520 ? 76 : 120;
   const plotW = Math.max(50, width - labelW - 8);
-  const layout = useMemo(() => layoutTimeline(episodes, start, end, plotW, 5), [episodes, start, end, plotW]);
+  const { placed, unplaced } = useMemo(() => placeEpisodes(episodes, start, end), [episodes, start, end]);
+  const layout = useMemo(() => layoutTimeline(placed, start, end, plotW, 5), [placed, start, end, plotW]);
   const byParent = useMemo(() => new Map(episodes.map(e => [e.parent, e])), [episodes]);
   const [hover, setHover] = useState<{ parent: string; x: number; y: number } | null>(null);
   const ticks = useMemo(() => {
-    const s = d3.scaleUtc().domain([start, end]).range([0, plotW]);
-    // months up to about four months, then quarters (the year at January), then years
-    const days = (end - start) / 86_400_000;
-    const every = days <= 130 ? d3.utcMonth.every(1)! : days <= 800 ? d3.utcMonth.every(3)! : d3.utcYear.every(1)!;
-    const label = (d: Date) => days > 800 || (days > 130 && d.getUTCMonth() === 0) ? d3.utcFormat("%Y")(d) : d3.utcFormat("%b")(d);
-    return s.ticks(every).map(d => ({ x: s(d), label: label(d) }));
+    const s = d3.scaleLinear().domain([start, end]).range([0, plotW]);
+    return s.ticks(Math.max(3, Math.min(7, Math.floor(plotW / 110)))).map(v => ({ x: s(v), label: fmtInt(v) }));
   }, [start, end, plotW]);
   const h = layout.pools.length * ROW_H + AXIS_H;
   const hovered = hover ? byParent.get(hover.parent) : null;
@@ -224,12 +227,14 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   return (
     <div ref={ref} className="relative w-full">
       <svg width={width} height={h} role="img" className="block text-foreground/60">
-        <desc>One row per pool over {Math.round((end - start) / 86_400_000)} days; a mark per episode, as wide as it lasted, coloured by its inferred kind.</desc>
+        <desc>One row per pool over the last {fmtInt(Math.max(0, end - start))} blocks; a mark per episode, over the heights being mined while it lasted, coloured by its inferred kind.</desc>
         <g transform={`translate(${labelW},0)`}>
           {ticks.map(t => (
             <g key={t.x}>
               <line x1={t.x} x2={t.x} y1={0} y2={h - AXIS_H} stroke="currentColor" strokeOpacity={0.12} />
-              <text x={t.x + 3} y={h - 5} fontSize={11} fill="currentColor">{t.label}</text>
+              {/* a label near the right edge ends at its line, so it stays inside the plot */}
+              <text x={t.x > plotW - 50 ? t.x - 3 : t.x + 3} y={h - 5} fontSize={11} fill="currentColor"
+                textAnchor={t.x > plotW - 50 ? "end" : "start"}>{t.label}</text>
             </g>
           ))}
           {layout.marks.map((m, i) => (
@@ -256,8 +261,10 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
           <KindChip kind={hovered.kind} />
           <div className="mt-1 font-mono">{fmtInt(hovered.height)}</div>
           <div className="text-foreground/60">{hovered.pools.length} pool{hovered.pools.length > 1 ? "s" : ""} · {fmtDuration(hovered.duration_ms)}</div>
+          <div className="text-foreground/40">{fmtUtc(hovered.first_ms)} UTC</div>
         </Tooltip>
       )}
+      {unplaced > 0 && <p className="mt-1 text-right text-[11px] text-foreground/60">{fmtInt(unplaced)} not placed</p>}
     </div>
   );
 }
@@ -530,7 +537,7 @@ function setUrl(key: string, value: string | null) {
 }
 
 export default function UnknownParents() {
-  const [range, setRange] = useState<Range>("90d");
+  const [range, setRange] = useState<Range>(DEFAULT_RANGE);
   // each range's last answer (switching back is instant; a late answer only fills its own range)
   const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
   const [kind, setKind] = useState<Kind | "all">("all");
@@ -545,11 +552,14 @@ export default function UnknownParents() {
   useEffect(() => {
     // a shared link's range and episode (?range=…&parent=…)
     const q = new URLSearchParams(window.location.search);
-    const r = RANGES.find(x => x === q.get("range")) ?? "90d";
+    const asked = q.get("range") ?? "";
+    const legacy = Object.hasOwn(LEGACY_RANGES, asked);
+    const r = RANGES.find(x => x === (legacy ? LEGACY_RANGES[asked] : asked)) ?? DEFAULT_RANGE;
     const p = q.get("parent");
     load(r).then(() => {
       setRange(r);
       if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
+      if (legacy) setUrl("range", r === DEFAULT_RANGE ? null : r);   // a legacy value: rewritten
     });
   }, [load]);
   const summary = loaded[range] ?? null;
@@ -562,7 +572,7 @@ export default function UnknownParents() {
   const chooseRange = (r: Range) => {
     if (r === range) return;
     setRange(r);
-    setUrl("range", r === "90d" ? null : r);
+    setUrl("range", r === DEFAULT_RANGE ? null : r);
     load(r);
   };
 
@@ -609,9 +619,9 @@ export default function UnknownParents() {
         ))}
         {rangePicker}
       </div>
-      {all.length > 0 && summary.window_start && summary.generated_at && (
+      {all.length > 0 && summary.from_height != null && summary.tip_height != null && (
         <div className="mb-8 rounded-xl border border-border p-4">
-          <EpisodeTimeline episodes={episodes} start={summary.window_start} end={summary.generated_at}
+          <EpisodeTimeline episodes={episodes} start={summary.from_height} end={summary.tip_height}
             selected={selected} onSelect={select} />
         </div>
       )}

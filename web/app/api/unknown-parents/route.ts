@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/unknownParentsRoute.test.ts)
 import { enableHistoricalData } from "../../../lib/db/blocks";
-import { RANGE_DAYS, UNKNOWN_PARENTS_RANGES, type UnknownParentsRange } from "../../../lib/db/unknown-parents";
+import {
+  DEFAULT_RANGE, LEGACY_RANGES, RANGE_BLOCKS, UNKNOWN_PARENTS_RANGES, getBestTipHeight, type UnknownParentsRange,
+} from "../../../lib/db/unknown-parents";
 import { getDrill, getEpisodes, type Drill, type Episode } from "../../../lib/unknownParents";
 import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
 
@@ -9,15 +11,18 @@ export const dynamic = "force-dynamic";
 
 /**
  * Unknown parents: templates whose previous block is no block we know, as episodes (one per parent), each with the
- * facts its kind is inferred from (lib/unknownParents.ts, lib/parentKind.ts), over a range: the episodes whose last
- * template is in the last 90 days (default), the last year, or all history. Read-only. With historical data disabled
- * it answers enabled: false, supported: false without touching a database. POOL_BLACKLIST pools are left out
- * entirely: their templates, connections and the episodes only they built on.
+ * facts its kind is inferred from (lib/unknownParents.ts, lib/parentKind.ts), over a range in Bitcoin time: the
+ * episodes whose last template arrived after the best-chain block 6 difficulty epochs (12,096 blocks, default) or 26
+ * epochs (52,416 blocks) below our tip did, or all history. Read-only. With historical data disabled it answers
+ * enabled: false, supported: false without touching a database. POOL_BLACKLIST pools are left out entirely: their
+ * templates, connections and the episodes only they built on. The earlier range values 90d and 1y are read as 6e and
+ * 26e (shared links); responses name the new ones.
  *
- *   GET /api/unknown-parents[?range=90d|1y|all]
- *       { range, days (null for all), window_start, generated_at, episodes: Episode[] } (oldest first); window_start
- *       is generated_at - days, or for all the first episode's first template (generated_at when there is none)
- *   GET /api/unknown-parents?parent=<64 hex, display order>[&range=…]
+ *   GET /api/unknown-parents[?range=6e|26e|all]
+ *       { range, blocks (N; null for all), tip_height (our best-chain tip; null with no blocks), from_height,
+ *       generated_at (ms), episodes: Episode[] } (oldest first); from_height is tip_height - blocks, or for all the
+ *       lowest tip_at_first of the episodes (tip_height when there is none)
+ *   GET /api/unknown-parents?parent=<64 hex, display order>[&range=...]
  *       one episode's drill-in: { episode, from_ms, to_ms, templates (decoded, each labelled by its parent),
  *       truncated, blocks (every block we know at height - 1 and height, with arrival) }; 404 if the parent isn't an
  *       episode of that range's summary
@@ -34,9 +39,10 @@ interface SummaryResponse {
   enabled: boolean;
   supported: boolean;
   range?: UnknownParentsRange;
-  days?: number | null;
-  window_start?: number;         // ms
-  generated_at?: number;
+  blocks?: number | null;
+  tip_height?: number | null;
+  from_height?: number | null;
+  generated_at?: number;         // ms
   episodes?: Episode[];
 }
 
@@ -55,12 +61,11 @@ const drills = new Map<string, { at: number; promise: Promise<DrillResponse> }>(
 function refreshSummary(range: UnknownParentsRange, now: number, fallback: SummaryResponse | null): SummaryEntry {
   const entry: SummaryEntry = {
     at: now, settled: null, fallback,
-    promise: getEpisodes(blacklistedPoolNames(), range).then(episodes => {
-      const generated_at = Date.now();
-      const days = RANGE_DAYS[range];
-      const window_start = days !== null ? generated_at - days * 86_400_000
-        : episodes.reduce((m, e) => Math.min(m, e.first_ms), generated_at);
-      return { enabled: true, supported: true, range, days, window_start, generated_at, episodes };
+    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range), getBestTipHeight()]).then(([episodes, tip_height]) => {
+      const blocks = RANGE_BLOCKS[range];
+      const from_height = tip_height === null ? null : blocks !== null ? tip_height - blocks
+        : episodes.reduce((m, e) => (e.facts.tip_at_first === null ? m : Math.min(m, e.facts.tip_at_first)), tip_height);
+      return { enabled: true, supported: true, range, blocks, tip_height, from_height, generated_at: Date.now(), episodes };
     }),
   };
   entry.promise.then(r => { entry.settled = r; }, () => {
@@ -88,7 +93,8 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   if (!enableHistoricalData) return NextResponse.json({ enabled: false, supported: false });
 
-  const range = (params.get("range") ?? "90d") as UnknownParentsRange;
+  const asked = params.get("range") ?? DEFAULT_RANGE;
+  const range = (Object.hasOwn(LEGACY_RANGES, asked) ? LEGACY_RANGES[asked] : asked) as UnknownParentsRange;
   if (!UNKNOWN_PARENTS_RANGES.includes(range)) {
     return NextResponse.json({ error: `range must be one of ${UNKNOWN_PARENTS_RANGES.join(", ")}` }, { status: 400 });
   }

@@ -160,9 +160,9 @@ export class Fixture {
   }
 
   /**
-   * /api/unknown-parents: 36 synthetic episodes over 90 days, a mix of the three kinds (block races across many pools,
-   * short bursts of another chain on one pool, invalid parents). Its own random stream, so the other fixtures don't
-   * change.
+   * /api/unknown-parents: 36 synthetic episodes over 90 days (a little over the default 6 epochs), a mix of the three
+   * kinds (block races across many pools, short bursts of another chain on one pool, invalid parents). Its own random
+   * stream, so the other fixtures don't change.
    */
   unknownParents(nowS: number) {
     const r = rng(this.opts.seed + 7);
@@ -184,7 +184,8 @@ export class Fixture {
         height, heights: [height], pools, first_ms: first, last_ms: first + duration, duration_ms: duration,
         templates: pools.reduce((s, p) => s + p.templates, 0), auxpow_templates: 0, auxpow_share: 0,
         facts: {
-          tip_at_first: height - 1 - offset, tip_offset: offset, nbits: [kind === "other_chain" ? "1a0abcde" : "17030ecd"],
+          tip_at_first: height - 1 - offset, tip_at_last: height - 1 - offset, tip_offset: offset,
+          nbits: [kind === "other_chain" ? "1a0abcde" : "17030ecd"],
           bitcoin_bits: kind === "other_chain" ? null : "17030ecd", bitcoin_bits_at: null,
           bitcoin_difficulty: kind === "other_chain" ? null : true, pow_ok: kind !== "invalid_parent",
           pow_bits: kind === "other_chain" ? "1a0abcde" : "17030ecd", in_stale_blocks: false,
@@ -192,7 +193,10 @@ export class Fixture {
         kind,
       };
     });
-    return { enabled: true, supported: true, days: 90, window_start: start, generated_at: end, episodes };
+    return {
+      enabled: true, supported: true, range: "6e", blocks: 12_096, tip_height: tip, from_height: tip - 12_096,
+      generated_at: end, episodes,
+    };
   }
 
   /** /api/unknown-parents?parent=…: the episode's pools, a template every 5 s each over its minutes ± 5 (thousands). */

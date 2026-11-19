@@ -100,7 +100,8 @@ describe('served templates carry masked extranonce1', () => {
       ...(await importOriginal<object>()),
       getEpisodePoolRows: vi.fn(async () => Object.keys(RAW).map(pool => ({ parent, pool, n: '1', first_ms: String(NOW_MS),
         last_ms: String(NOW_MS), auxpow: '0', conns: [1], heights: { 6976415: 1 }, nbits: { 386000000: 1 } }))),
-      getEpisodeFacts: vi.fn(async () => [{ i: 1, tip: null, bits_prev: null, bits_at: null, in_stale: false }]),
+      getEpisodeFacts: vi.fn(async () => [{ i: 1, tip: null, tip_last: null, bits_prev: null, bits_at: null, in_stale: false }]),
+      getBestTipHeight: vi.fn(async () => null),
       getDrillRows: vi.fn(async () => ({ truncated: false, blocks: [],
         templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'j1')) })),
     }));

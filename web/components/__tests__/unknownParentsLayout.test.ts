@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { laneSegments, layoutTimeline, timeX } from '../unknown-parents/layout';
+import { laneSegments, layoutTimeline, placeEpisodes, timeX } from '../unknown-parents/layout';
 
-const ep = (parent: string, first: number, last: number, pools: string[], kind = 'bitcoin_block') =>
-  ({ parent, kind, first_ms: first, last_ms: last, pools: pools.map(pool => ({ pool })) });
+const ep = (parent: string, from: number, to: number, pools: string[], kind = 'bitcoin_block') =>
+  ({ parent, kind, from, to, pools: pools.map(pool => ({ pool })) });
 
 describe('timeX', () => {
   it('maps linearly and clamps', () => {
@@ -10,6 +10,38 @@ describe('timeX', () => {
     expect(timeX(-5, 0, 100, 200)).toBe(0);
     expect(timeX(500, 0, 100, 200)).toBe(200);
     expect(timeX(5, 10, 10, 200)).toBe(0);           // empty range
+  });
+});
+
+describe('placeEpisodes', () => {
+  const api = (parent: string, height: number, first: number | null, last: number | null, kind = 'other_chain') =>
+    ({ parent, kind, height, pools: [{ pool: 'P' }], facts: { tip_at_first: first, tip_at_last: last } });
+
+  it('places an episode at the heights being mined while it lasted, by our tip, never its own (foreign) height', () => {
+    const { placed, unplaced } = placeEpisodes([
+      api('o', 6_976_415, 970_000, 970_002),          // another chain: placed by our tip
+      api('b', 970_101, 970_100, 970_100, 'bitcoin_block'),
+      api('s', 970_050, 970_049, null),               // no tip at the last template: one block wide
+    ], 960_000, 972_096);
+    expect(unplaced).toBe(0);
+    expect(placed.map(e => [e.parent, e.from, e.to])).toEqual([
+      ['o', 970_001, 970_003], ['b', 970_101, 970_101], ['s', 970_050, 970_050],
+    ]);
+  });
+  it('places one without a tip by its own height only inside the domain, and counts the rest', () => {
+    const { placed, unplaced } = placeEpisodes([
+      api('in', 965_000, null, null, 'bitcoin_block'),
+      api('far', 6_976_415, null, null),
+      api('low', 100, null, null),
+    ], 960_000, 972_096);
+    expect(placed.map(e => [e.parent, e.from, e.to])).toEqual([['in', 965_000, 965_000]]);
+    expect(unplaced).toBe(2);
+  });
+  it('lays the placed episodes out on a height axis', () => {
+    const { placed } = placeEpisodes([api('a', 0, 970_999, 971_499), api('b', 0, 971_999, 971_999)], 970_000, 972_000);
+    const [a, b] = layoutTimeline(placed, 970_000, 972_000, 2000, 4).marks;
+    expect(a).toMatchObject({ x: 1000, w: 500 });
+    expect(b).toMatchObject({ x: 1996, w: 4 });     // the height after our tip: at the right edge, inside the plot
   });
 });
 

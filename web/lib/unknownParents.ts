@@ -12,7 +12,7 @@
 import { maskTemplate } from './connectionMask';
 import { templateRowToMiningNotify } from './db/pg-mapping';
 import {
-  DRILL_MARGIN_MS, getDrillRows, getEpisodeFacts, getEpisodePoolRows,
+  DEFAULT_RANGE, DRILL_MARGIN_MS, getDrillRows, getEpisodeFacts, getEpisodePoolRows,
   type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type ParentLabel, type UnknownParentsRange,
 } from './db/unknown-parents';
 import { bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind } from './parentKind';
@@ -105,6 +105,7 @@ export interface EpisodePool {
 
 export interface EpisodeFacts {
   tip_at_first: number | null;   // our best-chain tip when the first template arrived
+  tip_at_last: number | null;    // ... when the last one did (with tip_at_first: the episode's place in Bitcoin time)
   tip_offset: number | null;     // height - 1 - tip_at_first
   nbits: string[];               // the templates' nbits (hex), most common first
   bitcoin_bits: string | null;   // Bitcoin's bits at height - 1 (hex), null when no block is stored there
@@ -177,9 +178,9 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
 }
 
 /** The range's episodes: the rows per parent and pool (getEpisodePoolRows), then the facts per episode. */
-export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = '90d'): Promise<Episode[]> {
+export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<Episode[]> {
   const drafts = draftEpisodes(await getEpisodePoolRows(excludePools, range));
-  const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms })));
+  const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
   return finishEpisodes(drafts, facts);
 }
 
@@ -225,7 +226,7 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[])
     return {
       ...episode,
       facts: {
-        tip_at_first: tip, tip_offset: tipOffset(d.height, tip), nbits: nbitsSorted,
+        tip_at_first: tip, tip_at_last: f?.tip_last ?? null, tip_offset: tipOffset(d.height, tip), nbits: nbitsSorted,
         bitcoin_bits: prev === null ? null : hex32(prev), bitcoin_bits_at: at === null ? null : hex32(at),
         bitcoin_difficulty: bitcoinDifficulty(pf), pow_ok: powOk, pow_bits: hex32(prev ?? nbitsMain),
         in_stale_blocks: Boolean(f?.in_stale),

@@ -9,9 +9,10 @@
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here either.
  *
  * The summary per (parent, pool) is read from unknown_parent_pools (getEpisodePoolRows), counted facts the backend keeps
- * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range of 90 days, a year or all
- * history; "still unknown" is judged here, at read time, against bitcoin_parents. Until that table is filled, 90 days
- * fall back to the live read of templates (getLiveEpisodePoolRows: a narrow anti-join finds where the candidates are,
+ * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range in Bitcoin time: the last 6
+ * or 26 difficulty epochs (12,096 or 52,416 blocks) or all history; "still unknown" is judged here, at read time,
+ * against bitcoin_parents. Until that table is filled, the default range falls back to the live read of templates
+ * (getLiveEpisodePoolRows, over the last 90 days: a narrow anti-join finds where the candidates are,
  * then a wide read fetches only those, aggregated per (parent, pool), the same aggregation the backend stores). The
  * per-episode facts (tip, Bitcoin bits) are looked up on the aggregated episodes only, by height through
  * blocks_height. The drill-in reads one episode's pools at heights h - 1 .. h + 1 within its receive times (± a
@@ -33,12 +34,19 @@
 import { getPgPool } from './pg';
 import type { TemplateRow } from './pg-mapping';
 
-export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window, and the default range
+export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window (wall-clock: it reads templates by time)
+export const EPOCH_BLOCKS = 2016;                  // a difficulty epoch
 
-/** The page's ranges: the episodes whose last template is within the last 90 or 365 days, or all of them. */
-export const UNKNOWN_PARENTS_RANGES = ['90d', '1y', 'all'] as const;
+/**
+ * The page's ranges, in Bitcoin time: the episodes whose last template arrived after the best-chain block 6 or 26
+ * epochs below our tip did, or all of them.
+ */
+export const UNKNOWN_PARENTS_RANGES = ['6e', '26e', 'all'] as const;
 export type UnknownParentsRange = typeof UNKNOWN_PARENTS_RANGES[number];
-export const RANGE_DAYS: Record<UnknownParentsRange, number | null> = { '90d': UNKNOWN_PARENTS_DAYS, '1y': 365, all: null };
+export const DEFAULT_RANGE: UnknownParentsRange = '6e';
+export const RANGE_BLOCKS: Record<UnknownParentsRange, number | null> = { '6e': 6 * EPOCH_BLOCKS, '26e': 26 * EPOCH_BLOCKS, all: null };
+/** Earlier, wall-clock range values, still accepted (shared links) and read as their nearest range. */
+export const LEGACY_RANGES: Record<string, UnknownParentsRange> = { '90d': '6e', '1y': '26e' };
 export const DRILL_MARGIN_MS = 5 * 60_000;      // receive-time margin around an episode in the drill-in
 export const DRILL_MAX_TEMPLATES = 5000;
 
@@ -95,20 +103,25 @@ const ANTI_JOIN = `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash
 
 /**
  * The rows per (unknown parent, pool) of the range, from unknown_parent_pools: every pool's row of each parent that is
- * no block we know now (bitcoin_parents) and whose last template (over the pools not excluded) is in the range. A
- * stored row covers all of the parent's templates, so an episode that began before the range is shown whole. Same
- * shape and order as the live read. Until the backend has filled the table, 90 days are read live.
+ * no block we know now (bitcoin_parents) and whose last template (over the pools not excluded) arrived at or after the
+ * best-chain block at height tip - N did (coalesce(seen_at, block_time); tip: the highest best-chain block; no such
+ * block, or all history: no cutoff). A stored row covers all of the parent's templates, so an episode that began
+ * before the range is shown whole. Same shape and order as the live read. Until the backend has filled the table, the
+ * default range is read live (over the last UNKNOWN_PARENTS_DAYS days: the live read selects templates by receive time).
  */
-export async function getEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = '90d'): Promise<EpisodePoolSql[]> {
+export async function getEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
   const pool = getPgPool();
-  const days = RANGE_DAYS[range];
-  if (range === '90d') {
+  if (range === DEFAULT_RANGE) {
     const { rows } = await pool.query<{ filled: boolean }>(`SELECT EXISTS (SELECT 1 FROM unknown_parent_pools) AS filled`);
     if (!rows[0]?.filled) return getLiveEpisodePoolRows(excludePools);
   }
-  const since = days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString();
   const { rows } = await pool.query<EpisodePoolSql>(
-    `WITH u AS (
+    `WITH cut AS (
+       SELECT coalesce((SELECT coalesce(b.seen_at, b.block_time) FROM blocks_best b
+                         WHERE $2::int IS NOT NULL AND b.height <= (SELECT max(height) FROM blocks_best) - $2::int
+                         ORDER BY b.height DESC, coalesce(b.seen_at, b.block_time) LIMIT 1),
+                       '-infinity'::timestamptz) AS at
+     ), u AS (
        SELECT u.*, max(u.last_received) OVER (PARTITION BY u.prev_hash) AS parent_last
          FROM unknown_parent_pools u
         WHERE u.pool <> ALL ($1::text[]) AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = u.prev_hash)
@@ -117,12 +130,18 @@ export async function getEpisodePoolRows(excludePools: string[], range: UnknownP
             (extract(epoch FROM u.first_received) * 1000)::bigint AS first_ms,
             (extract(epoch FROM u.last_received) * 1000)::bigint AS last_ms,
             u.auxpow::bigint AS auxpow, u.conns, u.heights, u.nbits
-       FROM u
-      WHERE $2::timestamptz IS NULL OR u.parent_last >= $2::timestamptz
+       FROM u, cut
+      WHERE u.parent_last >= cut.at
       ORDER BY first_ms, parent, u.pool`,
-    [excludePools, since],
+    [excludePools, RANGE_BLOCKS[range]],
   );
   return rows;
+}
+
+/** Our Bitcoin tip: the highest best-chain block (null with no blocks). */
+export async function getBestTipHeight(): Promise<number | null> {
+  const { rows } = await getPgPool().query<{ tip: number | null }>(`SELECT max(height) AS tip FROM blocks_best`);
+  return rows[0]?.tip ?? null;
 }
 
 /**
@@ -184,19 +203,21 @@ export interface EpisodeFactsQuery {
   parent: string;                       // display hex
   height: number;
   first_ms: number;
+  last_ms: number;
 }
 
 export interface EpisodeFactsSql {
   i: number;
   tip: number | null;                   // best-chain tip when the first template arrived
+  tip_last: number | null;              // ... when the last one did
   bits_prev: string | null;             // bits of the best block at h - 1 (NULL bits count as no block)
   bits_at: string | null;               // ... at h
   in_stale: boolean;                    // the parent is in stale_blocks
 }
 
 /**
- * Per episode: the tip at its first template (the highest best-chain block whose arrival, coalesce(seen_at,
- * block_time), is at or before it: walks blocks_height from the top), Bitcoin's bits at h - 1 and h (the earliest
+ * Per episode: the tip at its first and at its last template (the highest best-chain block whose arrival,
+ * coalesce(seen_at, block_time), is at or before it: walks blocks_height from the top), Bitcoin's bits at h - 1 and h (the earliest
  * arrival when a height has two best rows), and whether the parent is a recorded stale block. With the summary's
  * candidates that last one is false by construction (bitcoin_parents includes stale_blocks); it is read, not assumed,
  * so the badge stays true if the candidate rule changes.
@@ -205,16 +226,16 @@ export async function getEpisodeFacts(eps: EpisodeFactsQuery[]): Promise<Episode
   if (eps.length === 0) return [];
   const bits = (h: string) => `(SELECT b.bits FROM blocks_best b WHERE b.height = ${h} AND b.bits IS NOT NULL
                                  ORDER BY coalesce(b.seen_at, b.block_time), b.block_hash LIMIT 1)::text`;
+  const tip = (ms: string) => `(SELECT b.height FROM blocks_best b
+              WHERE coalesce(b.seen_at, b.block_time) <= timestamptz 'epoch' + ${ms} * interval '1 millisecond'
+              ORDER BY b.height DESC LIMIT 1)`;
   const { rows } = await getPgPool().query<EpisodeFactsSql>(
-    `SELECT e.i::int AS i,
-            (SELECT b.height FROM blocks_best b
-              WHERE coalesce(b.seen_at, b.block_time) <= timestamptz 'epoch' + e.first_ms * interval '1 millisecond'
-              ORDER BY b.height DESC LIMIT 1) AS tip,
+    `SELECT e.i::int AS i, ${tip('e.first_ms')} AS tip, ${tip('e.last_ms')} AS tip_last,
             ${bits('e.h - 1')} AS bits_prev, ${bits('e.h')} AS bits_at,
             EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = decode(e.parent, 'hex')) AS in_stale
-       FROM unnest($1::text[], $2::int[], $3::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, i)
+       FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, last_ms, i)
       ORDER BY e.i`,
-    [eps.map(e => e.parent), eps.map(e => e.height), eps.map(e => e.first_ms)],
+    [eps.map(e => e.parent), eps.map(e => e.height), eps.map(e => e.first_ms), eps.map(e => e.last_ms)],
   );
   return rows;
 }

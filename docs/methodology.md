@@ -213,7 +213,8 @@ the stored facts improve ([design](design/one-templates-table.md)). The template
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
 The "Unknown parents" view looks at templates whose previous block is no block we know (neither in `blocks` nor
-recorded in `stale_blocks`), over the last 90 days, the last year or all history. It groups them by that parent into
+recorded in `stale_blocks`), over the last 6 or 26 difficulty epochs (12,096 or 52,416 blocks) or all history. It
+groups them by that parent into
 **episodes**: one unknown parent, the
 height its templates build, the pools that built on it and on which of their connections (labelled a, b, … in each
 pool's (site, replica) order, so a letter always names the same connection), when the first and last template
@@ -235,9 +236,13 @@ templates, starting where its previous run ended if that was longer ago, and onc
 the startup sync (`backend/unknown_parents.py`). Each parent is read whole: the read covers the heights and receive
 times of its templates seen now plus those already in the table, an hour wider, so a parent that lasts longer than
 two hours keeps all its templates. History before that, or after a longer outage, comes from the backfill
-(`python -m unknown_parents --backfill`, in 7-day chunks). An episode is in a range when its last template is; it is
-shown with all its templates even if it began before the range. Until the table has rows, the 90-day view reads
-templates directly, as it did before.
+(`python -m unknown_parents --backfill`, in 7-day chunks). The ranges are counted in Bitcoin time, in blocks below
+our tip (the highest best-chain block), not in days: an episode is in a range when its last template arrived at or
+after the best-chain block N blocks below the tip did (`coalesce(seen_at, block_time)`); it is shown with all its
+templates even if it began before the range. The timeline's axis is block heights too. Another chain's templates
+carry that chain's heights, so an episode is placed by our tip when its first and last templates arrived (the
+heights being mined then), read per episode as `tip_at_first` and `tip_at_last`; dates are only shown on hover.
+Until the table has rows, the default view reads templates directly, over the last 90 days, as it did before.
 
 What each parent is gets **inferred** when the page is read, never stored, from these facts (`web/lib/parentKind.ts`):
 

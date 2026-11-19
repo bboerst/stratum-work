@@ -43,6 +43,8 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     pg = await import('../db/postgres');
     admin = new Client({ connectionString: env.PG_TEST_ADMIN_DSN });   // the web role can't write; insert as admin
     await admin.connect();
+    // pgUnknownParents.test.ts seeds the next-highest chain and checks it is the tip: one of the two at a time
+    await admin.query('SELECT pg_advisory_lock($1)', [72_010_261]);   // released when admin disconnects (afterAll)
     const flagged = '{"flags": [{"type": "synthetic"}]}';
     await block(lost, h, 0);            // seen first: the old reads returned it
     await block(won, h, 100);
@@ -55,7 +57,7 @@ describe.skipIf(!enabled)('Postgres block reads skip stale blocks', () => {
     await stale(back, h + 1, true);
     await stale(topStale, top, false);
     await stale(sideOnly, h, false);    // a side block known only from the stale tracker (headers only)
-  });
+  }, 120_000);                                   // may wait for the other suite's tip lock
 
   afterAll(async () => {
     await admin?.query(`DELETE FROM stale_blocks WHERE height = ANY($1::int[])`, [[h, h + 1, top]]);

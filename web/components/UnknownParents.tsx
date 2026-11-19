@@ -100,7 +100,7 @@ const KINDS: Kind[] = ["bitcoin_block", "other_chain", "invalid_parent", "undete
 const RANGES: Range[] = ["6e", "26e", "all"];
 const DEFAULT_RANGE: Range = "6e";
 const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // earlier links' wall-clock values
-const RANGE_LABEL: Record<Range, string> = { "6e": "6 epochs", "26e": "26 epochs", all: "All" };
+const RANGE_LABEL: Record<Range, string> = { "6e": "12,096 blocks", "26e": "52,416 blocks", all: "All" };
 const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
   bitcoin_block: "Bitcoin block",
@@ -272,11 +272,11 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
 // ---------------------------------------------------------------------------------------------------------------------
 // Table
 
-type SortKey = "time" | "height" | "pools" | "duration" | "kind";
+type SortKey = "bitcoin" | "height" | "pools" | "duration" | "kind";
 
 function sortValue(e: Episode, k: SortKey): number {
   switch (k) {
-    case "time": return e.first_ms;
+    case "bitcoin": return (e.facts.tip_at_first ?? -1) * 1e13 + e.first_ms;   // Bitcoin time: our tip when it began
     case "height": return e.height;
     case "pools": return e.pools.length;
     case "duration": return e.duration_ms;
@@ -285,7 +285,7 @@ function sortValue(e: Episode, k: SortKey): number {
 }
 
 function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; selected: string | null; onSelect: (p: string) => void }) {
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "time", desc: true });
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "bitcoin", desc: true });
   const rows = useMemo(() => [...episodes].sort((a, b) => {
     const c = sortValue(a, sort.key) - sortValue(b, sort.key) || a.first_ms - b.first_ms;
     return sort.desc ? -c : c;
@@ -308,10 +308,10 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
             <button type="button" onClick={() => onSelect(e.parent)} title={factsTitle(e)}
               className={`w-full rounded-lg border border-border px-3 py-2.5 text-left text-xs space-y-1.5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
               <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-sm">{fmtInt(e.height)} <span className="text-foreground/60 text-xs">· {fmtDuration(e.duration_ms)}</span></span>
                 <KindChip kind={e.kind} title={factsTitle(e)} />
-                <span className="text-foreground/60" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</span>
               </div>
-              <div className="font-mono text-sm">{fmtInt(e.height)} <span className="text-foreground/60 text-xs">· {fmtDuration(e.duration_ms)}</span></div>
+              <div className="text-foreground/40" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</div>
               <PoolChips e={e} max={4} />
             </button>
           </li>
@@ -321,22 +321,22 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border">
-              {head("Time (UTC)", "time")}
-              {head("Height", "height", true)}
+              {head("Height", "height")}
               {head("Pools", "pools")}
               {head("Duration", "duration", true)}
               {head("Kind", "kind")}
+              {head("UTC", "bitcoin", true)}
             </tr>
           </thead>
           <tbody>
             {rows.map(e => (
               <tr key={e.parent} onClick={() => onSelect(e.parent)}
                 className={`border-b border-border/60 cursor-pointer hover:bg-foreground/5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
-                <td className="px-3 py-2.5 text-xs text-foreground/60 whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
-                <td className="px-3 py-2.5 font-mono text-right">{fmtInt(e.height)}</td>
+                <td className="px-3 py-2.5 font-mono">{fmtInt(e.height)}</td>
                 <td className="px-3 py-2.5"><PoolChips e={e} /></td>
                 <td className="px-3 py-2.5 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
                 <td className="px-3 py-2.5"><KindChip kind={e.kind} title={factsTitle(e)} /></td>
+                <td className="px-3 py-2.5 text-xs text-foreground/40 text-right whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
               </tr>
             ))}
           </tbody>

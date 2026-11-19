@@ -70,6 +70,7 @@ describe('GET /api/unknown-parents', () => {
     const body = await res.json();
     expect(body).toMatchObject({ enabled: true, supported: true, range: '6e', blocks: 12_096, tip_height: TIP,
       from_height: TIP - 12_096 });
+    expect(body.before_first_block).toBe(0);
     expect(body).not.toHaveProperty('days');
     expect(body).not.toHaveProperty('window_start');
     expect(Math.abs(Date.now() - body.generated_at)).toBeLessThan(60_000);
@@ -81,6 +82,14 @@ describe('GET /api/unknown-parents', () => {
         bitcoin_bits_at: '17034219', bitcoin_difficulty: true, pow_ok: true, pow_bits: '17034219', in_stale_blocks: false },
       kind: 'bitcoin_block',
     }]);
+  });
+
+  it('leaves out an episode that began before our first stored block, and counts it', async () => {
+    const { route, getEpisodeFacts } = await loadRoute();
+    getEpisodeFacts.mockResolvedValueOnce([facts({ tip: null, tip_last: null, bits_prev: null, bits_at: null })]);
+    const body = await (await get(route)).json();
+    expect(body.episodes).toEqual([]);
+    expect(body.before_first_block).toBe(1);
   });
 
   it('validates the parent and 404s one that is no episode', async () => {

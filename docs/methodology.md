@@ -268,6 +268,9 @@ The rules, in order:
    valid block at all.
 4. **Undetermined**: no stored block to compare with at all.
 
+An episode that began before our first stored block (collection started part-way through that height) has no tip and
+no stored block to compare with. It is left out of the page and counted in the API response (`before_first_block`).
+
 Each episode on the page shows these facts next to the inferred kind, and its details show every template from its
 pools around its minutes, each labelled by the parent it built on (our best chain, a stale block, this unknown parent,
 or another one), with the arrival of the blocks at height − 1 and at the height.

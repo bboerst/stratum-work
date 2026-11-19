@@ -59,7 +59,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
   const X_F = '00000000' + r3 + '6f'.repeat(21) + 'ffffffff';
   const blk = (k: string) => '0000' + r3 + k.repeat(26) + '00';   // our blocks (display order)
   const [B2, B1, B0, S1] = [blk('b2'), blk('b1'), blk('b0'), blk('51')];  // H - 2, H - 1, H; S1: stale at H - 1
-  const [E6, E26] = [blk('e6'), blk('e2')];     // the range cutoffs: our blocks at H - 6 and H - 26 epochs
+  const [E6, E26, E0] = [blk('e6'), blk('e2'), blk('e0')];   // the range cutoffs (H - 6, H - 26 epochs); E0: an early block, so F has a tip
   const EN1 = { [single]: 'c0ffee11', [`${multi}/a`]: 'c0ffee12', [`${multi}/b`]: 'c0ffee13', [hidden]: 'c0ffee14' } as Record<string, string>;
   const SITE = `zz-site-${run}`;
   const AUX = 'fabe6d6d' + 'ab'.repeat(32) + '0100000000000000';
@@ -119,6 +119,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     // the ranges' cutoffs: 6 epochs below arrived 10 days before T0 (90 days ago), 26 epochs below 150 days before
     await block(E6, H - 12_096, -10 * DAY);
     await block(E26, H - 52_416, -150 * DAY);
+    await block(E0, H - 60_000, -250 * DAY);   // before F: an episode with no block before it has no tip and isn't shown
     await admin.query(
       `INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
                                  chaintip_status, last_status, tip_hash, fork_height, first_seen)
@@ -169,7 +170,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
       [ALL]);
     await admin?.query(`DELETE FROM blocks WHERE block_hash = decode($1, 'hex')`, [X_E]);
     await admin?.query(`DELETE FROM stale_blocks WHERE height = $1`, [H - 1]);
-    await admin?.query(`DELETE FROM blocks WHERE height = ANY ($1::int[])`, [[H - 2, H - 1, H, H - 12_096, H - 52_416]]);
+    await admin?.query(`DELETE FROM blocks WHERE height = ANY ($1::int[])`, [[H - 2, H - 1, H, H - 12_096, H - 52_416, H - 60_000]]);
     await admin?.end();
     const { getPgPool } = await import('../db/pg');
     await getPgPool().end();

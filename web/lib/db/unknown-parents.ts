@@ -217,7 +217,7 @@ export interface EpisodeFactsSql {
 
 /**
  * Per episode: the tip at its first and at its last template (the highest best-chain block whose arrival,
- * coalesce(seen_at, block_time), is at or before it: walks blocks_height from the top), Bitcoin's bits at h - 1 and h (the earliest
+ * coalesce(seen_at, block_time), is at or before it; also at its last template, tip_last), Bitcoin's bits at h - 1 and h (the earliest
  * arrival when a height has two best rows), and whether the parent is a recorded stale block. With the summary's
  * candidates that last one is false by construction (bitcoin_parents includes stale_blocks); it is read, not assumed,
  * so the badge stays true if the candidate rule changes.
@@ -226,14 +226,27 @@ export async function getEpisodeFacts(eps: EpisodeFactsQuery[]): Promise<Episode
   if (eps.length === 0) return [];
   const bits = (h: string) => `(SELECT b.bits FROM blocks_best b WHERE b.height = ${h} AND b.bits IS NOT NULL
                                  ORDER BY coalesce(b.seen_at, b.block_time), b.block_hash LIMIT 1)::text`;
-  const tip = (ms: string) => `(SELECT b.height FROM blocks_best b
-              WHERE coalesce(b.seen_at, b.block_time) <= timestamptz 'epoch' + ${ms} * interval '1 millisecond'
-              ORDER BY b.height DESC LIMIT 1)`;
+  // The tip at a time t: the highest best-chain block that had arrived by t. Computed for every episode's first and last
+  // template in one pass, as a running maximum over blocks and episode times in arrival order (a block arriving at the
+  // same instant counts as arrived), not one walk of blocks_height per lookup (~0.3 s vs ~17 s for 600 episodes).
   const { rows } = await getPgPool().query<EpisodeFactsSql>(
-    `SELECT e.i::int AS i, ${tip('e.first_ms')} AS tip, ${tip('e.last_ms')} AS tip_last,
+    `WITH e AS (
+       SELECT * FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, last_ms, i)
+     ), ev AS (
+       SELECT coalesce(b.seen_at, b.block_time) AS t, b.height, NULL::bigint AS i, 0 AS w FROM blocks_best b
+       UNION ALL SELECT timestamptz 'epoch' + e.first_ms * interval '1 millisecond', NULL, e.i, 1 FROM e
+       UNION ALL SELECT timestamptz 'epoch' + e.last_ms * interval '1 millisecond', NULL, e.i, 2 FROM e
+     ), tips AS (
+       SELECT i, w, max(height) OVER (ORDER BY t, (height IS NULL) ROWS UNBOUNDED PRECEDING) AS tip FROM ev
+     ), et AS (
+       SELECT i, max(tip) FILTER (WHERE w = 1) AS tip, max(tip) FILTER (WHERE w = 2) AS tip_last
+         FROM tips WHERE i IS NOT NULL GROUP BY i
+     )
+     SELECT e.i::int AS i,
+            et.tip, et.tip_last,
             ${bits('e.h - 1')} AS bits_prev, ${bits('e.h')} AS bits_at,
             EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = decode(e.parent, 'hex')) AS in_stale
-       FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS e(parent, h, first_ms, last_ms, i)
+       FROM e LEFT JOIN et ON et.i = e.i
       ORDER BY e.i`,
     [eps.map(e => e.parent), eps.map(e => e.height), eps.map(e => e.first_ms), eps.map(e => e.last_ms)],
   );

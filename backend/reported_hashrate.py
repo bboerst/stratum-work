@@ -4,11 +4,14 @@ ours: kept apart from block shares and anything else measured here (docs/methodo
 
     python -m reported_hashrate
 
-fetches the site's data file once and upserts every pool's hourly series. Off unless configured, all from env:
+reads the site's page for its current `last_time` token, fetches the data file with `?t=<last_time>` (the file is
+served only for the token the page names) and upserts every pool's hourly series. Two requests per run, no
+retries. Off unless configured, all from env:
 
-    REPORTED_HASHRATE_URL         the data file (JSON); "?t=<unix seconds>" is appended. Unset: exit 0, nothing done.
-    REPORTED_HASHRATE_USER_AGENT  User-Agent header (optional)
-    REPORTED_HASHRATE_REFERER     Referer header (optional)
+    REPORTED_HASHRATE_PAGE_URL    the page that names last_time. Unset: exit 0, nothing done.
+    REPORTED_HASHRATE_URL         the data file (JSON), without a query; "?t=<last_time>" is appended. Required with
+                                  the page URL.
+    REPORTED_HASHRATE_USER_AGENT  User-Agent header (default: DEFAULT_USER_AGENT)
     REPORTED_HASHRATE_SOURCE      the source label stored with every row (default: miningpoolstats)
 
 The file: top-level `hashrate` (the site's network estimate, H/s) and `data`, one entry per pool with a stable `id`,
@@ -21,7 +24,7 @@ Each point is stored at its time floored to the hour, so a later fetch overwrite
 site's latest values) instead of adding near-duplicates. Before writing anything the file must look sane: at least
 MIN_POOLS pools, a positive network estimate, and the reconstructed last point within MAX_LAST_DEVIATION of
 `hashrate_average_1h` for at least MIN_MATCHING of the pools that have both. Otherwise nothing is written and the
-exit status is 1. One request per run, no retries: the schedule decides when to try again.
+exit status is 1, as it is when the page names no last_time. No retries: the schedule decides when to try again.
 
 Connects like the backend (PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD, PG_SSLMODE, PG_SSLROOTCERT), as a
 user in the stratum_backend role.
@@ -33,6 +36,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.request
@@ -44,6 +48,9 @@ MIN_MATCHING = 0.90
 MAX_LAST_DEVIATION = 0.01
 TIMEOUT_S = 60
 HOUR = 3600
+DEFAULT_USER_AGENT = "stratum-work/1.0 (+https://stratum.work)"
+# last_time = "1795125694" in the page's script; exactly one distinct value accepted
+LAST_TIME = re.compile(r"""\blast_time\s*=\s*["']?(\d{9,11})(?!\d)""")
 
 logger = logging.getLogger("backend.reported_hashrate")
 
@@ -121,16 +128,25 @@ def rows(doc: Dict[str, Any], source: str, fetched_at: datetime) -> List[Dict[st
     return out
 
 
-def fetch(url: str, user_agent: Optional[str], referer: Optional[str], now: float) -> Dict[str, Any]:
-    """One GET of the data file; no retries."""
-    full = f"{url}{'&' if '?' in url else '?'}t={int(now)}"
-    headers = {"Accept": "application/json, text/javascript, */*"}
-    if user_agent:
-        headers["User-Agent"] = user_agent
-    if referer:
-        headers["Referer"] = referer
-    with urllib.request.urlopen(urllib.request.Request(full, headers=headers), timeout=TIMEOUT_S) as r:
-        return json.loads(r.read())
+def last_time(page: str) -> str:
+    """The page's last_time token. ValueError unless it names exactly one."""
+    found = set(LAST_TIME.findall(page))
+    if len(found) != 1:
+        raise ValueError(f"the page names {len(found)} last_time values, not one" if found else
+                         "the page names no last_time")
+    return found.pop()
+
+
+def _get(url: str, user_agent: str, accept: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": accept})
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        return r.read()
+
+
+def fetch(page_url: str, data_url: str, user_agent: str) -> Dict[str, Any]:
+    """The page (for last_time), then the data file with ?t=<last_time>. Two GETs, no retries."""
+    t = last_time(_get(page_url, user_agent, "text/html").decode("utf-8", "replace"))
+    return json.loads(_get(f"{data_url}?t={t}", user_agent, "application/json, text/javascript, */*"))
 
 
 def _postgres_store() -> Any:
@@ -145,16 +161,19 @@ def _postgres_store() -> Any:
 def main(env: Optional[Dict[str, str]] = None, store: Any = None, fetcher=fetch, clock=time.time) -> int:
     env = os.environ if env is None else env
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stderr)
+    page_url = env.get("REPORTED_HASHRATE_PAGE_URL", "").strip()
     url = env.get("REPORTED_HASHRATE_URL", "").strip()
-    if not url:
-        logger.info("Reported hashrate not configured (REPORTED_HASHRATE_URL unset): nothing to do")
+    if not page_url:
+        logger.info("Reported hashrate not configured (REPORTED_HASHRATE_PAGE_URL unset): nothing to do")
         return 0
+    if not url or "?" in url:
+        logger.error("Reported hashrate: REPORTED_HASHRATE_URL must be set, without a query, with the page URL")
+        return 1
     source = env.get("REPORTED_HASHRATE_SOURCE", "").strip() or "miningpoolstats"
     now = clock()
     try:
-        doc = fetcher(url, env.get("REPORTED_HASHRATE_USER_AGENT") or None, env.get("REPORTED_HASHRATE_REFERER") or None,
-                      now)
-    except Exception as e:   # the URL carries no credentials; the error names the status or the network failure
+        doc = fetcher(page_url, url, env.get("REPORTED_HASHRATE_USER_AGENT", "").strip() or DEFAULT_USER_AGENT)
+    except Exception as e:   # the URLs carry no credentials; the error names the status, the token or the network
         logger.error("Reported hashrate fetch failed: %s", e)
         return 1
     if not isinstance(doc, dict):

@@ -111,19 +111,32 @@ class MainTests(unittest.TestCase):
             self.assertEqual(rh.main(env={}, store=self.Store(), fetcher=no_fetch), 0)
         self.assertIn("not configured", logs.output[0])
 
-    def test_writes_with_headers_and_default_source(self):
+    PAGE = "https://stats.example/btc"
+    DATA = "https://stats.example/data.js"
+    ENV = {"REPORTED_HASHRATE_PAGE_URL": PAGE, "REPORTED_HASHRATE_URL": DATA}
+
+    def test_writes_with_the_default_user_agent_and_source(self):
         store, calls = self.Store(), []
-        env = {"REPORTED_HASHRATE_URL": "https://stats.example/data.js", "REPORTED_HASHRATE_USER_AGENT": "UA",
-               "REPORTED_HASHRATE_REFERER": "https://stats.example/"}
-        rc = rh.main(env=env, store=store, fetcher=lambda *a: calls.append(a) or doc(), clock=lambda: 1234.5)
+        rc = rh.main(env=dict(self.ENV), store=store, fetcher=lambda *a: calls.append(a) or doc())
         self.assertEqual(rc, 0)
-        self.assertEqual(calls, [("https://stats.example/data.js", "UA", "https://stats.example/", 1234.5)])
+        self.assertEqual(calls, [(self.PAGE, self.DATA, "stratum-work/1.0 (+https://stratum.work)")])
         self.assertEqual(len(store.written), 75)
         self.assertEqual({r["source"] for r in store.written}, {"miningpoolstats"})
+        calls.clear()
+        rh.main(env=dict(self.ENV, REPORTED_HASHRATE_USER_AGENT="UA"), store=store, fetcher=lambda *a: calls.append(a) or doc())
+        self.assertEqual(calls[0][2], "UA")
+
+    def test_page_without_data_url_or_with_a_query_is_an_error(self):
+        def no_fetch(*a):
+            raise AssertionError("must not fetch")
+        with self.assertLogs("backend.reported_hashrate", "ERROR"):
+            self.assertEqual(rh.main(env={"REPORTED_HASHRATE_PAGE_URL": self.PAGE}, store=self.Store(), fetcher=no_fetch), 1)
+            self.assertEqual(rh.main(env=dict(self.ENV, REPORTED_HASHRATE_URL=self.DATA + "?t=1"), store=self.Store(),
+                                     fetcher=no_fetch), 1)
 
     def test_failed_checks_write_nothing_and_exit_non_zero(self):
         store = self.Store()
-        env = {"REPORTED_HASHRATE_URL": "https://stats.example/data.js", "REPORTED_HASHRATE_SOURCE": "s"}
+        env = dict(self.ENV, REPORTED_HASHRATE_SOURCE="s")
         with self.assertLogs("backend.reported_hashrate", "ERROR"):
             self.assertEqual(rh.main(env=env, store=store, fetcher=lambda *a: doc(n=5)), 1)
             self.assertEqual(rh.main(env=env, store=store, fetcher=lambda *a: ["not", "an", "object"]), 1)
@@ -133,14 +146,28 @@ class MainTests(unittest.TestCase):
         def boom(*a):
             raise OSError("HTTP Error 403: Forbidden")
         with self.assertLogs("backend.reported_hashrate", "ERROR") as logs:
-            self.assertEqual(rh.main(env={"REPORTED_HASHRATE_URL": "https://stats.example/d"}, store=self.Store(),
-                                     fetcher=boom), 1)
+            self.assertEqual(rh.main(env=dict(self.ENV), store=self.Store(), fetcher=boom), 1)
         self.assertIn("403", logs.output[0])
 
-    def test_fetch_appends_the_time_and_sends_the_headers(self):
-        seen = {}
+
+class FetchTests(unittest.TestCase):
+    HTML = '<html><script>var coin = "bitcoin";\n  last_time = "1795125694";\n var x = 1;</script></html>'
+
+    def test_last_time_must_be_named_exactly_once(self):
+        self.assertEqual(rh.last_time(self.HTML), "1795125694")
+        self.assertEqual(rh.last_time("last_time=1795125694;" + self.HTML), "1795125694")   # same value twice: fine
+        for page in ("<html>no token</html>", 'last_time = "abc"', 'last_time = "123"', 'xlast_time = "1795125694"',
+                     self.HTML + 'last_time = "1795125699"'):
+            with self.assertRaises(ValueError, msg=page):
+                rh.last_time(page)
+
+    def fake_urlopen(self, responses):
+        seen = []
 
         class Resp:
+            def __init__(self, body):
+                self.body = body
+
             def __enter__(self):
                 return self
 
@@ -148,19 +175,33 @@ class MainTests(unittest.TestCase):
                 return False
 
             def read(self):
-                return b'{"hashrate": 1}'
+                return self.body
 
         def urlopen(req, timeout):
-            seen.update(url=req.full_url, ua=req.get_header("User-agent"), ref=req.get_header("Referer"), t=timeout)
-            return Resp()
+            seen.append(dict(url=req.full_url, ua=req.get_header("User-agent"), ref=req.get_header("Referer"),
+                             t=timeout))
+            return Resp(responses[len(seen) - 1])
         orig, rh.urllib.request.urlopen = rh.urllib.request.urlopen, urlopen
-        try:
-            self.assertEqual(rh.fetch("https://s.example/d.js", "UA", "https://s.example/", 99.9), {"hashrate": 1})
-            self.assertEqual(seen, dict(url="https://s.example/d.js?t=99", ua="UA", ref="https://s.example/", t=60))
-            rh.fetch("https://s.example/d.js?a=1", None, None, 5)
-            self.assertEqual((seen["url"], seen["ua"]), ("https://s.example/d.js?a=1&t=5", None))
-        finally:
-            rh.urllib.request.urlopen = orig
+        self.addCleanup(setattr, rh.urllib.request, "urlopen", orig)
+        return seen
+
+    def test_reads_the_page_then_the_file_with_its_token(self):
+        seen = self.fake_urlopen([self.HTML.encode(), b'{"hashrate": 1}'])
+        self.assertEqual(rh.fetch("https://s.example/btc", "https://s.example/d.js", "UA"), {"hashrate": 1})
+        self.assertEqual(seen, [dict(url="https://s.example/btc", ua="UA", ref=None, t=60),
+                                dict(url="https://s.example/d.js?t=1795125694", ua="UA", ref=None, t=60)])
+
+    def test_no_token_no_second_request_nothing_written(self):
+        seen = self.fake_urlopen([b"<html>changed</html>"])
+        with self.assertRaises(ValueError):
+            rh.fetch("https://s.example/btc", "https://s.example/d.js", "UA")
+        self.assertEqual(len(seen), 1)
+        store = MainTests.Store()
+        seen.clear()
+        with self.assertLogs("backend.reported_hashrate", "ERROR") as logs:
+            self.assertEqual(rh.main(env=dict(MainTests.ENV), store=store), 1)
+        self.assertIn("no last_time", logs.output[0])
+        self.assertEqual((len(seen), store.written), (1, []))
 
 
 @unittest.skipUnless(os.getenv("PG_TEST_HOST"), "set PG_TEST_HOST etc. to run against a migrated Postgres")

@@ -317,7 +317,8 @@ one figure. Each row is one hour of the site's hourly series for one pool (the s
 hour), stored with the site's network estimate at fetch time. It is the one table rewritten by design: a later fetch
 overwrites the hours it covers again with the site's latest values, and `fetched_at` says which fetch a row is from.
 Hours without a value have no row. A file that fails its sanity checks (too few pools, no network estimate, a series
-that doesn't reconstruct to the site's own last-hour average) is not written at all.
+that doesn't reconstruct to the site's own last-hour average) is not written at all, nor is anything when the site's
+page names no `last_time` token (the data file is fetched with it).
 
 ## Older history
 

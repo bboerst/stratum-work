@@ -8,10 +8,14 @@
  * Work on a stale Bitcoin block we recorded is Bitcoin work: the stale-blocks / fork view shows it (stale_tip_templates()).
  * A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here either.
  *
- * Two reads of the window (getEpisodePoolRows): a narrow anti-join finds where the candidates are, then a wide read
- * fetches only those, aggregated per (parent, pool); the route caches the summary for 30 min. The per-episode facts
- * (tip, Bitcoin bits) are looked up on the aggregated episodes only, by height through blocks_height. The drill-in reads one episode's pools at heights
- * h - 1 .. h + 1 within its receive times (± a margin): bounded by source, height and time.
+ * The summary per (parent, pool) is read from unknown_parent_pools (getEpisodePoolRows), counted facts the backend keeps
+ * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range of 90 days, a year or all
+ * history; "still unknown" is judged here, at read time, against bitcoin_parents. Until that table is filled, 90 days
+ * fall back to the live read of templates (getLiveEpisodePoolRows: a narrow anti-join finds where the candidates are,
+ * then a wide read fetches only those, aggregated per (parent, pool), the same aggregation the backend stores). The
+ * per-episode facts (tip, Bitcoin bits) are looked up on the aggregated episodes only, by height through
+ * blocks_height. The drill-in reads one episode's pools at heights h - 1 .. h + 1 within its receive times (± a
+ * margin): bounded by source, height and time.
  *
  * Redundant collection: rows are de-duplicated as exact copies across a pool's connections: the templates_copies key
  * (height, pool, prev_hash, merkle_branches, version, nbits, ntime) plus the copy number per connection (the k-th such
@@ -29,7 +33,12 @@
 import { getPgPool } from './pg';
 import type { TemplateRow } from './pg-mapping';
 
-export const UNKNOWN_PARENTS_DAYS = 90;
+export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window, and the default range
+
+/** The page's ranges: the episodes whose last template is within the last 90 or 365 days, or all of them. */
+export const UNKNOWN_PARENTS_RANGES = ['90d', '1y', 'all'] as const;
+export type UnknownParentsRange = typeof UNKNOWN_PARENTS_RANGES[number];
+export const RANGE_DAYS: Record<UnknownParentsRange, number | null> = { '90d': UNKNOWN_PARENTS_DAYS, '1y': 365, all: null };
 export const DRILL_MARGIN_MS = 5 * 60_000;      // receive-time margin around an episode in the drill-in
 export const DRILL_MAX_TEMPLATES = 5000;
 
@@ -85,7 +94,39 @@ export interface EpisodePoolSql {
 const ANTI_JOIN = `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = t.prev_hash)`;
 
 /**
- * The rows per (unknown parent, pool) over the window, in two reads of templates:
+ * The rows per (unknown parent, pool) of the range, from unknown_parent_pools: every pool's row of each parent that is
+ * no block we know now (bitcoin_parents) and whose last template (over the pools not excluded) is in the range. A
+ * stored row covers all of the parent's templates, so an episode that began before the range is shown whole. Same
+ * shape and order as the live read. Until the backend has filled the table, 90 days are read live.
+ */
+export async function getEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = '90d'): Promise<EpisodePoolSql[]> {
+  const pool = getPgPool();
+  const days = RANGE_DAYS[range];
+  if (range === '90d') {
+    const { rows } = await pool.query<{ filled: boolean }>(`SELECT EXISTS (SELECT 1 FROM unknown_parent_pools) AS filled`);
+    if (!rows[0]?.filled) return getLiveEpisodePoolRows(excludePools);
+  }
+  const since = days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString();
+  const { rows } = await pool.query<EpisodePoolSql>(
+    `WITH u AS (
+       SELECT u.*, max(u.last_received) OVER (PARTITION BY u.prev_hash) AS parent_last
+         FROM unknown_parent_pools u
+        WHERE u.pool <> ALL ($1::text[]) AND NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = u.prev_hash)
+     )
+     SELECT encode(stratum_prev_hash_to_block_hash(u.prev_hash), 'hex') AS parent, u.pool, u.n::bigint AS n,
+            (extract(epoch FROM u.first_received) * 1000)::bigint AS first_ms,
+            (extract(epoch FROM u.last_received) * 1000)::bigint AS last_ms,
+            u.auxpow::bigint AS auxpow, u.conns, u.heights, u.nbits
+       FROM u
+      WHERE $2::timestamptz IS NULL OR u.parent_last >= $2::timestamptz
+      ORDER BY first_ms, parent, u.pool`,
+    [excludePools, since],
+  );
+  return rows;
+}
+
+/**
+ * The rows per (unknown parent, pool) of the last UNKNOWN_PARENTS_DAYS days, read live, in two reads of templates:
  *  1. narrow: the (height, source_id) pairs with candidates, and their receive-time range. It reads only received_at,
  *     source_id, height and prev_hash, so it runs in parallel and decompresses little (one wide read of every column
  *     of every row in the window ran serially and took about 30 s on production; this one takes a second or two);
@@ -94,7 +135,7 @@ const ANTI_JOIN = `NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash
  *     The window and the anti-join are applied again, so the candidates are exactly those of a single read.
  * The window starts at the same instant in both reads (`since`).
  */
-export async function getEpisodePoolRows(excludePools: string[]): Promise<EpisodePoolSql[]> {
+export async function getLiveEpisodePoolRows(excludePools: string[]): Promise<EpisodePoolSql[]> {
   const pool = getPgPool();
   const since = new Date(Date.now() - UNKNOWN_PARENTS_DAYS * 86_400_000).toISOString();
   const excludedIds = excludePools.length === 0 ? [] : (await pool.query<{ id: number }>(

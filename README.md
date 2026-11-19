@@ -61,7 +61,6 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
 | [`helm-charts/`](helm-charts/) | Charts for [collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md) and [webapp](helm-charts/stratum-work-webapp/README.md) | Helm |
-| [`tools/site-compare/`](tools/site-compare/README.md) | Compares two deployed sites through their public API only | Python |
 | [`docs/`](docs/) | Field documentation and [design docs](docs/design/postgres-timescale.md) | |
 
 ## Quick start (docker compose)
@@ -111,6 +110,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `BLOCK_GAP_WINDOW` | `144` | Heights below the tip the backend checks against the node's active chain after each sync, new block and reorg: missing blocks are fetched, blocks a reorg replaced are swapped for the node's and marked stale (0 = off; see "Best chain" below) |
 | `BLOCK_GAP_FILL_INTERVAL_S` | `3600` | Seconds between runs of the historical gap fill (also once after the startup sync): every height missing between `MIN_BLOCK_HEIGHT` and the stored tip is fetched, on a pruned node through `getblockfrompeer` (0 = off; see "Historical gaps" below) |
 | `BLOCK_GAP_FILL_MAX_BLOCKS` / `_PEERS` / `_PEER_TIMEOUT_S` | `50` / `3` / `30` | Per gap-fill run: blocks at most, peers tried per pruned block, seconds to wait for each peer |
+| `UNKNOWN_PARENTS_ENABLED` | `true` | Keep the unknown-parents summary (`unknown_parent_pools`) up to date: after each new block over the last two hours, and once after the startup sync over the last seven days (`false` = off; see "Unknown parents" below) |
 | `BEST_CHAIN_HISTORY_INTERVAL_S` | `86400` | Seconds between runs of the full-history best-chain check (also once after the startup sync): the stored best block at every height between `MIN_BLOCK_HEIGHT` and the stored tip is compared with the node's (0 = off; see "Best chain, full history" below) |
 | `POSTGRES_PORT` | `5432` | Host port of the Postgres service |
 | `COLLECTOR_PG_*` / `BACKEND_PG_*` / `WEB_PG_*` | the local `postgres` service, each as its own user | Point a component at another database (`_HOST`, `_PORT`, `_DATABASE`, `_USER`, `_PASSWORD`, and `_SSLMODE` for collectors and web) |
@@ -208,6 +208,13 @@ cd backend && python -m stale_import --csv /tmp/stale-blocks/stale-blocks.csv --
 
 **Best chain, full history**: the best-chain check above only covers the recent window, so a wrong block deeper down (e.g. a history backfill that stored a block which later lost a race, while the winner isn't stored) stays wrong. Once after the startup sync and then every `BEST_CHAIN_HISTORY_INTERVAL_S` seconds (default daily), the backend compares the stored best block at every height between `MIN_BLOCK_HEIGHT` and the stored tip with the node's, in chunks of 2,000 heights: one indexed read and one `getblockhash` per height, outside the block processor, so new blocks aren't delayed. Only the fixes run on the block processor: the node's block is stored first, as a synced block (`seen_at` NULL: it wasn't seen live), on a pruned node through the gap fill's `getblockfrompeer` path, and only then is the stored block marked replaced, the same way as above. A height with no stored block is left to the gap fill. Marking a block replaced needs its header from the node (`getblockheader`); if the node never saw that block it has no header, the block stays in `blocks_best` next to the node's, and the height is logged as failed and retried on the next run. Each run logs one summary line (checked, mismatched, stored, replaced, failed, duration).
 
+**Unknown parents**: the web's [Unknown parents](docs/methodology.md#unknown-parents) page reads `unknown_parent_pools`, which the backend keeps current from the last hours of templates (`UNKNOWN_PARENTS_ENABLED`). A new database, or history from before the backend ran, is filled by the backfill, run once from `backend/` with the backend's `PG_*` settings (as a user in the `stratum_backend` role); it walks the templates in 7-day chunks, logs each, prints a JSON summary, and can be re-run at any time (each parent is recomputed whole):
+```bash
+python -m unknown_parents --backfill                      # from the first template to now
+python -m unknown_parents --backfill --from 2026-01-01 --to 2026-02-01 --chunk 1d
+```
+Until the table has rows, the page's 90-day view reads templates directly.
+
 **Migrations:** `docker run --rm -v "$PWD/db:/db" ghcr.io/amacneil/dbmate:2.37.0 new <name>`, then fill `-- migrate:up` and a working `-- migrate:down`. TimescaleDB procedures such as `add_columnstore_policy` need `-- migrate:up transaction:false`. `db/test-migrations.sh` runs them up/down/up and checks the role privileges.
 
 **Not in compose:** the mempool recorder. Run it from its directory (`go run . -h` lists flags and env fallbacks) against the compose Postgres; it logs in as the local user `mempool` / `mempool` (`db/dev-users.sql`, role `stratum_mempool`) and needs a node with `-zmqpubsequence` / `-zmqpubrawtx` ([README](mempool-recorder/README.md)).
@@ -216,7 +223,7 @@ cd backend && python -m stale_import --csv /tmp/stale-blocks/stale-blocks.csv --
 
 ### Getting data
 - **Collect your own.** Connect a node, set `MIN_BLOCK_HEIGHT` near the tip, and let a few collectors run: `docker compose up -d --build web backend collector-f2pool collector-antpool`. A few hours give dozens of heights; every height has a few hundred templates per pool. Without a node you still get templates (but no blocks).
-- **From the public site.** The web's JSON API is read-only and public (below). [`tools/site-compare`](tools/site-compare/README.md) shows how to fetch it politely (rate limit, retries, cache).
+- **From the public site.** The web's JSON API is read-only and public (below). Fetch it politely: a request or two per second, honor `Retry-After`, and cache what you've read.
 
 ### The schema in one table
 All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-timescale.md) explains the choices. Hashes and hex fields are `bytea`; `encode(x, 'hex')` shows them.
@@ -226,6 +233,7 @@ All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-t
 | `sources` | One row per collector connection: `name` (the pool), `site`, `replica` |
 | `templates` | Every template, one row per `mining.notify`, whatever chain it is for (hypertable on `received_at`, indexed on `(height, source_id, received_at)`). `prev_hash` is in Stratum's word order; `height` is as the pool sent it (0 if unparseable) |
 | `bitcoin_parents` | The blocks we know (`blocks` and `stale_blocks`) by `prev_hash` in Stratum's order: a template whose `prev_hash` isn't here doesn't build on our Bitcoin chain |
+| `unknown_parent_pools` | The backend's summary of templates on a parent that was no known block, per (`prev_hash`, `pool`): de-duplicated count `n`, `first_received` / `last_received`, `auxpow`, connection ranks `conns`, `heights` and `nbits` (jsonb value → templates). Facts only: join `bitcoin_parents` at read time to keep the still-unknown ones ([methodology](docs/methodology.md#unknown-parents)) |
 | `template_routing_labels` | The old write-time chain classification (`chain`, `reason`) of the rows that were in the former `templates_other` table, kept as a fact |
 | `templates_dedup(h1, h2, t1, t2)` / `templates_copies(…)` | One stream per pool when a pool is collected over several connections, for heights `h1`–`h2` received in `[t1, t2]`: `templates_dedup` is what reads show, `templates_copies` classifies every row (`primary`, `copy`, `secondary_stream`, `gap_fill`). With one collector per pool, `templates_dedup` = the raw rows. `height_window(h1, h2)` gives a height range's receive window (`t_from`, `t_to`); pass `'-infinity', 'infinity'` for every row at the heights. The bounds go to chunk exclusion, so pass them as values |
 | `blocks`, `blocks_best` | Every block stored (keyed by hash, so stale and best blocks coexist); `blocks_best` hides the currently stale ones. `block_hash` is in display (explorer) order. `mining_pool` and `analysis` are jsonb |
@@ -271,7 +279,7 @@ SELECT t.pool, hash_display(m.txid) AS txid, m.first_seen, m.fee::numeric / m.vs
   FROM templates_dedup(925000, 925000, (SELECT t_from FROM height_window(925000, 925000)), (SELECT t_to FROM height_window(925000, 925000))) t
   JOIN mempool_txs m ON m.txid = substring(t.merkle_branches FROM 1 FOR 32);
 
--- Templates that don't build on a block we know, per pool (last day; /api/unknown-parents groups 90 days by parent)
+-- Templates that don't build on a block we know, per pool (last day; /api/unknown-parents groups them by parent, from unknown_parent_pools)
 SELECT s.name AS pool, count(*), min(t.height), max(t.height)
   FROM templates t JOIN sources s ON s.id = t.source_id
  WHERE t.received_at > now() - interval '1 day'
@@ -283,9 +291,6 @@ SELECT height, pool, tip, templates, mined_after_switch
   FROM stale_tip_templates((SELECT max(height) - 100 FROM blocks_best), (SELECT max(height) + 1 FROM blocks_best));
 
 ```
-
-### Tools
-- [`tools/site-compare`](tools/site-compare/README.md): two deployed sites through their public API only, height by height. Gentle by default (2 requests/s, retries honoring `Retry-After`, a response cache). Keep reports of real sites out of the repository.
 
 ### Public API
 Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.work/api/...`). The public sites rate-limit per client; cache what you fetch, and prefer your own instance for bulk reads.
@@ -299,8 +304,8 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them |
-| `GET /api/unknown-parents` | Templates of the last 90 days whose previous block is no block we know, as episodes (one per parent): height, pools with their connections (a/b), first / last receive time, duration, templates (exact copies on a pool's connections count once), AuxPoW share, the facts (tip when first seen, offset from it, nbits, Bitcoin's bits at height − 1, proof of work, recorded as stale) and the kind inferred from them (`bitcoin_block`, `other_chain`, `invalid_parent`, `undetermined`; [rules](docs/methodology.md#unknown-parents)). Recomputed every 30 minutes |
-| `GET /api/unknown-parents?parent=<hex>` | One episode's details: every template from its pools at heights h − 1 … h + 1 within its minutes ± 5, decoded (scriptSig height, tags, AuxPoW root, outputs) and labelled by the parent it built on (`best`, `stale`, `this`, `other`), plus the blocks we know at h − 1 and h with their arrival |
+| `GET /api/unknown-parents?range=90d\|1y\|all` | Templates whose previous block is no block we know, over the last 90 days (default), the last year or all history, as episodes (one per parent): height, pools with their connections (a/b), first / last receive time, duration, templates (exact copies on a pool's connections count once), AuxPoW share, the facts (tip when first seen, offset from it, nbits, Bitcoin's bits at height − 1, proof of work, recorded as stale) and the kind inferred from them (`bitcoin_block`, `other_chain`, `invalid_parent`, `undetermined`; [rules](docs/methodology.md#unknown-parents)). Read from the backend's `unknown_parent_pools`; recomputed every 5 minutes |
+| `GET /api/unknown-parents?parent=<hex>[&range=…]` | One episode's details: every template from its pools at heights h − 1 … h + 1 within its minutes ± 5, decoded (scriptSig height, tags, AuxPoW root, outputs) and labelled by the parent it built on (`best`, `stale`, `this`, `other`), plus the blocks we know at h − 1 and h with their arrival |
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md)) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 
@@ -327,7 +332,6 @@ backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork
 backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, full-history check
 backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
-tools/site-compare/test-e2e.sh         # unit tests + two fake sites over HTTP
 ```
 Client performance: `npm run perf` against a running production build ([web/perf/README.md](web/perf/README.md)).
 
@@ -377,9 +381,9 @@ The backend runs analytics plug-ins for each processed block. They inspect the t
 Guidelines: keep findings small (what the UI needs to render); keep the logic deterministic and scoped to the height's templates; with several collectors per pool the templates are every collector's rows (`site` / `replica` say which), so group by pool or pair exact copies per collector as `invalid_coinbase_no_merkle.py` does, rather than counting rows; use the shared logger and never log secrets.
 
 ## Further reading
-- [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, backups, migration plan, redundant collection.
+- [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, history migration, redundant collection.
 - [How the data is measured](docs/methodology.md): what each value is, how it was taken, and its limits.
-- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
+- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 
 **License:** [MIT](LICENSE), © the stratum.work contributors.

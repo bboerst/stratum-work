@@ -1,8 +1,9 @@
 /**
  * /api/unknown-parents against mocked database functions: disabled history touches no database, parameter
- * validation, POOL_BLACKLIST passed to every read, the summary cache (one read per period, served stale while a
- * refresh runs, a failure not kept), the drill-in looked up in the summary and cached, and the episode assembly
- * (draftEpisodes / finishEpisodes).
+ * validation (parent, range), POOL_BLACKLIST passed to every read, the range passed to the summary read with its
+ * window, the summary cache per range (one read per period, served stale while a refresh runs, a failure not kept),
+ * the drill-in looked up in its range's summary and cached, the table-or-live choice (the live 90-day read only while
+ * the backend's table is empty), and the episode assembly (draftEpisodes / finishEpisodes).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrillRows, EpisodeFactsSql, EpisodePoolSql } from '../db/unknown-parents';
@@ -30,7 +31,7 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   vi.resetModules();
   vi.stubEnv('POOL_BLACKLIST', blacklist);
   vi.stubEnv('EXTRANONCE1_MASK_KEY', 'route-key');
-  const getEpisodePoolRows = vi.fn<(exclude: string[]) => Promise<EpisodePoolSql[]>>(async () => [poolRow()]);
+  const getEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => [poolRow()]);
   const getEpisodeFacts = vi.fn<(q: unknown[]) => Promise<EpisodeFactsSql[]>>(async () => [facts()]);
   const getDrillRows = vi.fn<(q: unknown, exclude: string[]) => Promise<DrillRows>>(async () => drillRows());
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
@@ -64,7 +65,7 @@ describe('GET /api/unknown-parents', () => {
     const res = await get(route);
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
     const body = await res.json();
-    expect(body).toMatchObject({ enabled: true, supported: true, days: 90 });
+    expect(body).toMatchObject({ enabled: true, supported: true, range: '90d', days: 90 });
     expect(body.generated_at - body.window_start).toBe(90 * 86_400_000);
     expect(getEpisodeFacts).toHaveBeenCalledWith([{ parent: P1, height: 900_001, first_ms: 1000 }]);
     expect(body.episodes).toEqual([{
@@ -105,7 +106,32 @@ describe('GET /api/unknown-parents', () => {
   it('passes POOL_BLACKLIST to the summary read', async () => {
     const { route, getEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden, Other' });
     await get(route);
-    expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other']);
+    expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '90d');
+  });
+
+  it('reads the range asked for, with its window, cached per range; rejects others', async () => {
+    const { route, getEpisodePoolRows } = await loadRoute();
+    const y = await (await get(route, '?range=1y')).json();
+    expect(y).toMatchObject({ range: '1y', days: 365 });
+    expect(y.generated_at - y.window_start).toBe(365 * 86_400_000);
+    const all = await (await get(route, '?range=all')).json();
+    expect(all).toMatchObject({ range: 'all', days: null, window_start: 1000 });   // the first episode's first template
+    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['1y', 'all']);
+    await get(route, '?range=1y');
+    await get(route);
+    expect(getEpisodePoolRows.mock.calls.map(c => c[1])).toEqual(['1y', 'all', '90d']);
+    for (const qs of ['?range=30d', '?range=', `?range=ALL&parent=${P1}`]) expect((await get(route, qs)).status, qs).toBe(400);
+    getEpisodePoolRows.mockImplementation(async () => []);
+    const none = await (await get(route, '?range=all&x=1')).json();          // cached: still the first result
+    expect(none.episodes).toHaveLength(1);
+  });
+
+  it('looks a drill-in up in its range', async () => {
+    const { route, getEpisodePoolRows, getDrillRows } = await loadRoute();
+    getEpisodePoolRows.mockImplementation(async (_x, range) => (range === 'all' ? [poolRow()] : []));
+    expect((await get(route, `?parent=${P1}`)).status).toBe(404);
+    expect((await get(route, `?parent=${P1}&range=all`)).status).toBe(200);
+    expect(getDrillRows).toHaveBeenCalledTimes(1);
   });
 
   it('computes the summary once per period and serves it stale while refreshing', async () => {
@@ -118,7 +144,7 @@ describe('GET /api/unknown-parents', () => {
     expect((await (await get(route)).json()).episodes).toHaveLength(1);
     await get(route);
     expect(getEpisodePoolRows).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(Date.now() + 31 * 60_000);   // past SUMMARY_MS (30 min)
+    vi.setSystemTime(Date.now() + 6 * 60_000);    // past SUMMARY_MS (5 min)
     expect((await (await get(route)).json()).episodes).toHaveLength(1);
     expect((await (await get(route)).json()).episodes).toHaveLength(1);
     expect(getEpisodePoolRows).toHaveBeenCalledTimes(2);
@@ -157,5 +183,47 @@ describe('episode assembly', () => {
     expect(e.kind).toBe('bitcoin_block');
     expect(ff.kind).toBe('undetermined');
     expect(ff.facts).toMatchObject({ tip_at_first: null, tip_offset: null, bitcoin_bits: null, pow_ok: false, pow_bits: '17034219' });
+  });
+});
+
+describe('summary source', () => {
+  afterEach(() => { vi.doUnmock('../db/pg'); });
+
+  // getEpisodePoolRows with a mocked pool: the first query is the emptiness check
+  async function load(filled: boolean) {
+    vi.resetModules();
+    const sql: string[] = [];
+    const query = vi.fn(async (text: string, params?: unknown[]) => {
+      sql.push(text);
+      if (text.includes('EXISTS (SELECT 1 FROM unknown_parent_pools)')) return { rows: [{ filled }] };
+      return { rows: [], params };
+    });
+    vi.doMock('../db/pg', () => ({ getPgPool: () => ({ query }) }));
+    const db = await import('../db/unknown-parents');
+    return { db, sql, query };
+  }
+
+  it('reads the table, with the range as a bound, judging "unknown" at read time', async () => {
+    const { db, sql, query } = await load(true);
+    await db.getEpisodePoolRows(['Hidden'], '90d');
+    await db.getEpisodePoolRows(['Hidden'], 'all');
+    const reads = query.mock.calls.filter(c => c[0].includes('FROM unknown_parent_pools u'));
+    expect(reads).toHaveLength(2);
+    expect(reads[0][0]).toContain('NOT EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = u.prev_hash)');
+    expect(reads[0][1]![0]).toEqual(['Hidden']);
+    expect(Date.now() - Date.parse(reads[0][1]![1] as string)).toBeGreaterThanOrEqual(90 * 86_400_000);
+    expect(reads[1][1]).toEqual([['Hidden'], null]);
+    expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
+  });
+
+  it('falls back to the live 90-day read of templates while the table is empty (90 days only)', async () => {
+    const { db, sql } = await load(false);
+    await db.getEpisodePoolRows([], '90d');
+    expect(sql.some(t => t.includes('FROM templates t'))).toBe(true);
+    expect(sql.some(t => t.includes('FROM unknown_parent_pools u'))).toBe(false);
+    sql.length = 0;
+    await db.getEpisodePoolRows([], '1y');
+    expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
+    expect(sql.some(t => t.includes('FROM unknown_parent_pools u'))).toBe(true);
   });
 });

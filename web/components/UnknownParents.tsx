@@ -7,14 +7,15 @@ import { useElementWidth } from "@/visuals/framework/useElementWidth";
 import { laneSegments, layoutTimeline, timeX } from "./unknown-parents/layout";
 
 /**
- * Unknown parents (/api/unknown-parents): templates of the last 90 days built on a block we don't know, as episodes
- * (one per parent). The server aggregates, reads the facts, infers the kind and decodes; this component draws a few
- * dozen episodes (timeline, table) and one episode's pools as swimlanes. How the kinds are inferred is in
+ * Unknown parents (/api/unknown-parents): templates built on a block we don't know, as episodes (one per parent), over
+ * the last 90 days, the last year or all history. The server aggregates, reads the facts, infers the kind and decodes;
+ * this component draws the episodes (timeline, table) and one episode's pools as swimlanes. How the kinds are inferred is in
  * docs/methodology.md (linked from the header), not on the page.
  */
 
 type Kind = "bitcoin_block" | "other_chain" | "invalid_parent" | "undetermined";
 type ParentLabel = "best" | "stale" | "this" | "other";
+type Range = "90d" | "1y" | "all";
 
 interface Episode {
   parent: string;
@@ -44,7 +45,8 @@ interface Episode {
 interface SummaryResponse {
   enabled: boolean;
   supported: boolean;
-  days?: number;
+  range?: Range;
+  days?: number | null;
   window_start?: number;
   generated_at?: number;
   episodes?: Episode[];
@@ -92,6 +94,9 @@ interface DrillResponse {
 const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/methodology.md#unknown-parents";
 
 const KINDS: Kind[] = ["bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
+const RANGES: Range[] = ["90d", "1y", "all"];
+const RANGE_LABEL: Record<Range, string> = { "90d": "90d", "1y": "1y", all: "All" };
+const RANGE_TEXT: Record<Range, string> = { "90d": "last 90 days", "1y": "last year", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
   bitcoin_block: "Bitcoin block",
   other_chain: "Other chain",
@@ -207,7 +212,11 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   const [hover, setHover] = useState<{ parent: string; x: number; y: number } | null>(null);
   const ticks = useMemo(() => {
     const s = d3.scaleUtc().domain([start, end]).range([0, plotW]);
-    return s.ticks(d3.utcMonth.every(1)!).map(d => ({ x: s(d), label: d3.utcFormat("%b")(d) }));
+    // months up to about four months, then quarters (the year at January), then years
+    const days = (end - start) / 86_400_000;
+    const every = days <= 130 ? d3.utcMonth.every(1)! : days <= 800 ? d3.utcMonth.every(3)! : d3.utcYear.every(1)!;
+    const label = (d: Date) => days > 800 || (days > 130 && d.getUTCMonth() === 0) ? d3.utcFormat("%Y")(d) : d3.utcFormat("%b")(d);
+    return s.ticks(every).map(d => ({ x: s(d), label: label(d) }));
   }, [start, end, plotW]);
   const h = layout.pools.length * ROW_H + AXIS_H;
   const hovered = hover ? byParent.get(hover.parent) : null;
@@ -215,7 +224,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
   return (
     <div ref={ref} className="relative w-full">
       <svg width={width} height={h} role="img" className="block text-foreground/60">
-        <desc>One row per pool over the last {Math.round((end - start) / 86_400_000)} days; a mark per episode, as wide as it lasted, coloured by its inferred kind.</desc>
+        <desc>One row per pool over {Math.round((end - start) / 86_400_000)} days; a mark per episode, as wide as it lasted, coloured by its inferred kind.</desc>
         <g transform={`translate(${labelW},0)`}>
           {ticks.map(t => (
             <g key={t.x}>
@@ -444,19 +453,19 @@ function TemplateRow({ t }: { t: Template }) {
 
 const LIST_PAGE = 200;
 
-function DrillIn({ episode }: { episode: Episode }) {
+function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const [drill, setDrill] = useState<{ parent: string; data: DrillResponse } | null>(null);
   const [showList, setShowList] = useState(false);
   const [shown, setShown] = useState(LIST_PAGE);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     const ctl = new AbortController();
-    fetch(`/api/unknown-parents?parent=${episode.parent}`, { signal: ctl.signal })
+    fetch(`/api/unknown-parents?parent=${episode.parent}&range=${range}`, { signal: ctl.signal })
       .then(r => r.json())
       .then((d: DrillResponse) => setDrill({ parent: episode.parent, data: d }))
       .catch(e => { if (e?.name !== "AbortError") setDrill({ parent: episode.parent, data: { error: String(e) } }); });
     return () => ctl.abort();
-  }, [episode.parent]);
+  }, [episode.parent, range]);
   const data = drill?.parent === episode.parent ? drill.data : null;
   const templates = useMemo(() => data?.templates ?? [], [data]);
   const present = useMemo(() => new Set(templates.map(t => t.parent)), [templates]);
@@ -513,31 +522,49 @@ function DrillIn({ episode }: { episode: Episode }) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
+/** Keep a choice in the page's URL (shareable), without a navigation. */
+function setUrl(key: string, value: string | null) {
+  const url = new URL(window.location.href);
+  if (value === null) url.searchParams.delete(key); else url.searchParams.set(key, value);
+  window.history.replaceState(null, "", url);
+}
+
 export default function UnknownParents() {
-  const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const [range, setRange] = useState<Range>("90d");
+  // each range's last answer (switching back is instant; a late answer only fills its own range)
+  const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
   const [kind, setKind] = useState<Kind | "all">("all");
   const [selected, setSelected] = useState<string | null>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
 
+  const load = useCallback((r: Range) => fetch(`/api/unknown-parents?range=${r}`)
+    .then(res => res.json())
+    .then((d: SummaryResponse) => setLoaded(m => ({ ...m, [r]: d })))
+    .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
+
   useEffect(() => {
-    fetch("/api/unknown-parents")
-      .then(r => r.json())
-      .then((d: SummaryResponse) => {
-        setSummary(d);
-        // a shared link's episode (?parent=…)
-        const p = new URLSearchParams(window.location.search).get("parent");
-        if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
-      })
-      .catch(e => setSummary({ enabled: true, supported: true, error: String(e) }));
-  }, []);
+    // a shared link's range and episode (?range=…&parent=…)
+    const q = new URLSearchParams(window.location.search);
+    const r = RANGES.find(x => x === q.get("range")) ?? "90d";
+    const p = q.get("parent");
+    load(r).then(() => {
+      setRange(r);
+      if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
+    });
+  }, [load]);
+  const summary = loaded[range] ?? null;
 
   const select = useCallback((parent: string) => {
     setSelected(parent);
-    const url = new URL(window.location.href);
-    url.searchParams.set("parent", parent);
-    window.history.replaceState(null, "", url);
+    setUrl("parent", parent);
     requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }, []);
+  const chooseRange = (r: Range) => {
+    if (r === range) return;
+    setRange(r);
+    setUrl("range", r === "90d" ? null : r);
+    load(r);
+  };
 
   const all = useMemo(() => summary?.episodes ?? [], [summary]);
   const episodes = useMemo(() => (kind === "all" ? all : all.filter(e => e.kind === kind)), [all, kind]);
@@ -548,13 +575,30 @@ export default function UnknownParents() {
   }, [all]);
   const selectedEpisode = all.find(e => e.parent === selected) ?? null;
 
+  const shownRange = range;
+  const rangePicker = (
+    <div className="ml-auto inline-flex overflow-hidden rounded-full border border-border text-xs" role="group" aria-label="Range">
+      {RANGES.map(r => (
+        <button key={r} onClick={() => chooseRange(r)} aria-pressed={shownRange === r}
+          className={`px-3 py-1.5 transition-colors ${shownRange === r ? "bg-foreground/10" : "text-foreground/60 hover:bg-foreground/5"}`}>
+          {RANGE_LABEL[r]}
+        </button>
+      ))}
+    </div>
+  );
+
   let body: React.ReactNode;
-  if (!summary) body = <p className="py-12 text-center text-sm text-foreground/60">Loading…</p>;
+  if (!summary) body = (
+    <>
+      <div className="mb-5 flex">{rangePicker}</div>
+      <p className="py-12 text-center text-sm text-foreground/60">Loading…</p>
+    </>
+  );
   else if (summary.error) body = <p className="text-sm text-red-500">{summary.error}</p>;
   else if (!summary.enabled) body = <p className="text-sm text-foreground/60">Historical data is disabled on this deployment.</p>;
   else body = (
     <>
-      <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="Filter by kind">
+      <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by kind">
         {(["all", ...KINDS] as const).filter(k => k === "all" || counts[k]).map(k => (
           <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
             className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${kind === k ? "border-foreground/60 bg-foreground/10" : "border-border hover:bg-foreground/5"}`}>
@@ -563,6 +607,7 @@ export default function UnknownParents() {
             <span className="font-mono text-foreground/60">{k === "all" ? all.length : counts[k]}</span>
           </button>
         ))}
+        {rangePicker}
       </div>
       {all.length > 0 && summary.window_start && summary.generated_at && (
         <div className="mb-8 rounded-xl border border-border p-4">
@@ -571,7 +616,7 @@ export default function UnknownParents() {
         </div>
       )}
       <div ref={detailsRef} className="scroll-mt-4">
-        {selectedEpisode && <DrillIn key={selectedEpisode.parent} episode={selectedEpisode} />}
+        {selectedEpisode && <DrillIn key={selectedEpisode.parent} episode={selectedEpisode} range={shownRange} />}
       </div>
       <div className="mt-8">
         <EpisodeTable episodes={episodes} selected={selected} onSelect={select} />
@@ -589,7 +634,7 @@ export default function UnknownParents() {
             <Info className="h-4 w-4" />
           </a>
         </h1>
-        <p className="mt-1 text-sm text-foreground/60">Templates built on a block we don&apos;t know · last {summary?.days ?? 90} days</p>
+        <p className="mt-1 text-sm text-foreground/60">Templates built on a block we don&apos;t know · {RANGE_TEXT[shownRange]}</p>
       </div>
       {body}
     </div>

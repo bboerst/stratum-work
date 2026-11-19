@@ -82,6 +82,11 @@ HEADER_FILL_MAX_BLOCKS = int(os.getenv("HEADER_FILL_MAX_BLOCKS", "20000"))
 # merkle branches get them (and the coinbase txid) from getblock verbosity 1, newest first, until the first block
 # the node has pruned. 0 = off. Postgres only.
 COINBASE_FILL_MAX_BLOCKS = int(os.getenv("COINBASE_FILL_MAX_BLOCKS", "1000"))
+# Unknown-parents summary (unknown_parents.py): once after the startup sync over the last 7 days, then after each new
+# block over the last 2 hours, the per-(parent, pool) facts the web's /unknown-parents page reads are recomputed for
+# every parent of those templates that is no block we know. Its own thread and connection: new blocks never wait for
+# it. Older history: `python -m unknown_parents --backfill`. false = off.
+UNKNOWN_PARENTS_ENABLED = os.getenv("UNKNOWN_PARENTS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
 
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
@@ -804,6 +809,9 @@ def zmq_listener():
                         block_processor.submit(reconcile_recent_window)
                         if stale_tracker is not None:
                             stale_tracker.request_poll()   # a new tip may have made another branch stale
+                        if unknown_parents_refresher is not None:
+                            # after the block is stored (the queue is in order), so it is a known parent by then
+                            block_processor.submit(unknown_parents_refresher.request)
                         
                 except Exception as inner_e:
                     logger.error("Error processing ZMQ message: %s", inner_e)
@@ -893,10 +901,36 @@ def best_chain_history_check(fetcher=None):
         fetcher=fetcher or gap_filler(), min_height=MIN_BLOCK_HEIGHT, chunk=BEST_CHAIN_HISTORY_CHUNK)
 
 
+# --- Unknown-parents summary (unknown_parents.py) ---
+unknown_parents_refresher = None
+
+
+def start_unknown_parents_refresher():
+    """After the startup sync (the blocks it stores are known parents, so they aren't summarised as unknown): the
+    refresher's first run, then one per new block, on its own thread and its own connection."""
+    global unknown_parents_refresher
+    if not (UNKNOWN_PARENTS_ENABLED and store.enabled):
+        logger.info("Unknown-parents summary off (UNKNOWN_PARENTS_ENABLED=%s, storage enabled=%s)",
+                    UNKNOWN_PARENTS_ENABLED, store.enabled)
+        return
+    try:
+        from unknown_parents import UnknownParentsRefresher
+        # a second store of the same kind: its own connection, so a refresh never holds the block writes' lock
+        refresher = UnknownParentsRefresher(type(store).from_env())
+    except Exception as e:
+        logger.error("Unknown-parents summary not started: %s", e)
+        return
+    threading.Thread(target=refresher.run_forever, daemon=True, name="unknown_parents").start()
+    unknown_parents_refresher = refresher
+    logger.info("Unknown-parents summary started")
+
+
 def sync_then_fill_gaps():
-    """The startup sync, then the historical gap fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history
-    best-chain check (every BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
+    """The startup sync, then the unknown-parents summary (unknown_parents.py, on its own thread), the historical gap
+    fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history best-chain check (every
+    BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
     sync_blocks()
+    start_unknown_parents_refresher()
     fill = BLOCK_GAP_FILL_INTERVAL_S > 0 and store.enabled
     check = BEST_CHAIN_HISTORY_INTERVAL_S > 0 and store.enabled
     if not fill:

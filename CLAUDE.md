@@ -7,12 +7,11 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 |---|---|---|
 | `collector-go/` | The collector (#148): connects to one pool over Stratum, one process per pool. Writes each `mining.notify` to Postgres (`templates`) and RabbitMQ, with latency estimates and kernel receive timestamps; `/livez` `/readyz` `/metrics`. The node and chain-detection flags are accepted and ignored (every template goes to `templates`, classified at read time, [design](docs/design/one-templates-table.md)); passwords from env only. Golden test against a frozen fixture from the removed Python collector (`testdata/golden.json`). | Go |
 | `mempool-recorder/` | Follows the Bitcoin node's mempool over ZMQ (`sequence` + `rawtx`) and records every transaction with first-seen time and how it left (mined, replaced, conflict, reorg, expired, evicted) in `mempool_txs`; blocks and off-mempool block transactions too (#180). Race-free sync and resync, `/livez` `/readyz` `/metrics`. ([README](mempool-recorder/README.md)) | Go |
-| `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks`, runs analytics plug-ins (`backend/analytics/`, see [README "Adding an analyzer"](README.md#adding-an-analyzer)), publishes block events. | Python |
-| `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views, unknown parents (templates on a block we don't know, as episodes with an inferred kind, over 90 days). API routes in `web/app/api/`, data layer in `web/lib/db/`. | TypeScript, Next.js 16 |
+| `backend/` | Follows the Bitcoin node (RPC + ZMQ `hashblock`). Writes `blocks` and the unknown-parents summary (`unknown_parents.py`, with a `--backfill` CLI), runs analytics plug-ins (`backend/analytics/`, see [README "Adding an analyzer"](README.md#adding-an-analyzer)), publishes block events. | Python |
+| `web/` | Next.js app: realtime table, template details, timing, Sankey, infra/latency views, unknown parents (templates on a block we don't know, as episodes with an inferred kind, over 90 days, a year or all history, read from the backend's `unknown_parent_pools`). API routes in `web/app/api/`, data layer in `web/lib/db/`. | TypeScript, Next.js 16 |
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
 | `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
 | `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |
-| `tools/site-compare/` | Compares two deployed sites through their public API only (blocks, templates by job key, first seen, pools), for checking a new stack before switching to it ([README](tools/site-compare/README.md)) | Python |
 
 ## Run it
 ```bash
@@ -36,7 +35,6 @@ db/test-migrations.sh                   # migrations up/down/up + role privilege
 backend/test-stale-blocks-e2e.sh        # stale blocks: two regtest nodes, fork + reorg (Docker)
 backend/test-reorg-reconcile-e2e.sh     # best chain across reorgs: tracker off, backend down, 2 deep, full-history check (Docker)
 backend/test-block-gap-fill-e2e.sh      # historical gaps on a pruned node, filled via getblockfrompeer (Docker)
-tools/site-compare/test-e2e.sh          # site comparison: unit tests + two synthetic fake sites over HTTP (Docker)
 ```
 [README "Testing and CI"](README.md#testing-and-ci) shows how to run them inside the containers and what CI checks.
 

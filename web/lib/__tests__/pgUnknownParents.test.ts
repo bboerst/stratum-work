@@ -6,9 +6,14 @@
  *                     connections, an exact copy counted once) and the blacklisted pool
  *  B  invalid_parent  an (almost) all-ff hash at H + 1 with Bitcoin's nbits
  *  C  other_chain     a parent at a height far below our tip, with other nbits
+ *  D  other_chain     a parent whose last template is 200 days old: in the year and all history, not in 90 days
+ *  E  a parent recorded as a block after the summary was written: gone at read time, its row untouched
  * Parent hashes are asymmetric (they meet the target only read in display order), so a byte-order slip fails here.
- * Covered: episodes, pools and a/b connections, counts, facts, kinds, blacklist exclusion (counts, chips, drill-in,
- * site names never returned), the drill-in's parent labels and blocks, and extranonce1 masking.
+ * The summary is read through unknown_parent_pools, filled here (as the owner) by the function the backend calls
+ * (unknown_parent_pools_refresh(), backend/unknown_parents.py), and compared field for field with the web's live
+ * two-step read of templates (getLiveEpisodePoolRows). Covered: episodes, pools and a/b connections, counts, facts,
+ * kinds, ranges, blacklist exclusion (counts, chips, drill-in, site names never returned), the drill-in's parent
+ * labels and blocks, and extranonce1 masking.
  *
  * Shared database: other suites insert blocks too. The tip is "the highest best block that had arrived by the first
  * template", so this suite's blocks sit above every other suite's heights except pgBlocksBest's top (9,000,000 +),
@@ -33,6 +38,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
   const hidden = `wunkx-${run}`;           // blacklisted
   const H = 8_000_000 + run * 20;          // our chain: best blocks at H - 2, H - 1, H; the race is at H - 1
   const HC = 5_000_000 + run * 20;         // the other chain's height
+  const HD = 6_000_000 + run * 20;         // D's
   const DAY = 86_400;
   const T0 = Math.floor(Date.now() / 1000) - 80 * DAY;   // the best block at H - 1 arrives (inside the 90-day window)
   const BITS = 0x207fffff;                 // target 0x7fffff << 232: a hash starting 00 meets it, one starting ff doesn't
@@ -43,6 +49,8 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
   const X_B = 'ff'.repeat(29) + r3;                          // all ff but this run's bytes (episodes are per parent)
   const X_C = '00000000' + r3 + '3c'.repeat(21) + 'ffffffff';
   const X_H = '00' + r3 + '77'.repeat(24) + 'ffffffff';       // only the blacklisted pool builds on it
+  const X_D = '00000000' + r3 + '4d'.repeat(21) + 'ffffffff';
+  const X_E = '00' + r3 + '8e'.repeat(24) + 'ffffffff';
   const blk = (k: string) => '0000' + r3 + k.repeat(26) + '00';   // our blocks (display order)
   const [B2, B1, B0, S1] = [blk('b2'), blk('b1'), blk('b0'), blk('51')];  // H - 2, H - 1, H; S1: stale at H - 1
   const EN1 = { [single]: 'c0ffee11', [`${multi}/a`]: 'c0ffee12', [`${multi}/b`]: 'c0ffee13', [hidden]: 'c0ffee14' } as Record<string, string>;
@@ -76,7 +84,9 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
   };
   type Ep = { parent: string; kind: string; height: number; templates: number; pools: { pool: string; connections: string[]; templates: number }[];
     facts: Record<string, unknown>; first_ms: number; last_ms: number; duration_ms: number; auxpow_templates: number };
-  const mine = (eps: Ep[]) => eps.filter(e => [X_A, X_B, X_C, X_H].includes(e.parent));
+  const ALL = [X_A, X_B, X_C, X_H, X_D, X_E];
+  const mine = (eps: Ep[]) => eps.filter(e => ALL.includes(e.parent));
+  let db: typeof import('../db/unknown-parents');
 
   beforeAll(async () => {
     vi.resetModules();
@@ -125,10 +135,26 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     await insert(`${multi}/a`, 1004, HC + 1, 'c3', X_C, { nbits: OTHER_NBITS }); // a second height, outvoted
     // only the blacklisted pool: no episode at all
     await insert(hidden, 2000, HC, 'x2', X_H, { nbits: OTHER_NBITS });
+    // D: 200 days ago (120 days before T0)
+    await insert(single, -120 * DAY, HD, 'd1', X_D, { nbits: OTHER_NBITS });
+    await insert(single, -120 * DAY + 30, HD, 'd2', X_D, { nbits: OTHER_NBITS });
+    // E: unknown when the summary is written
+    await insert(single, 3000, HC, 'e1', X_E, { nbits: OTHER_NBITS });
+    // the summary, as the backend writes it: each parent recomputed from all its templates
+    await admin.query(
+      `SELECT unknown_parent_pools_refresh(x.prev_hash, x.heights, x.t_from, x.t_to)
+         FROM (SELECT prev_hash, array_agg(DISTINCT height) AS heights, min(received_at) AS t_from, max(received_at) AS t_to
+                 FROM templates WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)
+                GROUP BY prev_hash) x`, [ALL]);
     route = await import('../../app/api/unknown-parents/route');
+    db = await import('../db/unknown-parents');
   });
 
   afterAll(async () => {
+    await admin?.query(
+      `DELETE FROM unknown_parent_pools WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)`,
+      [ALL]);
+    await admin?.query(`DELETE FROM blocks WHERE block_hash = decode($1, 'hex')`, [X_E]);
     await admin?.query(`DELETE FROM stale_blocks WHERE height = $1`, [H - 1]);
     await admin?.query(`DELETE FROM blocks WHERE height BETWEEN $1 AND $2`, [H - 2, H]);
     await admin?.end();
@@ -136,11 +162,43 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
     await getPgPool().end();
   });
 
+  it('stores what the live read of templates returns, field for field (with and without the blacklist)', async () => {
+    const pick = (rows: { parent: string }[]) => rows.filter(r => [X_A, X_B, X_C, X_H].includes(r.parent));
+    for (const excluded of [[], [hidden]]) {
+      const live = pick(await db.getLiveEpisodePoolRows(excluded));
+      expect(live.length).toBeGreaterThanOrEqual(excluded.length ? 4 : 6);
+      expect(pick(await db.getEpisodePoolRows(excluded, '90d'))).toEqual(live);
+    }
+  });
+
+  it('judges "unknown" at read time: a parent recorded as a block later drops out, its row untouched', async () => {
+    const has = async () => (await db.getEpisodePoolRows([], 'all')).some(r => r.parent === X_E);
+    expect(await has()).toBe(true);
+    await admin.query(`INSERT INTO blocks (block_hash, height, block_time, coinbase_script_sig) VALUES (decode($1, 'hex'), $2, now(), '\\x00')`,
+      [X_E, HC - 1]);
+    expect(await has()).toBe(false);
+    const stored = await admin.query(
+      `SELECT n FROM unknown_parent_pools WHERE prev_hash = stratum_prev_hash_to_block_hash(decode($1, 'hex'))`, [X_E]);
+    expect(stored.rows).toEqual([{ n: 1 }]);
+    await admin.query(`DELETE FROM blocks WHERE block_hash = decode($1, 'hex')`, [X_E]);
+  });
+
+  it('reads 90 days, a year or all history', async () => {
+    const parents = async (qs: string) => mine((await get(qs)).body.episodes).map(e => e.parent).filter(p => p !== X_E);
+    expect(await parents('')).toEqual([X_A, X_B, X_C]);
+    expect(await parents('?range=1y')).toEqual([X_D, X_A, X_B, X_C]);
+    expect(await parents('?range=all')).toEqual([X_D, X_A, X_B, X_C]);
+    const y = (await get('?range=1y')).body;
+    expect(y).toMatchObject({ range: '1y', days: 365 });
+    expect((await get(`?parent=${X_D}`)).status).toBe(404);
+    expect((await get(`?parent=${X_D}&range=1y`)).status).toBe(200);
+  });
+
   it('groups the window into episodes with pools, a/b connections and counts', async () => {
     const { status, body } = await get();
     expect(status).toBe(200);
-    expect(body).toMatchObject({ enabled: true, supported: true, days: 90 });
-    const eps = mine(body.episodes);
+    expect(body).toMatchObject({ enabled: true, supported: true, range: '90d', days: 90 });
+    const eps = mine(body.episodes).filter(e => e.parent !== X_E);
     expect(eps.map(e => e.parent)).toEqual([X_A, X_B, X_C]);               // oldest first; X_H (blacklisted only) absent
     const [a, b, c] = eps;
     expect(a).toMatchObject({
@@ -154,7 +212,7 @@ describe.skipIf(!enabled)('Postgres unknown parents (episodes, inferred kinds, d
   });
 
   it('reads the facts and infers one kind of each', async () => {
-    const [a, b, c] = mine((await get()).body.episodes);
+    const [a, b, c] = mine((await get()).body.episodes);   // E (later) sorts last
     const bits = BITS.toString(16);
     expect(a.kind).toBe('bitcoin_block');
     expect(a.facts).toEqual({

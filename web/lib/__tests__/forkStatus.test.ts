@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPrevHashes } from '../forkStatus';
+import { classifyPrevHashes, unknownParentKinds } from '../forkStatus';
 import { prevHashStatusOf } from '../../components/ForkTimeline';
 import { reverseHex } from '../../utils/formatters';
 
@@ -45,5 +45,35 @@ describe('prevHashStatusOf (ForkTimeline)', () => {
 
   it('has no status without a canonical parent', () => {
     expect(prevHashStatusOf(rawB, null, server)).toBeNull();
+  });
+});
+
+describe('unknownParentKinds', () => {
+  const BITS = '17023a04';                        // Bitcoin's bits at h - 1 and h
+  const POW = '0000000000000000000' + '1'.repeat(45); // meets that target
+  const NOPOW = 'f'.repeat(64);
+  const t = (prev_hash: string, nbits: string) => ({ prev_hash, nbits });
+
+  it('infers each unknown parent from its templates\' most common nbits; known ones are left out', () => {
+    const status = { [A]: 'canonical', [POW]: 'unknown', [NOPOW]: 'unknown', [C]: 'unknown' } as const;
+    const templates = [
+      t(A, BITS), t(POW, BITS), t(POW, BITS), t(POW, '1d00ffff'),
+      t(NOPOW, BITS),
+      t(C, '1a0fffff'),
+    ];
+    expect(unknownParentKinds(status, templates, 900_001, BITS, BITS)).toEqual({
+      [POW]: 'bitcoin_block', [NOPOW]: 'invalid_parent', [C]: 'other_chain',
+    });
+  });
+
+  it('matches hashes case-insensitively and reads numeric nbits', () => {
+    const status = { [POW]: 'unknown' } as const;
+    expect(unknownParentKinds(status, [{ prev_hash: POW.toUpperCase(), nbits: 0x17023a04 }], 900_001, BITS, BITS))
+      .toEqual({ [POW]: 'bitcoin_block' });
+  });
+
+  it('null without a status or without unknown parents', () => {
+    expect(unknownParentKinds(null, [t(C, BITS)], 900_001, BITS, BITS)).toBeNull();
+    expect(unknownParentKinds({ [A]: 'canonical', [B]: 'stale' }, [t(A, BITS)], 900_001, BITS, BITS)).toBeNull();
   });
 });

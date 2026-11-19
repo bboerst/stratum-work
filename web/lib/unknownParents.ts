@@ -13,7 +13,7 @@ import { maskTemplate } from './connectionMask';
 import { templateRowToMiningNotify } from './db/pg-mapping';
 import {
   DRILL_MARGIN_MS, getDrillRows, getEpisodeFacts, getEpisodePoolRows,
-  type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type ParentLabel,
+  type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type ParentLabel, type UnknownParentsRange,
 } from './db/unknown-parents';
 import { bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind } from './parentKind';
 import { parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
@@ -176,9 +176,9 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
   return out.sort((a, b) => a.first_ms - b.first_ms || (a.parent < b.parent ? -1 : 1));
 }
 
-/** The window's episodes: one scan of templates (aggregated per parent and pool), then the facts per episode. */
-export async function getEpisodes(excludePools: string[]): Promise<Episode[]> {
-  const drafts = draftEpisodes(await getEpisodePoolRows(excludePools));
+/** The range's episodes: the rows per parent and pool (getEpisodePoolRows), then the facts per episode. */
+export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = '90d'): Promise<Episode[]> {
+  const drafts = draftEpisodes(await getEpisodePoolRows(excludePools, range));
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms })));
   return finishEpisodes(drafts, facts);
 }

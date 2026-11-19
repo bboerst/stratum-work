@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBlockByHeight, getHighestBlock, getInterestingBlocks, knownBlockHashes } from "@/lib/db/blocks";
-import { classifyPrevHashes } from "@/lib/forkStatus";
+import { classifyPrevHashes, unknownParentKinds } from "@/lib/forkStatus";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
 import { maskTemplates } from "@/lib/connectionMask";
 import { filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
@@ -145,12 +145,15 @@ export async function GET(request: NextRequest) {
       const prevHashStatus = prevHashes.length > 1
         ? classifyPrevHashes(prevHashes, previousBlock?.block_hash, await knownBlockHashes(prevHashes))
         : null;
+      // For the parents we have no block for: the kind /unknown-parents infers (other chain, unrecorded block, …).
+      const prevHashKind = unknownParentKinds(prevHashStatus, processedData, height, previousBlock?.bits, currentBlock?.bits);
 
       // Return the result for this height
       return {
         height,
         mining_notifications: processedData,
         prev_hash_status: prevHashStatus,
+        prev_hash_kind: prevHashKind,
         block_details: currentBlock ? {
           height: currentBlock.height,
           hash: currentBlock.block_hash,

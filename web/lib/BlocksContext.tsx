@@ -65,7 +65,9 @@ export function BlocksProvider({ children }: { children: ReactNode }) {
     if (blockElement) {
       // Calculate the scroll position to center the block
       const containerWidth = containerRef.current.clientWidth;
-      const blockLeft = (blockElement as HTMLElement).offsetLeft;
+      // Relative to the scroll container, whatever the tile's offset parent (a stacked tile sits in its own box).
+      const blockLeft = (blockElement as HTMLElement).getBoundingClientRect().left
+        - containerRef.current.getBoundingClientRect().left + containerRef.current.scrollLeft;
       const blockWidth = (blockElement as HTMLElement).offsetWidth;
       
       // Center the block in the container
@@ -94,7 +96,9 @@ export function BlocksProvider({ children }: { children: ReactNode }) {
           if (blockElement) {
             // Calculate the scroll position to center the block
             const containerWidth = containerRef.current.clientWidth;
-            const blockLeft = (blockElement as HTMLElement).offsetLeft;
+            // Relative to the scroll container, whatever the tile's offset parent (a stacked tile sits in its own box).
+      const blockLeft = (blockElement as HTMLElement).getBoundingClientRect().left
+        - containerRef.current.getBoundingClientRect().left + containerRef.current.scrollLeft;
             const blockWidth = (blockElement as HTMLElement).offsetWidth;
             
             // Center the block in the container

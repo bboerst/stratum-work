@@ -10,6 +10,8 @@ Today two places decide, at write time, whether a template is Bitcoin's:
 - the collectors: `collector/pgsink.py` `route()` and `collector-go` `chain.go` / `tip.go`;
 - the backfill: `tools/mongo-to-postgres/m2p/convert.py`.
 
+(These have since been removed: the Python collector, the collectors' classification and the backfill tool.)
+
 The rule is that the height must be within ±6 of the collector's node tip at that moment. The collector also asks an external BCH block API about suspicious prev hashes. Bitcoin rows go to `templates`, and everything else goes to `templates_other` with a `chain` and a `reason`. Section 2 of [postgres-timescale.md](postgres-timescale.md) explains the split:
 - no query could forget a chain filter;
 - one far-off height (6,976,415) couldn't widen a chunk's height range and defeat chunk skipping.

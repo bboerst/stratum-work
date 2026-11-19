@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { formatPrevBlockHash, reverseHex } from "@/utils/formatters";
 import type { PrevHashStatus } from "@/lib/forkStatus";
+import type { ParentKind } from "@/lib/parentKind";
 
 interface MiningNotification {
   pool_name?: string | null;
@@ -15,6 +16,8 @@ interface ForkTimelineProps {
   canonicalBlockHash?: string;
   /** Per prev hash (block hash, display order), from /api/analysis-data's prev_hash_status (#212). */
   prevHashStatus?: Record<string, PrevHashStatus> | null;
+  /** Per unknown prev hash (block hash, display order): the kind the server infers (lib/parentKind.ts). */
+  prevHashKind?: Record<string, ParentKind> | null;
 }
 
 const PREV_HASH_COLORS = [
@@ -27,7 +30,27 @@ const PREV_HASH_COLORS = [
 ];
 const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
 const STALE_HASH_COLOR = "#1550a4"; // slate-500 (muted/disabled look)
-const UNKNOWN_HASH_COLOR = "#6b7280"; // gray-500: a parent we have no block for
+const UNKNOWN_HASH_COLOR = "#6b7280"; // gray-500: a parent we have no block for, kind undetermined
+// Unknown parents by inferred kind, in /unknown-parents' colours: a Bitcoin block we never recorded is a stale block
+// all the same (blue), another chain's block violet, a parent that isn't a valid block rose.
+const KIND_COLOR: Record<ParentKind, string> = {
+  bitcoin_block: STALE_HASH_COLOR,
+  other_chain: "#7c3aed", // violet-600
+  invalid_parent: "#e11d48", // rose-600
+  undetermined: UNKNOWN_HASH_COLOR,
+};
+const KIND_LABEL: Record<ParentKind, string> = {
+  bitcoin_block: "Stale · unrecorded",
+  other_chain: "Other chain",
+  invalid_parent: "Invalid",
+  undetermined: "Unknown",
+};
+const KIND_TEXT: Record<ParentKind, string> = {
+  bitcoin_block: "text-red-400",
+  other_chain: "text-violet-400",
+  invalid_parent: "text-rose-400",
+  undetermined: "text-muted-foreground",
+};
 
 /**
  * Status of each prev hash for the legend, colors and tooltips. `hash` and `canonicalRaw` are in the timeline's
@@ -49,8 +72,15 @@ export function prevHashStatusOf(
 const STATUS_LABEL: Record<PrevHashStatus, string> = {
   canonical: "canonical",
   stale: "stale",
-  unknown: "unknown tip",
+  unknown: "unknown",
 };
+
+/** The tooltip label: the status, or for an unknown parent its inferred kind. */
+function labelOf(status: PrevHashStatus | null, kind: ParentKind | undefined): string | null {
+  if (status === null) return null;
+  if (status === "unknown" && kind) return KIND_LABEL[kind].toLowerCase();
+  return STATUS_LABEL[status];
+}
 
 function parseTimestampToNs(ts: string): number {
   if (!ts) return 0;
@@ -227,12 +257,13 @@ function splitSegmentAtGaps(
   return result;
 }
 
-export default function ForkTimeline({ notifications, canonicalBlockHash, prevHashStatus }: ForkTimelineProps) {
+export default function ForkTimeline({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind }: ForkTimelineProps) {
   const computed = useMemo(() => {
     // Convert big-endian block_hash to raw stratum format for comparison
     const canonicalRaw = canonicalBlockHash
       ? reverseHex(canonicalBlockHash).toLowerCase()
       : null;
+    const kindOf = (hash: string): ParentKind | undefined => prevHashKind?.[reverseHex(hash).toLowerCase()];
     const parsed = notifications
       .filter((n) => n.pool_name && n.prev_hash && n.timestamp)
       .map((n) => ({
@@ -344,7 +375,8 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
           const relEnd = formatRelativeTime(sub.endNs - minTime);
           const status = prevHashStatusOf(seg.prevHash, canonicalRaw, prevHashStatus);
           const isStale = status !== null && status !== "canonical"; // hatched: not the best parent
-          const staleLabel = status !== null ? ` (${STATUS_LABEL[status]})` : "";
+          const label = labelOf(status, kindOf(seg.prevHash));
+          const staleLabel = label !== null ? ` (${label})` : "";
           visualSegments.push({
             leftPct,
             widthPct,
@@ -456,7 +488,10 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
         const status = hashStatus.get(h);
         if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
         else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
-        else if (status === "unknown") colorMap.set(h, UNKNOWN_HASH_COLOR);
+        else if (status === "unknown") {
+          const kind = kindOf(h);
+          colorMap.set(h, kind ? KIND_COLOR[kind] : UNKNOWN_HASH_COLOR);
+        }
       });
     }
 
@@ -465,13 +500,14 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
       sortedHashes,
       colorMap,
       hashStatus,
+      hashKind: new Map(sortedHashes.map((h) => [h, kindOf(h)] as const)),
       ticks,
       gridLines: [...new Set(gridLines)],
       gapIndicators,
       duration,
       compressed,
     };
-  }, [notifications, canonicalBlockHash, prevHashStatus]);
+  }, [notifications, canonicalBlockHash, prevHashStatus, prevHashKind]);
 
   const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
 
@@ -482,6 +518,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
     sortedHashes,
     colorMap,
     hashStatus,
+    hashKind,
     ticks,
     gridLines,
     gapIndicators,
@@ -560,11 +597,8 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
                 </span>
               )}
               {status === "unknown" && (
-                <span
-                  className="text-[9px] font-semibold text-muted-foreground shrink-0"
-                  title="Not a block we have: a competing tip our node never received, or not a block at all"
-                >
-                  Unknown tip
+                <span className={`text-[9px] font-semibold shrink-0 ${KIND_TEXT[hashKind.get(hash) ?? "undetermined"]}`}>
+                  {KIND_LABEL[hashKind.get(hash) ?? "undetermined"]}
                 </span>
               )}
               <span className="text-[10px] opacity-75 font-mono break-all">

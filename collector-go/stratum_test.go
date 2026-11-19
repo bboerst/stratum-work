@@ -561,6 +561,18 @@ func TestRelayBetweenMinerAndPool(t *testing.T) {
 	if d.Params[0].s != "relayed" || d.Extranonce1.s != "f00d" || d.Extranonce2Len.s != "4" || !m.Subscribed.Load() {
 		t.Errorf("doc %s en1 %s", d.Params[0].s, pyDumps(d.Extranonce1))
 	}
+	// mining.set_extranonce is relayed to the miner and applies to later templates, as in direct mode
+	f.send(t, setExtranonceLine(`["beef", 2]`)+notifyLine("after-set"))
+	if l := readMiner(); !strings.Contains(l, "mining.set_extranonce") {
+		t.Error(l)
+	}
+	readMiner()
+	if d := nextDoc(t, docs); d.Params[0].s != "after-set" || d.Extranonce1.s != "beef" || d.Extranonce2Len.s != "2" {
+		t.Errorf("doc %s en1 %s", d.Params[0].s, pyDumps(d.Extranonce1))
+	}
+	if e := nextEvent(t, events); e.Kind != "extranonce" || e.Detail["cause"] != "set_extranonce" || e.Detail["applied"] != true {
+		t.Errorf("relay extranonce event %+v", e)
+	}
 	share := `{"id": 8, "method": "mining.submit", "params": ["w", "j", "00", "00", "00"]}` + "\n"
 	_, _ = io.WriteString(miner, share)
 	if _, raw := f.readReq(t); raw != share {
@@ -572,8 +584,8 @@ func TestRelayBetweenMinerAndPool(t *testing.T) {
 	if _, err := f.r.ReadString('\n'); err == nil {
 		t.Error("pool connection not closed after the miner left")
 	}
-	// the relayed connection is recorded as a session: one template, ended by the miner leaving
-	if e := nextEvent(t, events); e.Kind != "session" || e.Templates != 1 || e.Detail["relay"] != true ||
+	// the relayed connection is recorded as a session: two templates, ended by the miner leaving
+	if e := nextEvent(t, events); e.Kind != "session" || e.Templates != 2 || e.Detail["relay"] != true ||
 		e.Detail["subscribed_at"] != nil || e.Detail["end"] == "shutdown" {
 		t.Errorf("relay session event %+v", e)
 	}

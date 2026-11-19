@@ -354,6 +354,10 @@ func TestPostgresIntegration(t *testing.T) {
 	s.SubmitEvent(startEvent("node-ci", "test", evStart))
 	s.SubmitEvent(IngestEvent{Kind: "session", Start: evStart, End: evStart.Add(time.Minute), Templates: 2,
 		Detail: map[string]any{"subscribed_at": evStart.Add(time.Second).Format(time.RFC3339Nano), "end": "EOF"}})
+	// An extranonce event whose detail holds a hostile pool value (NUL: jsonb refuses \u0000 unless escaped).
+	s.SubmitEvent(IngestEvent{Kind: "extranonce", Start: evStart, End: evStart, Detail: map[string]any{
+		"cause": "set_extranonce", "applied": false, "params": eventValue(pyValue{kind: pyList,
+			items: []pyValue{pyString("a\x00b"), pyIntOf(4)}}), "old": extranonceDetail(pyString("abcd"), pyIntOf(8))}})
 	// Another chain's height and an unparseable one (0) go to templates like every other template.
 	s.Submit(testDoc(map[string]string{"job_id": `"other"`, "height": "6976415"}))
 	s.Submit(testDoc(map[string]string{"job_id": `"noheight"`, "height": "0"}))
@@ -361,7 +365,7 @@ func TestPostgresIntegration(t *testing.T) {
 	s.Submit(noLat)
 	if !waitFor(func() bool {
 		st := s.Stats()
-		return st["written"] == 4 && st["rejects_written"] == 4 && st["events_written"] == 3
+		return st["written"] == 4 && st["rejects_written"] == 4 && st["events_written"] == 4
 	}, 15*time.Second) {
 		t.Fatal(s.Stats())
 	}
@@ -401,6 +405,11 @@ func TestPostgresIntegration(t *testing.T) {
 		(SELECT detail->>'end' FROM ingest_events WHERE source_id = $1 AND kind = 'session' AND templates = 2)`, sid).Scan(&node, &sessEnd); err != nil ||
 		node != "node-ci" || sessEnd != "EOF" {
 		t.Error("start/session events:", err, node, sessEnd)
+	}
+	var enCause, enOld string
+	if err := c.QueryRow(context.Background(), `SELECT detail->>'cause', detail->'old'->>'extranonce1' FROM ingest_events
+		WHERE source_id = $1 AND kind = 'extranonce'`, sid).Scan(&enCause, &enOld); err != nil || enCause != "set_extranonce" || enOld != "abcd" {
+		t.Error("extranonce event:", err, enCause, enOld)
 	}
 	var other, noHeight, total int32
 	if err := c.QueryRow(context.Background(), `SELECT

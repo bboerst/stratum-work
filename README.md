@@ -61,7 +61,6 @@ A pool sends `mining.notify` whenever it has new work: on a new block (with clea
 | [`db/`](db/) | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users (`dev-users.sql`), migration and SQL tests | SQL |
 | [`postgres/`](postgres/) | CloudNativePG Postgres + TimescaleDB image used in production | Dockerfile |
 | [`helm-charts/`](helm-charts/) | Charts for [collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md) and [webapp](helm-charts/stratum-work-webapp/README.md) | Helm |
-| [`tools/site-compare/`](tools/site-compare/README.md) | Compares two deployed sites through their public API only | Python |
 | [`docs/`](docs/) | Field documentation and [design docs](docs/design/postgres-timescale.md) | |
 
 ## Quick start (docker compose)
@@ -224,7 +223,7 @@ Until the table has rows, the page's 90-day view reads templates directly.
 
 ### Getting data
 - **Collect your own.** Connect a node, set `MIN_BLOCK_HEIGHT` near the tip, and let a few collectors run: `docker compose up -d --build web backend collector-f2pool collector-antpool`. A few hours give dozens of heights; every height has a few hundred templates per pool. Without a node you still get templates (but no blocks).
-- **From the public site.** The web's JSON API is read-only and public (below). [`tools/site-compare`](tools/site-compare/README.md) shows how to fetch it politely (rate limit, retries, cache).
+- **From the public site.** The web's JSON API is read-only and public (below). Fetch it politely: a request or two per second, honor `Retry-After`, and cache what you've read.
 
 ### The schema in one table
 All in [`db/migrations`](db/migrations); the [design doc](docs/design/postgres-timescale.md) explains the choices. Hashes and hex fields are `bytea`; `encode(x, 'hex')` shows them.
@@ -293,9 +292,6 @@ SELECT height, pool, tip, templates, mined_after_switch
 
 ```
 
-### Tools
-- [`tools/site-compare`](tools/site-compare/README.md): two deployed sites through their public API only, height by height. Gentle by default (2 requests/s, retries honoring `Retry-After`, a response cache). Keep reports of real sites out of the repository.
-
 ### Public API
 Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.work/api/...`). The public sites rate-limit per client; cache what you fetch, and prefer your own instance for bulk reads.
 
@@ -336,7 +332,6 @@ backend/test-stale-blocks-e2e.sh       # stale blocks: two regtest nodes, a fork
 backend/test-reorg-reconcile-e2e.sh    # best chain across reorgs: tracker off, backend down, 2 deep, full-history check
 backend/test-block-gap-fill-e2e.sh     # historical gaps on a pruned node (-prune=550 -fastprune), filled via getblockfrompeer
 mempool-recorder/test-e2e.sh           # regtest node + TimescaleDB + recorder image
-tools/site-compare/test-e2e.sh         # unit tests + two fake sites over HTTP
 ```
 Client performance: `npm run perf` against a running production build ([web/perf/README.md](web/perf/README.md)).
 
@@ -386,9 +381,9 @@ The backend runs analytics plug-ins for each processed block. They inspect the t
 Guidelines: keep findings small (what the UI needs to render); keep the logic deterministic and scoped to the height's templates; with several collectors per pool the templates are every collector's rows (`site` / `replica` say which), so group by pool or pair exact copies per collector as `invalid_coinbase_no_merkle.py` does, rather than counting rows; use the shared logger and never log secrets.
 
 ## Further reading
-- [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, backups, migration plan, redundant collection.
+- [Design: MongoDB → Postgres + TimescaleDB](docs/design/postgres-timescale.md): data access, schema, measurements, history migration, redundant collection.
 - [How the data is measured](docs/methodology.md): what each value is, how it was taken, and its limits.
-- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), [site-compare](tools/site-compare/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
+- Field docs in [`docs/`](docs/); component READMEs: [mempool-recorder](mempool-recorder/README.md), [web/perf](web/perf/README.md), Helm charts ([collector](helm-charts/stratum-work-collector/README.md), [backend](helm-charts/stratum-work-backend/README.md), [webapp](helm-charts/stratum-work-webapp/README.md)).
 - [CLAUDE.md](CLAUDE.md): guidance for coding agents.
 
 **License:** [MIT](LICENSE), © the stratum.work contributors.

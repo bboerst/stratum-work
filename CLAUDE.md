@@ -12,7 +12,6 @@ Guidance for AI coding agents (and humans) working in this repo. Start with the 
 | `helm-charts/` | Charts for collector, backend, and webapp | Helm |
 | `db/` | Postgres schema as [dbmate](https://github.com/amacneil/dbmate) migrations (`db/migrations/`), local dev users, migration test | SQL |
 | `postgres/` | CloudNativePG Postgres + TimescaleDB image for production | Dockerfile |
-| `tools/site-compare/` | Compares two deployed sites through their public API only (blocks, templates by job key, first seen, pools), for checking a new stack before switching to it ([README](tools/site-compare/README.md)) | Python |
 
 ## Run it
 ```bash
@@ -36,7 +35,6 @@ db/test-migrations.sh                   # migrations up/down/up + role privilege
 backend/test-stale-blocks-e2e.sh        # stale blocks: two regtest nodes, fork + reorg (Docker)
 backend/test-reorg-reconcile-e2e.sh     # best chain across reorgs: tracker off, backend down, 2 deep, full-history check (Docker)
 backend/test-block-gap-fill-e2e.sh      # historical gaps on a pruned node, filled via getblockfrompeer (Docker)
-tools/site-compare/test-e2e.sh          # site comparison: unit tests + two synthetic fake sites over HTTP (Docker)
 ```
 [README "Testing and CI"](README.md#testing-and-ci) shows how to run them inside the containers and what CI checks.
 

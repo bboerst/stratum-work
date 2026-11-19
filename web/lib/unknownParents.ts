@@ -196,16 +196,22 @@ export interface Drill {
   to_ms: number;
   templates: UnknownParentTemplate[];   // earliest first
   truncated: boolean;            // more than DRILL_MAX_TEMPLATES in the range: the first ones are shown
+  clipped: boolean;              // the episode lasted longer than DRILL_MAX_SPAN_MS: only its start is read
   blocks: DrillBlock[];          // every block we know at height - 1 and height
 }
 
 /** One episode's drill-in: its pools' templates at height - 1 .. height + 1 around its receive times, and the blocks. */
+// A long episode (a feed stuck on one parent for hours) would read hours of every pool's templates: read its start only.
+export const DRILL_MAX_SPAN_MS = 30 * 60_000;
+
 export async function getDrill(e: Episode, excludePools: string[]): Promise<Drill> {
-  const from_ms = e.first_ms - DRILL_MARGIN_MS, to_ms = e.last_ms + DRILL_MARGIN_MS;
+  const clipped = e.last_ms - e.first_ms > DRILL_MAX_SPAN_MS;
+  const from_ms = e.first_ms - DRILL_MARGIN_MS;
+  const to_ms = (clipped ? e.first_ms + DRILL_MAX_SPAN_MS : e.last_ms) + DRILL_MARGIN_MS;
   const rows = await getDrillRows(
     { parent: e.parent, height: e.height, pools: e.pools.map(p => p.pool), from_ms, to_ms }, excludePools);
   return {
-    from_ms, to_ms, truncated: rows.truncated,
+    from_ms, to_ms, truncated: rows.truncated, clipped,
     templates: rows.templates.map(toUnknownParentTemplate),
     blocks: rows.blocks.map(b => ({ hash: b.block_hash, height: b.height, arrival_ms: Number(b.arrival_ms), best: b.best })),
   };

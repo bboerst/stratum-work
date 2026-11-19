@@ -306,12 +306,19 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
      SELECT d.source_id, d.pool AS source_name, ${US('d.received_at')} AS received_us, d.height, d.job_id, d.prev_hash,
             d.coinbase1, d.coinbase2, d.merkle_branches, d.version, d.nbits, d.ntime, d.clean_jobs, d.extranonce1,
             d.extranonce2_length, d.latency_ms, d.latency_method::text AS latency_method, d.copies::int AS copies,
-            ARRAY(SELECT DISTINCT x FROM unnest(d.conns) x ORDER BY x) AS conns,
-            CASE WHEN d.prev_hash = stratum_prev_hash_to_block_hash(decode($6, 'hex')) THEN 'this'
-                 WHEN EXISTS (SELECT 1 FROM blocks_best b WHERE b.block_hash = stratum_prev_hash_to_block_hash(d.prev_hash)) THEN 'best'
-                 WHEN EXISTS (SELECT 1 FROM bitcoin_parents p WHERE p.prev_hash = d.prev_hash) THEN 'stale'
-                 ELSE 'other' END AS parent_label
-       FROM d ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
+            ARRAY(SELECT DISTINCT x FROM unnest(d.conns) x ORDER BY x) AS conns, l.parent_label
+       FROM d JOIN (
+         -- each distinct parent labelled once, by hash lookups on blocks / stale_blocks (the bitcoin_parents view would
+         -- convert every stored block's hash per row: ~0.6 s a lookup, which a long episode repeats hundreds of times)
+         SELECT x.prev_hash,
+                CASE WHEN x.prev_hash = stratum_prev_hash_to_block_hash(decode($6, 'hex')) THEN 'this'
+                     WHEN EXISTS (SELECT 1 FROM blocks_best b WHERE b.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash)) THEN 'best'
+                     WHEN EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash))
+                       OR EXISTS (SELECT 1 FROM stale_blocks s WHERE s.block_hash = stratum_prev_hash_to_block_hash(x.prev_hash)) THEN 'stale'
+                     ELSE 'other' END AS parent_label
+           FROM (SELECT DISTINCT prev_hash FROM d) x
+       ) l ON l.prev_hash = d.prev_hash
+      ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
     [excludePools, ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1])).rows;
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,

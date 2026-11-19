@@ -90,6 +90,7 @@ interface DrillResponse {
   to_ms?: number;
   templates?: Template[];
   truncated?: boolean;
+  clipped?: boolean;
   blocks?: { hash: string; height: number; arrival_ms: number; best: boolean }[];
   error?: string;
 }
@@ -460,6 +461,74 @@ function TemplateRow({ t }: { t: Template }) {
 
 const LIST_PAGE = 200;
 
+/**
+ * Why an episode is here, drawn: our chain (the best blocks at the parent's height and the next, as tiles) and, hanging
+ * below it at the height its templates claim, the parent they built on, which is no block we know. Three checks under
+ * it carry the inference: the parent's proof of work, whether the templates use Bitcoin's difficulty, and that the
+ * parent is in neither our node nor the stale-block records. An other-chain parent sits off our chain, its height
+ * beside ours.
+ */
+function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse }) {
+  const f = episode.facts;
+  const ph = episode.height - 1;                      // the parent's claimed height
+  const ours = (h: number) => (drill.blocks ?? []).find(b => b.height === h && b.best);
+  const prev = ours(ph), next = ours(episode.height);
+  const onOurChain = f.tip_at_first !== null && Math.abs(ph - f.tip_at_first) <= 1;
+  const TW = 118, TH = 46, G = 30, X0 = 4, Y0 = 18, Y1 = Y0 + TH + 34;
+  const tile = (x: number, y: number, label: string, sub: string, cls: string, dashed = false, title = "") => (
+    <g>
+      <title>{title}</title>
+      <rect x={x} y={y} width={TW} height={TH} rx={4} className={cls} strokeWidth={dashed ? 1.5 : 0}
+        strokeDasharray={dashed ? "4 3" : undefined} />
+      <text x={x + TW / 2} y={y + 20} textAnchor="middle" fontSize={13} className="fill-foreground font-mono">{label}</text>
+      <text x={x + TW / 2} y={y + 36} textAnchor="middle" fontSize={10} className="fill-foreground/60 font-mono">{sub}</text>
+    </g>
+  );
+  const short = (h: string) => `${h.slice(0, 4)}…${h.slice(-6)}`;
+  const xPrev = X0, xNext = X0 + TW + G;
+  const unknownX = xPrev;
+  const kindStroke = episode.kind === "other_chain" ? "stroke-violet-500" : episode.kind === "invalid_parent" ? "stroke-rose-500" : "stroke-amber-600";
+  const pools = episode.pools.map(p => p.pool);
+  const checks: { ok: boolean | null; label: string; title: string }[] = [
+    { ok: onOurChain, label: "at our tip",
+      title: `parent at height ${fmtInt(ph)} · our tip ${f.tip_at_first === null ? "none" : fmtInt(f.tip_at_first)}${onOurChain ? "" : ": not Bitcoin's height now"}` },
+    { ok: f.pow_ok, label: "proof of work",
+      title: f.pow_ok ? `the parent's hash meets the target of bits ${f.pow_bits}` : `the parent's hash misses the target of bits ${f.pow_bits}: not a valid block` },
+    { ok: f.bitcoin_difficulty, label: "Bitcoin's difficulty",
+      title: f.bitcoin_difficulty === null ? "no Bitcoin block stored to compare with"
+        : `templates' nbits ${f.nbits[0] ?? "?"} ${f.bitcoin_difficulty ? "=" : "≠"} Bitcoin's bits ${f.bitcoin_bits ?? "?"} at height ${fmtInt(ph)}` },
+    { ok: false, label: "a block we know", title: "the parent is in neither our node's chain nor the stale-block records" },
+  ];
+  const W = xNext + TW + 200;
+  return (
+    <div className="mb-5">
+      <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
+        <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
+        <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
+        {prev ? tile(xPrev, Y0, fmtInt(prev.height), short(prev.hash), "fill-amber-600/25", false, `best block ${fmtInt(prev.height)} · ${prev.hash}`)
+              : tile(xPrev, Y0, onOurChain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", "fill-foreground/5")}
+        {onOurChain && <line x1={xPrev + TW} x2={xNext} y1={Y0 + TH / 2} y2={Y0 + TH / 2} className="stroke-foreground/30" />}
+        {next ? tile(xNext, Y0, fmtInt(next.height), short(next.hash), "fill-amber-600/25", false, `best block ${fmtInt(next.height)} · ${next.hash}`)
+              : onOurChain ? tile(xNext, Y0, fmtInt(episode.height), "", "fill-foreground/5") : null}
+        {!onOurChain && <text x={xPrev + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
+        {onOurChain && <path d={`M${xPrev + 18} ${Y0 + TH} C ${xPrev + 18} ${Y1 - 6}, ${xPrev + 18} ${Y1 - 6}, ${xPrev + 26} ${Y1}`} fill="none" className="stroke-foreground/30" strokeDasharray="3 3" />}
+        {tile(unknownX, Y1, fmtInt(ph), short(episode.parent), `fill-transparent ${kindStroke}`, true, `the parent the templates built on: ${episode.parent}`)}
+        <text x={unknownX + TW + 10} y={Y1 + 18} fontSize={11} className="fill-foreground/70">← {pools.length} pool{pools.length > 1 ? "s" : ""} built on it</text>
+        <text x={unknownX + TW + 10} y={Y1 + 34} fontSize={10} className="fill-foreground/50">{pools.slice(0, 4).join(", ")}{pools.length > 4 ? ` +${pools.length - 4}` : ""}</text>
+      </svg>
+      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+        {checks.map(c => (
+          <span key={c.label} title={c.title}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 ${c.ok === null ? "border-border text-foreground/60" : c.ok ? "border-emerald-600/50 text-emerald-500" : "border-rose-600/50 text-rose-500"}`}>
+            {c.ok === null ? "?" : c.ok ? "✓" : "✗"} {c.label}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} /></span>
+      </div>
+    </div>
+  );
+}
+
 function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const [drill, setDrill] = useState<{ parent: string; data: DrillResponse } | null>(null);
   const [showList, setShowList] = useState(false);
@@ -504,7 +573,9 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
       {data?.error && <p className="text-sm text-red-500">{data.error}</p>}
       {data && !data.error && (
         <>
+          <WhyUnknown episode={episode} drill={data} />
           <Swimlanes episode={episode} drill={data} />
+          {data.clipped && <p className="mt-1 text-xs text-foreground/50">first 30 min of {fmtDuration(episode.duration_ms)}</p>}
           <button type="button" className="mt-4 text-xs text-foreground/60 hover:text-foreground"
             onClick={() => setShowList(s => !s)} aria-expanded={showList}>
             {showList ? "▾" : "▸"} Templates ({fmtInt(templates.length)}{data.truncated ? "+" : ""})

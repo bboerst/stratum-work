@@ -207,10 +207,15 @@ function InvalidCoinbaseBadge({ ic }: { ic: InvalidCoinbase }) {
   );
 }
 
-function KindChip({ kind, title }: { kind: Kind; title?: string }) {
+function KindChip({ kind, title, alsoInvalid = false }: { kind: Kind; title?: string; alsoInvalid?: boolean }) {
   return (
     <span title={title ?? (kind === "stale" ? "Recorded" : "Inferred")} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
-      <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[kind]}`} aria-hidden />
+      {alsoInvalid
+        // two findings in one episode (e.g. a race with an invalid coinbase): the dot is half each colour
+        ? <span className="inline-flex h-2.5 w-2.5 flex-col overflow-hidden rounded-full" aria-hidden>
+            <span className={`h-1/2 w-full ${KIND_BG[kind]}`} /><span className="h-1/2 w-full bg-rose-500" />
+          </span>
+        : <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[kind]}`} aria-hidden />}
       {KIND_LABEL[kind]}
     </span>
   );
@@ -306,6 +311,11 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
                 className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${focus === m.parent || selected === m.parent ? "stroke-foreground" : ""}`}
                 strokeWidth={focus === m.parent || selected === m.parent ? 1.5 : m.kind === "invalid_coinbase" ? 1.5 : 0}
                 />
+              {/* two findings in one episode (a race with an invalid coinbase): the mark's lower half is rose on the
+                  rows of the pools whose coinbase was invalid */}
+              {m.kind !== "invalid_coinbase" && byParent.get(m.parent)?.invalid_coinbase?.pools.some(p => p.pool === layout.pools[m.row]) && (
+                <rect x={m.x} y={m.row * ROW_H + ROW_H / 2} width={m.w} height={MARK_H / 2} className="fill-rose-500" pointerEvents="none" />
+              )}
             </g>
           ))}
             </g>
@@ -373,7 +383,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
               className={`w-full rounded-lg border border-border px-3 py-2.5 text-left text-xs space-y-1.5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-sm">{fmtInt(e.height)} <span className="text-foreground/60 text-xs">· {fmtDuration(e.duration_ms)}</span></span>
-                <KindChip kind={e.kind} title={factsTitle(e)} />
+                <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
               </div>
               <div className="text-foreground/40" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</div>
               {e.invalid_coinbase && e.kind !== "invalid_coinbase" && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
@@ -402,7 +412,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
                 <td className="px-3 py-2.5 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <KindChip kind={e.kind} title={factsTitle(e)} />
+                    <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
                     {e.invalid_coinbase && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
                   </div>
                 </td>
@@ -673,7 +683,7 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
             {c.ok === null ? "?" : c.ok ? "✓" : "✗"} {c.label}
           </span>
         ))}
-        <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} /></span>
+        <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
       </div>
     </div>
   );
@@ -699,7 +709,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   return (
     <section className="mt-8 rounded-xl border border-border p-4" aria-label="Episode details">
       <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-        <KindChip kind={episode.kind} title={factsTitle(episode)} />
+        <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} />
         <span className="font-mono text-base">{fmtInt(episode.height)}</span>
         <button type="button" className="font-mono text-xs text-foreground/60 hover:text-foreground"
           title={`${episode.parent} · click to copy`}

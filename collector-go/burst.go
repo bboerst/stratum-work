@@ -17,7 +17,7 @@ import (
 
 // IngestEvent is one ingest_events row (without source_id, which the sink adds).
 type IngestEvent struct {
-	Kind      string // "burst" | "sink_overflow" | "start" | "session"
+	Kind      string // "burst" | "sink_overflow" | "start" | "session" | "extranonce"
 	Start     time.Time
 	End       time.Time
 	Templates int // burst: templates in the episode; sink_overflow: templates dropped; session: templates received

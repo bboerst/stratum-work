@@ -57,6 +57,12 @@ Both are made only from stored facts, so recomputing them gives the same answer 
   drop because storage fell behind, each time a collector starts, and every connection to a pool (when it connected
   and subscribed, how many templates it delivered, and why it ended). So a gap in the data can be told apart from a
   pool that sent nothing.
+- Each template carries the `extranonce1` and `extranonce2_length` in force on its connection when it arrived, so its
+  coinbase can be rebuilt as `coinbase1 + extranonce1 + extranonce2 + coinbase2`. They come from the subscribe in the
+  handshake; a later `mining.set_extranonce` replaces them for the templates after it (invalid values are ignored).
+  Every change is an `extranonce` event with the old and new values. A response to the collector's own re-subscribe
+  (latency probe, keep-alive) with other values is recorded the same way but not applied: the first subscription is
+  assumed to stay in force, and these events check that assumption.
 
 ## Arrival times
 

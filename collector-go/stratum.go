@@ -367,6 +367,8 @@ func (c *Collector) process(msg pyValue, l line) {
 			v = p.items[0]
 		}
 		c.log.Info("mining.set_difficulty", "difficulty", pyStrOf(v))
+	case "mining.set_extranonce":
+		c.setExtranonce(msg, l)
 	default:
 		p, _ := msg.get("params")
 		c.log.Info("server notification", "method", m.s, "params", truncate(string(pyDumps(p)), 300))
@@ -505,7 +507,10 @@ func (c *Collector) session(ctx context.Context) (err error) {
 			continue
 		}
 		if c.tracker.TryResolve(msg, l.mono) {
-			continue // response to a latency probe or keep-alive
+			// Response to a latency probe or keep-alive: other extranonce values are recorded, not applied.
+			// (Compared only here: during the handshake the values in force may still be the previous connection's.)
+			c.checkResubscribe(msg, l)
+			continue
 		}
 		c.process(msg, l)
 	}

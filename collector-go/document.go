@@ -208,6 +208,23 @@ func merkleBytes(v pyValue) ([]byte, error) {
 	return nil, errPyType // int / float / bool: not iterable
 }
 
+// extranonceColumns converts extranonce1 and extranonce2_length to their `templates` columns (bytes.fromhex and
+// int() like pgsink.to_row, plus the smallint range). mining.set_extranonce is validated with it too.
+func extranonceColumns(en1, en2 pyValue) ([]byte, int16, error) {
+	b, err := pyFromHex(en1)
+	if err != nil {
+		return nil, 0, fmt.Errorf("extranonce1: %w", err)
+	}
+	n, err := pyIntOfValue(en2)
+	if err != nil {
+		return nil, 0, fmt.Errorf("extranonce2_length: %w", err)
+	}
+	if !n.IsInt64() || n.Int64() < math.MinInt16 || n.Int64() > math.MaxInt16 {
+		return nil, 0, errors.New("extranonce2_length out of range for smallint")
+	}
+	return b, int16(n.Int64()), nil
+}
+
 // toRow converts a document to a `templates` row exactly like pgsink.to_row. On top of Python's checks it rejects
 // values Postgres would refuse (NUL or a lone surrogate in job_id, a height or extranonce2_length out of the column's
 // range): Python would fail the whole batch on those and retry it forever.
@@ -249,17 +266,9 @@ func toRow(d *Document, sourceID int16) (Row, error) {
 		return r, fmt.Errorf("ntime: %w", err)
 	}
 	r.CleanJobs = d.Params[pCleanJobs].truthy()
-	if r.Extranonce1, err = pyFromHex(d.Extranonce1); err != nil {
-		return r, fmt.Errorf("extranonce1: %w", err)
+	if r.Extranonce1, r.Extranonce2Len, err = extranonceColumns(d.Extranonce1, d.Extranonce2Len); err != nil {
+		return r, err
 	}
-	en2, err := pyIntOfValue(d.Extranonce2Len)
-	if err != nil {
-		return r, fmt.Errorf("extranonce2_length: %w", err)
-	}
-	if !en2.IsInt64() || en2.Int64() < math.MinInt16 || en2.Int64() > math.MaxInt16 {
-		return r, errors.New("extranonce2_length out of range for smallint")
-	}
-	r.Extranonce2Len = int16(en2.Int64())
 	if d.HasLatency {
 		f := float32(d.LatencyMs) // float8 -> real, rounded to nearest like Postgres' assignment cast
 		r.LatencyMs = &f

@@ -366,7 +366,7 @@ describe('summary source', () => {
     });
     vi.doMock('../db/pg', () => ({ getPgPool: () => ({ query }) }));
     const db = await import('../db/unknown-parents');
-    const rows = await db.getStaleEpisodePoolRows(['Hidden'], '6e');
+    const rows = await db.getLiveStaleEpisodePoolRows(['Hidden'], '6e');
     expect(rows.map(r => [r.parent.slice(0, 2), r.pool])).toEqual([['bb', 'A'], ['bb', 'B']]);
     const [first, second] = query.mock.calls as unknown as [string, unknown[]][];
     expect(first[0]).toContain('s.reorged_in_at IS NULL AND w.w_to >= cut.at');
@@ -378,8 +378,43 @@ describe('summary source', () => {
       900_101, '2026-01-02 00:00:00+00', 'infinity', 'bb'.repeat(32)]);
     query.mockImplementationOnce(async () => ({ rows: [] }));
     query.mockClear();
-    expect(await db.getStaleEpisodePoolRows([], 'all')).toEqual([]);           // no stale block: no templates read
+    expect(await db.getLiveStaleEpisodePoolRows([], 'all')).toEqual([]);       // no stale block: no templates read
     expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  // getStaleEpisodePoolRows with a mocked pool: the first query is the emptiness check
+  async function loadStale(filled: boolean) {
+    vi.resetModules();
+    const sql: string[] = [];
+    const query = vi.fn(async (text: string, params?: unknown[]) => {
+      sql.push(text);
+      if (text.includes('EXISTS (SELECT 1 FROM stale_parent_pools)')) return { rows: [{ filled }] };
+      return { rows: [], params };
+    });
+    vi.doMock('../db/pg', () => ({ getPgPool: () => ({ query }) }));
+    const db = await import('../db/unknown-parents');
+    return { db, sql, query };
+  }
+
+  it('reads stale parents from stale_parent_pools, judging "still stale" and the range at read time', async () => {
+    const { db, sql, query } = await loadStale(true);
+    for (const r of ['6e', '26e', 'all'] as const) await db.getStaleEpisodePoolRows(['Hidden'], r);
+    const reads = query.mock.calls.filter(c => c[0].includes('FROM stale_parent_pools u'));
+    expect(reads).toHaveLength(3);
+    expect(reads[0][0]).toContain('s.reorged_in_at IS NULL');
+    expect(reads[0][0]).toContain('NULL::bigint AS auxpow');
+    expect(reads.map(r => r[1])).toEqual([[12_096, ['Hidden']], [52_416, ['Hidden']], [null, ['Hidden']]]);
+    expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
+  });
+
+  it('reads stale parents live while stale_parent_pools is empty and stale blocks exist (every range)', async () => {
+    const { db, sql } = await loadStale(false);
+    for (const r of ['6e', 'all'] as const) {
+      sql.length = 0;
+      await db.getStaleEpisodePoolRows([], r);
+      expect(sql.some(t => t.includes('template_height_windows'))).toBe(true);
+      expect(sql.some(t => t.includes('FROM stale_parent_pools u'))).toBe(false);
+    }
   });
 
   it('falls back to the live read of templates while the table is empty (the default range only)', async () => {

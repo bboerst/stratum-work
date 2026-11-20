@@ -128,12 +128,17 @@ class UnknownParentsRefresher:
             return to - self.startup_window, to
         return min(to - self.window, self.covered_to), to
 
+    label = "Unknown parents"
+
+    def refresh(self, a: datetime, b: datetime) -> Dict[str, Any]:
+        return refresh(self.store, a, b, self.margin)
+
     def run_once(self) -> Dict[str, Any]:
         a, b = self.range()
         t0 = time.monotonic()
-        s = refresh(self.store, a, b, self.margin)
+        s = self.refresh(a, b)
         self.covered_to = b
-        self.log.info("Unknown parents refreshed [%s, %s]: %d parents, %d rows written, %.1f s",
+        self.log.info("%s refreshed [%s, %s]: %d parents, %d rows written, %.1f s", self.label,
                       a.isoformat(), b.isoformat(), len(s["parents"]), s["rows"], time.monotonic() - t0)
         return s
 
@@ -143,7 +148,7 @@ class UnknownParentsRefresher:
                 self.run_once()
             except Exception as e:
                 # covered_to stays: the next run starts where the last good one ended
-                self.log.error("Unknown parents refresh failed (retried on the next block): %s", e)
+                self.log.error("%s refresh failed (retried on the next block): %s", self.label, e)
             self._wake.wait()
             self._wake.clear()
 

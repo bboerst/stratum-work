@@ -31,8 +31,8 @@ export const dynamic = "force-dynamic";
  *       truncated, blocks (every block we know at height - 1 and height, with arrival) }; 404 if the parent isn't an
  *       episode of that range's summary
  *
- * The summary reads the backend's per-(parent, pool) table of unknown parents (a few ms), the templates built on the
- * stale blocks in the range (one bounded read), and the findings; it's computed once per SUMMARY_MS per process and
+ * The summary reads the backend's per-(parent, pool) tables of unknown and of stale parents (a few ms each) and the
+ * findings; it's computed once per SUMMARY_MS per process and
  * range and served stale while a refresh runs. A drill-in is looked up in that summary (so it reads only the
  * episode's pools, heights and minutes) and cached for DRILL_MS.
  */

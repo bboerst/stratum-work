@@ -91,6 +91,11 @@ COINBASE_FILL_MAX_BLOCKS = int(os.getenv("COINBASE_FILL_MAX_BLOCKS", "1000"))
 # every parent of those templates that is no block we know. Its own thread and connection: new blocks never wait for
 # it. Older history: `python -m unknown_parents --backfill`. false = off.
 UNKNOWN_PARENTS_ENABLED = os.getenv("UNKNOWN_PARENTS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
+# Stale-parents summary (stale_parents.py): on the same schedule, the per-(stale block, pool) facts the Forks page reads
+# for templates on a recorded stale block, recomputed for every stale block whose height window overlaps that range or
+# that has no row yet; also right after the stale-block tracker records a block. Its own thread and connection.
+# Older history: `python -m stale_parents --backfill`. false = off.
+STALE_PARENTS_ENABLED = os.getenv("STALE_PARENTS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
 
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
@@ -823,6 +828,8 @@ def zmq_listener():
                         if unknown_parents_refresher is not None:
                             # after the block is stored (the queue is in order), so it is a known parent by then
                             block_processor.submit(unknown_parents_refresher.request)
+                        if stale_parents_refresher is not None:
+                            block_processor.submit(stale_parents_refresher.request)
                         
                 except Exception as inner_e:
                     logger.error("Error processing ZMQ message: %s", inner_e)
@@ -870,6 +877,9 @@ def stale_recorder():
 def _after_stale_poll(stats) -> None:
     if stats.get("reactivated"):   # a recorded stale block is active again: our best chain may have to follow
         block_processor.submit(reconcile_recent_window)
+    if stats.get("blocks_recorded") and stale_parents_refresher is not None:
+        # a newly recorded stale block left the unknown parents (judged at read time): give it its rows now
+        stale_parents_refresher.request()
 
 
 def start_stale_block_tracker():
@@ -936,12 +946,36 @@ def start_unknown_parents_refresher():
     logger.info("Unknown-parents summary started")
 
 
+# --- Stale-parents summary (stale_parents.py) ---
+stale_parents_refresher = None
+
+
+def start_stale_parents_refresher():
+    """After the startup sync, like the unknown-parents summary: the first run, then one per new block and per newly
+    recorded stale block, on its own thread and its own connection."""
+    global stale_parents_refresher
+    if not (STALE_PARENTS_ENABLED and store.enabled):
+        logger.info("Stale-parents summary off (STALE_PARENTS_ENABLED=%s, storage enabled=%s)",
+                    STALE_PARENTS_ENABLED, store.enabled)
+        return
+    try:
+        from stale_parents import StaleParentsRefresher
+        refresher = StaleParentsRefresher(type(store).from_env())
+    except Exception as e:
+        logger.error("Stale-parents summary not started: %s", e)
+        return
+    threading.Thread(target=refresher.run_forever, daemon=True, name="stale_parents").start()
+    stale_parents_refresher = refresher
+    logger.info("Stale-parents summary started")
+
+
 def sync_then_fill_gaps():
-    """The startup sync, then the unknown-parents summary (unknown_parents.py, on its own thread), the historical gap
-    fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history best-chain check (every
-    BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
+    """The startup sync, then the unknown- and stale-parents summaries (unknown_parents.py, stale_parents.py, each on
+    its own thread), the historical gap fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history best-chain
+    check (every BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
     sync_blocks()
     start_unknown_parents_refresher()
+    start_stale_parents_refresher()
     fill = BLOCK_GAP_FILL_INTERVAL_S > 0 and store.enabled
     check = BEST_CHAIN_HISTORY_INTERVAL_S > 0 and store.enabled
     if not fill:

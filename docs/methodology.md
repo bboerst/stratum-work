@@ -62,7 +62,8 @@ Both are made only from stored facts, so recomputing them gives the same answer 
   handshake; a later `mining.set_extranonce` replaces them for the templates after it (invalid values are ignored).
   Every change is an `extranonce` event with the old and new values. A response to the collector's own re-subscribe
   (latency probe, keep-alive) with other values is recorded the same way but not applied: the first subscription is
-  assumed to stay in force, and these events check that assumption.
+  assumed to stay in force, and these events check that assumption. Some pools answer every re-subscribe with the
+  same other values, so a response that repeats the last one recorded on the connection is not recorded again.
 
 ## Arrival times
 

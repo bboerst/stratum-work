@@ -166,6 +166,58 @@ func TestKeepAliveResponseWithOtherValuesIsRecorded(t *testing.T) {
 	}
 }
 
+// Some pools answer every re-subscribe with the same other values (e.g. extranonce1's bytes reversed): recorded
+// once per connection, then only when the response changes. A reconnect starts over.
+func TestRepeatedResubscribeResponseIsRecordedOnce(t *testing.T) {
+	pool := newFakePool(t)
+	c, docs, _, _ := testCollector(t, poolURL(pool), func(s *StratumConfig) { s.ProbeInterval = 100 * time.Millisecond })
+	events := make(chan IngestEvent, 16)
+	c.Event = func(e IngestEvent) {
+		if e.Kind == "extranonce" {
+			events <- e
+		}
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go c.Run(ctx)
+	answer := func(f *fakeConn, en1 string, job string) {
+		t.Helper()
+		probe, _ := f.readReq(t)
+		f.send(t, `{"id": `+reqID(probe)+`, "result": [[], "`+en1+`", 8], "error": null}`+"\n"+notifyLine(job))
+		wantExtranonce(t, nextDoc(t, docs), job, `"abcd1234"`, "8")
+	}
+	wantNew := func(en1 string) {
+		t.Helper()
+		e := nextEvent(t, events)
+		if n, _ := e.Detail["new"].(map[string]any); e.Detail["cause"] != "resubscribe" || n["extranonce1"] != en1 {
+			t.Errorf("want a resubscribe event with %s, got %+v", en1, e)
+		}
+	}
+
+	f := pool.accept(t)
+	f.handshake(t)
+	answer(f, "3412cdab", "r1")
+	wantNew("3412cdab")
+	answer(f, "3412cdab", "r2") // repeat: not recorded
+	answer(f, "3412cdab", "r3")
+	noEvent(t, events)
+	answer(f, "abcd1234", "r4") // the values in force: not recorded, and the last recorded response is kept
+	answer(f, "3412cdab", "r5")
+	noEvent(t, events)
+	answer(f, "beef0000", "r6") // a change: recorded
+	wantNew("beef0000")
+	answer(f, "3412cdab", "r7") // differs from the last recorded: recorded again
+	wantNew("3412cdab")
+
+	f.Close() // reconnect: the memory starts over
+	f2 := pool.accept(t)
+	f2.handshake(t)
+	answer(f2, "3412cdab", "s1")
+	wantNew("3412cdab")
+	answer(f2, "3412cdab", "s2")
+	noEvent(t, events)
+}
+
 func TestEventValueIsJSONBSafe(t *testing.T) {
 	for _, tc := range []struct {
 		v    pyValue

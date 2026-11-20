@@ -14,6 +14,8 @@
  *                     plus a late re-send after the window and a blacklisted pool's template: neither counts
  *  S2 stale           a recorded stale block at H - 100, built on by both pools (an exact copy across multi's
  *                     connections counted once) and the blacklisted pool, five days before T0
+ *  S3 stale           a recorded stale block at H - 20,000, built on 120 days before T0: in 26 epochs and all
+ *                     history, not in 6 epochs
  * and invalid-coinbase findings: on B0 (height H: a badge on A and S1, the blacklisted offender left out) and on B1
  * (height H - 1, where nothing forked: a row of its own, keyed by B2).
  * Parent hashes are asymmetric (they meet the target only read in display order), so a byte-order slip fails here.
@@ -68,6 +70,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
   const blk = (k: string) => '0000' + r3 + k.repeat(26) + '00';   // our blocks (display order)
   const [B2, B1, B0, S1] = [blk('b2'), blk('b1'), blk('b0'), blk('51')];  // H - 2, H - 1, H; S1: stale at H - 1
   const S2 = blk('52');                                                    // stale at H - 100
+  const S3 = blk('53');                                                    // stale at H - 20,000
   const [E6, E26, E0] = [blk('e6'), blk('e2'), blk('e0')];   // the range cutoffs (H - 6, H - 26 epochs); E0: an early block, so F has a tip
   const EN1 = { [single]: 'c0ffee11', [`${multi}/a`]: 'c0ffee12', [`${multi}/b`]: 'c0ffee13', [hidden]: 'c0ffee14' } as Record<string, string>;
   const SITE = `zz-site-${run}`;
@@ -98,11 +101,11 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
   const refreshStale = () => admin.query(
     `SELECT stale_parent_pools_refresh(s.block_hash, s.height + 1, w.w_from, w.w_to)
        FROM stale_blocks s CROSS JOIN LATERAL template_height_windows(s.height + 1, s.height + 1) w
-      WHERE s.block_hash = ANY (SELECT decode(h, 'hex') FROM unnest($1::text[]) h)`, [[S1, S2]]);
+      WHERE s.block_hash = ANY (SELECT decode(h, 'hex') FROM unnest($1::text[]) h)`, [[S1, S2, S3]]);
   const staleRows = async () => (await admin.query(
     `SELECT encode(prev_hash, 'hex') AS prev_hash, pool, n, first_received, last_received, conns, heights, nbits
        FROM stale_parent_pools WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)
-      ORDER BY 1, 2`, [[S1, S2]])).rows;
+      ORDER BY 1, 2`, [[S1, S2, S3]])).rows;
 
   const get = async (qs = '') => {
     const res = await route.GET(new Request(`http://localhost/api/forks${qs}`));
@@ -150,6 +153,11 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
                                  chaintip_status, last_status, tip_hash, fork_height, first_seen)
        VALUES (decode($1, 'hex'), $2, decode($3, 'hex'), 1, to_timestamp($4::float8), $5, 1, '\\x00', 'valid-fork',
                'valid-fork', decode($1, 'hex'), $2 - 1, to_timestamp($4::float8))`, [S2, H - 100, B2, T0 - 5 * DAY, BITS]);
+    await admin.query(
+      `INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,
+                                 chaintip_status, last_status, tip_hash, fork_height, first_seen)
+       VALUES (decode($1, 'hex'), $2, decode($3, 'hex'), 1, to_timestamp($4::float8), $5, 1, '\\x00', 'valid-fork',
+               'valid-fork', decode($1, 'hex'), $2 - 1, to_timestamp($4::float8))`, [S3, H - 20_000, B2, T0 - 120 * DAY, BITS]);
     await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
       [S1, JSON.stringify({ name: 'Synthetic Miner' })]);
     await admin.query(`UPDATE blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,   // a best block's miner
@@ -182,6 +190,8 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     await insert(`${multi}/b`, -5 * DAY + 40, H - 99, 's2c', S2);
     await insert(single, -5 * DAY + 20, H - 99, 's2d', S2, { nbits: OTHER_NBITS });
     await insert(hidden, -5 * DAY + 5, H - 99, 's2x', S2);                    // blacklisted
+    // S3: at H - 19,999, 120 days before T0 (inside its window: from E26 to E6; before the 6-epoch cutoff)
+    await insert(single, -120 * DAY + 60, H - 19_999, 's3a', S3);
     // B: the all-ff parent at H + 1, T0 + 300 .. T0 + 320
     await insert(single, 300, H + 1, 'b1', X_B);
     await insert(single, 320, H + 1, 'b2', X_B);
@@ -216,9 +226,9 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
       [ALL]);
     await admin?.query(
       `DELETE FROM stale_parent_pools WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)`,
-      [[S1, S2]]);
+      [[S1, S2, S3]]);
     await admin?.query(`DELETE FROM blocks WHERE block_hash = decode($1, 'hex')`, [X_E]);
-    await admin?.query(`DELETE FROM stale_blocks WHERE height = ANY ($1::int[])`, [[H - 1, H - 100]]);
+    await admin?.query(`DELETE FROM stale_blocks WHERE height = ANY ($1::int[])`, [[H - 1, H - 100, H - 20_000]]);
     await admin?.query(`DELETE FROM blocks WHERE height = ANY ($1::int[])`, [[H - 2, H - 1, H, H - 12_096, H - 52_416, H - 60_000]]);
     await admin?.end();
     const { getPgPool } = await import('../db/pg');
@@ -235,13 +245,15 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
   });
 
   it('stores the stale parents as the live read of templates returns them, field for field (every range, blacklist)', async () => {
-    const pick = <T extends { parent: string }>(rows: T[]) => rows.filter(r => [S1, S2].includes(r.parent));
+    const pick = <T extends { parent: string }>(rows: T[]) => rows.filter(r => [S1, S2, S3].includes(r.parent));
     for (const range of ['6e', '26e', 'all'] as const) {
       for (const excluded of [[], [hidden]]) {
         const live = pick(await db.getLiveStaleEpisodePoolRows(excluded, range));
-        // oldest first: S2's pools (hidden at +5 s, multi at +10, single at +20), then S1's (hidden at 31 is after multi at 30)
+        // oldest first: S3's (outside 6 epochs), S2's pools (hidden at +5 s, multi at +10, single at +20), then S1's
+        // (hidden at 31 is after multi at 30)
+        const s3 = range === '6e' ? [] : [single];
         expect(live.map(r => r.pool), `${range} ${excluded}`).toEqual(
-          excluded.length ? [multi, single, multi] : [hidden, multi, single, multi, hidden]);
+          [...s3, ...(excluded.length ? [multi, single, multi] : [hidden, multi, single, multi, hidden])]);
         expect(pick(await db.getStaleEpisodePoolRows(excluded, range)), `${range} ${excluded}`).toEqual(live);
       }
     }
@@ -253,7 +265,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     ]);
     // recomputing changes nothing (idempotent)
     const before = await staleRows();
-    expect(before).toHaveLength(5);
+    expect(before).toHaveLength(6);
     await refreshStale();
     expect(await staleRows()).toEqual(before);
   });
@@ -385,7 +397,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     await admin.query(`UPDATE stale_blocks SET reorged_in_at = now() WHERE block_hash = decode($1, 'hex')`, [S1]);
     expect((await db.getStaleEpisodePoolRows([hidden], 'all')).some(r => r.parent === S1)).toBe(false);
     expect((await db.getLiveStaleEpisodePoolRows([hidden], 'all')).some(r => r.parent === S1)).toBe(false);
-    expect(await staleRows()).toHaveLength(5);     // judged at read time: S1's rows stay
+    expect(await staleRows()).toHaveLength(6);     // judged at read time: S1's rows stay
     await admin.query(`UPDATE stale_blocks SET reorged_in_at = NULL WHERE block_hash = decode($1, 'hex')`, [S1]);
     expect((await db.getStaleEpisodePoolRows([hidden], 'all')).filter(r => r.parent === S1).map(r => r.pool)).toEqual([multi]);
   });

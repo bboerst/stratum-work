@@ -236,9 +236,10 @@ that block and that arrived inside that height's time window, de-duplicated like
 isn't counted: it would mean reading every coinbase). The backend keeps these counts in `stale_parent_pools`, the
 twin of the unknown parents' summary below (`backend/stale_parents.py`): one row per stale block and pool, counted
 facts only, recomputed whole from the stored templates (never added to) for every stale block whose height window
-overlaps the last hours (new templates can only arrive inside it, and the window only moves while blocks at its
-heights are still arriving) or that has no row yet (a block recorded since, also from the public dataset or by the
-best-chain check); `python -m stale_parents --backfill` recomputes every stale block. Whether a block is still stale
+overlaps the last hours (new templates can only arrive inside it, and its window moves when blocks at its heights
+arrive) or that has no row yet (a block recorded since, also from the public dataset or by the best-chain check);
+`python -m stale_parents --backfill` recomputes every stale block, also after a block stored late at an old height
+(the gap fill) has moved an old window. Whether a block is still stale
 is checked each time the page is read, so a block reorged back in drops out with no cleanup. The web's Postgres tests
 compare the table field for field with the direct read of templates, which the page uses while the table is empty.
 Its episode shows the block's height, how its header reached us and, when identified, its miner (not named when it

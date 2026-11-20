@@ -246,8 +246,8 @@ export async function getStaleEpisodePoolRows(excludePools: string[], range: Unk
             (extract(epoch FROM u.last_received) * 1000)::bigint AS last_ms,
             NULL::bigint AS auxpow, u.conns, u.heights, u.nbits
        FROM u, cut
-      WHERE cut.at = '-infinity'
-         OR (extract(epoch FROM u.parent_last) * 1000)::bigint >= (extract(epoch FROM cut.at) * 1000)::bigint
+      WHERE CASE WHEN cut.at = '-infinity' THEN true      -- the bigint cast of an infinite epoch would fail
+                 ELSE (extract(epoch FROM u.parent_last) * 1000)::bigint >= (extract(epoch FROM cut.at) * 1000)::bigint END
       ORDER BY first_ms, parent, u.pool`,
     [RANGE_BLOCKS[range], excludePools],
   );

@@ -27,7 +27,7 @@ export default function VisualizationToggle({ blockHeight, isTemplatePage }: Vis
       title={isPanelVisible ? "Hide analytics panel" : "Show analytics panel"}
     >
       <BarChartIcon className="h-5 w-5" />
-      <span className="hidden sm:inline text-sm font-medium">Analytics Panel</span>
+      <span className="hidden xl:inline text-sm font-medium">Analytics Panel</span>
       {isPanelVisible ? (
         <ChevronRightIcon className="hidden sm:block h-4 w-4" />
       ) : (

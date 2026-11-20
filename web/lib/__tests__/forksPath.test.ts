@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SELECTION_ORDER, episodeDescription, episodeTitle, parseForksPath, rankAtHeight, resolvePath, selectEpisode,
-  shortPath, shortPathForParent, type ShareEpisode, type ShareKind, type ShareRange,
+  pagePath, shortPath, shortPathForParent, type ShareEpisode, type ShareKind, type ShareRange,
 } from '../forksPath';
 
 let n = 0;
@@ -120,5 +120,26 @@ describe('link-preview text', () => {
       .toBe("Height 5: 1 pool built on another chain's block for 10m (1 template).");
     expect(episodeDescription(ep('invalid_coinbase', 5, { templates: 3 })))
       .toBe('Height 5: 1 pool sent templates whose coinbase pays more than the block can (3 templates).');
+  });
+});
+
+describe('pagePath (the address the page writes)', () => {
+  it('reopens the same episode on reload whichever range the page shows', async () => {
+    // 6e has A alone at h; all also has B, which ranks first there: B's bare path would reload to A
+    const A = ep('stale', 500), B = ep('invalid_parent', 500), C = ep('other_chain', 500), D = ep('other_chain', 501);
+    const ranges: Record<ShareRange, ShareEpisode[]> = { '6e': [A, D], '26e': [A, D], all: [A, B, C, D] };
+    const load = async (r: ShareRange) => ranges[r];
+    for (const range of ['6e', '26e', 'all'] as ShareRange[]) {
+      for (const e of ranges[range]) {
+        const path = pagePath(e, ranges[range], range);
+        const r = await resolvePath(parseForksPath(path.split('/').slice(2))!, load);
+        expect(r?.episode, `${range} ${path}`).toBe(e);
+      }
+    }
+    expect(pagePath(A, ranges['6e'], '6e')).toBe('/forks/500');
+    expect(pagePath(D, ranges.all, 'all')).toBe('/forks/501');   // alone at its height
+    expect(pagePath(B, ranges.all, 'all')).toBe(`/forks/500/invalid-parent-${B.parent.slice(-8)}`);
+    // the bare path the page would have written without this rule opens A, not B
+    expect((await resolvePath(parseForksPath(['500'])!, load))?.episode).toBe(A);
   });
 });

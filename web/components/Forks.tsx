@@ -5,7 +5,7 @@ import * as d3 from "d3";
 import { Info } from "lucide-react";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
 import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
-import { shortPath } from "@/lib/forksPath";
+import { pagePath } from "@/lib/forksPath";
 
 /**
  * Forks (/api/forks): templates built on a block other than our best one, as episodes (one per parent), in
@@ -774,7 +774,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
  * lib/forksPath.ts), or /forks with a range other than the default.
  */
 function pageUrl(selected: Episode | null, all: Episode[], range: Range): string {
-  if (selected) return shortPath(selected, all);
+  if (selected) return pagePath(selected, all, range);
   return range === DEFAULT_RANGE ? "/forks" : `/forks?range=${range}`;
 }
 

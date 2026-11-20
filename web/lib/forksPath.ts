@@ -109,6 +109,18 @@ export function shortPath(e: ShareEpisode, episodes: readonly ShareEpisode[]): s
 }
 
 /**
+ * The path the page writes for an episode it shows from one range's summary. The short forms are resolved against the
+ * smallest range with anything at that height, so they are only safe when this is the smallest range (6e) or the
+ * episode is alone at its height here (a smaller range then has it alone or nothing). Otherwise a larger range can
+ * hold an episode a smaller one lacks, and the bare or kind form would open another one: the suffix form, which
+ * matches exactly in any range.
+ */
+export function pagePath(e: ShareEpisode, episodes: readonly ShareEpisode[], range: ShareRange): string {
+  if (range === SHARE_RANGES[0] || rankAtHeight(episodes, e.height).length <= 1) return shortPath(e, episodes);
+  return `/forks/${e.height}/${KIND_SLUG[e.kind]}-${e.parent.slice(-SUFFIX)}`;
+}
+
+/**
  * Resolve a path against the ranges' summaries, smallest range first: the first range with an exact match wins, else
  * the first with any episode at the height (a fallback). load returns a range's episodes, or null (no data).
  */

@@ -26,7 +26,11 @@ export interface SummaryResponse {
 // The summary entry being served per range: `settled` once its read finished, `fallback` = the previous result,
 // served while this one is still running.
 interface SummaryEntry { at: number; promise: Promise<SummaryResponse>; settled: SummaryResponse | null; fallback: SummaryResponse | null }
-const summaries = new Map<UnknownParentsRange, SummaryEntry>();
+// On globalThis: Next.js bundles the API route, the pages and the image routes separately, each with its own copy of
+// this module, and one cache per process is the point (a short link's first view would otherwise read every range
+// again). Tests delete it to start cold.
+const store = globalThis as { __forksSummaries?: Map<UnknownParentsRange, SummaryEntry> };
+const summaries = (store.__forksSummaries ??= new Map<UnknownParentsRange, SummaryEntry>());
 
 function refreshSummary(range: UnknownParentsRange, now: number, fallback: SummaryResponse | null): SummaryEntry {
   const entry: SummaryEntry = {

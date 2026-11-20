@@ -348,6 +348,17 @@ time() - max by (pool) (
 ```
 A replica that isn't scraped at all drops out of the `max`; check `up` for that.
 
+### Backend (`BACKEND_METRICS_PORT`, off by default)
+| Metric | Type | What |
+|---|---|---|
+| `stratum_backend_zmq_block_saved_seconds` | histogram | ZMQ `hashblock` receipt (`blocks.seen_at`) to the block saved, for blocks saved with `seen_via` `zmq`. Buckets 0.05 s to 40 s |
+| `stratum_backend_reconcile_blocks_saved_total` | counter | Blocks saved with `seen_via` `reconcile`: the best-chain reconciliation found them missing, not ZMQ (a missed announcement, a reorg's other blocks, or a failed save of an announced block). Blocks mined while the backend was stopped are stored by the startup sync as synced, not counted |
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(stratum_backend_zmq_block_saved_seconds_bucket[1d])))
+increase(stratum_backend_reconcile_blocks_saved_total[1d]) > 0
+```
+
 ## Testing and CI
 
 ### Tests per component

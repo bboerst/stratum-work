@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,5 +103,86 @@ func TestHealthEndpointsAndMetrics(t *testing.T) {
 		if strings.Contains(body, gone) {
 			t.Errorf("unexpected %q in\n%s", gone, body)
 		}
+	}
+}
+
+// sampleValue is the value of the unlabelled sample `name` in a /metrics body.
+func sampleValue(t *testing.T, body, name string) float64 {
+	t.Helper()
+	for _, l := range strings.Split(body, "\n") {
+		if f := strings.Fields(l); len(f) == 2 && f[0] == name {
+			v, err := strconv.ParseFloat(f[1], 64)
+			if err != nil {
+				t.Fatalf("%s: %v", l, err)
+			}
+			return v
+		}
+	}
+	t.Fatalf("no sample %s in\n%s", name, body)
+	return 0
+}
+
+// The "no template for N s" alert reads these two gauges: the last template's receipt time, and the process start
+// for a collector that has had none since it started (README "Metrics").
+func TestLastTemplateAndStartTimeGauges(t *testing.T) {
+	m := &Metrics{}
+	hs := &HealthServer{Metrics: m, MaxAge: time.Minute, log: quietLog}
+	h := hs.Handler()
+	_, body := get(t, h, "/metrics")
+	for _, want := range []string{
+		"# TYPE stratum_collector_last_notify_timestamp_seconds gauge",
+		"# TYPE stratum_collector_start_time_seconds gauge",
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if v := sampleValue(t, body, "stratum_collector_last_notify_timestamp_seconds"); v != 0 {
+		t.Errorf("last notify before any template = %v, want 0", v)
+	}
+	start := sampleValue(t, body, "stratum_collector_start_time_seconds")
+	if now := float64(time.Now().Unix()); start <= 0 || start > now+1 {
+		t.Errorf("start time %v, now %v", start, now)
+	}
+
+	ts := time.Date(2026, 11, 20, 12, 0, 0, 250_000_000, time.UTC).UnixNano()
+	m.Notify(ts, ts+1000)
+	_, body = get(t, h, "/metrics")
+	if v, want := sampleValue(t, body, "stratum_collector_last_notify_timestamp_seconds"), float64(ts)/1e9; v != want {
+		t.Errorf("last notify = %v, want %v (the receipt time)", v, want)
+	}
+	if v := sampleValue(t, body, "stratum_collector_start_time_seconds"); v != start {
+		t.Errorf("start time moved: %v -> %v", start, v)
+	}
+	m.Notify(ts+int64(time.Second), ts+int64(time.Second))
+	_, body = get(t, h, "/metrics")
+	if v, want := sampleValue(t, body, "stratum_collector_last_notify_timestamp_seconds"), float64(ts+int64(time.Second))/1e9; v != want {
+		t.Errorf("last notify = %v, want %v", v, want)
+	}
+}
+
+// Scrapes while templates arrive (go test -race).
+func TestMetricsRenderConcurrentWithNotify(t *testing.T) {
+	m := &Metrics{}
+	hs := &HealthServer{Metrics: m, MaxAge: time.Minute, log: quietLog}
+	h := hs.Handler()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 500; i++ {
+			now := time.Now().UnixNano()
+			m.Notify(now, now+int64(i))
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		get(t, h, "/metrics")
+	}
+	<-done
+	_, body := get(t, h, "/metrics")
+	if v := sampleValue(t, body, "stratum_collector_templates_received_total"); v != 500 {
+		t.Errorf("templates = %v, want 500", v)
+	}
+	if v := sampleValue(t, body, "stratum_collector_last_notify_timestamp_seconds"); v <= 0 {
+		t.Errorf("last notify = %v", v)
 	}
 }

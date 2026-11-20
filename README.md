@@ -313,6 +313,41 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md)) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from |
 
+## Metrics
+
+Prometheus text format on `/metrics`.
+
+### Collector (`--http-port`)
+No sample carries a pool label: each collector is one process and one pool connection, named by
+`stratum_collector_info{pool,site,replica,version}`. Join on the scrape target to label the others.
+
+| Metric | Type | What |
+|---|---|---|
+| `stratum_collector_info` | gauge | 1, with labels `pool`, `site`, `replica`, `version` |
+| `stratum_collector_templates_received_total` | counter | `mining.notify` messages received (stored as templates) |
+| `stratum_collector_last_notify_timestamp_seconds` | gauge | Receipt time of the last template (unix seconds); 0 before the first one |
+| `stratum_collector_start_time_seconds` | gauge | Process start (unix seconds) |
+| `stratum_collector_notify_malformed_total`, `_rejected_total`, `_bursts_total`, `_reconnects_total` | counter | Quarantined `mining.notify`, quarantined messages, burst records, lost or failed connections |
+| `stratum_collector_subscribed`, `_ready`, `_kernel_rx_timestamps` | gauge | 1 while subscribed, while `/readyz` succeeds, if receipt times are kernel timestamps |
+| `stratum_collector_rx_clock_lag_seconds`, `_rx_clock_lag_max_seconds` | summary, gauge | How far the post-read clock trailed the kernel receive timestamp |
+| `stratum_collector_latency_estimate_seconds{method}` | gauge | One-way latency estimate (RTT/2) |
+| `stratum_collector_sink_queue_depth{sink}`, `_sink_events_total{sink,event}` | gauge, counter | Postgres and RabbitMQ sink queues and counters |
+
+Every replica of a pool without a template for 5 minutes. Each replica counts from its last template, or from its
+start if it has had none since: a restart doesn't look like silence, and a pool that stays silent across restarts
+still shows up after 5 minutes. A timestamp, unlike `increase(..._templates_received_total[5m])`, has no counter
+reset or missing history after a restart to misread.
+```promql
+time() - max by (pool) (
+  (
+    stratum_collector_last_notify_timestamp_seconds > stratum_collector_start_time_seconds
+    or stratum_collector_start_time_seconds
+  )
+  * on (job, instance) group_left (pool) stratum_collector_info
+) > 300
+```
+A replica that isn't scraped at all drops out of the `max`; check `up` for that.
+
 ## Testing and CI
 
 ### Tests per component

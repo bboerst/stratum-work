@@ -14,6 +14,7 @@ from bitcoin_utils import extract_coinbase_data
 from integrations import store, publish_to_rabbitmq, rabbitmq_manager   # store: Postgres (integrations/store.py)
 from integrations.rabbitmq import start_heartbeat_thread
 from header_fill import block_header_fields   # new blocks and the header fill share one mapping
+import metrics   # /metrics (metrics.py)
 
 # Global mining pool definitions cache
 pools_cache: Dict[str, Dict[str, Any]] = {}
@@ -57,6 +58,9 @@ START_FULL_REINDEX_ON_BOOT = False
 # height (a reorg) is replaced by the node's and marked stale. The startup sync only fills below the lowest and above
 # the highest stored block, and never replaces one. 0 turns the window off.
 BLOCK_GAP_WINDOW = int(os.getenv("BLOCK_GAP_WINDOW", "144"))
+
+# Prometheus /metrics (metrics.py) on this port; 0 = off.
+METRICS_PORT = int(os.getenv("BACKEND_METRICS_PORT", "0"))
 
 # Historical gap fill (gap_fill.py): at startup (after the sync) and then every BLOCK_GAP_FILL_INTERVAL_S seconds,
 # every height missing between MIN_BLOCK_HEIGHT and the stored tip is fetched; on a pruned node the node first
@@ -339,6 +343,11 @@ def process_block_status(block_hash: str, is_new_block: bool = False, seen_at: O
         doc = build_block_doc(block_hash)
         height = doc["height"]
         store.save_block(doc, is_new_block, seen_at=seen_at, seen_via=seen_via)
+        if is_new_block and seen_via == "zmq" and seen_at is not None:
+            # max(0): a wall-clock step back must not make the histogram's sum decrease
+            metrics.zmq_block_saved_seconds.observe(max(0.0, (datetime.now(timezone.utc) - seen_at).total_seconds()))
+        elif is_new_block and seen_via == "reconcile":
+            metrics.reconcile_blocks_saved_total.inc()
 
         logger.info("%s block %d (%s) mined by %s",
                    "Processed new" if is_new_block else "Synced old",
@@ -983,6 +992,8 @@ def sync_then_fill_gaps():
 def start_background_workers():
     """Initialize background tasks when running as a worker-only service."""
     logger.info("Starting background workers for Bitcoin Mining Pool Identification Service")
+    if METRICS_PORT > 0:
+        metrics.serve(METRICS_PORT)
     load_pools_once()
     start_stale_block_tracker()
     threading.Thread(target=sync_then_fill_gaps, daemon=True, name="sync_gap_fill").start()

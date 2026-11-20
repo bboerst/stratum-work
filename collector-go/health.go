@@ -37,6 +37,10 @@ type Metrics struct {
 	rxDeltaMax   float64
 }
 
+// processStart is exported as stratum_collector_start_time_seconds: before the first mining.notify after a restart,
+// last_notify_timestamp_seconds is 0, and an alert on "no template for N s" counts from this instead (README "Metrics").
+var processStart = time.Now()
+
 func (m *Metrics) SetSubscribed(v bool) { m.Subscribed.Store(v) }
 
 func (m *Metrics) Notify(tsNs, appNs int64) {
@@ -162,8 +166,10 @@ func (h *HealthServer) render() string {
 	p.sample(ns+"info", h.Labels, 1)
 	p.metric(ns+"templates_received_total", "counter", "mining.notify messages received.")
 	p.sample(ns+"templates_received_total", nil, float64(m.Templates.Load()))
-	p.metric(ns+"last_notify_timestamp_seconds", "gauge", "Receipt time of the last mining.notify (unix seconds).")
+	p.metric(ns+"last_notify_timestamp_seconds", "gauge", "Receipt time of the last mining.notify (unix seconds); 0 before the first one.")
 	p.sample(ns+"last_notify_timestamp_seconds", nil, float64(m.LastNotifyNs.Load())/1e9)
+	p.metric(ns+"start_time_seconds", "gauge", "Start time of the collector process (unix seconds).")
+	p.sample(ns+"start_time_seconds", nil, float64(processStart.UnixNano())/1e9)
 	p.metric(ns+"notify_malformed_total", "counter", "mining.notify messages without usable params (quarantined, not stored as templates).")
 	p.sample(ns+"notify_malformed_total", nil, float64(m.NotifyMalformed.Load()))
 	p.metric(ns+"rejected_total", "counter", "Messages from the pool quarantined instead of stored as templates.")

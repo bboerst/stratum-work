@@ -190,6 +190,7 @@ services:
       RABBITMQ_PASSWORD: "mqpassword"
       RABBITMQ_EXCHANGE: blocks
       PORT: ${BACKEND_PORT:-8001}
+      BACKEND_METRICS_PORT: ${BACKEND_METRICS_PORT:-0}
       # Storage (#112), as the local `backend` user
       PG_HOST: ${BACKEND_PG_HOST:-postgres}
       PG_PORT: ${BACKEND_PG_PORT:-5432}

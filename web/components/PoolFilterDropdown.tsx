@@ -65,7 +65,7 @@ export function PoolFilterDropdown() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-64 rounded-lg shadow-md border bg-background text-foreground z-50 flex flex-col">
+        <div className="fixed left-2 right-2 top-14 sm:absolute sm:left-auto sm:right-0 sm:top-full mt-1 sm:w-64 rounded-lg shadow-md border bg-background text-foreground z-50 flex flex-col">
           {/* Select / Deselect All */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b shrink-0">
             <button

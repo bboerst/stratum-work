@@ -239,14 +239,14 @@ export default function VisualizationPanel({
   return (
     <div 
       ref={panelRef}
-      className="h-full bg-background border-r border-border relative shrink-0"
-      style={{ width: `${width}px`, color: '#9d9d9d' }}
+      className="h-full bg-background border-r border-border relative shrink-0 w-full md:w-[var(--panel-w)]"
+      style={{ '--panel-w': `${width}px`, color: '#9d9d9d' } as React.CSSProperties}
     >
 
       {/* Resize handle */}
       <div 
         ref={resizeHandleRef}
-        className="absolute top-0 left-0 w-4 h-full cursor-ew-resize z-10 group flex items-center justify-center"
+        className="absolute top-0 left-0 w-4 h-full cursor-ew-resize z-10 group max-md:hidden md:flex items-center justify-center"
         style={{ transform: 'translateX(-50%)' }}
       >
         <div className="w-1 h-full bg-gray-700/60 group-hover:bg-gray-400">

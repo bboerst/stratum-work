@@ -80,7 +80,8 @@ export default function HeightPage() {
       
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
-        <div className="flex-1 overflow-auto">
+        {/* On a phone an open panel takes the full width in place of the table (its toggle switches back). */}
+        <div className={`flex-1 overflow-auto ${isPanelVisible || selectedTemplate ? "max-md:hidden" : ""}`}>
           {blockHeight !== null && blockHeight > 0 && (
             <div className="px-4">
               <CollapsibleRow title="Findings" defaultExpanded={true}>
@@ -116,7 +117,7 @@ export default function HeightPage() {
         
         {/* Selected Template Panel */}
         {selectedTemplate && (
-          <div className="w-[600px] shrink-0 border-l border-border bg-background overflow-auto">
+          <div className="w-full md:w-[600px] shrink-0 md:border-l border-border bg-background overflow-auto">
             <div className="p-4">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold">Selected Template Details</h2>
@@ -135,10 +136,12 @@ export default function HeightPage() {
         
         {/* Visualization Panel */}
         {isPanelVisible && (
+          <div className={selectedTemplate ? "contents max-md:hidden" : "contents"}>
           <VisualizationPanel 
             paused={paused}
             filterBlockHeight={blockHeight ?? undefined}
           />
+          </div>
         )}
       </div>
     </main>

@@ -24,13 +24,14 @@ export default function VisualizationToggle({ blockHeight, isTemplatePage }: Vis
       className={`pause-button px-2 py-1.5 transition-colors duration-200 flex items-center gap-2
         ${!isPanelVisible && "bg-background text-foreground hover:bg-muted"}`}
       aria-label={isPanelVisible ? "Hide analytics panel" : "Show analytics panel"}
+      title={isPanelVisible ? "Hide analytics panel" : "Show analytics panel"}
     >
       <BarChartIcon className="h-5 w-5" />
-      <span className="text-sm font-medium">Analytics Panel</span>
+      <span className="hidden xl:inline text-sm font-medium">Analytics Panel</span>
       {isPanelVisible ? (
-        <ChevronRightIcon className="h-4 w-4" />
+        <ChevronRightIcon className="hidden sm:block h-4 w-4" />
       ) : (
-        <ChevronLeftIcon className="h-4 w-4" />
+        <ChevronLeftIcon className="hidden sm:block h-4 w-4" />
       )}
     </button>
   );

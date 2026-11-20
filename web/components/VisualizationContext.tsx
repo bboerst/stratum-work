@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 
 interface VisualizationContextType {
   isPanelVisible: boolean;
@@ -15,6 +15,11 @@ const VisualizationContext = createContext<VisualizationContextType | undefined>
 export function VisualizationProvider({ children }: { children: ReactNode }) {
   const [isPanelVisible, setIsPanelVisible] = useState(true);
   const [activeVisualizations, setActiveVisualizations] = useState<Set<string>>(new Set(["chart"])); // Default to chart active
+
+  // On a phone the panel would squeeze the table to a sliver, so it starts closed there (it opens full width).
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) setIsPanelVisible(false);
+  }, []);
 
   const togglePanelVisibility = () => {
     setIsPanelVisible(prev => !prev);

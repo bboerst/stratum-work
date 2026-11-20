@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import ModeToggle from "@/components/ModeToggle";
 import PauseButton from "@/components/ui/PauseButton";
 
 interface SankeyMenuProps {
@@ -97,8 +96,7 @@ export default function SankeyMenu({
           }}
         >          
           <div>
-            <ModeToggle />
-            <div className="font-bold text-sm mt-2">Sankey Settings</div>
+            <div className="font-bold text-sm">Sankey Settings</div>
           </div>
           <label className="block text-sm mt-1">
             <input

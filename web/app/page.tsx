@@ -77,6 +77,8 @@ export default function HomePage() {
     }
   };
 
+  const detailsOpen = Boolean(selectedTemplate && selectedBlock !== null && selectedBlock !== -1);
+
   return (
     <main className="min-h-screen h-screen bg-transparent flex flex-col">
       <header className="p-4 shrink-0">
@@ -91,7 +93,8 @@ export default function HomePage() {
       
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content */}
-        <div className="flex-1 overflow-auto">
+        {/* On a phone an open panel takes the full width in place of the table (its toggle switches back). */}
+        <div className={`flex-1 overflow-auto ${isPanelVisible || detailsOpen ? "max-md:hidden" : ""}`}>
           <RealtimeTable 
             paused={paused}
             showSettings={showSettings}
@@ -101,8 +104,8 @@ export default function HomePage() {
         </div>
         
         {/* Selected Template Panel - only show for historical data */}
-        {selectedTemplate && selectedBlock !== null && selectedBlock !== -1 && (
-          <div className="w-[600px] shrink-0 border-l border-border bg-background overflow-auto">
+        {detailsOpen && selectedTemplate && (
+          <div className="w-full md:w-[600px] shrink-0 md:border-l border-border bg-background overflow-auto">
             <div className="p-4">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold">Selected Template Details</h2>
@@ -121,10 +124,12 @@ export default function HomePage() {
         
         {/* Visualization Panel */}
         {isPanelVisible && (
+          <div className={detailsOpen ? "contents max-md:hidden" : "contents"}>
           <VisualizationPanel 
             paused={paused}
             filterBlockHeight={selectedBlock ?? undefined}
           />
+          </div>
         )}
       </div>
     </main>

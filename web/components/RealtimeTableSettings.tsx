@@ -1,5 +1,4 @@
 import React, { useRef, useEffect } from 'react';
-import ModeToggle from "@/components/ModeToggle";
 import { SortedRow } from '@/types/tableTypes';
 import { useLatencyAdjusted } from "./TimingDisplayContext";
 import type { TimingVisualKey } from "./TimingDisplayContext";
@@ -71,9 +70,6 @@ export default function RealtimeTableSettings({
         right: '20px' // Position from the right edge
       }}
     >
-      <div className="pb-1 border-b border-gray-200 dark:border-gray-700 mb-1">
-        <ModeToggle />
-      </div>
       <div className="flex items-center justify-between px-2 py-1 border-b border-gray-200 dark:border-gray-700 mb-1">
         <span
           className="text-sm font-medium"

@@ -4,30 +4,34 @@ import React from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { PoolFilterDropdown } from "./PoolFilterDropdown";
+import ModeToggle from "./ModeToggle";
 
 export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
   
   return (
-    <div className="flex justify-end items-center space-x-4 z-50">
+    <div className="flex shrink-0 justify-end items-center space-x-2 sm:space-x-4 z-50">
       {/* Connection indicator - always present but only visible when disconnected */}
       <ConnectionIndicator />
       
       {/* Page-specific menu items */}
       {menuContent && (
         <>
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
             {menuContent}
           </div>
           
           {/* Vertical separator */}
-          <div className="h-6 w-px bg-gray-500"></div>
+          <div className="hidden sm:block h-6 w-px bg-gray-500"></div>
         </>
       )}
       
       {/* Global pool filter - always present */}
       <PoolFilterDropdown />
       
+      {/* Light/dark switch - always present */}
+      <ModeToggle />
+
       {/* GitHub link - always present on the far right */}
       <a
         href="https://github.com/bboerst/stratum-work"

@@ -8,6 +8,7 @@ import type { TimingVisualKey } from '@/components/TimingDisplayContext';
 import { 
     computeCoinbaseOutputValue, 
     computeFirstTransaction, 
+    EMPTY_TEMPLATE,
     computeCoinbaseOutputs, 
     fetchFeeRates, 
     clearCoinbaseFromCaches, 
@@ -266,7 +267,7 @@ export function useTableData(
     const missing = new Set<string>();
     computedRows.forEach((row) => {
       const txid = row.first_transaction;
-      if (!txid || txid === "empty block") return;
+      if (!txid || txid === EMPTY_TEMPLATE) return;
       if (feeRateMap[txid] !== undefined || isRequestInFlight(txid)) return;
       missing.add(txid);
     });
@@ -377,7 +378,7 @@ export function useTableData(
           coinbaseRaw,
           coinbaseScriptASCII,
           coinbaseOutputValue,
-          feeRateComputed: firstTx && firstTx !== "empty block"
+          feeRateComputed: firstTx && firstTx !== EMPTY_TEMPLATE
             ? feeRateMapRef.current[firstTx] ?? "fetching..."
             : "N/A",
           coinbase_outputs: computeCoinbaseOutputs(coinbaseRaw),
@@ -430,7 +431,7 @@ export function useTableData(
 
       sortedData.forEach(item => {
         const firstTx = item.first_transaction;
-        if (firstTx && firstTx !== "empty block" && firstTx !== "N/A" && newFeeRateMap[firstTx] === undefined) {
+        if (firstTx && firstTx !== EMPTY_TEMPLATE && firstTx !== "N/A" && newFeeRateMap[firstTx] === undefined) {
           newFeeRateMap[firstTx] = "fetching...";
           hasNewTxids = true;
         }
@@ -449,7 +450,7 @@ export function useTableData(
     const missing = new Map<string, number | undefined>();
     filteredData.forEach(item => {
       const firstTx = item.first_transaction;
-      if (!firstTx || firstTx === "empty block" || firstTx === "N/A") return;
+      if (!firstTx || firstTx === EMPTY_TEMPLATE || firstTx === "N/A") return;
       if (feeRateMap[firstTx] !== undefined && feeRateMap[firstTx] !== "fetching...") return;
       if (isRequestInFlight(firstTx)) return;
       const at = templateTimeMs(item.raw_timestamp ?? item.timestamp);
@@ -534,7 +535,7 @@ export function useTableData(
     const updatedData = filteredData.map(item => {
       if (
         item.first_transaction && 
-        item.first_transaction !== "empty block" && 
+        item.first_transaction !== EMPTY_TEMPLATE && 
         item.feeRateComputed !== feeRateMap[item.first_transaction] &&
         feeRateMap[item.first_transaction] !== undefined
       ) {

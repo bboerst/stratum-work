@@ -4,7 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { SortedRow } from '@/types/tableTypes';
 import { formatPrevBlockHash, formatTimeReceived, formatNtime } from '@/utils/formatters';
 import { getMerkleColor, getTimeColor, generateColorFromOutputs } from '@/utils/colorUtils';
-import { CoinbaseOutputDetail } from '@/utils/bitcoinUtils';
+import { CoinbaseOutputDetail, EMPTY_TEMPLATE } from '@/utils/bitcoinUtils';
 import { Zap } from 'lucide-react';
 import type { PoolBurst } from '@/lib/useDataStream';
 import { childTitle, feeRateChildOf } from '@/lib/txFeeRates';
@@ -99,7 +99,11 @@ function RealtimeTableRowComponent({
           style={{ width: columnWidths.first_transaction }}
           className="p-1 truncate"
         >
-          {row.first_transaction && row.first_transaction !== "empty block" ? (
+          {row.first_transaction === EMPTY_TEMPLATE ? (
+            <span className="text-muted-foreground" title="No transactions besides the coinbase">
+              {EMPTY_TEMPLATE}
+            </span>
+          ) : row.first_transaction ? (
             <a
               href={`https://mempool.space/tx/${row.first_transaction}`}
               target="_blank"

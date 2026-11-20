@@ -121,7 +121,7 @@ The API returns a JSON object with the following structure:
 | `coinbaseRaw` | Complete reconstructed coinbase transaction |
 | `coinbaseScriptASCII` | ASCII representation of the coinbase script |
 | `coinbaseOutputValue` | Total value of the coinbase outputs in BTC |
-| `first_transaction` | First transaction ID in the block (derived from merkle branches) |
+| `first_transaction` | First transaction ID in the template (derived from merkle branches), or `"empty template"` when the template has no transactions besides the coinbase (this value was `"empty block"` before) |
 | `coinbase_outputs` | Array of outputs from the coinbase transaction with addresses and values |
 
 ### Block Details

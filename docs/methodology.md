@@ -19,6 +19,7 @@ details are in the other files in [`docs/`](./).
 - [Several connections per pool](#several-connections-per-pool)
 - [Blocks](#blocks)
 - [Forks](#forks)
+- [Template providers](#template-providers)
 - [First transaction fee rate](#first-transaction-fee-rate)
 - [Reported hashrate](#reported-hashrate)
 - [Older history](#older-history)
@@ -308,6 +309,66 @@ own (kind `invalid_coinbase`), so no finding is lost. Pools hidden from the site
 The page's "Invalid" filter takes all invalid work, work that could never make a valid block: invalid parents and
 invalid coinbases. In an episode's details, each pool's run of invalid templates is marked on its lane where the
 coinbase parses.
+
+## Template providers
+
+"Who builds the templates" on the home page groups our feeds by **template provider**: whatever chooses the
+transactions. A pool brand doesn't say who that is. Several feeds can carry identical transaction sets, built by one
+template provider and sent under different names. When that provider has a problem, every feed it serves has it at
+the same moment.
+
+**What is counted** (**observed**, by the backend, `template_set_*`). A height is counted once its receive window has
+closed, two hours after its block, so no template for it can still arrive. Its non-empty templates are counted if they
+arrived in the window ([Which templates belong to a height](#which-templates-belong-to-a-height)) and build on the
+Bitcoin block at h − 1 that we know. Templates for other chains and work on parents we never recorded are not counted.
+
+- **Node.** A template belongs to a node: its feed, plus the pool its coinbase pays or names. The pool is identified
+  as a block's is: the coinbase's output addresses, highest value first, against the pool list, then its scriptSig
+  against the pools' tags ([Blocks](#blocks)). A coinbase that matches no pool, or doesn't parse, is an unidentified
+  node, named by its feed.
+- **Transaction set.** A set is the template's merkle branches, compared exactly (`sha256` of the bytes, not stored).
+- **Counts.** Per height, each node gets its distinct sets and templates. Each pair of nodes gets the sets both
+  received.
+- **Connections.** A feed's connections count as one feed.
+- **Unit.** A set at one height is a different unit from the same set at another, so counts add up exactly over any
+  range of heights.
+- **Empty templates are never counted.** Every pool sends the same empty set right after a block, so they would match
+  anything.
+- **Known limits.**
+  - A pool is identified when the height is counted, so a later change to the pool list needs a backfill run.
+  - A coinbase whose extranonce2 length doesn't reassemble is repaired as for the invalid-coinbase check: one other
+    length that parses. Otherwise it is unidentified.
+
+**What is derived** (**modelled**, when the page is read, per difficulty epoch of 2,016 blocks):
+
+- **Sharing a provider.** Two nodes share a template provider when the sets both received are at least 80% of the
+  smaller node's sets, and each has at least 5.
+- **Strongest partner.** Each node links only to the partner it overlaps most: the highest share, then the most shared
+  sets. Nodes on one provider overlap almost completely. A feed that alternates between two providers overlaps each
+  only partly, so it joins one of them and doesn't merge the two. The providers are the connected groups of these
+  links.
+- **Which blocks count for a provider.** A block counts for the provider of its pool's node with the most sets in
+  that epoch (an unidentified block is "unidentified"). It is "not on our feeds" when none of our feeds pays its pool.
+- **Miner-built.** A block whose coinbase names a DATUM template creator is miner-built, a kind of its own, split by
+  creator. Creators that are the pool's own template servers are the exception (`POOL_OWN_TEMPLATE_CREATORS`, name
+  prefixes, none by default): their blocks count for the pool.
+- **Per epoch.** Each block counts with its own epoch's groups. A new epoch whose first heights aren't counted yet
+  uses the last counted epoch's groups. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
+  and all blocks from the first counted epoch, exact by height.
+- **Excluded feeds** (`POOL_BLACKLIST`) are dropped before grouping. The result is the same as if they had never been
+  collected. A pool only they pay is "not on our feeds".
+
+**What it does not claim:**
+
+- **Not ownership.** A shared template provider is not shared ownership or control. Feeds may buy templates from the
+  same service, run the same software against the same node, or front another pool. We see only that the sets match
+  ([glossary](glossary.md): template provider, operator, proxy pool).
+- **Only our feeds.** A pool's blocks are attributed through the feeds we collect. Its other endpoints may be built
+  differently, and a pool we don't collect from could share a provider we can't see.
+- **The threshold is a choice.** It is 80% of the smaller node's sets, with at least 5 sets each. It is not a measured
+  boundary. The counts behind every pair are stored, so another threshold can be applied to the same data. The rule
+  says "these feeds received the same work", not why.
+- **Timing isn't part of the rule.** Matching sets are counted whenever they arrived within the height.
 
 ## First transaction fee rate
 

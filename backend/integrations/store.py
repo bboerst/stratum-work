@@ -435,6 +435,77 @@ class PostgresStore:
     def first_template_received(self) -> Optional[datetime]:
         return self._run(lambda c: c.execute("SELECT min(received_at) FROM templates").fetchone()[0])
 
+    # transaction-set facts (template_sets.py; db/migrations/20261120000002_template_sets.sql). The receive-time
+    # bounds come from height_window() in a first round trip and are passed as values, unprepared, so TimescaleDB
+    # excludes chunks at planning. The windows and the parents (the blocks at h - 1, stratum word order) are
+    # materialized once per read: a per-template lookup in bitcoin_parents took minutes per chunk, this a second.
+    _TEMPLATE_SET_ROWS = """
+        WITH w AS MATERIALIZED (SELECT * FROM template_height_windows(%(h_from)s, %(h_to)s)),
+        par AS MATERIALIZED (
+            SELECT height + 1 AS height, stratum_prev_hash_to_block_hash(block_hash) AS prev_hash FROM blocks
+             WHERE height BETWEEN %(h_from)s - 1 AND %(h_to)s - 1
+            UNION
+            SELECT height + 1, stratum_prev_hash_to_block_hash(block_hash) FROM stale_blocks
+             WHERE height BETWEEN %(h_from)s - 1 AND %(h_to)s - 1)
+        SELECT t.height, s.name, sha256(t.merkle_branches), t.coinbase1, t.extranonce1, t.extranonce2_length,
+               t.coinbase2, t.received_at
+          FROM templates t
+          JOIN sources s ON s.id = t.source_id
+          JOIN w ON w.height = t.height
+          JOIN par ON par.height = t.height AND par.prev_hash = t.prev_hash
+         WHERE t.height BETWEEN %(h_from)s AND %(h_to)s AND t.received_at >= %(t_from)s AND t.received_at <= %(t_to)s
+           AND t.received_at >= w.w_from AND t.received_at <= w.w_to AND length(t.merkle_branches) > 0"""
+
+    def template_set_rows(self, h_from: int, h_to: int) -> List[tuple]:
+        """The non-empty templates counted at heights [h_from, h_to]: (height, feed, sha256 of the merkle branches,
+        coinbase1 hex, extranonce1 hex, extranonce2_length, coinbase2 hex, received_at)."""
+        def run(c):
+            t_from, t_to = c.execute("SELECT t_from::text, t_to::text FROM height_window(%s, %s)", (h_from, h_to),
+                                     prepare=False).fetchone()
+            if t_from is None:
+                return []
+            return c.execute(self._TEMPLATE_SET_ROWS, dict(h_from=h_from, h_to=h_to, t_from=t_from, t_to=t_to),
+                             prepare=False).fetchall()
+        return [(h, feed, bytes(sh), bytes(cb1).hex(), bytes(en1).hex(), en2len, bytes(cb2).hex(), ra)
+                for h, feed, sh, cb1, en1, en2len, cb2, ra in self._run(run)]
+
+    def replace_template_sets(self, h_from: int, h_to: int, heights: List[tuple], feeds: List[tuple],
+                              pairs: List[tuple]) -> None:
+        """Replace every row of heights [h_from, h_to] in one transaction: heights (height, templates), feeds
+        (height, feed, pool_id, sets, templates, first_received, last_received), pairs (height, feed_a, pool_a,
+        feed_b, pool_b, shared)."""
+        def tx(c):
+            for table in ("template_set_pairs", "template_set_feeds", "template_set_heights"):
+                c.execute(f"DELETE FROM {table} WHERE height BETWEEN %s AND %s", (h_from, h_to))
+            with c.cursor() as cur:
+                for sql, rows in (
+                        ("COPY template_set_heights (height, templates) FROM STDIN", heights),
+                        ("COPY template_set_feeds (height, feed, pool_id, sets, templates, first_received,"
+                         " last_received) FROM STDIN", feeds),
+                        ("COPY template_set_pairs (height, feed_a, pool_a, feed_b, pool_b, shared) FROM STDIN", pairs)):
+                    if rows:
+                        with cur.copy(sql) as cp:
+                            for r in rows:
+                                cp.write_row(r)
+        self._run(tx)
+
+    def template_set_heights_due(self, lookback: int) -> List[int]:
+        """Heights of the last `lookback` up to our highest block whose window has closed and that aren't filled."""
+        rows = self._run(lambda c: c.execute(
+            "WITH tip AS (SELECT max(height) AS h, min(height) AS lo FROM blocks)"
+            " SELECT w.height FROM tip, LATERAL template_height_windows(greatest(tip.h - %s, tip.lo + 1), tip.h) w"
+            "  WHERE w.w_to < now()"
+            "    AND NOT EXISTS (SELECT 1 FROM template_set_heights s WHERE s.height = w.height)"
+            "  ORDER BY w.height", (lookback,)).fetchall())
+        return [r[0] for r in rows]
+
+    def template_set_height_bounds(self) -> tuple:
+        """(lowest height with a stored parent, highest height whose window has closed), from blocks."""
+        return tuple(self._run(lambda c: c.execute(
+            "SELECT (SELECT min(height) + 1 FROM blocks),"
+            "       (SELECT max(height) FROM blocks WHERE coalesce(seen_at, block_time) + interval '2 hours' < now())"
+        ).fetchone()))
+
     # reported hashrate (reported_hashrate.py; db/migrations/20261119000005_reported_hashrate.sql): a claim by each
     # pool, kept apart from anything measured.
     REPORTED_HASHRATE_UPSERT = (

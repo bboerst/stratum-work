@@ -27,8 +27,8 @@ def reconstruct_coinbase_raw(coinbase1: str, extranonce1: str, extranonce2_lengt
         return f"{coinbase1}{extranonce1}{coinbase2}"
 
 
-def parse_tx_total_output_value_sats(coinbase_raw_hex: str) -> Optional[int]:
-    """Sum of the outputs of a reassembled coinbase, or None if it isn't a well-formed coinbase transaction (parse
+def parse_coinbase_tx(coinbase_raw_hex: str):
+    """The reassembled coinbase as a CTransaction, or None if it isn't a well-formed coinbase transaction (parse
     error; bytes left over / missing because the declared lengths don't match what was reassembled; not exactly one
     null-prevout input; no outputs)."""
     try:
@@ -44,9 +44,35 @@ def parse_tx_total_output_value_sats(coinbase_raw_hex: str) -> Optional[int]:
         # misaligned reassembly can still deserialize (e.g. as zero inputs and zero outputs).
         if len(tx.vin) != 1 or not tx.vin[0].prevout.is_null() or not tx.vout:
             return None
-        return sum(int(vout.nValue) for vout in tx.vout)
+        return tx
     except Exception:
         return None
+
+
+def parse_tx_total_output_value_sats(coinbase_raw_hex: str) -> Optional[int]:
+    """Sum of the outputs of a reassembled coinbase, or None if it isn't a well-formed coinbase (parse_coinbase_tx)."""
+    tx = parse_coinbase_tx(coinbase_raw_hex)
+    return None if tx is None else sum(int(vout.nValue) for vout in tx.vout)
+
+
+def reassemble_coinbase(coinbase1: str, extranonce1: str, extranonce2_length: int, coinbase2: str):
+    """(coinbase CTransaction, extranonce2 length that reassembles) for a template's coinbase, by the same rule as
+    coinbase_total_output_sats: the stored length, else the one other length in EXTRANONCE2_LENGTHS that parses.
+    (None, None) when none does, or when more than one does (ambiguous)."""
+    stored = int(extranonce2_length or 0)
+    tx = parse_coinbase_tx(reconstruct_coinbase_raw(coinbase1, extranonce1, stored, coinbase2))
+    if tx is not None:
+        return tx, stored
+    found = {}
+    for n in EXTRANONCE2_LENGTHS:
+        if n == stored:
+            continue
+        t = parse_coinbase_tx(reconstruct_coinbase_raw(coinbase1, extranonce1, n, coinbase2))
+        if t is not None:
+            found[n] = t
+    if len(found) == 1:
+        return next(iter(found.items()))[::-1]
+    return None, None
 
 
 def coinbase_total_output_sats(coinbase1: str, extranonce1: str, extranonce2_length: int,

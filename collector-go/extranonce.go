@@ -16,7 +16,9 @@ import (
 //     recorded as an ingest event of kind "extranonce", cause "set_extranonce".
 //   - A response to the collector's own re-subscribe (latency probe, keep-alive) that carries other values is
 //     recorded only (cause "resubscribe", applied false): the original subscription is assumed to stay in force,
-//     and these rows check that assumption.
+//     and these rows check that assumption. Repeats are not: some pools answer every re-subscribe with the same
+//     other values, so a response is recorded only when it also differs from the last one recorded on this
+//     connection (the first differing response, then each change).
 //
 // Both run on the read goroutine, which also builds the documents, so no locking is needed.
 
@@ -67,16 +69,19 @@ func (c *Collector) setExtranonce(msg pyValue, l line) {
 	c.extranonce1, c.extranonce2 = en1, en2
 }
 
-// checkResubscribe compares a re-subscribe response with the values in force and records a difference (not applied).
+// checkResubscribe compares a re-subscribe response with the values in force and records a difference (not applied),
+// unless it repeats the last response recorded on this connection.
 func (c *Collector) checkResubscribe(msg pyValue, l line) {
 	res, ok := msg.get("result")
 	if !ok || res.kind != pyList || len(res.items) < 2 {
 		return
 	}
 	en1, en2 := res.items[len(res.items)-2], res.items[len(res.items)-1]
-	if sameExtranonce(en1, en2, c.extranonce1, c.extranonce2) {
+	if sameExtranonce(en1, en2, c.extranonce1, c.extranonce2) ||
+		c.lastResub != nil && sameExtranonce(en1, en2, c.lastResub[0], c.lastResub[1]) {
 		return
 	}
+	c.lastResub = &[2]pyValue{en1, en2}
 	c.log.Info("re-subscribe response with other extranonce values, not applied", "extranonce1", pyStrOf(c.extranonce1),
 		"extranonce2_length", pyStrOf(c.extranonce2), "response_extranonce1", truncate(pyStrOf(en1), 80),
 		"response_extranonce2_length", truncate(pyStrOf(en2), 80))

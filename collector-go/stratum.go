@@ -142,6 +142,8 @@ type Collector struct {
 	// Read-goroutine state (Python Watcher attributes).
 	extranonce1 pyValue
 	extranonce2 pyValue
+	// The last re-subscribe response recorded on this connection (extranonce.go); reset on every connect.
+	lastResub *[2]pyValue
 }
 
 func parseStratumURL(raw string) (string, int, error) {
@@ -478,6 +480,7 @@ func (c *Collector) session(ctx context.Context) (err error) {
 	}
 	connected, subscribed := time.Now(), time.Time{}
 	c.sessionTemplates = 0
+	c.lastResub = nil
 	defer func() { c.event(c.sessionEvent(ctx, connected, subscribed, err, false)) }()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()

@@ -51,6 +51,14 @@ describe('/api/template-providers', () => {
     expect((await get()).status).toBe(404);
   });
 
+  it('404 before the migration has created the tables', async () => {
+    const missing = Object.assign(new Error('relation "template_set_heights" does not exist'), { code: '42P01' });
+    const { get } = await load({ read: vi.fn().mockRejectedValue(missing) });
+    expect((await get()).status).toBe(404);
+    const other = await load({ read: vi.fn().mockRejectedValue(new Error('timeout')) });
+    expect((await other.get()).status).toBe(500);
+  });
+
   it('passes the excluded feeds and the own-creator prefixes', async () => {
     const { get, read } = await load();
     const { status, body } = await get();

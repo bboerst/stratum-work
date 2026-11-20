@@ -139,8 +139,8 @@ class ChunkTests(unittest.TestCase):
 class FakeStore:
     """rows: the template rows template_set_rows() returns; replace_template_sets() keeps the latest per height."""
 
-    def __init__(self, rows, due=(), bounds=(100, 102)):
-        self.rows, self.due, self.bounds = rows, list(due), bounds
+    def __init__(self, rows, due=(), bounds=(100, 102), no_parent=()):
+        self.rows, self.due, self.bounds, self.no_parent = rows, list(due), bounds, set(no_parent)
         self.heights, self.feeds, self.pairs, self.reads = {}, {}, {}, []
 
     def template_set_rows(self, a, b):
@@ -157,6 +157,9 @@ class FakeStore:
         for p in pairs:
             self.pairs.setdefault(p[0], []).append(p)
         self.due = [h for h in self.due if not a <= h <= b]
+
+    def template_set_parent_heights(self, a, b):
+        return set(range(a, b + 1)) - self.no_parent
 
     def template_set_heights_due(self, lookback):
         return list(self.due)
@@ -186,6 +189,20 @@ class FillTests(unittest.TestCase):
         self.assertEqual(store.pairs[100], [(100, "F1", 7, "F2", 7, 1)])
         self.assertEqual(store.feeds[102], [(102, "F1", None, 1, 1, T0, T0)])
 
+    def test_a_height_without_its_parent_block_stays_uncounted(self):
+        store = FakeStore(self.ROWS, no_parent={101})
+        ts.fill(store, 100, 102, ts.PoolIdentifier(POOLS))
+        self.assertEqual(store.heights, {100: 2, 102: 1})
+
+    def test_identifier_caches_stay_bounded(self):
+        ident = ts.PoolIdentifier(POOLS)
+        ident.CACHE_MAX = 3
+        for k in range(10):
+            self.assertEqual(ident(*coinbase(900000 + k, [(1, p2wpkh(9))], tag=b"/PoolB/")), 8)
+            self.assertEqual(ident(*coinbase(900000 + k, [(1, p2wpkh(1))])), 7)
+        self.assertLessEqual(len(ident._by_script_sig), 3)
+        self.assertLessEqual(len(ident._by_addresses), 3)
+
     def test_backfill_walks_chunks_and_logs(self):
         store = FakeStore(self.ROWS)
         with self.assertLogs(LOG, "INFO") as logs:
@@ -196,7 +213,8 @@ class FillTests(unittest.TestCase):
 
     def test_filler_fills_only_due_heights_in_runs(self):
         store = FakeStore(self.ROWS, due=[100, 102])
-        f = ts.TemplateSetsFiller(store, chunk=144, log=LOG)
+        f = ts.TemplateSetsFiller(store, log=LOG)
+        self.assertEqual(f.chunk, ts.FILLER_CHUNK)
         self.assertEqual(f.run_once(), {"heights": 2, "templates": 3})
         self.assertEqual(store.reads, [(100, 100), (102, 102)])
         self.assertEqual(f.run_once(), {"heights": 0, "templates": 0})   # nothing due any more
@@ -340,6 +358,8 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(hi, H + 1)
         ts.fill(self.store, H, H, ts.PoolIdentifier(self.store.load_pools()))
         self.assertEqual([h for h in self.store.template_set_heights_due(5) if h >= H], [H + 1])
+        self.assertEqual(self.store.template_set_parent_heights(H - 1, H + 2) & {H - 1, H, H + 1, H + 2},
+                         {H, H + 1, H + 2})
 
 
 if __name__ == "__main__":

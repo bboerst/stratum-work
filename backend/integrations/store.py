@@ -438,7 +438,8 @@ class PostgresStore:
     # transaction-set facts (template_sets.py; db/migrations/20261120000002_template_sets.sql). The receive-time
     # bounds come from height_window() in a first round trip and are passed as values, unprepared, so TimescaleDB
     # excludes chunks at planning. The windows and the parents (the blocks at h - 1, stratum word order) are
-    # materialized once per read: a per-template lookup in bitcoin_parents took minutes per chunk, this a second.
+    # materialized once per read (on production, 144 recent heights: 2.1 s server-side, against 3.1 s with a
+    # per-template EXISTS on bitcoin_parents).
     _TEMPLATE_SET_ROWS = """
         WITH w AS MATERIALIZED (SELECT * FROM template_height_windows(%(h_from)s, %(h_to)s)),
         par AS MATERIALIZED (
@@ -475,6 +476,8 @@ class PostgresStore:
         (height, feed, pool_id, sets, templates, first_received, last_received), pairs (height, feed_a, pool_a,
         feed_b, pool_b, shared)."""
         def tx(c):
+            # one writer at a time (the backend's filler and a backfill may overlap): delete + insert can't collide
+            c.execute("SELECT pg_advisory_xact_lock(%s)", (self.TEMPLATE_SETS_LOCK,))
             for table in ("template_set_pairs", "template_set_feeds", "template_set_heights"):
                 c.execute(f"DELETE FROM {table} WHERE height BETWEEN %s AND %s", (h_from, h_to))
             with c.cursor() as cur:
@@ -489,15 +492,25 @@ class PostgresStore:
                                 cp.write_row(r)
         self._run(tx)
 
+    TEMPLATE_SETS_LOCK = 72_011_120   # pg_advisory_xact_lock key of replace_template_sets
+
     def template_set_heights_due(self, lookback: int) -> List[int]:
-        """Heights of the last `lookback` up to our highest block whose window has closed and that aren't filled."""
+        """Heights of the last `lookback` up to our highest block whose window has closed, whose block at h - 1 is
+        stored, and that aren't filled."""
         rows = self._run(lambda c: c.execute(
             "WITH tip AS (SELECT max(height) AS h, min(height) AS lo FROM blocks)"
             " SELECT w.height FROM tip, LATERAL template_height_windows(greatest(tip.h - %s, tip.lo + 1), tip.h) w"
             "  WHERE w.w_to < now()"
+            "    AND EXISTS (SELECT 1 FROM blocks b WHERE b.height = w.height - 1)"
             "    AND NOT EXISTS (SELECT 1 FROM template_set_heights s WHERE s.height = w.height)"
             "  ORDER BY w.height", (lookback,)).fetchall())
         return [r[0] for r in rows]
+
+    def template_set_parent_heights(self, h_from: int, h_to: int) -> Set[int]:
+        """The heights in [h_from, h_to] whose block at h - 1 is stored (a best or a stale block)."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT DISTINCT height + 1 FROM blocks WHERE height BETWEEN %s AND %s", (h_from - 1, h_to - 1)).fetchall())
+        return {r[0] for r in rows}
 
     def template_set_height_bounds(self) -> tuple:
         """(lowest height with a stored parent, highest height whose window has closed), from blocks."""

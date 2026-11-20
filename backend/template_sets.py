@@ -41,7 +41,8 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 LOOKBACK = 1008        # heights below the tip checked after each block (a week)
-CHUNK = 144            # heights per read
+CHUNK = 144            # heights per read (backfill)
+FILLER_CHUNK = 24      # heights per read in the backend (a deploy's first run counts up to LOOKBACK in these)
 
 logger = logging.getLogger("backend.template_sets")
 
@@ -139,24 +140,41 @@ def coinbase_payer(coinbase1: str, extranonce1: str, extranonce2_length: int, co
 
 
 class PoolIdentifier:
-    """pool_id for a template's coinbase, by the block rule (identify_pool_from_data) over the stored pool list,
-    cached per (addresses, scriptSig)."""
+    """pool_id for a template's coinbase, by the block rule (identify_pool_from_data) over the stored pool list. The
+    rule tries the addresses first and the scriptSig's tags only when no address matches, so results are cached per
+    address list (few: a pool's payout outputs) and, for the rest, per scriptSig (one per template, mostly: it
+    carries the height and extranonce1), each cache cleared when it reaches CACHE_MAX entries."""
+    CACHE_MAX = 50_000
 
     def __init__(self, pool_definitions: Sequence[Dict[str, Any]]):
         self.pools = {p.get("id"): p for p in pool_definitions if p.get("id") is not None}
-        self._by_payer: Dict[Tuple[Tuple[str, ...], str], Optional[int]] = {}
+        self._by_addresses: Dict[Tuple[str, ...], Optional[int]] = {}
+        self._by_script_sig: Dict[str, Optional[int]] = {}
+
+    @staticmethod
+    def _id(found: Optional[Dict[str, Any]]) -> Optional[int]:
+        pid = found.get("id") if found else None
+        return int(pid) if pid is not None else None
 
     def __call__(self, coinbase1: str, extranonce1: str, extranonce2_length: int, coinbase2: str) -> Optional[int]:
         payer = coinbase_payer(coinbase1, extranonce1, extranonce2_length, coinbase2)
         if payer is None:
             return None
         script_sig, addresses = payer
-        key = (tuple(addresses), script_sig)
-        if key not in self._by_payer:
-            found = _analytics("pool_identification").identify_pool_from_data(self.pools, script_sig, addresses)
-            pid = found.get("id") if found else None
-            self._by_payer[key] = int(pid) if pid is not None else None
-        return self._by_payer[key]
+        rule = _analytics("pool_identification")
+        key = tuple(addresses)
+        if key not in self._by_addresses:
+            if len(self._by_addresses) >= self.CACHE_MAX:
+                self._by_addresses.clear()
+            self._by_addresses[key] = self._id(rule.identify_by_address(self.pools, addresses))
+        if self._by_addresses[key] is not None:
+            return self._by_addresses[key]
+        if script_sig not in self._by_script_sig:
+            if len(self._by_script_sig) >= self.CACHE_MAX:
+                self._by_script_sig.clear()
+            # no address matched: what identify_pool_from_data does next (the tags)
+            self._by_script_sig[script_sig] = self._id(rule.identify_pool_from_data(self.pools, script_sig, []))
+        return self._by_script_sig[script_sig]
 
 
 # --- counting -------------------------------------------------------------------------------------------------------
@@ -174,12 +192,8 @@ def count_heights(rows: Iterable[Tuple[Any, ...]], identify: Callable[..., Optio
     received_at), all non-empty: ({height: templates}, feed rows, pair rows) in the tables' column order."""
     per: Dict[int, Dict[Node, Dict[str, Any]]] = {}
     templates: Dict[int, int] = {}
-    payer_cache: Dict[Tuple[str, str, int, str], Optional[int]] = {}
     for height, feed, set_hash, cb1, en1, en2len, cb2, received_at in rows:
-        ck = (cb1, en1, en2len, cb2)
-        if ck not in payer_cache:
-            payer_cache[ck] = identify(cb1, en1, en2len, cb2)
-        node = (feed, payer_cache[ck])
+        node = (feed, identify(cb1, en1, en2len, cb2))
         templates[height] = templates.get(height, 0) + 1
         n = per.setdefault(height, {}).setdefault(node, {"sets": set(), "templates": 0, "first": received_at,
                                                          "last": received_at})
@@ -211,7 +225,9 @@ def fill(store: Any, h_from: int, h_to: int, identify: Callable[..., Optional[in
     rows = store.template_set_rows(h_from, h_to)
     t1 = time.monotonic()
     templates, feeds, pairs = count_heights(rows, identify)
-    heights = [(h, templates.get(h, 0)) for h in range(h_from, h_to + 1)]
+    # a height whose block at h - 1 isn't stored (yet) can't be counted: it stays uncounted, due again once it is
+    parents = store.template_set_parent_heights(h_from, h_to)
+    heights = [(h, templates.get(h, 0)) for h in range(h_from, h_to + 1) if h in parents]
     t2 = time.monotonic()
     store.replace_template_sets(h_from, h_to, heights, feeds, pairs)
     return {"heights": len(heights), "templates": sum(templates.values()), "feeds": len(feeds), "pairs": len(pairs),
@@ -261,7 +277,7 @@ class TemplateSetsFiller:
     `lookback` below the tip whose window has closed and that isn't filled. Its own thread and store (connection),
     never the block processor's. The pool list is re-read from the store on every run."""
 
-    def __init__(self, store: Any, lookback: int = LOOKBACK, chunk: int = CHUNK, log: logging.Logger = logger):
+    def __init__(self, store: Any, lookback: int = LOOKBACK, chunk: int = FILLER_CHUNK, log: logging.Logger = logger):
         self.store, self.lookback, self.chunk, self.log = store, lookback, chunk, log
         self._wake = threading.Event()
 

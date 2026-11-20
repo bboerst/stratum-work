@@ -85,10 +85,11 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
       heights.push(h);
       await admin.query(`INSERT INTO template_set_heights (height, templates) VALUES ($1, 100)`, [h]);
       await feedRow(h, fa, A, 10); await feedRow(h, fb, B, 10); await feedRow(h, fc, C, 10); await feedRow(h, fx, B, 20);
-      await feedRow(h, fx, null, 3);
+      await feedRow(h, fx, null, 3); await feedRow(h, fx, X, 6);
       await pairRow(h, fa, A, fb, B, 9);
       await pairRow(h, fc, C, fx, B, 10);       // only with fx present: fc joins fx (and B's blocks follow fx)
       await pairRow(h, fx, null, fx, B, 3);
+      await pairRow(h, fx, B, fx, X, 6);
     }
     // E1: apart
     heights.push(h1 + 5);
@@ -98,6 +99,7 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     // blocks: E0 A, A, B, C, Z (on no feed), unidentified, a miner-built one via C, one by C's own template server
     await block(h0 + 1, A); await block(h0 + 2, A); await block(h0 + 3, B); await block(h0 + 4, C);
     await block(h0 + 5, Z); await block(h0 + 6, null); await block(h0 + 7, C, 'miner-q'); await block(h0 + 8, C, 'OWN-2');
+    await block(h0 + 9, X);                    // paid only on the excluded feed: "not on our feeds" when it's excluded
     // E1: A, B; above the last counted epoch (E1 + 1): B
     await block(h1 + 1, A); await block(h1 + 2, B); await block(h1 + 2016 + 3, B);
   });
@@ -118,16 +120,16 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     expect(g0[`${NAME[A]} +1`]).toMatchObject({ n: 3, pools: [NAME[A], NAME[B]], payers: [NAME[A], NAME[B]], feeds: [fa, fb], hatched: true, kind: 'producer' });
     expect(g0[NAME[C]]).toMatchObject({ n: 2, feeds: [fc], hatched: false });   // its block and its own server's
     expect(g0['Miner-built']).toMatchObject({ n: 1, kind: 'miner', creators: [['miner-q', 1]], via: [[NAME[C], 1]] });
-    expect(g0['not on our feeds']).toMatchObject({ n: 1, kind: 'other' });
+    expect(g0['not on our feeds']).toMatchObject({ n: 2, kind: 'other' });   // Z's, and X's (only fx pays X)
     expect(g0['unidentified']).toMatchObject({ n: 1, kind: 'other' });
-    expect(cols[0].tot).toBe(8);
+    expect(cols[0].tot).toBe(9);
     const g1 = Object.fromEntries(cols[1].groups.map((g: { name: string }) => [g.name, g]));
     expect(Object.keys(g1).sort()).toEqual([NAME[A], NAME[B]].sort());
     expect(body.columns.at(-1).label).toBe('now');
     expect(body.tip_height).toBe(h1 + 2016 + 3);
     const all = body.pies.at(-1);
     expect(all.label).toBe('All');
-    expect(all.tot).toBe(11);
+    expect(all.tot).toBe(12);
     // the block above the last counted epoch counts with E1's groups: B on its own
     expect(body.pies[0].groups.find((g: { pools: string[] }) => g.pools[0] === NAME[B])?.feeds).toEqual([fb]);
     expect(body.heights_counted).toBe(3);
@@ -156,6 +158,8 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     const col = withX.body.columns.find((c: { label: string }) => c.label === h0.toLocaleString('en-US'));
     const bx = col.groups.find((g: { feeds: string[] }) => g.feeds.includes(fx));
     expect(bx.feeds).toEqual([fc, fx]);
+    expect(bx.payers).toEqual([NAME[B], NAME[C], NAME[X]].sort());
+    expect(bx.pools).toContain(NAME[X]);                                     // X's block is on our feeds now
   });
 
   it('the web role reads the tables and cannot write them', async () => {

@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
  *       144 / 2,016 / 12,096 / 52,416 blocks and All), legend, tip_height, from_height, heights_counted, range,
  *       generated_at (ms) }. range narrows the columns to the last 6 or 26 epochs (default all); pies, colours and
  *       legend don't change with it.
- *       404 while nothing is counted yet, or with historical data disabled (the home page leaves the section out).
+ *       404 while nothing is counted yet (also before the migration has created the tables), or with historical data
+ *       disabled (the home page leaves the section out).
  *
  * POOL_BLACKLIST feeds are dropped before grouping: they add no node, pair or feed name, and a pool only they pay is
  * "not on our feeds". POOL_OWN_TEMPLATE_CREATORS (comma-separated prefixes, default none) names the DATUM template
@@ -72,6 +73,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ ...summary, columns, range, generated_at: Date.now() },
       { headers: { "Cache-Control": "public, max-age=60" } });
   } catch (error: unknown) {
+    // the tables aren't there yet (the web deployed before the migration): nothing counted, like an empty table
+    if ((error as { code?: string })?.code === "42P01") {
+      console.warn("Template providers: the template_set tables don't exist yet (migration pending)");
+      return NextResponse.json({ error: "no transaction sets counted yet" }, { status: 404 });
+    }
     console.error("Error reading template providers:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: errorMessage }, { status: 500 });

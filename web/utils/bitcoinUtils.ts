@@ -263,17 +263,20 @@ export function computeCoinbaseOutputValue(coinbaseRaw: string): number {
   }
 }
 
+/** first_transaction for a template with no transactions besides the coinbase (an empty template, not a mined empty block). */
+export const EMPTY_TEMPLATE = "empty template";
+
 // Extract first transaction from merkle branches
 export function computeFirstTransaction(merkle_branches: string[]): string {
   if (!merkle_branches || merkle_branches.length === 0) {
-    return "empty block";
+    return EMPTY_TEMPLATE;
   }
   try {
     const firstBranch = merkle_branches[0];
     return Buffer.from(firstBranch, "hex").reverse().toString("hex");
   } catch {
     console.error("Error computing first_transaction");
-    return "empty block";
+    return EMPTY_TEMPLATE;
   }
 }
 

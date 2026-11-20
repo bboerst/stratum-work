@@ -9,7 +9,8 @@ import {
   formatCoinbaseScriptASCII, 
   computeCoinbaseOutputValue, 
   computeFirstTransaction, 
-  computeCoinbaseOutputs 
+  computeCoinbaseOutputs,
+  EMPTY_TEMPLATE
 } from "@/utils/bitcoinUtils";
 
 const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? "true").toLowerCase() === "true";
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest) {
         let coinbaseRaw = '';
         let coinbaseScriptASCII = '';
         let coinbaseOutputValue = 0;
-        let firstTransaction = 'empty block';
+        let firstTransaction = EMPTY_TEMPLATE;
         let coinbaseOutputs: ReturnType<typeof computeCoinbaseOutputs> = [];
 
         try {

@@ -16,15 +16,17 @@ export function ConnectionIndicator() {
     <span 
       className="inline-block text-red-500 animate-pulse"
       title="Disconnected from data stream"
+      role="status"
+      aria-label="Disconnected from data stream"
     >
       <svg 
-        className="inline-block w-4 h-4 mr-1" 
+        className="inline-block w-4 h-4 sm:mr-1" 
         viewBox="0 0 24 24" 
         fill="currentColor"
       >
         <circle cx="12" cy="12" r="8" />
       </svg>
-      Disconnected
+      <span className="hidden sm:inline">Disconnected</span>
     </span>
   );
 } 

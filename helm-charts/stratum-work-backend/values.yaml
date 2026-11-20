@@ -74,6 +74,14 @@ env:
   # Stale-parents summary (stale_parents.py): stale_parent_pools, read by the web's Forks page for templates on a
   # recorded stale block, on the same schedule; history via `python -m stale_parents --backfill`. "false" = off.
   # STALE_PARENTS_ENABLED: "true"
+  #
+  # Transaction-set facts (template_sets.py): template_set_heights / _feeds / _pairs, read by the web's
+  # /api/template-providers, after each new block for the heights whose receive window has closed. "false" = off.
+  # TEMPLATE_SETS_ENABLED: "true"
+  # History in the background, one chunk per cycle after the recent heights, down to the lowest stored block (resumable; stops
+  # when done); or `python -m template_sets --backfill` by hand.
+  # TEMPLATE_SETS_BACKFILL: "false"
+  # TEMPLATE_SETS_BACKFILL_CHUNK: "144"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

@@ -31,6 +31,13 @@ class HistogramTest(unittest.TestCase):
                      't_seconds_count 5'):
             self.assertIn(line + "\n", text)
 
+    def test_gauge_is_absent_until_set(self):
+        g = metrics.Gauge("t_height", "test")
+        self.assertEqual(g.render(), "")
+        g.set(846720)
+        self.assertIn("# TYPE t_height gauge\nt_height 846720.0\n", g.render())
+        self.assertIn(metrics.template_sets_lowest_height, metrics.REGISTRY)
+
     def test_counter(self):
         c = metrics.Counter("t_total", "test")
         c.inc()

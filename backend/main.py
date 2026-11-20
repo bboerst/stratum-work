@@ -96,6 +96,14 @@ UNKNOWN_PARENTS_ENABLED = os.getenv("UNKNOWN_PARENTS_ENABLED", "true").strip().l
 # that has no row yet; also right after the stale-block tracker records a block. Its own thread and connection.
 # Older history: `python -m stale_parents --backfill`. false = off.
 STALE_PARENTS_ENABLED = os.getenv("STALE_PARENTS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
+# Transaction-set facts (template_sets.py): after each new block, every height of the last week below the tip whose
+# receive window has closed (2 h after its block) and that isn't counted yet gets its per-(feed, pool paid) sets and
+# per-pair shared sets, which the web's /api/template-providers derives template providers from. Its own thread and
+# connection. false = off. TEMPLATE_SETS_BACKFILL=true also counts older history, one TEMPLATE_SETS_BACKFILL_CHUNK of
+# heights per cycle after the recent ones, down to the lowest stored block (or `python -m template_sets --backfill`).
+TEMPLATE_SETS_ENABLED = os.getenv("TEMPLATE_SETS_ENABLED", "true").strip().lower() not in ("n", "no", "f", "false", "off", "0")
+TEMPLATE_SETS_BACKFILL = os.getenv("TEMPLATE_SETS_BACKFILL", "false").strip().lower() in ("y", "yes", "t", "true", "on", "1")
+TEMPLATE_SETS_BACKFILL_CHUNK = int(os.getenv("TEMPLATE_SETS_BACKFILL_CHUNK", "144"))
 
 # --- Connections ---
 def new_rpc_proxy(url=None, timeout=None):
@@ -830,6 +838,8 @@ def zmq_listener():
                             block_processor.submit(unknown_parents_refresher.request)
                         if stale_parents_refresher is not None:
                             block_processor.submit(stale_parents_refresher.request)
+                        if template_sets_filler is not None:
+                            block_processor.submit(template_sets_filler.request)
                         
                 except Exception as inner_e:
                     logger.error("Error processing ZMQ message: %s", inner_e)
@@ -969,13 +979,39 @@ def start_stale_parents_refresher():
     logger.info("Stale-parents summary started")
 
 
+# --- Transaction-set facts (template_sets.py) ---
+template_sets_filler = None
+
+
+def start_template_sets_filler():
+    """After the startup sync: the filler's first run, then one per new block (and, with TEMPLATE_SETS_BACKFILL, one
+    history chunk per cycle until done), on its own thread and connection."""
+    global template_sets_filler
+    if not (TEMPLATE_SETS_ENABLED and store.enabled):
+        logger.info("Template-set facts off (TEMPLATE_SETS_ENABLED=%s, storage enabled=%s)",
+                    TEMPLATE_SETS_ENABLED, store.enabled)
+        return
+    try:
+        from template_sets import TemplateSetsFiller
+        filler = TemplateSetsFiller(type(store).from_env(), backfill=TEMPLATE_SETS_BACKFILL,
+                                    backfill_chunk=TEMPLATE_SETS_BACKFILL_CHUNK,
+                                    on_progress=metrics.template_sets_lowest_height.set)
+    except Exception as e:
+        logger.error("Template-set facts not started: %s", e)
+        return
+    threading.Thread(target=filler.run_forever, daemon=True, name="template_sets").start()
+    template_sets_filler = filler
+    logger.info("Template-set facts started (history backfill %s)", "on" if TEMPLATE_SETS_BACKFILL else "off")
+
+
 def sync_then_fill_gaps():
-    """The startup sync, then the unknown- and stale-parents summaries (unknown_parents.py, stale_parents.py, each on
-    its own thread), the historical gap fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history best-chain
+    """The startup sync, then the unknown- and stale-parents summaries (unknown_parents.py, stale_parents.py) and the
+    transaction-set facts (template_sets.py), each on its own thread, the historical gap fill (every BLOCK_GAP_FILL_INTERVAL_S seconds) and the full-history best-chain
     check (every BEST_CHAIN_HISTORY_INTERVAL_S seconds), each once right after the sync."""
     sync_blocks()
     start_unknown_parents_refresher()
     start_stale_parents_refresher()
+    start_template_sets_filler()
     fill = BLOCK_GAP_FILL_INTERVAL_S > 0 and store.enabled
     check = BEST_CHAIN_HISTORY_INTERVAL_S > 0 and store.enabled
     if not fill:

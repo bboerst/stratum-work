@@ -4,6 +4,7 @@ import React from "react";
 import { useGlobalMenu } from "./GlobalMenuContext";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { PoolFilterDropdown } from "./PoolFilterDropdown";
+import ModeToggle from "./ModeToggle";
 
 export function GlobalMenu() {
   const { menuContent } = useGlobalMenu();
@@ -28,6 +29,9 @@ export function GlobalMenu() {
       {/* Global pool filter - always present */}
       <PoolFilterDropdown />
       
+      {/* Light/dark switch - always present */}
+      <ModeToggle />
+
       {/* GitHub link - always present on the far right */}
       <a
         href="https://github.com/bboerst/stratum-work"

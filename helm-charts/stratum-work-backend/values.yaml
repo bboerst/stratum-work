@@ -70,6 +70,10 @@ env:
   # each new block (last 2 hours) and once after the startup sync (last 7 days); history via
   # `python -m unknown_parents --backfill`. "false" = off.
   # UNKNOWN_PARENTS_ENABLED: "true"
+  #
+  # Stale-parents summary (stale_parents.py): stale_parent_pools, read by the web's Forks page for templates on a
+  # recorded stale block, on the same schedule; history via `python -m stale_parents --backfill`. "false" = off.
+  # STALE_PARENTS_ENABLED: "true"
 
 # Environment variables read from Secrets or ConfigMaps (any `valueFrom` source), e.g. a CloudNativePG app secret:
 #   envValueFrom:

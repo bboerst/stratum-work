@@ -15,7 +15,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 logger = logging.getLogger("backend.store")
 
@@ -393,6 +393,44 @@ class PostgresStore:
         return self._run(lambda c: c.execute(
             "SELECT unknown_parent_pools_refresh(%s, %s::int[], %s, %s)", (prev_hash, list(heights), t_from, t_to),
             prepare=False).fetchone()[0])
+
+    # stale parents (stale_parents.py; db/migrations/20261120000001_stale_parent_pools.sql). block_hash is display
+    # order, as stale_blocks.block_hash. Each block comes with its height + 1 and that height's window as text (exact
+    # to the µs, and 'infinity' while no block at the height is stored), passed back as values.
+    _STALE_PARENT_BLOCKS = (
+        "SELECT s.block_hash, s.height + 1, w.w_from::text, w.w_to::text,"
+        "       EXISTS (SELECT 1 FROM stale_parent_pools p WHERE p.prev_hash = stratum_prev_hash_to_block_hash(s.block_hash)),"
+        "       w.w_from <= %(t_to)s::timestamptz AND w.w_to >= %(t_from)s::timestamptz"
+        "  FROM stale_blocks s CROSS JOIN LATERAL template_height_windows(s.height + 1, s.height + 1) w"
+        " WHERE s.height BETWEEN %(h_from)s AND %(h_to)s")
+
+    def _stale_parent_blocks(self, where: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        p = {"t_from": None, "t_to": None, "h_from": -1, "h_to": 2 ** 31 - 1, **params}
+        rows = self._run(lambda c: c.execute(
+            f"SELECT * FROM ({self._STALE_PARENT_BLOCKS}) x(block_hash, height, w_from, w_to, has_rows, in_range)"
+            f" WHERE {where} ORDER BY height, block_hash", p).fetchall())
+        return [{"block_hash": bytes(b), "height": h, "w_from": f, "w_to": t, "has_rows": r, "overlaps": bool(o)}
+                for b, h, f, t, r, o in rows]
+
+    def stale_parents_to_refresh(self, t_from: datetime, t_to: datetime) -> List[Dict[str, Any]]:
+        """The stale blocks whose height + 1 window overlaps [t_from, t_to] (new templates on them, or a window that
+        just changed), and those with no stale_parent_pools row (recorded since, e.g. imported or marked replaced)."""
+        return self._stale_parent_blocks("in_range OR NOT has_rows", {"t_from": t_from, "t_to": t_to})
+
+    def stale_parents_between_heights(self, h_from: int, h_to: int) -> List[Dict[str, Any]]:
+        """Every stale block at heights [h_from, h_to] (the backfill)."""
+        return self._stale_parent_blocks("true", {"h_from": h_from, "h_to": h_to})
+
+    def stale_block_heights(self) -> Optional[Tuple[int, int]]:
+        row = self._run(lambda c: c.execute("SELECT min(height), max(height) FROM stale_blocks").fetchone())
+        return None if row[0] is None else (row[0], row[1])
+
+    def refresh_stale_parent(self, block_hash: bytes, height: int, w_from: str, w_to: str) -> int:
+        """Recompute one stale block's stale_parent_pools rows from its templates at height received in
+        [w_from, w_to] (stale_parent_pools_refresh()). Returns the (block, pool) rows written."""
+        return self._run(lambda c: c.execute(
+            "SELECT stale_parent_pools_refresh(%s, %s, %s::timestamptz, %s::timestamptz)",
+            (block_hash, height, w_from, w_to), prepare=False).fetchone()[0])
 
     def first_template_received(self) -> Optional[datetime]:
         return self._run(lambda c: c.execute("SELECT min(received_at) FROM templates").fetchone()[0])

@@ -5,8 +5,9 @@
  * block we never recorded (a lost race, a pool's own block that lost), or not a valid block at all; which one is
  * inferred from the facts returned here (lib/parentKind.ts), never stored.
  *
- * Work on a stale Bitcoin block we recorded isn't an unknown parent: the Forks page reads it live from templates
- * (getStaleEpisodePoolRows, below). A stuck feed's late re-send of Bitcoin work has a Bitcoin parent, so it isn't here.
+ * Work on a stale Bitcoin block we recorded isn't an unknown parent: the Forks page reads it from the backend's twin
+ * summary, stale_parent_pools (getStaleEpisodePoolRows, below). A stuck feed's late re-send of Bitcoin work has a
+ * Bitcoin parent, so it isn't here.
  *
  * The summary per (parent, pool) is read from unknown_parent_pools (getEpisodePoolRows), counted facts the backend keeps
  * up to date (backend/unknown_parents.py: after each block, plus a backfill), for a range in Bitcoin time: the last 6
@@ -95,7 +96,7 @@ export interface EpisodePoolSql {
   n: string;                            // templates (de-duplicated)
   first_ms: string;
   last_ms: string;
-  auxpow: string | null;                // NULL: not read (getStaleEpisodePoolRows)
+  auxpow: string | null;                // NULL: not counted (stale parents)
   conns: number[];                      // connection ranks that received templates on this parent
   heights: Record<string, string | number>;   // height -> templates
   nbits: Record<string, string | number>;     // nbits -> templates
@@ -221,6 +222,39 @@ const CUT = `cut AS (
      )`;
 
 /**
+ * The rows per (stale parent, pool) of the range, from stale_parent_pools (backend/stale_parents.py: counted facts per
+ * recorded stale block and pool, kept up to date after each block, plus a backfill): every pool's row of each block
+ * that is stale now (stale_blocks, reorged_in_at IS NULL: judged here, at read time), from the pools not excluded,
+ * whose last template (over those pools) arrived at or after the range's cutoff, compared in whole ms as the live
+ * read does. Same rows, shape and order as the live read (getLiveStaleEpisodePoolRows), which is used while the
+ * table is empty and stale blocks exist (before the backend has filled it).
+ */
+export async function getStaleEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
+  const pool = getPgPool();
+  const { rows: [state] } = await pool.query<{ filled: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM stale_parent_pools) OR NOT EXISTS (SELECT 1 FROM stale_blocks) AS filled`);
+  if (!state?.filled) return getLiveStaleEpisodePoolRows(excludePools, range);
+  const { rows } = await pool.query<EpisodePoolSql>(
+    `WITH ${CUT}, u AS (
+       SELECT u.*, max(u.last_received) OVER (PARTITION BY u.prev_hash) AS parent_last
+         FROM stale_parent_pools u
+         JOIN stale_blocks s ON s.block_hash = stratum_prev_hash_to_block_hash(u.prev_hash) AND s.reorged_in_at IS NULL
+        WHERE u.pool <> ALL ($2::text[])
+     )
+     SELECT encode(stratum_prev_hash_to_block_hash(u.prev_hash), 'hex') AS parent, u.pool, u.n::bigint AS n,
+            (extract(epoch FROM u.first_received) * 1000)::bigint AS first_ms,
+            (extract(epoch FROM u.last_received) * 1000)::bigint AS last_ms,
+            NULL::bigint AS auxpow, u.conns, u.heights, u.nbits
+       FROM u, cut
+      WHERE cut.at = '-infinity'
+         OR (extract(epoch FROM u.parent_last) * 1000)::bigint >= (extract(epoch FROM cut.at) * 1000)::bigint
+      ORDER BY first_ms, parent, u.pool`,
+    [RANGE_BLOCKS[range], excludePools],
+  );
+  return rows;
+}
+
+/**
  * The rows per (stale parent, pool) of the range, read live, in the summary's shape: for every block that is stale now
  * (stale_blocks, reorged_in_at IS NULL; a non-best row of blocks is one of them by blocks_best's definition), the
  * templates built on it at its height + 1, received inside that height's window (template_height_windows()), from the
@@ -233,7 +267,7 @@ const CUT = `cut AS (
  * every block would span the whole history). A parent is in the range when its last template arrived at or after the
  * cutoff, the unknown parents' rule.
  */
-export async function getStaleEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
+export async function getLiveStaleEpisodePoolRows(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<EpisodePoolSql[]> {
   const pool = getPgPool();
   const { rows: blocks } = await pool.query<{ parent: string; height: number; w_from: string; w_to: string; cut_ms: string | null }>(
     `WITH ${CUT}

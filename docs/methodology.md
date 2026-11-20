@@ -42,8 +42,9 @@ Two derived results are stored, for speed, and recomputed rather than trusted:
   computed when a block is stored. When a check changes, they are recomputed over every stored block
   (`python -m coinbase_reanalysis` for the coinbase checks). History converted from the earlier database has no fork
   flag, so a block without one is not evidence that there was no fork; the fork view reads the templates themselves.
-- **The unknown-parents summary** (`unknown_parent_pools`) is kept up to date after each block and rebuilt from
-  the templates with `python -m unknown_parents --backfill`.
+- **The unknown- and stale-parents summaries** (`unknown_parent_pools`, `stale_parent_pools`) are kept up to date
+  after each block and rebuilt from the templates with `python -m unknown_parents --backfill` and
+  `python -m stale_parents --backfill`.
 
 Both are made only from stored facts, so recomputing them gives the same answer from the same data.
 
@@ -230,11 +231,18 @@ templates (a template seen on several of a pool's connections counts once, and o
 either a **stale block we recorded** (in `stale_blocks` and not reorged back in; kind `stale`, a fact) or **no block
 we know** (neither in `blocks` nor in `stale_blocks`; its kind is inferred, below).
 
-Templates on a recorded stale block are read directly from `templates` when the page is computed: for each block
-that is stale now, the templates at its height + 1 whose previous block is that block and that arrived inside that
-height's time window, de-duplicated like the rest (their merge-mining share isn't counted: it would mean reading every
-coinbase). Its episode shows the block's height, how its header reached us and, when identified, its miner (not
-named when it is a pool hidden from the site).
+Templates on a recorded stale block are counted per block: the templates at its height + 1 whose previous block is
+that block and that arrived inside that height's time window, de-duplicated like the rest (their merge-mining share
+isn't counted: it would mean reading every coinbase). The backend keeps these counts in `stale_parent_pools`, the
+twin of the unknown parents' summary below (`backend/stale_parents.py`): one row per stale block and pool, counted
+facts only, recomputed whole from the stored templates (never added to) for every stale block whose height window
+overlaps the last hours (new templates can only arrive inside it, and the window only moves while blocks at its
+heights are still arriving) or that has no row yet (a block recorded since, also from the public dataset or by the
+best-chain check); `python -m stale_parents --backfill` recomputes every stale block. Whether a block is still stale
+is checked each time the page is read, so a block reorged back in drops out with no cleanup. The web's Postgres tests
+compare the table field for field with the direct read of templates, which the page uses while the table is empty.
+Its episode shows the block's height, how its header reached us and, when identified, its miner (not named when it
+is a pool hidden from the site).
 
 Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
 keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the

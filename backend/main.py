@@ -994,7 +994,8 @@ def start_template_sets_filler():
     try:
         from template_sets import TemplateSetsFiller
         filler = TemplateSetsFiller(type(store).from_env(), backfill=TEMPLATE_SETS_BACKFILL,
-                                    backfill_chunk=TEMPLATE_SETS_BACKFILL_CHUNK)
+                                    backfill_chunk=TEMPLATE_SETS_BACKFILL_CHUNK,
+                                    on_progress=metrics.template_sets_lowest_height.set)
     except Exception as e:
         logger.error("Template-set facts not started: %s", e)
         return

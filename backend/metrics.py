@@ -8,6 +8,8 @@ Text format 0.0.4, written with the standard library like the collector's: two s
   best-chain reconciliation found them missing (ZMQ didn't announce them, e.g. a reorg's other blocks, or saving the
   announced block failed). Blocks mined while the backend was stopped are stored by the startup sync as synced and
   not counted.
+- stratum_backend_template_sets_lowest_height (gauge): the lowest height the transaction-set counts reach, set by the
+  in-process history walk (TEMPLATE_SETS_BACKFILL) after each chunk; absent until it has run.
 """
 import bisect
 import logging
@@ -43,6 +45,30 @@ class Counter:
 
     def render(self) -> str:
         return f"# HELP {self.name} {self.help}\n# TYPE {self.name} counter\n{self.name} {_fmt(self.value)}\n"
+
+
+class Gauge:
+    """A value set from time to time; not rendered until it has been set."""
+
+    def __init__(self, name: str, help_text: str):
+        self.name, self.help = name, help_text
+        self._lock = threading.Lock()
+        self._value = None
+
+    def set(self, v: float) -> None:
+        with self._lock:
+            self._value = float(v)
+
+    @property
+    def value(self):
+        with self._lock:
+            return self._value
+
+    def render(self) -> str:
+        v = self.value
+        if v is None:
+            return ""
+        return f"# HELP {self.name} {self.help}\n# TYPE {self.name} gauge\n{self.name} {_fmt(v)}\n"
 
 
 class Histogram:
@@ -90,7 +116,11 @@ reconcile_blocks_saved_total = Counter(
     NS + "reconcile_blocks_saved_total",
     "Blocks saved as seen live with seen_via reconcile: found missing by the best-chain reconciliation, not via ZMQ.")
 
-REGISTRY = (zmq_block_saved_seconds, reconcile_blocks_saved_total)
+template_sets_lowest_height = Gauge(
+    NS + "template_sets_lowest_height",
+    "Lowest height the transaction-set counts reach, set by the in-process history walk after each chunk.")
+
+REGISTRY = (zmq_block_saved_seconds, reconcile_blocks_saved_total, template_sets_lowest_height)
 
 
 def render() -> str:

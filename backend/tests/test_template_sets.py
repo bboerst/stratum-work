@@ -143,11 +143,15 @@ class FakeStore:
         self.rows, self.due, self.bounds, self.no_parent = rows, list(due), bounds, set(no_parent)
         self.heights, self.feeds, self.pairs, self.reads = {}, {}, {}, []
 
-    def template_set_rows(self, a, b):
+    def template_set_rows(self, a, b, consume):
         self.reads.append((a, b))
-        return [r for r in self.rows if a <= r[0] <= b]
+        return consume(iter([r for r in self.rows if a <= r[0] <= b]))
+
+    def template_set_lowest_counted(self):
+        return min(self.heights, default=None)
 
     def replace_template_sets(self, a, b, heights, feeds, pairs):
+        self.writes = getattr(self, "writes", []) + [(a, b)]
         for h in range(a, b + 1):
             self.heights.pop(h, None), self.feeds.pop(h, None), self.pairs.pop(h, None)
         for h, n in heights:
@@ -215,9 +219,9 @@ class FillTests(unittest.TestCase):
         store = FakeStore(self.ROWS, due=[100, 102])
         f = ts.TemplateSetsFiller(store, log=LOG)
         self.assertEqual(f.chunk, ts.FILLER_CHUNK)
-        self.assertEqual(f.run_once(), {"heights": 2, "templates": 3})
+        self.assertEqual(f.run_once(), {"heights": 2, "templates": 3, "history": None})
         self.assertEqual(store.reads, [(100, 100), (102, 102)])
-        self.assertEqual(f.run_once(), {"heights": 0, "templates": 0})   # nothing due any more
+        self.assertEqual(f.run_once(), {"heights": 0, "templates": 0, "history": None})   # nothing due any more
 
     def test_cli(self):
         store = FakeStore(self.ROWS)
@@ -233,6 +237,88 @@ class FillTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(ts.main(["--backfill"], store=FakeStore([], bounds=(None, None))), 0)
         self.assertEqual(json.loads(out.getvalue())["chunks"], 0)
+
+
+class HistoryWalkTests(unittest.TestCase):
+    """TEMPLATE_SETS_BACKFILL: the filler's in-process walk down through history, one chunk per cycle."""
+
+    def store(self, **kw):
+        # stored blocks from 99 (floor 100) to the tip; live due: 150-151; history below them
+        rows = [cbrow(h, "F1", f"s{h}", 1, T0) for h in range(100, 152)]
+        return FakeStore(rows, due=[150, 151], bounds=(100, 151), **kw)
+
+    def test_live_first_then_one_chunk_per_cycle_downward_to_the_floor(self):
+        store = self.store()
+        seen = []
+        f = ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=20, log=LOG, on_progress=seen.append)
+        s = f.run_once()
+        self.assertEqual(store.writes, [(150, 151), (130, 149)])     # live work, then one history chunk
+        self.assertEqual((s["heights"], s["history"]["from_height"], s["history"]["to_height"]), (2, 130, 149))
+        f.run_once()
+        f.run_once()
+        self.assertEqual(store.writes[2:], [(110, 129), (100, 109)])  # the last chunk stops at the floor
+        self.assertIsNone(f.run_once()["history"])                    # done: nothing more, and it says so once
+        self.assertTrue(f.backfill_done)
+        self.assertEqual(sorted(store.heights), list(range(100, 152)))
+        self.assertEqual(seen, [130, 110, 100, 100])
+
+    def test_live_work_comes_first_in_every_cycle(self):
+        store = self.store()
+        f = ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=20, log=LOG)
+        f.run_once()
+        store.due = [152]                    # a new height closed meanwhile
+        store.rows.append(cbrow(152, "F1", "s152", 1, T0))
+        store.bounds = (100, 152)
+        f.run_once()
+        self.assertEqual(store.writes, [(150, 151), (130, 149), (152, 152), (110, 129)])
+
+    def test_resumes_from_the_table_after_a_restart(self):
+        store = self.store()
+        ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=20, log=LOG).run_once()
+        again = ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=20, log=LOG)   # a new process
+        again.run_once()
+        self.assertEqual(store.writes, [(150, 151), (130, 149), (110, 129)])
+
+    def test_moves_past_heights_it_cannot_count(self):
+        # 110-129 have no stored parent: nothing is counted there, the walk goes on below them
+        store = self.store(no_parent=set(range(110, 130)))
+        f = ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=20, log=LOG)
+        for _ in range(4):
+            f.run_once()
+        self.assertEqual(store.writes, [(150, 151), (130, 149), (110, 129), (100, 109)])
+        self.assertEqual(min(store.heights), 100)
+        self.assertNotIn(115, store.heights)
+
+    def test_off_by_default_and_waits_for_live_work(self):
+        store = self.store()
+        f = ts.TemplateSetsFiller(store, log=LOG)
+        self.assertIsNone(f.run_once()["history"])
+        self.assertEqual(store.writes, [(150, 151)])
+        empty = FakeStore([], due=[], bounds=(100, 151))
+        self.assertIsNone(ts.TemplateSetsFiller(empty, backfill=True, log=LOG).run_once()["history"])
+        with self.assertRaises(ValueError):
+            ts.TemplateSetsFiller(store, backfill=True, backfill_chunk=0)
+
+    def test_run_forever_pauses_between_history_chunks_and_waits_for_blocks_when_done(self):
+        f = ts.TemplateSetsFiller(self.store(), backfill=True, backfill_chunk=20, backfill_pause_s=7, log=LOG)
+        waits = []
+
+        class Stop(Exception):
+            pass
+
+        class Ev:
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                if len(waits) == 5:
+                    raise Stop
+
+            def clear(self):
+                pass
+
+        f._wake = Ev()
+        with self.assertRaises(Stop):
+            f.run_forever()
+        self.assertEqual(waits, [7, 7, 7, None, None])   # three chunks; then done, so only blocks wake it
 
 
 @unittest.skipUnless(os.getenv("PG_TEST_HOST"), "set PG_TEST_HOST etc. to run against a migrated Postgres")
@@ -358,6 +444,7 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(hi, H + 1)
         ts.fill(self.store, H, H, ts.PoolIdentifier(self.store.load_pools()))
         self.assertEqual([h for h in self.store.template_set_heights_due(5) if h >= H], [H + 1])
+        self.assertLessEqual(self.store.template_set_lowest_counted(), H)
         self.assertEqual(self.store.template_set_parent_heights(H - 1, H + 2) & {H - 1, H, H + 1, H + 2},
                          {H, H + 1, H + 2})
 

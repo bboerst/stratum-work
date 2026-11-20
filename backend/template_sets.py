@@ -17,8 +17,11 @@ A height is filled once its window has closed (2 hours after the block at h arri
 for it can still arrive. Every fill recomputes its heights whole (delete + insert): idempotent.
 
 The backend fills, after each new block, every height of the last LOOKBACK below the tip whose window has closed and
-that isn't filled yet (so an outage up to LOOKBACK blocks heals itself). Anything older (a fresh table, a longer
-outage, or a re-count after the pool list changed) is the backfill's:
+that isn't filled yet (so an outage up to LOOKBACK blocks heals itself). With TEMPLATE_SETS_BACKFILL it also walks
+history in the background, one chunk per cycle after that live work, down from the lowest counted height to the
+lowest stored block, resuming after a restart and stopping when done (TemplateSetsFiller). Heights above the lowest
+counted one that are still uncounted (an older, partial backfill; a longer outage), or a re-count after the pool
+list changed, are the manual backfill's:
 
     python -m template_sets --backfill [--from-height 846720] [--to-height 976000] [--chunk 144]
 
@@ -43,6 +46,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 LOOKBACK = 1008        # heights below the tip checked after each block (a week)
 CHUNK = 144            # heights per read (backfill)
 FILLER_CHUNK = 24      # heights per read in the backend (a deploy's first run counts up to LOOKBACK in these)
+BACKFILL_PAUSE_S = 5   # in-process history walk: seconds between its chunks (TEMPLATE_SETS_BACKFILL)
 
 logger = logging.getLogger("backend.template_sets")
 
@@ -222,16 +226,15 @@ def fill(store: Any, h_from: int, h_to: int, identify: Callable[..., Optional[in
     """Count heights [h_from, h_to] and replace their rows. Returns {heights, templates, feeds, pairs, read_s,
     write_s}."""
     t0 = time.monotonic()
-    rows = store.template_set_rows(h_from, h_to)
+    # rows are streamed through the count, never held: memory is the distinct sets per node, not the templates
+    templates, feeds, pairs = store.template_set_rows(h_from, h_to, lambda rows: count_heights(rows, identify))
     t1 = time.monotonic()
-    templates, feeds, pairs = count_heights(rows, identify)
     # a height whose block at h - 1 isn't stored (yet) can't be counted: it stays uncounted, due again once it is
     parents = store.template_set_parent_heights(h_from, h_to)
     heights = [(h, templates.get(h, 0)) for h in range(h_from, h_to + 1) if h in parents]
-    t2 = time.monotonic()
     store.replace_template_sets(h_from, h_to, heights, feeds, pairs)
     return {"heights": len(heights), "templates": sum(templates.values()), "feeds": len(feeds), "pairs": len(pairs),
-            "read_s": round(t1 - t0, 2), "count_s": round(t2 - t1, 2), "write_s": round(time.monotonic() - t2, 2)}
+            "read_count_s": round(t1 - t0, 2), "write_s": round(time.monotonic() - t1, 2)}
 
 
 def chunks(h_from: int, h_to: int, chunk: int = CHUNK) -> List[Tuple[int, int]]:
@@ -263,8 +266,8 @@ def backfill(store: Any, h_from: int, h_to: int, identify: Callable[..., Optiona
         for k in total:
             total[k] += s[k]
         log.info("Template sets backfill %d/%d heights %d-%d: %d templates, %d feed rows, %d pair rows "
-                 "(read %.1f s, count %.1f s, write %.1f s), %.1f s", i, len(cs), a, b, s["templates"], s["feeds"],
-                 s["pairs"], s["read_s"], s["count_s"], s["write_s"], clock() - t0)
+                 "(read + count %.1f s, write %.1f s), %.1f s", i, len(cs), a, b, s["templates"], s["feeds"],
+                 s["pairs"], s["read_count_s"], s["write_s"], clock() - t0)
     summary = {"from_height": h_from, "to_height": h_to, "chunk": chunk, "chunks": len(cs),
                "templates": total["templates"], "feed_rows": total["feeds"], "pair_rows": total["pairs"],
                "seconds": round(clock() - started, 1)}
@@ -273,22 +276,36 @@ def backfill(store: Any, h_from: int, h_to: int, identify: Callable[..., Optiona
 
 
 class TemplateSetsFiller:
-    """The backend's schedule: after each new block (request()) and once at start, every height of the last
-    `lookback` below the tip whose window has closed and that isn't filled. Its own thread and store (connection),
-    never the block processor's. The pool list is re-read from the store on every run."""
+    """The backend's schedule. Each cycle, live work first: every height of the last `lookback` below the tip whose
+    window has closed and that isn't counted (after each new block, request(), and once at start). Then, with
+    `backfill`, ONE older chunk of `backfill_chunk` heights, walking down from the lowest counted height to the floor
+    (the lowest stored block + 1: below it no template has a parent we know), and the next cycle follows after
+    `backfill_pause_s` instead of waiting for a block, until the floor is reached. The walk keeps no state of its own:
+    it starts below the table's lowest height, so a restart resumes where it was (re-counting at most the chunk it
+    was in when a run of uncounted heights, e.g. missing parents, lies below). Its own thread and store (connection),
+    never the block processor's; one writer at a time with a backfill CLI (replace_template_sets' lock). The pool list
+    is re-read from the store on every cycle."""
 
-    def __init__(self, store: Any, lookback: int = LOOKBACK, chunk: int = FILLER_CHUNK, log: logging.Logger = logger):
+    def __init__(self, store: Any, lookback: int = LOOKBACK, chunk: int = FILLER_CHUNK, backfill: bool = False,
+                 backfill_chunk: int = CHUNK, backfill_pause_s: float = BACKFILL_PAUSE_S,
+                 log: logging.Logger = logger, on_progress: Optional[Callable[[int], None]] = None):
+        if backfill_chunk <= 0:
+            raise ValueError("backfill_chunk must be positive")
         self.store, self.lookback, self.chunk, self.log = store, lookback, chunk, log
+        self.backfill, self.backfill_chunk, self.backfill_pause_s = backfill, backfill_chunk, backfill_pause_s
+        self.on_progress = on_progress
+        self.cursor: Optional[int] = None     # the next history chunk ends here (None: from the table)
+        self.backfill_done = not backfill
         self._wake = threading.Event()
 
     def request(self) -> None:
         self._wake.set()
 
-    def run_once(self) -> Dict[str, Any]:
+    def run_live(self, identify: Optional[PoolIdentifier] = None) -> Dict[str, Any]:
         due = self.store.template_set_heights_due(self.lookback)
         if not due:
             return {"heights": 0, "templates": 0}
-        identify = PoolIdentifier(self.store.load_pools())
+        identify = identify or PoolIdentifier(self.store.load_pools())
         t0, n, templates = time.monotonic(), 0, 0
         for a, b in runs(due, self.chunk):
             s = fill(self.store, a, b, identify)
@@ -297,13 +314,48 @@ class TemplateSetsFiller:
                       time.monotonic() - t0)
         return {"heights": n, "templates": templates}
 
+    def run_history_chunk(self, identify: Optional[PoolIdentifier] = None) -> Optional[Dict[str, Any]]:
+        """One chunk of history below the lowest counted height, or None when the floor is reached (or nothing is
+        counted yet: the walk starts below the live work)."""
+        if self.backfill_done:
+            return None
+        lo, _ = self.store.template_set_height_bounds()
+        lowest = self.store.template_set_lowest_counted()
+        if lo is None or lowest is None:
+            return None
+        top = (lowest if self.cursor is None else min(self.cursor, lowest)) - 1
+        if top < lo:
+            self.backfill_done = True
+            self.log.info("Template sets history backfill done: counted down to %d", lowest)
+            if self.on_progress:
+                self.on_progress(lowest)
+            return None
+        a = max(lo, top - self.backfill_chunk + 1)
+        t0 = time.monotonic()
+        s = fill(self.store, a, top, identify or PoolIdentifier(self.store.load_pools()))
+        self.cursor = a
+        if self.on_progress:
+            self.on_progress(a)
+        self.log.info("Template sets history backfill heights %d-%d: %d templates, %d feed rows, %d pair rows, "
+                      "%.1f s; %d heights left to %d", a, top, s["templates"], s["feeds"], s["pairs"],
+                      time.monotonic() - t0, a - lo, lo)
+        return {**s, "from_height": a, "to_height": top}
+
+    def run_once(self) -> Dict[str, Any]:
+        """One cycle: the live heights, then at most one history chunk."""
+        identify = PoolIdentifier(self.store.load_pools())
+        live = self.run_live(identify)
+        history = self.run_history_chunk(identify) if not self.backfill_done else None
+        return {**live, "history": history}
+
     def run_forever(self) -> None:
         while True:
             try:
                 self.run_once()
             except Exception as e:
-                self.log.error("Template sets fill failed (retried on the next block): %s", e)
-            self._wake.wait()
+                self.log.error("Template sets fill failed (retried on the next cycle): %s", e)
+            # history pending: the next cycle after a pause (a new block wakes it earlier); else wait for a block
+            self._wake.wait(None if self.backfill_done else self.backfill_pause_s)
             self._wake.clear()
 
 

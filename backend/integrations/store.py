@@ -457,18 +457,28 @@ class PostgresStore:
          WHERE t.height BETWEEN %(h_from)s AND %(h_to)s AND t.received_at >= %(t_from)s AND t.received_at <= %(t_to)s
            AND t.received_at >= w.w_from AND t.received_at <= w.w_to AND length(t.merkle_branches) > 0"""
 
-    def template_set_rows(self, h_from: int, h_to: int) -> List[tuple]:
-        """The non-empty templates counted at heights [h_from, h_to]: (height, feed, sha256 of the merkle branches,
-        coinbase1 hex, extranonce1 hex, extranonce2_length, coinbase2 hex, received_at)."""
+    TEMPLATE_SET_ITERSIZE = 5000      # rows per fetch of the server-side cursor
+
+    def template_set_rows(self, h_from: int, h_to: int, consume):
+        """consume(rows) over the non-empty templates counted at heights [h_from, h_to], streamed (a server-side cursor,
+        TEMPLATE_SET_ITERSIZE rows at a time, so neither libpq nor Python holds a chunk's ~200k rows at once): each row
+        (height, feed, sha256 of the merkle branches, coinbase1 hex, extranonce1 hex, extranonce2_length, coinbase2
+        hex, received_at). Returns what consume returns."""
         def run(c):
             t_from, t_to = c.execute("SELECT t_from::text, t_to::text FROM height_window(%s, %s)", (h_from, h_to),
                                      prepare=False).fetchone()
             if t_from is None:
-                return []
-            return c.execute(self._TEMPLATE_SET_ROWS, dict(h_from=h_from, h_to=h_to, t_from=t_from, t_to=t_to),
-                             prepare=False).fetchall()
-        return [(h, feed, bytes(sh), bytes(cb1).hex(), bytes(en1).hex(), en2len, bytes(cb2).hex(), ra)
-                for h, feed, sh, cb1, en1, en2len, cb2, ra in self._run(run)]
+                return consume(iter(()))
+            with c.cursor(name="template_set_rows") as cur:
+                cur.itersize = self.TEMPLATE_SET_ITERSIZE
+                cur.execute(self._TEMPLATE_SET_ROWS, dict(h_from=h_from, h_to=h_to, t_from=t_from, t_to=t_to))
+                return consume((h, feed, bytes(sh), bytes(cb1).hex(), bytes(en1).hex(), en2len, bytes(cb2).hex(), ra)
+                               for h, feed, sh, cb1, en1, en2len, cb2, ra in cur)
+        return self._run(run)
+
+    def template_set_lowest_counted(self) -> Optional[int]:
+        """The lowest height in template_set_heights (the in-process history walk's position)."""
+        return self._run(lambda c: c.execute("SELECT min(height) FROM template_set_heights").fetchone()[0])
 
     def replace_template_sets(self, h_from: int, h_to: int, heights: List[tuple], feeds: List[tuple],
                               pairs: List[tuple]) -> None:

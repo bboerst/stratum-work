@@ -336,6 +336,10 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
   anything.
 - **Known limits.**
   - A pool is identified when the height is counted, so a later change to the pool list needs a backfill run.
+  - History is counted in the background, downward from the newest counted height, one chunk of heights at a time
+    (`TEMPLATE_SETS_BACKFILL`). Until it reaches our first stored block, the columns and the "All" pie start at the
+    first counted epoch, and an epoch the walk is still inside is grouped from the heights counted so far. The API's
+    `from_height` and `heights_counted` say how far it got.
   - A coinbase whose extranonce2 length doesn't reassemble is repaired as for the invalid-coinbase check: one other
     length that parses. Otherwise it is unidentified.
 

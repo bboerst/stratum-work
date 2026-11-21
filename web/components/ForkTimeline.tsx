@@ -152,6 +152,14 @@ function markerTitle(m: BlockMarker): string {
   return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${m.staleOnly ? "first recorded" : "reached us"} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}`;
 }
 
+/** A marker label's alignment: centred on its line, but kept inside the plot near either end (about 26 px of room). */
+function labelShift(m: BlockMarker, plotW: number): string {
+  const edgePct = (26 / plotW) * 100;
+  if (m.edge === "before" || (m.edge === null && m.pct < edgePct)) return "";
+  if (m.edge === "after" || m.pct > 100 - edgePct) return "-translate-x-full";
+  return "-translate-x-1/2";
+}
+
 function splitSegmentAtGaps(
   seg: TimelineSegment,
   zones: TimeZone[],
@@ -596,7 +604,7 @@ export default function ForkTimeline({
               key={m.hash}
               className={`absolute font-mono text-[9px] leading-none whitespace-nowrap select-none ${
                 m.best ? "text-foreground/60" : "text-[#1550a4] dark:text-blue-400"
-              } ${m.edge === "before" ? "" : m.edge === "after" ? "-translate-x-full" : "-translate-x-1/2"}`}
+              } ${labelShift(m, plotW)}`}
               style={{ left: `${m.pct}%`, top: m.row === 1 ? 0 : 12 }}
               title={markerTitle(m)}
             >

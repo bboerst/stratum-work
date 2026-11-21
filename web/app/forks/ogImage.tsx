@@ -1,127 +1,142 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { ImageResponse } from "next/og";
 import type { Episode } from "@/lib/unknownParents";
-import { loadEpisodes } from "@/lib/forksSummary";
+import { loadBlocksAt, loadEpisodes } from "@/lib/forksSummary";
 import { resolveCached } from "@/lib/forksShare";
-import { KIND_TITLE, SELECTION_ORDER, SITE_NAME, fmtDuration, fmtInt, type ShareKind } from "@/lib/forksPath";
+import { cardModel, type CardModel, type TileStyle } from "@/lib/forksCard";
+import { KIND_TITLE, SELECTION_ORDER, SITE_NAME, fmtInt, type ShareKind } from "@/lib/forksPath";
 
 /**
- * The Forks link-preview card (opengraph-image / twitter-image of /forks, /forks/<height> and /forks/<height>/<kind>):
- * the episode's chevron diagram as on the page (our chain's blocks, and the parent the templates built on below them in
- * the kind's colour), its kind and height, and its counts. No pool or miner names at all (nothing excluded by
- * POOL_BLACKLIST can show; the summary leaves those pools out anyway). It reads the cached summary
- * (lib/forksSummary.ts), so a card costs one render; browsers and crawlers may keep it for CACHE_S.
+ * The Forks link-preview card (opengraph-image / twitter-image of /forks, /forks/<height> and /forks/<height>/<kind>),
+ * drawn like the page's episode diagram (components/Forks.tsx WhyUnknown) in its dark theme and monospace font: the
+ * header (kind, height, parent), our chain's blocks with their miners, the parent below in the kind's colour, and the
+ * pools that built on it (lib/forksCard.ts). Names follow the page's rules (POOL_BLACKLIST pools left out). It reads the
+ * cached summary and the cached blocks at the height, so a card costs one render; browsers and crawlers may keep it
+ * for CACHE_S.
  */
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 const CACHE_S = 300;
 
-const BG = "#0b0b0c", FG = "#e8e8e8", DIM = "#8f8f8f", STRIP = "#313131", TILE_TEXT = "#d7d7d7";
-// The page's dark-theme kind colours (components/Forks.tsx KIND_FILL)
-const KIND_COLOUR: Record<ShareKind, string> = {
+// Liberation Mono (SIL OFL 1.1, fonts/OFL.txt): the metric-compatible font of the site's monospace stack
+// (globals.css: ui-monospace, …, Liberation Mono, …). Referenced by URL so the build bundles it (the runtime image has
+// no source tree); read once per process.
+const FONT_REGULAR = new URL("./fonts/LiberationMono-Regular.ttf", import.meta.url);
+const FONT_BOLD = new URL("./fonts/LiberationMono-Bold.ttf", import.meta.url);
+let fonts: Promise<{ name: string; data: Buffer; weight: 400 | 700; style: "normal" }[]> | null = null;
+function loadFonts() {
+  fonts ??= Promise.all([readFile(fileURLToPath(FONT_REGULAR)), readFile(fileURLToPath(FONT_BOLD))]).then(([r, b]) => [
+    { name: "Mono", data: r, weight: 400 as const, style: "normal" as const },
+    { name: "Mono", data: b, weight: 700 as const, style: "normal" as const },
+  ]);
+  fonts.catch(() => { fonts = null; });
+  return fonts;
+}
+
+// The page's dark theme (globals.css .dark, Forks.tsx KIND_BG / WhyUnknown)
+const BG = "#020817";                          // --background: 222.2 84% 4.9%
+const FG = "#f8fafc";                          // --foreground: 210 40% 98%
+const FG70 = "rgba(248,250,252,0.7)", FG50 = "rgba(248,250,252,0.5)", FG60 = "rgba(248,250,252,0.6)";
+const STRIP = "#313131", TILE_TEXT = "#d7d7d7", TILE_SUB = "rgba(215,215,215,0.75)";
+const DOT: Record<ShareKind, string> = {        // KIND_BG, dark
   stale: "#3b82f6", bitcoin_block: "#38bdf8", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
   invalid_coinbase: "#f43f5e", undetermined: "#6b7280",
 };
+const OUTLINE: Record<ShareKind, string> = {    // WhyUnknown kindStroke
+  stale: "#6b7280", bitcoin_block: "#38bdf8", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
+  invalid_coinbase: "#f43f5e", undetermined: "#6b7280",
+};
+const STALE_FILL = "#2563eb";                  // fill-blue-600 (dark)
+const ROSE = "#f43f5e";
 
-// The blocks strip's chevron tile (Forks.tsx WhyUnknown), at twice the size
-const S = 2, TW = 104 * S, TH = 64 * S, G = 6;
+// The blocks strip's 104 x 64 chevron, scaled
+const S = 2.4, TW = 104 * S, TH = 64 * S, G = 4 * S, ROW_GAP = 22 * S;
 const chevron = (x: number, y: number) =>
   [[4, 32], [19, 0], [104, 0], [90, 32], [104, 64], [19, 64]].map(([px, py]) => `${x + px * S},${y + py * S}`).join(" ");
+const tileX = (col: 0 | 1) => col * (TW + G);
+const tileY = (row: 0 | 1) => row * (TH + ROW_GAP);
 
-interface Tile { x: number; y: number; label: string; sub?: string; fill: string; stroke?: string; dashed?: boolean; onColour?: boolean }
-
-function Diagram({ e }: { e: Episode }) {
-  const f = e.facts;
-  const ph = e.height - 1;
-  const colour = KIND_COLOUR[e.kind];
-  const onOurChain = f.tip_at_first !== null && Math.abs(ph - f.tip_at_first) <= 1;
-  const Y0 = 34, Y1 = Y0 + TH + 40, xNext = 0, xPrev = TW + G;
-  const short = `${e.parent.slice(0, 4)}…${e.parent.slice(-6)}`;
-  const tiles: Tile[] = [];
-  let link: { x: number } | null = null;
-  if (e.kind === "invalid_coinbase") {
-    // our own chain: the block whose templates paid too much, outlined
-    tiles.push({ x: xPrev, y: Y0, label: fmtInt(ph), fill: STRIP });
-    tiles.push({ x: xNext, y: Y0, label: fmtInt(e.height), sub: "overpaid", fill: "transparent", stroke: colour });
-  } else {
-    if (onOurChain) {
-      tiles.push({ x: xPrev, y: Y0, label: fmtInt(ph), fill: STRIP });
-      tiles.push({ x: xNext, y: Y0, label: fmtInt(e.height), fill: STRIP });
-      link = { x: xPrev };
-    } else {
-      tiles.push({ x: xNext, y: Y0, label: f.tip_at_first === null ? "—" : fmtInt(f.tip_at_first), sub: "our tip", fill: STRIP });
-    }
-    const px = onOurChain ? xPrev : xNext;
-    tiles.push(e.kind === "stale"
-      ? { x: px, y: Y1, label: fmtInt(f.stale_block?.height ?? ph), sub: short, fill: colour, onColour: true }
-      : { x: px, y: Y1, label: fmtInt(ph), sub: short, fill: "transparent", stroke: colour, dashed: true });
+function tilePaint(style: TileStyle, kind: ShareKind) {
+  switch (style) {
+    case "strip": return { fill: STRIP, stroke: "none", dashed: false, text: TILE_TEXT, sub: TILE_SUB };
+    case "stale": return { fill: STALE_FILL, stroke: "none", dashed: false, text: "#ffffff", sub: "rgba(255,255,255,0.8)" };
+    case "outline": return { fill: "none", stroke: OUTLINE[kind], dashed: true, text: TILE_TEXT, sub: TILE_SUB };
+    case "overpaid": return { fill: STRIP, stroke: ROSE, dashed: false, text: TILE_TEXT, sub: TILE_SUB };
   }
-  const W = xPrev + TW + 4, H = Y1 + TH + 4;
+}
+
+function Diagram({ e, m }: { e: Episode; m: CardModel }) {
+  const W = 1200 - 2 * 56, H = 2 * TH + ROW_GAP + 4;
+  const overpaid = e.kind === "invalid_coinbase";
+  const parent = m.tiles.find(t => t.row === 1);
+  // the pools beside the parent (below our chain for an invalid coinbase, which has none)
+  const textX = parent ? tileX(parent.col) + TW + 24 : 0;
+  const textY = parent ? tileY(1) + 20 : tileY(1) - 6;
   return (
     <div style={{ display: "flex", position: "relative", width: W, height: H }}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ position: "absolute", left: 0, top: 0 }}>
-        {link && <line x1={link.x + 54 * S} x2={link.x + 54 * S} y1={Y0 + TH} y2={Y1} stroke="#5a5a5a" strokeWidth={3} strokeDasharray="6 6" />}
-        {tiles.map((t, i) => (
-          <polygon key={i} points={chevron(t.x + 2, t.y)} fill={t.fill} stroke={t.stroke ?? "none"} strokeWidth={t.stroke ? 4 : 0}
-            strokeDasharray={t.dashed ? "10 7" : undefined} />
-        ))}
+        {m.link && <line x1={tileX(1) + 54 * S} x2={tileX(1) + 54 * S} y1={TH} y2={tileY(1)}
+          stroke="rgba(248,250,252,0.3)" strokeWidth={2.5} strokeDasharray="7 7" />}
+        {m.tiles.map((t, i) => {
+          const p = tilePaint(t.style, e.kind);
+          return <polygon key={i} points={chevron(tileX(t.col) + 2, tileY(t.row) + 2)} fill={p.fill} stroke={p.stroke}
+            strokeWidth={p.stroke === "none" ? 0 : 3.5} strokeDasharray={p.dashed ? "10 7" : undefined} />;
+        })}
       </svg>
-      <div style={{ position: "absolute", left: 0, top: 0, fontSize: 22, color: DIM, display: "flex" }}>our chain</div>
-      {tiles.map((t, i) => (
-        <div key={i} style={{
-          position: "absolute", left: t.x + 2 + 19 * S, top: t.y, width: (104 - 19 - 4) * S, height: TH,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: t.onColour ? "#ffffff" : TILE_TEXT }}>{t.label}</div>
-          {t.sub && <div style={{ display: "flex", fontSize: 20, color: t.onColour ? "rgba(255,255,255,0.8)" : "rgba(215,215,215,0.7)" }}>{t.sub}</div>}
-        </div>
-      ))}
+      {m.tiles.map((t, i) => {
+        const p = tilePaint(t.style, e.kind);
+        return (
+          <div key={i} style={{
+            position: "absolute", left: tileX(t.col) + 2 + 12 * S, top: tileY(t.row) + 2, width: 84 * S, height: TH,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          }}>
+            <div style={{ display: "flex", fontSize: 15 * S, fontWeight: 700, color: p.text }}>{t.label}</div>
+            {t.sub && <div style={{ display: "flex", fontSize: 9.5 * S, color: p.sub, marginTop: 4 }}>{t.sub}</div>}
+          </div>
+        );
+      })}
+      {m.ourTip && <div style={{ position: "absolute", left: TW + 24, top: TH / 2 - 16, display: "flex", fontSize: 26, color: FG50 }}>our tip</div>}
+      <div style={{ position: "absolute", left: textX, top: textY, width: W - textX, display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", fontSize: 30, color: overpaid ? ROSE : FG70 }}>{m.builtOn}</div>
+        <div style={{ display: "flex", fontSize: 25, color: FG50, marginTop: 8, lineHeight: 1.3 }}>{m.pools}</div>
+        {m.invalidCoinbase && <div style={{ display: "flex", fontSize: 24, color: ROSE, marginTop: 8 }}>{m.invalidCoinbase}</div>}
+        <div style={{ display: "flex", fontSize: 25, color: FG50, marginTop: 8 }}>{m.facts}</div>
+      </div>
     </div>
   );
 }
-
-const BUILT_ON: Record<ShareKind, string> = {
-  stale: "built on a stale block",
-  bitcoin_block: "built on an unrecorded block",
-  other_chain: "built on another chain",
-  invalid_parent: "built on an invalid parent",
-  invalid_coinbase: "overpaid the coinbase",
-  undetermined: "built on an unknown parent",
-};
 
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column", background: BG, color: FG,
-      padding: "52px 64px", fontFamily: "sans-serif",
+      padding: "44px 56px", fontFamily: "Mono",
     }}>
-      <div style={{ display: "flex", fontSize: 28, color: DIM }}>{SITE_NAME} · Forks</div>
+      <div style={{ display: "flex", fontSize: 24, color: FG50 }}>{SITE_NAME} · Forks</div>
       {children}
     </div>
   );
 }
 
-export function episodeCard(e: Episode) {
-  const colour = KIND_COLOUR[e.kind];
-  const n = e.pools.length;
+const Dot = ({ kind, d }: { kind: ShareKind; d: number }) => (
+  <div style={{ display: "flex", width: d, height: d, borderRadius: d / 2, marginRight: d * 0.6,
+    background: kind === "invalid_coinbase" ? "transparent" : DOT[kind], border: `${Math.round(d / 7)}px solid ${DOT[kind]}` }} />
+);
+
+export function episodeCard(e: Episode, m: CardModel) {
   return (
     <Frame>
-      <div style={{ display: "flex", alignItems: "center", marginTop: 18 }}>
-        <div style={{ display: "flex", width: 30, height: 30, borderRadius: 15, marginRight: 22,
-          background: e.kind === "invalid_coinbase" ? "transparent" : colour, border: `4px solid ${colour}` }} />
-        <div style={{ display: "flex", fontSize: 66, fontWeight: 700, color: colour }}>{KIND_TITLE[e.kind]}</div>
-        <div style={{ display: "flex", fontSize: 66, fontWeight: 700, marginLeft: 22 }}>at {fmtInt(e.height)}</div>
+      {/* the page's episode header: kind, height, parent */}
+      <div style={{ display: "flex", alignItems: "center", marginTop: 16 }}>
+        <Dot kind={e.kind} d={26} />
+        <div style={{ display: "flex", fontSize: 40 }}>{KIND_TITLE[e.kind]}</div>
+        <div style={{ display: "flex", fontSize: 50, fontWeight: 700, marginLeft: 30 }}>{fmtInt(e.height)}</div>
+        <div style={{ display: "flex", fontSize: 26, color: FG60, marginLeft: 30 }}>{m.hash}</div>
       </div>
-      <div style={{ display: "flex", flex: 1, alignItems: "flex-end", justifyContent: "space-between" }}>
-        <Diagram e={e} />
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginBottom: 8 }}>
-          <div style={{ display: "flex", fontSize: 76, fontWeight: 700 }}>{fmtInt(n)} pool{n === 1 ? "" : "s"}</div>
-          <div style={{ display: "flex", fontSize: 32, color: DIM }}>{BUILT_ON[e.kind]}</div>
-          <div style={{ display: "flex", fontSize: 32, color: DIM, marginTop: 6 }}>
-            {e.kind === "invalid_coinbase" ? "" : `for ${fmtDuration(e.duration_ms)} · `}{fmtInt(e.templates)} template{e.templates === 1 ? "" : "s"}
-          </div>
-        </div>
-      </div>
+      <div style={{ display: "flex", fontSize: 22, color: FG50, marginTop: 26, marginBottom: 8 }}>our chain</div>
+      <Diagram e={e} m={m} />
     </Frame>
   );
 }
@@ -132,25 +147,24 @@ export function forksCard(episodes: Episode[] | null) {
   for (const e of episodes ?? []) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
   return (
     <Frame>
-      <div style={{ display: "flex", fontSize: 76, fontWeight: 700, marginTop: 18 }}>Forks</div>
-      <div style={{ display: "flex", fontSize: 34, color: DIM, marginTop: 8 }}>Templates built on a block other than our best one</div>
+      <div style={{ display: "flex", fontSize: 72, fontWeight: 700, marginTop: 18 }}>Forks</div>
+      <div style={{ display: "flex", fontSize: 30, color: FG60, marginTop: 8 }}>Templates built on a block other than our best one</div>
       <div style={{ display: "flex", flex: 1, alignItems: "flex-end", alignContent: "flex-end", flexWrap: "wrap" }}>
         {SELECTION_ORDER.filter(k => counts.get(k)).map(k => (
           <div key={k} style={{ display: "flex", alignItems: "center", marginRight: 44, marginTop: 18 }}>
-            <div style={{ display: "flex", width: 26, height: 26, borderRadius: 13, marginRight: 14,
-              background: k === "invalid_coinbase" ? "transparent" : KIND_COLOUR[k], border: `4px solid ${KIND_COLOUR[k]}` }} />
-            <div style={{ display: "flex", fontSize: 36 }}>{KIND_TITLE[k]}</div>
-            <div style={{ display: "flex", fontSize: 36, color: DIM, marginLeft: 12 }}>{fmtInt(counts.get(k)!)}</div>
+            <Dot kind={k} d={24} />
+            <div style={{ display: "flex", fontSize: 34 }}>{KIND_TITLE[k]}</div>
+            <div style={{ display: "flex", fontSize: 34, color: FG60, marginLeft: 14 }}>{fmtInt(counts.get(k)!)}</div>
           </div>
         ))}
       </div>
-      {episodes && <div style={{ display: "flex", fontSize: 26, color: DIM, marginTop: 22 }}>last 12,096 blocks</div>}
+      {episodes && <div style={{ display: "flex", fontSize: 24, color: FG50, marginTop: 22 }}>last 12,096 blocks</div>}
     </Frame>
   );
 }
 
-const respond = (el: React.ReactElement) =>
-  new ImageResponse(el, { ...size, headers: { "Cache-Control": `public, max-age=${CACHE_S}` } });
+const respond = async (el: React.ReactElement) =>
+  new ImageResponse(el, { ...size, fonts: await loadFonts(), headers: { "Cache-Control": `public, max-age=${CACHE_S}` } });
 
 export async function forksImage() {
   return respond(forksCard(await loadEpisodes("6e")));
@@ -158,5 +172,6 @@ export async function forksImage() {
 
 export async function episodeImage(segments: string[]) {
   const r = await resolveCached(segments.join("/"));
-  return respond(r.status === "found" ? episodeCard(r.episode) : forksCard(null));
+  if (r.status !== "found") return respond(forksCard(null));
+  return respond(episodeCard(r.episode, cardModel(r.episode, await loadBlocksAt(r.episode.height))));
 }

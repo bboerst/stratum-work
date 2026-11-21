@@ -19,7 +19,8 @@ export const dynamic = "force-dynamic";
  * range in Bitcoin time: the episodes whose last template arrived after the best-chain block 6 difficulty epochs
  * (12,096 blocks, default) or 26 epochs (52,416 blocks) below our tip did, or all history. Read-only. With historical
  * data disabled it answers enabled: false, supported: false without touching a database. POOL_BLACKLIST pools are
- * left out entirely: their templates, connections, findings and the episodes only they built on. The earlier range
+ * left out of this endpoint entirely: their templates, connections, findings and the episodes only they built on. (The
+ * page's fork chart reads /api/analysis-data, which keeps them at mined heights, as the height page does.) The earlier range
  * values 90d and 1y are read as 6e and 26e (shared links); responses name the new ones. /api/unknown-parents is an
  * alias (the page's former name).
  *

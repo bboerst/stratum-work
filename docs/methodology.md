@@ -310,6 +310,15 @@ The page's "Invalid" filter takes all invalid work, work that could never make a
 invalid coinbases. In an episode's details, each pool's run of invalid templates is marked on its lane where the
 coinbase parses.
 
+**Providers per episode** (**modelled**). Several pools on one parent can be one template provider sending the same
+work under different names, or several independent ones reacting to the same thing at once. Each episode counts the
+[template providers](#template-providers) among its pools, with the groups of the difficulty epoch our tip was in
+when its first template arrived (not the templates' height, which for another chain is that chain's): the 80% rule
+on identical transaction sets in that epoch. A pool's provider is that of its node with the most sets; a pool with
+fewer than 5 sets in the epoch, or none, has an unknown provider and isn't counted as one. An epoch with no counted
+heights gives no count, never another epoch's: older episodes have none until the history is counted. Like the
+groups themselves, a shared provider says the pools received the same work, not that they share an owner.
+
 ## Template providers
 
 "Who builds the templates" on the home page groups our feeds by **template provider**: whatever chooses the
@@ -359,8 +368,10 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **Per epoch.** Each block counts with its own epoch's groups. A new epoch whose first heights aren't counted yet
   uses the last counted epoch's groups. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
   and all blocks from the first counted epoch, exact by height.
-- **Excluded feeds** (`POOL_BLACKLIST`) are dropped before grouping. The result is the same as if they had never been
-  collected. A pool only they pay is "not on our feeds".
+- **Excluded pools** (`POOL_BLACKLIST`) are dropped before grouping: their own feeds, and every node whose templates
+  pay or name an excluded pool, on any feed. For their feeds the result is the same as if they had never been
+  collected, and no node is named after an excluded pool: its blocks, like those of a pool only they pay, are "not on
+  our feeds".
 
 **What it does not claim:**
 

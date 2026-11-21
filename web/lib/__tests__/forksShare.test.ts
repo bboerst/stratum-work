@@ -17,7 +17,7 @@ const ep = (o: Partial<Episode> & Pick<Episode, 'parent' | 'height' | 'kind'>): 
     tip_at_first: o.height - 1, tip_at_last: o.height - 1, tip_offset: 0, nbits: [], bitcoin_bits: null, bitcoin_bits_at: null,
     bitcoin_difficulty: true, pow_ok: true, pow_bits: '', in_stale_blocks: o.kind === 'stale', stale_block: null,
   },
-  invalid_coinbase: null, ...o,
+  invalid_coinbase: null, providers: null, provider_groups: [], ...o,
 });
 const RACE = ep({ parent: '00'.repeat(28) + 'aa'.repeat(4), height: 976175, kind: 'stale' });
 const OTHER = ep({ parent: '00'.repeat(28) + 'bb'.repeat(4), height: 976175, kind: 'other_chain' });

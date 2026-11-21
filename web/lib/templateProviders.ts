@@ -12,6 +12,8 @@
  *            the greater node key. Nodes on one stream overlap almost fully; a node alternating between two
  *            providers overlaps each only partly, so it joins one group instead of merging two.
  *   group    the connected components of those links: one template provider each.
+ *   feed     a feed's provider (Forks: providers per episode) is the group of its node with the most sets, when that
+ *            node has at least SETS_MIN; otherwise unknown.
  * Blocks (our best chain, exact by height):
  *   miner    the coinbase names a DATUM template creator that isn't one of the pool's own (ownCreatorPrefixes):
  *            a miner-built template, its own kind, split by creator.
@@ -88,6 +90,7 @@ export interface EpochGroups {
   groupOf: Map<NodeKey, number>;                     // node -> group index
   groups: { members: NodeKey[]; feeds: string[]; payers: number[] }[];
   ownerOf: Map<number, number>;                      // pool id -> group index
+  feedOf: Map<string, number>;                       // feed -> group index (feedProvider: its node with the most sets)
 }
 
 /** One epoch's template providers from its nodes and pairs (rules above). */
@@ -155,18 +158,62 @@ export function groupEpoch(nodes: readonly Omit<NodeRow, "epoch">[], pairs: read
     g.feeds = [...new Set(g.members.map(m => info.get(m)!.feed))].sort();
     g.payers = [...new Set(g.members.map(m => info.get(m)!.pool).filter((p): p is number => p !== null))].sort((x, y) => x - y);
   }
-  // a pool's blocks go to the group of its node with the most sets (then templates, then key)
-  const ownerOf = new Map<number, number>(), bestNode = new Map<number, { sets: number; templates: number; key: NodeKey }>();
+  // a pool's blocks go to the group of its node with the most sets (then templates, then key); a feed's provider is
+  // the group of its own node with the most sets, by the same order, when that node has at least SETS_MIN (below it a
+  // node can't link to any other, so its group says nothing: the feed's provider is unknown)
+  const ownerOf = new Map<number, number>(), feedOf = new Map<string, number>();
+  const bestPool = new Map<number, { sets: number; templates: number; key: NodeKey }>();
+  const bestFeed = new Map<string, { sets: number; templates: number; key: NodeKey }>();
+  const better = (n: { sets: number; templates: number }, k: NodeKey, b: { sets: number; templates: number; key: NodeKey } | undefined) =>
+    !b || n.sets > b.sets || (n.sets === b.sets && (n.templates > b.templates || (n.templates === b.templates && k > b.key)));
   for (const k of keys) {
     const n = info.get(k)!;
+    if (better(n, k, bestFeed.get(n.feed))) bestFeed.set(n.feed, { sets: n.sets, templates: n.templates, key: k });
     if (n.pool === null) continue;
-    const b = bestNode.get(n.pool);
-    if (!b || n.sets > b.sets || (n.sets === b.sets && (n.templates > b.templates || (n.templates === b.templates && k > b.key)))) {
-      bestNode.set(n.pool, { sets: n.sets, templates: n.templates, key: k });
+    if (better(n, k, bestPool.get(n.pool))) {
+      bestPool.set(n.pool, { sets: n.sets, templates: n.templates, key: k });
       ownerOf.set(n.pool, groupOf.get(k)!);
     }
   }
-  return { groupOf, groups, ownerOf };
+  for (const [feed, b] of bestFeed) if (b.sets >= SETS_MIN) feedOf.set(feed, groupOf.get(b.key)!);
+  return { groupOf, groups, ownerOf, feedOf };
+}
+
+/** Each counted epoch's groups (groupEpoch), from the per-epoch node and pair rows. */
+export function groupEpochs(nodes: readonly NodeRow[], pairs: readonly PairRow[], counted: readonly { epoch: number; heights: number }[]): Map<number, EpochGroups> {
+  const nodesBy = new Map<number, NodeRow[]>(), pairsBy = new Map<number, PairRow[]>();
+  for (const n of nodes) { if (!nodesBy.has(n.epoch)) nodesBy.set(n.epoch, []); nodesBy.get(n.epoch)!.push(n); }
+  for (const p of pairs) { if (!pairsBy.has(p.epoch)) pairsBy.set(p.epoch, []); pairsBy.get(p.epoch)!.push(p); }
+  const out = new Map<number, EpochGroups>();
+  for (const c of [...counted].filter(c => c.heights > 0).sort((a, b) => a.epoch - b.epoch)) {
+    out.set(c.epoch, groupEpoch(nodesBy.get(c.epoch) ?? [], pairsBy.get(c.epoch) ?? []));
+  }
+  return out;
+}
+
+// --- feeds of one episode -------------------------------------------------------------------------------------------
+export interface FeedProviders {
+  providers: number | null;          // distinct template providers among the feeds; null: the epoch isn't counted
+  provider_groups: string[][];       // the feeds per provider (largest first, then in the feeds' order); feeds whose
+                                     // provider is unknown in that epoch are in none
+}
+
+/**
+ * The template providers of a set of feeds (an episode's pools), with one epoch's groups. No groups (the epoch has no
+ * counted heights) gives null: never another epoch's groups. A feed with no node of at least SETS_MIN sets in the epoch
+ * has an unknown provider and is left out (not counted as a provider of its own). Only the given feeds are listed.
+ */
+export function feedProviders(feeds: readonly string[], groups: EpochGroups | undefined): FeedProviders {
+  if (!groups) return { providers: null, provider_groups: [] };
+  const by = new Map<number, string[]>();
+  for (const f of new Set(feeds)) {
+    const g = groups.feedOf.get(f);
+    if (g === undefined) continue;
+    if (!by.has(g)) by.set(g, []);
+    by.get(g)!.push(f);
+  }
+  const provider_groups = [...by.values()].map((fs, i) => ({ fs, i })).sort((a, b) => b.fs.length - a.fs.length || a.i - b.i).map(x => x.fs);
+  return { providers: provider_groups.length, provider_groups };
 }
 
 // --- attribution ----------------------------------------------------------------------------------------------------
@@ -195,11 +242,7 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
   const prefixes = input.ownCreatorPrefixes ?? [];
   const counted = [...input.counted].filter(c => c.heights > 0).sort((a, b) => a.epoch - b.epoch);
   if (counted.length === 0) return null;
-  const nodesBy = new Map<number, NodeRow[]>(), pairsBy = new Map<number, PairRow[]>();
-  for (const n of input.nodes) { if (!nodesBy.has(n.epoch)) nodesBy.set(n.epoch, []); nodesBy.get(n.epoch)!.push(n); }
-  for (const p of input.pairs) { if (!pairsBy.has(p.epoch)) pairsBy.set(p.epoch, []); pairsBy.get(p.epoch)!.push(p); }
-  const grouping = new Map<number, EpochGroups>();
-  for (const c of counted) grouping.set(c.epoch, groupEpoch(nodesBy.get(c.epoch) ?? [], pairsBy.get(c.epoch) ?? []));
+  const grouping = groupEpochs(input.nodes, input.pairs, counted);
   const lastCounted = counted[counted.length - 1].epoch;
   const firstHeight = counted[0].epoch * EPOCH_BLOCKS;
 

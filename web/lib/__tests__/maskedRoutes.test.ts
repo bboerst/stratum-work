@@ -51,6 +51,7 @@ afterEach(() => {
   vi.doUnmock('../db/mining-notify');
   vi.doUnmock('../rabbitmq');
   vi.doUnmock('../db/unknown-parents');
+  vi.doUnmock('../db/template-providers');
   resetConnectionMaskForTests();
 });
 
@@ -108,6 +109,7 @@ describe('served templates carry masked extranonce1', () => {
       getDrillRows: vi.fn(async () => ({ truncated: false, blocks: [],
         templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'j1')) })),
     }));
+    vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs: vi.fn(async () => ({ nodes: [], pairs: [], counted: [] })) }));
     const { GET } = await import('../../app/api/forks/route');
     const text = await (await GET(new Request(`http://test/api/forks?parent=${parent}`))).text();
     expectMasked(text, JSON.parse(text).templates);

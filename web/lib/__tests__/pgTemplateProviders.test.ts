@@ -162,6 +162,50 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     expect(bx.pools).toContain(NAME[X]);                                     // X's block is on our feeds now
   });
 
+  it('reads just the asked epochs for Forks\' providers per episode, the excluded feed dropped', async () => {
+    vi.resetModules();
+    Object.assign(process.env, {
+      PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
+      PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
+    });
+    const db = await import('../db/template-providers');
+    const { feedProviders, groupEpochs } = await import('../templateProviders');
+    try {
+      const e0 = await db.getEpochGroupInputs([E0], [fx]);
+      expect(e0.counted).toEqual([{ epoch: E0, heights: 2 }]);
+      expect(new Set([...e0.nodes, ...e0.pairs].map(r => r.epoch))).toEqual(new Set([E0]));
+      expect(JSON.stringify(e0)).not.toContain(fx);
+      // the same rows as the home page's read, for that epoch
+      const full = await db.getTemplateProviderInputs([fx]);
+      const sortRows = <T,>(rs: T[]) => rs.map(r => JSON.stringify(r)).sort();
+      expect(sortRows(e0.nodes)).toEqual(sortRows(full.nodes.filter(n => n.epoch === E0)));
+      expect(sortRows(e0.pairs)).toEqual(sortRows(full.pairs.filter(p => p.epoch === E0)));
+
+      const both = await db.getEpochGroupInputs([E1, E0, E1 + 1], [fx]);
+      const groups = groupEpochs(both.nodes, both.pairs, both.counted);
+      expect(feedProviders([fa, fb, fc], groups.get(E0))).toEqual({ providers: 2, provider_groups: [[fa, fb], [fc]] });
+      expect(feedProviders([fa, fb], groups.get(E1))).toEqual({ providers: 2, provider_groups: [[fa], [fb]] });
+      expect(feedProviders([fa], groups.get(E1 + 1))).toEqual({ providers: null, provider_groups: [] });   // not counted
+      // an excluded pool paid by a feed that isn't excluded (X, paid by fx): that node and its pairs are dropped, so
+      // nothing is named after it or grouped through it; fx keeps its other nodes
+      const noX = await db.getEpochGroupInputs([E0], [NAME[X]]);
+      expect(noX.nodes.some(n => n.pool_id === X)).toBe(false);
+      expect(noX.pairs.some(p => p.pool_a === X || p.pool_b === X)).toBe(false);
+      expect(noX.nodes.some(n => n.feed === fx && n.pool_id === B)).toBe(true);
+      const gNoX = groupEpochs(noX.nodes, noX.pairs, noX.counted).get(E0)!;
+      expect(gNoX.groups.flatMap(g => g.payers)).not.toContain(X);
+      expect(feedProviders([fa, fc, fx], gNoX)).toEqual({ providers: 2, provider_groups: [[fc, fx], [fa]] });
+      // collected, fx is a provider with fc
+      const withX = await db.getEpochGroupInputs([E0], []);
+      const gx = groupEpochs(withX.nodes, withX.pairs, withX.counted).get(E0);
+      expect(feedProviders([fa, fc, fx], gx)).toEqual({ providers: 2, provider_groups: [[fc, fx], [fa]] });
+    } finally {
+      const { getPgPool } = await import('../db/pg');
+      await getPgPool().end();
+      delete (global as unknown as { stratumPgPool?: unknown }).stratumPgPool;
+    }
+  });
+
   it('the web role reads the tables and cannot write them', async () => {
     const web = new Client({ host: env.PG_TEST_HOST, port: Number(env.PG_TEST_PORT ?? 5432), database: env.PG_TEST_DATABASE ?? 'stratum',
       user: env.PG_TEST_USER, password: env.PG_TEST_PASSWORD });

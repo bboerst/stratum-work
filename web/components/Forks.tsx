@@ -46,6 +46,8 @@ interface Episode {
   };
   kind: Kind;
   invalid_coinbase: InvalidCoinbase | null;
+  providers?: number | null;       // template providers among its pools in that epoch (null: not counted there)
+  provider_groups?: string[][];    // its pools per provider; a pool in none has an unknown provider
 }
 
 interface InvalidCoinbase {
@@ -197,6 +199,24 @@ function factsTitle(e: Episode): string {
 
 const fmtBtc = (sats: number) => (sats / 1e8).toFixed(8);
 
+const plural = (n: number, word: string) => `${fmtInt(n)} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * The episode's template providers (docs/methodology.md "Template providers"): how many independent ones its pools
+ * are on, in the epoch it began in. Null when that epoch isn't counted; `unknown` = pools whose provider isn't known there.
+ */
+function providerInfo(e: Episode): { n: number; groups: string[][]; unknown: string[]; text: string; title: string } | null {
+  if (e.providers === null || e.providers === undefined) return null;
+  const groups = e.provider_groups ?? [];
+  const known = new Set(groups.flat());
+  const unknown = e.pools.map(p => p.pool).filter(p => !known.has(p));
+  const n = e.providers;
+  const text = n === 0 ? "provider unknown" : `${plural(n, "provider")}${unknown.length ? ` · ${fmtInt(unknown.length)} unknown` : ""}`;
+  const title = [`${plural(n, "template provider")} among ${plural(e.pools.length, "pool")} (identical transaction sets in that difficulty epoch; not ownership)`,
+    ...groups.map(g => g.join(", ")), ...(unknown.length ? [`provider unknown: ${unknown.join(", ")}`] : [])].join("\n");
+  return { n, groups, unknown, text, title };
+}
+
 /** The invalid-coinbase finding at the episode's height: a small rose badge, the pools and amounts on hover. */
 function InvalidCoinbaseBadge({ ic }: { ic: InvalidCoinbase }) {
   const title = ic.pools.map(p => `${p.pool}: ${p.templates} template${p.templates > 1 ? "s" : ""} · paid ${fmtBtc(p.total_sats)} BTC${p.subsidy_sats === null ? "" : ` vs subsidy ${fmtBtc(p.subsidy_sats)}`}`).join("\n");
@@ -233,6 +253,38 @@ function PoolChips({ e, max = 6 }: { e: Episode; max?: number }) {
         </span>
       ))}
       {e.pools.length > max && <span className="px-1 py-0.5 text-[11px] text-foreground/60">+{e.pools.length - max}</span>}
+    </div>
+  );
+}
+
+/** The table's providers count: the number, "+N?" for pools whose provider is unknown; "–" before that epoch was counted. */
+function ProvidersCell({ e }: { e: Episode }) {
+  const p = providerInfo(e);
+  return (
+    <td className="px-3 py-2.5 font-mono text-right text-xs whitespace-nowrap" title={p?.title ?? "not counted for this height yet"}>
+      {p ? <>{p.n}{p.unknown.length > 0 && <span className="text-foreground/40"> +{p.unknown.length}?</span>}</> : <span className="text-foreground/30">–</span>}
+    </td>
+  );
+}
+
+/** The details' pools grouped by template provider: a box per provider, a dashed one for the unknown ones. */
+function ProviderGroups({ e }: { e: Episode }) {
+  const p = providerInfo(e);
+  if (!p || e.pools.length < 2) return null;
+  const box = "inline-flex flex-wrap items-center gap-1 rounded-md border px-1.5 py-1";
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px]" aria-label="Pools by template provider">
+      {p.groups.map(g => (
+        <span key={g.join(",")} className={`${box} border-foreground/25`} title={`one template provider: ${g.join(", ")}`}>
+          {g.map(pool => <span key={pool} className="rounded bg-foreground/10 px-1.5 py-0.5 whitespace-nowrap">{pool}</span>)}
+        </span>
+      ))}
+      {p.unknown.length > 0 && (
+        <span className={`${box} border-dashed border-foreground/25`} title="provider unknown in that difficulty epoch (too few transaction sets counted)">
+          <span className="px-0.5 text-foreground/50">?</span>
+          {p.unknown.map(pool => <span key={pool} className="rounded bg-foreground/5 px-1.5 py-0.5 whitespace-nowrap text-foreground/60">{pool}</span>)}
+        </span>
+      )}
     </div>
   );
 }
@@ -334,7 +386,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
         <Tooltip x={hover.x} y={hover.y} width={width}>
           <KindChip kind={hovered.kind} />
           <div className="mt-1 font-mono">{fmtInt(hovered.height)}</div>
-          <div className="text-foreground/60">{hovered.pools.length} pool{hovered.pools.length > 1 ? "s" : ""} · {fmtDuration(hovered.duration_ms)}</div>
+          <div className="text-foreground/60">{plural(hovered.pools.length, "pool")}{providerInfo(hovered) ? ` · ${providerInfo(hovered)!.text}` : ""} · {fmtDuration(hovered.duration_ms)}</div>
           <div className="mt-0.5 text-foreground/80">{hovered.pools.map(p => p.pool).join(", ")}</div>
           <div className="text-foreground/40">{fmtUtc(hovered.first_ms)} UTC</div>
         </Tooltip>
@@ -347,13 +399,14 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
 // ---------------------------------------------------------------------------------------------------------------------
 // Table
 
-type SortKey = "bitcoin" | "height" | "pools" | "duration" | "kind";
+type SortKey = "bitcoin" | "height" | "pools" | "providers" | "duration" | "kind";
 
 function sortValue(e: Episode, k: SortKey): number {
   switch (k) {
     case "bitcoin": return (e.facts.tip_at_first ?? -1) * 1e13 + e.first_ms;   // Bitcoin time: our tip when it began
     case "height": return e.height;
     case "pools": return e.pools.length;
+    case "providers": return e.providers ?? -1;   // not counted: below 0
     case "duration": return e.duration_ms;
     case "kind": return KINDS.indexOf(e.kind);
   }
@@ -389,6 +442,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
               <div className="text-foreground/40" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</div>
               {e.invalid_coinbase && e.kind !== "invalid_coinbase" && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
               <PoolChips e={e} max={4} />
+              {providerInfo(e) && <div className="text-foreground/60" title={providerInfo(e)!.title}>{providerInfo(e)!.text}</div>}
             </button>
           </li>
         ))}
@@ -399,6 +453,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
             <tr className="border-b border-border">
               {head("Height", "height")}
               {head("Pools", "pools")}
+              {head("Providers", "providers", true)}
               {head("Duration", "duration", true)}
               {head("Kind", "kind")}
               {head("UTC", "bitcoin", true)}
@@ -410,6 +465,7 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
                 className={`border-b border-border/60 cursor-pointer hover:bg-foreground/5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
                 <td className="px-3 py-2.5 font-mono">{fmtInt(e.height)}</td>
                 <td className="px-3 py-2.5"><PoolChips e={e} /></td>
+                <ProvidersCell e={e} />
                 <td className="px-3 py-2.5 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex flex-wrap items-center gap-2">
@@ -717,7 +773,10 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
           onClick={() => navigator.clipboard?.writeText(episode.parent).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {})}>
           {copied ? "copied" : `${episode.parent.slice(0, 6)}…${episode.parent.slice(-6)}`}
         </button>
-        <span className="text-xs text-foreground/60">{episode.pools.length} pool{episode.pools.length > 1 ? "s" : ""}</span>
+        <span className="text-xs text-foreground/60">
+          {plural(episode.pools.length, "pool")}
+          {providerInfo(episode) && <span title={providerInfo(episode)!.title}> · {providerInfo(episode)!.text}</span>}
+        </span>
         <span className="text-xs text-foreground/60">{fmtDuration(episode.duration_ms)}</span>
         {episode.kind !== "invalid_coinbase" && (
           <span className="text-xs text-foreground/60" title={factsTitle(episode)}>
@@ -738,6 +797,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
           )}
         </span>
       </div>
+      <ProviderGroups e={episode} />
       {!data && <p className="py-8 text-center text-xs text-foreground/60">Loading…</p>}
       {data?.error && <p className="text-sm text-red-500">{data.error}</p>}
       {data && !data.error && (

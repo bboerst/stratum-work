@@ -368,8 +368,10 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **Per epoch.** Each block counts with its own epoch's groups. A new epoch whose first heights aren't counted yet
   uses the last counted epoch's groups. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
   and all blocks from the first counted epoch, exact by height.
-- **Excluded feeds** (`POOL_BLACKLIST`) are dropped before grouping. The result is the same as if they had never been
-  collected. A pool only they pay is "not on our feeds".
+- **Excluded pools** (`POOL_BLACKLIST`) are dropped before grouping: their own feeds, and every node whose templates
+  pay or name an excluded pool, on any feed. For their feeds the result is the same as if they had never been
+  collected, and no node is named after an excluded pool: its blocks, like those of a pool only they pay, are "not on
+  our feeds".
 
 **What it does not claim:**
 

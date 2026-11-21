@@ -19,8 +19,8 @@ export const dynamic = "force-dynamic";
  *       404 while nothing is counted yet (also before the migration has created the tables), or with historical data
  *       disabled (the home page leaves the section out).
  *
- * POOL_BLACKLIST feeds are dropped before grouping: they add no node, pair or feed name, and a pool only they pay is
- * "not on our feeds". POOL_OWN_TEMPLATE_CREATORS (comma-separated prefixes, default none) names the DATUM template
+ * POOL_BLACKLIST names are dropped before grouping, as feeds and as pools paid: they add no node, pair, feed or pool
+ * name, and an excluded pool's blocks (like a pool only excluded feeds pay) are "not on our feeds". POOL_OWN_TEMPLATE_CREATORS (comma-separated prefixes, default none) names the DATUM template
  * creators that are a pool's own template servers: their blocks count as the pool's, not as miner-built. Computed once
  * per SUMMARY_MS per process and served stale while a refresh runs.
  */

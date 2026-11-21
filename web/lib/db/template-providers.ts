@@ -1,9 +1,10 @@
 /**
  * The reads behind /api/template-providers (lib/templateProviders.ts derives the providers): the backend's per-height
  * counts (template_set_heights / _feeds / _pairs, backend/template_sets.py) summed per difficulty epoch, our
- * best-chain blocks from the first counted epoch, and the pool names. Excluded feeds (POOL_BLACKLIST, passed as $1)
- * are dropped here, before any grouping: their nodes and every pair touching them, so the result is the one a
- * database without those feeds would give. All SQL is parameterized.
+ * best-chain blocks from the first counted epoch, and the pool names; and for /api/forks just the epochs its episodes
+ * need. Excluded names (POOL_BLACKLIST, passed as $1) are dropped here, before any grouping: a node whose feed is
+ * excluded or whose paid pool's name is (exact match on pools.name; an unidentified payer is kept), and every pair
+ * touching one. All SQL is parameterized.
  */
 import { getPgPool } from './pg';
 import { EPOCH_BLOCKS, type BlockRow, type NodeRow, type PairRow, type ProviderInputs } from '../templateProviders';

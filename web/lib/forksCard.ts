@@ -39,9 +39,20 @@ export const shortHash = (h: string) => `${h.slice(0, 4)}…${h.slice(-6)}`;
 export const headerHash = (h: string) => `${h.slice(0, 6)}…${h.slice(-6)}`;
 export const fitName = (s: string, max = MINER_MAX) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
-/** The first names and how many more: "Pool A, Pool B, Pool C, Pool D +5". */
-export function nameList(names: string[], max = 4): string {
-  return `${names.slice(0, max).join(", ")}${names.length > max ? ` +${names.length - max}` : ""}`;
+/** Characters that fit beside the parent tile on one line: the card's monospace at 25 px is 15 px a character, and
+ * the text column is about 550 px wide (36 characters); 34 leaves a margin. */
+export const POOL_LINE_CHARS = 34;
+
+/** As many names as fit in `maxChars` on one line, and how many more: "Pool A, Pool B, Pool C +6". The "+N" always
+ * fits on the same line; at least one name is shown (shortened if it alone is too long). */
+export function nameList(names: string[], maxChars = POOL_LINE_CHARS): string {
+  if (names.length === 0) return "";
+  const more = (shown: number) => (names.length > shown ? ` +${names.length - shown}` : "");
+  let shown = 1;
+  while (shown < names.length && [...names.slice(0, shown + 1)].join(", ").length + more(shown + 1).length <= maxChars) shown++;
+  const first = names.slice(0, shown).join(", ");
+  if (first.length + more(shown).length <= maxChars) return first + more(shown);
+  return fitName(names[0], Math.max(4, maxChars - more(1).length)) + more(1);
 }
 
 const plural = (n: number, w: string) => `${fmtInt(n)} ${w}${n === 1 ? "" : "s"}`;
@@ -78,7 +89,7 @@ export function cardModel(e: Episode, blocks: CardBlock[] | null): CardModel {
     ourTip: !chain && !overpaid,
     builtOn: overpaid ? `${plural(pools.length, "pool")} overpaid the coinbase` : `← ${plural(pools.length, "pool")} built on it`,
     pools: nameList(pools),
-    invalidCoinbase: ic && ic.length ? `✗ invalid coinbase: ${nameList(ic, 3)}` : null,
+    invalidCoinbase: ic && ic.length ? `✗ invalid coinbase: ${nameList(ic, POOL_LINE_CHARS - 20)}` : null,
     facts: overpaid ? plural(e.templates, "template") : `for ${fmtDuration(e.duration_ms)} · ${plural(e.templates, "template")}`,
   };
 }

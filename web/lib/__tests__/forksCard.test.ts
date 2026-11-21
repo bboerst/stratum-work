@@ -27,6 +27,16 @@ describe('text pieces', () => {
   it('lists names as the page does', () => {
     expect(nameList(['Pool A', 'Pool B', 'Pool C', 'Pool D', 'Pool E', 'Pool F'])).toBe('Pool A, Pool B, Pool C, Pool D +2');
     expect(nameList(['Pool A', 'Pool B'])).toBe('Pool A, Pool B');
+    expect(nameList([])).toBe('');
+    // the real case that wrapped: 4 names + "+5" is 38 characters, over the line; the +N stays on the line
+    const nine = ['Aaaaaa', 'Bbb', 'Ccccccccc', 'Ddddddddddd', 'E', 'F', 'G', 'H', 'I'];
+    const line = nameList(nine);
+    expect(line).toBe('Aaaaaa, Bbb, Ccccccccc +6');
+    expect(line.length).toBeLessThanOrEqual(34);
+    // every result fits, whatever the names
+    for (const names of [nine, ['A very long pool name indeed, longer than the line', 'B'], Array.from({ length: 30 }, (_, i) => `Pool ${i}`)])
+      expect(nameList(names).length).toBeLessThanOrEqual(34);
+    expect(nameList(['A very long pool name indeed, longer than the line', 'B'])).toMatch(/…\s\+1$/);
     expect(shortHash(PARENT)).toBe('0000…7b2196');
     expect(headerHash(PARENT)).toBe('000000…7b2196');
     expect(fitName('A very long pool name')).toBe('A very long p…');

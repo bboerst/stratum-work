@@ -10,7 +10,7 @@ const PARENT = '0000000000000000000327cda2d3d99ac20342aaaa6986837fbfa8903a7b2196
 const pools = (n: number) => Array.from({ length: n }, (_, i) => ({ pool: `Pool ${String.fromCharCode(65 + i)}`, connections: ['a'], templates: 2 }));
 const ep = (o: Partial<Episode> = {}): Episode => ({
   parent: PARENT, height: 900_001, heights: [900_001], pools: pools(9), first_ms: 0, last_ms: 76_000, duration_ms: 76_000,
-  templates: 24, auxpow_templates: 0, auxpow_share: 0, kind: 'stale', invalid_coinbase: null,
+  templates: 24, auxpow_templates: 0, auxpow_share: 0, kind: 'stale', invalid_coinbase: null, providers: null, provider_groups: [],
   facts: {
     tip_at_first: 900_000, tip_at_last: 900_000, tip_offset: 0, nbits: [], bitcoin_bits: null, bitcoin_bits_at: null,
     bitcoin_difficulty: true, pow_ok: true, pow_bits: '', in_stale_blocks: true, stale_block: { height: 900_000, header_source: null, miner: 'Pool Z' },

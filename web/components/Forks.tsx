@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as d3 from "d3";
 import { Info } from "lucide-react";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
-import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
+import { layoutTimeline, placeEpisodes } from "./unknown-parents/layout";
+import HeightForkTimeline from "./HeightForkTimeline";
 import { pagePath } from "@/lib/forksPath";
 
 /**
@@ -151,19 +152,13 @@ const KIND_BG: Record<Kind, string> = {
   invalid_coinbase: "border-2 border-rose-500",
   undetermined: "bg-gray-500",
 };
-// Drill-in: the episode's own parent in the text colour (the subject), amber = our best chain (as in the fork view),
-// blue = a known stale block, gray = another unknown parent
+// Drill-in's template list: the episode's own parent in the text colour (the subject), amber = our best chain and
+// blue = a known stale block (the fork timeline's colours), gray = another unknown parent
 const LABELS: ParentLabel[] = ["this", "best", "stale", "other"];
 const LABEL_TEXT: Record<ParentLabel, string> = { this: "this parent", best: "best chain", stale: "stale", other: "other" };
-const LABEL_FILL: Record<ParentLabel, string> = {
-  this: "fill-foreground",
-  best: "fill-amber-600",
-  stale: "fill-[#1550a4] dark:fill-blue-500",
-  other: "fill-gray-400 dark:fill-gray-500",
-};
 const LABEL_BG: Record<ParentLabel, string> = {
   this: "bg-foreground",
-  best: "bg-amber-600",
+  best: "bg-amber-500",
   stale: "bg-[#1550a4] dark:bg-blue-500",
   other: "bg-gray-400 dark:bg-gray-500",
 };
@@ -487,140 +482,6 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
 // ---------------------------------------------------------------------------------------------------------------------
 // Drill-in
 
-const LANE_H = 22;
-const BAR_H = 12;
-
-function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse }) {
-  const { ref, width } = useElementWidth<HTMLDivElement>();
-  const labelW = width < 520 ? 76 : 120;
-  const plotW = Math.max(50, width - labelW - 16);
-  const start = drill.from_ms!, end = drill.to_ms!;
-  const pools = useMemo(() => episode.pools.map(p => p.pool), [episode]);
-  // a run per parent block: the template's height tells the best-chain blocks apart (h - 2, h - 1, h)
-  const segments = useMemo(() => laneSegments((drill.templates ?? []).map(t => ({ pool: t.pool_name, t: t.received_at, label: t.parent, key: t.height })),
-    start, end, plotW, 2), [drill, start, end, plotW]);
-  const lane = useMemo(() => new Map(pools.map((p, i) => [p, i])), [pools]);
-  // Invalid coinbase: an empty template (no merkle branches) paying more than the block subsidy, as the backend's
-  // analysis flags it. Runs of such templates per pool are drawn over the lanes; templates whose coinbase didn't parse
-  // can't be judged here (the episode's badge, from the backend, names their pools).
-  const invalid = useMemo(() => {
-    const subsidy = (h: number) => Math.floor(5_000_000_000 / 2 ** Math.floor(h / 210_000));
-    const byPool = new Map<string, Template[]>();
-    for (const t of drill.templates ?? []) {
-      const l = byPool.get(t.pool_name) ?? []; l.push(t); byPool.set(t.pool_name, l);
-    }
-    const runs: { pool: string; x: number; w: number; n: number; total: number; subsidy: number }[] = [];
-    for (const [pool, ts] of byPool) {
-      ts.sort((a, b) => a.received_at - b.received_at);
-      let cur: { from: number; to: number; n: number; total: number; subsidy: number } | null = null;
-      ts.forEach((t, i) => {
-        const bad = t.merkle_branches === 0 && t.coinbase_ok && t.output_total > subsidy(t.height);
-        const next = ts[i + 1]?.received_at ?? t.received_at + 1000;
-        if (bad) {
-          if (cur) { cur.to = next; cur.n++; } else cur = { from: t.received_at, to: next, n: 1, total: t.output_total, subsidy: subsidy(t.height) };
-        } else if (cur) {
-          const x0 = timeX(cur.from, start, end, plotW), x1 = timeX(cur.to, start, end, plotW);
-          runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: cur.n, total: cur.total, subsidy: cur.subsidy }); cur = null;
-        }
-      });
-      if (cur) {
-        const c: { from: number; to: number; n: number; total: number; subsidy: number } = cur;
-        const x0 = timeX(c.from, start, end, plotW), x1 = timeX(c.to, start, end, plotW);
-        runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: c.n, total: c.total, subsidy: c.subsidy });
-      }
-    }
-    return runs;
-  }, [drill, start, end, plotW]);
-  const offenders = useMemo(() => new Set([...(episode.invalid_coinbase?.pools ?? []).map(p => p.pool), ...invalid.map(r => r.pool)]), [episode, invalid]);
-  const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
-  const ticks = useMemo(() => {
-    const s = d3.scaleUtc().domain([start, end]).range([0, plotW]);
-    return s.ticks(Math.max(2, Math.min(6, Math.floor(plotW / 120)))).map(d => ({ x: s(d), label: d3.utcFormat("%H:%M")(d) }));
-  }, [start, end, plotW]);
-  const lanesH = pools.length * LANE_H;
-  const top = 32;   // room for two rows of block labels
-  const h = top + lanesH + AXIS_H;
-  const seg = hover ? segments[hover.i] : null;
-
-  return (
-    <div ref={ref} className="relative w-full">
-      <svg width={width} height={h} role="img" className="block text-foreground/60">
-        <desc>One lane per pool; bars show which parent the pool was building on over time, lines mark when the blocks at height − 1 and height reached us.</desc>
-        <g transform={`translate(${labelW},${top})`}>
-          {ticks.map(t => (
-            <text key={t.x} x={t.x} y={lanesH + 15} fontSize={11} textAnchor="middle" fill="currentColor">{t.label}</text>
-          ))}
-          {segments.map((s, i) => {
-            const row = lane.get(s.pool);
-            if (row === undefined) return null;
-            return (
-              // a 2 px gap where the pool moved on, so runs on different blocks stay apart
-              <rect key={i} x={s.x} y={row * LANE_H + (LANE_H - BAR_H) / 2} width={s.w > 6 ? s.w - 2 : s.w} height={BAR_H} rx={2}
-                className={LABEL_FILL[s.label as ParentLabel]} opacity={hover && hover.i !== i ? 0.75 : 1}
-                onMouseEnter={() => setHover({ i, x: labelW + s.x, y: top + (row + 1) * LANE_H + 2 })}
-                onMouseLeave={() => setHover(null)} />
-            );
-          })}
-          {invalid.map((r, i) => {
-            const row = lane.get(r.pool);
-            if (row === undefined) return null;
-            return (
-              <rect key={`ic${i}`} x={r.x} y={row * LANE_H + (LANE_H - BAR_H) / 2 - 2} width={r.w} height={BAR_H + 4} rx={2}
-                className="fill-rose-500 stroke-rose-300" strokeWidth={1}>
-                <title>{`${r.pool}: ${r.n} empty job${r.n > 1 ? "s" : ""} paying ${(r.total / 1e8).toFixed(8)} BTC, over the ${(r.subsidy / 1e8).toFixed(3)} BTC subsidy (invalid coinbase)`}</title>
-              </rect>
-            );
-          })}
-          {(() => {
-            // Labels of blocks that arrived moments apart would overlap: a label goes up a row when it sits within a
-            // label's width of the previous one (two blocks at one height arrive seconds apart in a race).
-            const rows = new Map<string, number>();
-            let lastX = -Infinity, lastRow = 1;
-            for (const b of [...(drill.blocks ?? [])].sort((a, c) => a.arrival_ms - c.arrival_ms)) {
-              const x = timeX(b.arrival_ms, start, end, plotW);
-              const row = x - lastX < 60 ? 1 - lastRow : 0;
-              rows.set(b.hash, row); lastX = x; lastRow = row;
-            }
-            return (drill.blocks ?? []).map(b => {
-            const label = fmtInt(b.height);   // the block's own height (Bitcoin time), not h-relative shorthand
-            const before = b.arrival_ms < start, after = b.arrival_ms > end;
-            const x = timeX(b.arrival_ms, start, end, plotW);
-            const ly = -6 - 13 * (rows.get(b.hash) ?? 0);
-            const cls = b.best ? "text-amber-600" : "text-[#1550a4] dark:text-blue-500";
-            return (
-              <g key={b.hash} className={cls}>
-                <title>{`block ${label} arrived · ${b.best ? "best chain" : "stale"} · ${fmtUtcS(b.arrival_ms)} UTC`}</title>
-                {!before && !after && <line x1={x} x2={x} y1={ly + 2} y2={lanesH} stroke="currentColor" strokeWidth={1.5} />}
-                <text x={before ? 0 : after ? plotW : x} y={ly} fontSize={11} fill="currentColor"
-                  textAnchor={after ? "end" : before ? "start" : "middle"}>
-                  {before ? `‹ ${label}` : after ? `${label} ›` : label}
-                </text>
-              </g>
-            );
-            });
-          })()}
-        </g>
-        {pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={top + i * LANE_H + LANE_H / 2 + 4} fontSize={12} textAnchor="end"
-            className={offenders.has(p) ? "fill-rose-500" : "fill-foreground/60"}>
-            <title>{offenders.has(p) ? `${p}: invalid coinbase` : p}</title>{offenders.has(p) ? "✗ " : ""}{shortName(p, labelW < 100)}
-          </text>
-        ))}
-      </svg>
-      {seg && hover && (
-        <Tooltip x={hover.x} y={hover.y} width={width}>
-          <div className="flex items-center gap-1.5">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[seg.label as ParentLabel]}`} aria-hidden />
-            {LABEL_TEXT[seg.label as ParentLabel]}
-          </div>
-          <div className="mt-1 text-foreground/60">{seg.pool} · {seg.n} template{seg.n > 1 ? "s" : ""}</div>
-          <div className="font-mono text-foreground/60">{fmtUtcS(seg.from)}{seg.to > seg.from ? `–${fmtUtcS(seg.to)}` : ""}</div>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
 function TemplateRow({ t }: { t: Template }) {
   const [open, setOpen] = useState(false);
   return (
@@ -709,7 +570,7 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   ];
   const W = xPrev + TW + 330;
   return (
-    <div className="mb-5">
+    <div>
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
@@ -733,20 +594,28 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
           </text>;
         })()}
       </svg>
-      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        {/* the checks as chips, styled like the pool chips; each chip's background is its result */}
-        <span className="inline-flex flex-wrap items-center gap-1">
-          {checks.map(c => (
-            <span key={c.label} title={c.title} className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 whitespace-nowrap ${c.ok === null ? "bg-foreground/10 text-foreground/60" : c.ok ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/20 text-rose-700 dark:text-rose-300"}`}>
-              <span>{c.ok === null ? "?" : c.ok ? "✓" : "✗"}</span>
-              {c.label}
+      {/* the checks as one quiet line: only the glyph carries the result */}
+      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground/60">
+        {checks.map((c, i) => (
+          <span key={c.label} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            {i > 0 && <span aria-hidden className="text-foreground/30">·</span>}
+            <span title={c.title}>
+              <span className={c.ok === null ? "text-foreground/40" : c.ok ? "text-emerald-500/80" : "text-rose-500/80"}>
+                {c.ok === null ? "?" : c.ok ? "✓" : "✗"}
+              </span>{" "}{c.label}
             </span>
-          ))}
-        </span>
-        <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5 pl-1">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
       </div>
     </div>
   );
+}
+
+/** The heights an episode's templates claim (usually one: its height), ascending. */
+function forkHeights(e: Episode): number[] {
+  const hs = [...new Set(e.heights?.length ? e.heights : [e.height])].sort((a, b) => a - b);
+  return hs.length > 0 ? hs : [e.height];
 }
 
 function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
@@ -787,18 +656,6 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
           </span>
         )}
         {episode.invalid_coinbase && <InvalidCoinbaseBadge ic={episode.invalid_coinbase} />}
-        <span className="ml-auto flex flex-wrap gap-3 text-xs text-foreground/60">
-          {LABELS.filter(l => present.has(l)).map(l => (
-            <span key={l} className="inline-flex items-center gap-1.5">
-              <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[l]}`} aria-hidden />{LABEL_TEXT[l]}
-            </span>
-          ))}
-          {episode.invalid_coinbase && (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" aria-hidden />invalid coinbase
-            </span>
-          )}
-        </span>
       </div>
       <ProviderGroups e={episode} />
       {!data && <p className="py-8 text-center text-xs text-foreground/60">Loading…</p>}
@@ -806,14 +663,27 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
       {data && !data.error && (
         <>
           {episode.kind !== "invalid_coinbase" && <WhyUnknown episode={episode} drill={data} />}
-          <Swimlanes episode={episode} drill={data} />
-          {data.clipped && <p className="mt-1 text-xs text-foreground/50">first 30 min of {fmtDuration(episode.duration_ms)}</p>}
+          {/* every feed at the episode's height, as on the height page (one chart per height its templates claim) */}
+          <div className="mt-6 border-t border-border/60 pt-4">
+            {forkHeights(episode).map(h => (
+              <HeightForkTimeline key={h} height={h} title={forkHeights(episode).length > 1 ? `Fork at ${fmtInt(h)}` : "Fork"}
+                invalidCoinbasePools={episode.invalid_coinbase?.pools.map(p => p.pool)} />
+            ))}
+          </div>
           <button type="button" className="mt-4 text-xs text-foreground/60 hover:text-foreground"
             onClick={() => setShowList(s => !s)} aria-expanded={showList}>
             {showList ? "▾" : "▸"} Templates ({fmtInt(templates.length)}{data.truncated ? "+" : ""})
+            {data.clipped && <span className="text-foreground/50"> · first 30 min of {fmtDuration(episode.duration_ms)}</span>}
           </button>
           {showList && (
             <div className="mt-2 overflow-x-auto">
+              <div className="mb-1 flex flex-wrap gap-3 text-xs text-foreground/60">
+                {LABELS.filter(l => present.has(l)).map(l => (
+                  <span key={l} className="inline-flex items-center gap-1.5">
+                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[l]}`} aria-hidden />{LABEL_TEXT[l]}
+                  </span>
+                ))}
+              </div>
               <table className="w-full text-sm">
                 <tbody>{templates.slice(0, shown).map(t => <TemplateRow key={t.id} t={t} />)}</tbody>
               </table>

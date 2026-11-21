@@ -93,7 +93,10 @@ The API returns a JSON object with the following structure:
           "name": "AntPool",
           "link": "https://www.antpool.com"
         }
-      }
+      },
+      "blocks": [
+        { "hash": "...", "height": 799999, "best": true, "miner": "AntPool", "seen_ms": 1234567881000, "stale_only": false }
+      ]
     },
     // More results for other heights if requested
   ]
@@ -140,6 +143,19 @@ The API returns a JSON object with the following structure:
 | `nonce` | Nonce value used to solve the block |
 | `difficulty` | Block difficulty |
 | `transaction_count` | Number of transactions in the block |
+
+### Blocks
+
+Every block we know at `height - 1` and `height`: best chain and stale (the fork timeline draws a marker where each reached us).
+
+| Field | Description |
+|-------|-------------|
+| `hash` | Block hash (display order) |
+| `height` | Its height |
+| `best` | On our best chain now (otherwise a stale block) |
+| `miner` | The identified pool, or `null` |
+| `seen_ms` | When our node saw it (ms since the epoch), or `null` when that wasn't recorded (older history) |
+| `stale_only` | Known only from the stale-block records: `seen_ms` is when the backend's chain-tips poll first recorded it, not the node's arrival |
 
 ## Error Responses
 

@@ -1,0 +1,51 @@
+# The web's Postgres-backed tests (web/lib/__tests__/pg*.test.ts) against a real migrated database, connected as the
+# least-privilege web role: the reads behind the API routes, and the POOL_BLACKLIST exclusion invariant over every
+# route (pgExclusionInvariant.test.ts). tests.yml runs the rest of the web suite, where these skip. Throwaway
+# database and passwords (db/dev-users.sql): no secrets.
+name: web-db
+
+on:
+  pull_request:
+    paths: ["web/**", "db/**", ".github/workflows/web-db.yml"]
+  push:
+    branches: [main]
+    paths: ["web/**", "db/**", ".github/workflows/web-db.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  web-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The same database image and dbmate as db.yml.
+      - name: Start TimescaleDB, migrate, create local users
+        run: |
+          docker network create t
+          docker run -d --name pg --network t -e POSTGRES_USER=stratum -e POSTGRES_PASSWORD=stratum -e POSTGRES_DB=stratum \
+            timescale/timescaledb:2.30.2-pg18 -c timescaledb.enable_chunk_skipping=on
+          for _ in $(seq 60); do docker exec pg pg_isready -U stratum -d stratum && break; sleep 1; done
+          docker run --rm --network t -v "$PWD/db:/db:ro" -e DATABASE_URL="postgres://stratum:stratum@pg:5432/stratum?sslmode=disable" \
+            -e DBMATE_NO_DUMP_SCHEMA=true ghcr.io/amacneil/dbmate:2.37.0 --wait up
+          docker exec -i pg psql -U stratum -d stratum -v ON_ERROR_STOP=1 -q < db/dev-users.sql
+
+      # In the pinned image tests.yml uses, on the database's network. Fails if any test is skipped: these suites skip
+      # silently without PG_TEST_*, which is how they went unrun before this job.
+      - name: Web Postgres tests (as the web role)
+        run: |
+          docker run --rm --network t -v "$PWD/web:/web" -w /web \
+            -e PG_TEST_HOST=pg -e PG_TEST_USER=web -e PG_TEST_PASSWORD=web \
+            -e PG_TEST_ADMIN_DSN=postgresql://stratum:stratum@pg:5432/stratum \
+            node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 \
+            sh -ec '
+              npm ci --no-audit --no-fund
+              npx vitest run lib/__tests__/pg --reporter=verbose --reporter=json --outputFile=/tmp/pg-tests.json
+              node -e "
+                const r = require(\"/tmp/pg-tests.json\");
+                const skipped = r.numPendingTests + r.numTodoTests;
+                console.log(r.numPassedTests + \" passed, \" + r.numFailedTests + \" failed, \" + skipped + \" skipped\");
+                if (skipped > 0 || r.numPassedTests === 0) process.exit(1);
+              "'

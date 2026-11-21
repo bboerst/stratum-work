@@ -88,7 +88,8 @@ nearby stratum-1 time servers using chrony, which also reports how far off the c
 |offset| + root dispersion + root delay / 2
 ```
 
-On the collector machines that bound is typically around 5 ms, and the clocks are measured continuously.
+On the collector machines that bound has a median of about 6 ms per machine and a 99th percentile of up to about 16 ms;
+the largest measured so far is under 20 ms. The clocks are measured continuously.
 
 Since 18 November 2026 the data also records which machine received each template: each collector process writes an
 `ingest_events` `start` row with its machine, and a template's machine is the one in the latest `start` row of its
@@ -96,8 +97,8 @@ source at or before its `received_at`. So a timing comparison between two templa
 it. Two templates stamped by the same machine share its clock, so its error cancels out of the difference between
 them.
 
-Limits: across different machines, differences smaller than the clocks' error bounds (a few milliseconds) aren't
-meaningful.
+Limits: across different machines, differences smaller than the two clocks' error bounds added together (typically
+about 11 ms, up to about 36 ms) aren't meaningful.
 
 ## Latency adjustment
 

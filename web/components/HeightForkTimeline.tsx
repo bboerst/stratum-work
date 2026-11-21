@@ -64,10 +64,12 @@ export function useHeightFork(height: number): { data: HeightFork | null; loadin
 }
 
 /** The shared fork chart (the height page's Findings and the Forks page's episode drill-in), loaded for a height. */
-export default function HeightForkTimeline({ height, title, invalidCoinbasePools }: {
+export default function HeightForkTimeline({ height, title, invalidCoinbasePools, kindHint }: {
   height: number;
   title?: string;
   invalidCoinbasePools?: string[] | null;
+  /** Parents whose kind the caller knows (ForkTimeline's kindHint). */
+  kindHint?: Record<string, ParentKind> | null;
 }) {
   const { data, loading, error } = useHeightFork(height);
   if (loading) return <div className="mt-2 text-xs text-muted-foreground">Loading fork…</div>;
@@ -81,6 +83,7 @@ export default function HeightForkTimeline({ height, title, invalidCoinbasePools
       prevHashKind={data.kind}
       blocks={data.blocks}
       invalidCoinbasePools={invalidCoinbasePools}
+      kindHint={kindHint}
       title={title}
     />
   );

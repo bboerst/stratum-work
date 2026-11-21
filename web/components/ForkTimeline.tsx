@@ -26,6 +26,11 @@ interface ForkTimelineProps {
   blocks?: ArrivalBlock[] | null;
   /** Pools with an invalid coinbase at this height (the backend's finding): a rose ✗ on their row. */
   invalidCoinbasePools?: string[] | null;
+  /**
+   * Kinds the caller already knows (block hash, display order), used only where the server gave no status: a height
+   * with no stored block at height - 1 (another chain's) has none, but the Forks page knows its episode's kind.
+   */
+  kindHint?: Record<string, ParentKind> | null;
   /** The chart's heading (default "Fork"). */
   title?: string;
 }
@@ -185,7 +190,7 @@ function splitSegmentAtGaps(
 }
 
 export default function ForkTimeline({
-  notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, invalidCoinbasePools, title = "Fork",
+  notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, invalidCoinbasePools, kindHint, title = "Fork",
 }: ForkTimelineProps) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const computed = useMemo(() => {
@@ -193,7 +198,12 @@ export default function ForkTimeline({
     const canonicalRaw = canonicalBlockHash
       ? reverseHex(canonicalBlockHash).toLowerCase()
       : null;
-    const kindOf = (hash: string): ParentKind | undefined => prevHashKind?.[reverseHex(hash).toLowerCase()];
+    const hintOf = (hash: string): ParentKind | undefined =>
+      canonicalRaw === null ? kindHint?.[reverseHex(hash).toLowerCase()] : undefined;
+    const kindOf = (hash: string): ParentKind | undefined => prevHashKind?.[reverseHex(hash).toLowerCase()] ?? hintOf(hash);
+    // no best block to compare with: a parent the caller knows is shown as unknown, of that kind
+    const statusOf = (hash: string): PrevHashStatus | null =>
+      prevHashStatusOf(hash, canonicalRaw, prevHashStatus) ?? (hintOf(hash) ? "unknown" : null);
     const parsed = notifications
       .filter((n) => n.pool_name && n.prev_hash && n.timestamp)
       .map((n) => ({
@@ -305,7 +315,7 @@ export default function ForkTimeline({
           const widthPct = Math.max(rightPct - leftPct, 0.3);
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
-          const status = prevHashStatusOf(seg.prevHash, canonicalRaw, prevHashStatus);
+          const status = statusOf(seg.prevHash);
           const isStale = status !== null && status !== "canonical"; // hatched: not the best parent
           const label = labelOf(status, kindOf(seg.prevHash));
           const staleLabel = label !== null ? ` (${label})` : "";
@@ -412,20 +422,18 @@ export default function ForkTimeline({
 
     // Build a map of hash → canonical/stale status
     const hashStatus = new Map<string, PrevHashStatus | null>();
-    sortedHashes.forEach((h) => hashStatus.set(h, prevHashStatusOf(h, canonicalRaw, prevHashStatus)));
+    sortedHashes.forEach((h) => hashStatus.set(h, statusOf(h)));
 
-    // Force semantic colors when canonical side is known.
-    if (canonicalRaw !== null) {
-      sortedHashes.forEach((h) => {
-        const status = hashStatus.get(h);
-        if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
-        else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
-        else if (status === "unknown") {
-          const kind = kindOf(h);
-          colorMap.set(h, kind ? KIND_COLOR[kind] : UNKNOWN_HASH_COLOR);
-        }
-      });
-    }
+    // Semantic colors wherever a status is known (the canonical side, or a kind the caller knows)
+    sortedHashes.forEach((h) => {
+      const status = hashStatus.get(h);
+      if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
+      else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
+      else if (status === "unknown") {
+        const kind = kindOf(h);
+        colorMap.set(h, kind ? KIND_COLOR[kind] : UNKNOWN_HASH_COLOR);
+      }
+    });
 
     return {
       poolTimelines,
@@ -442,7 +450,7 @@ export default function ForkTimeline({
       minTime,
       maxTime,
     };
-  }, [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks]);
+  }, [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint]);
 
   const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
 

@@ -303,9 +303,14 @@ The rules, in order:
 An episode that began before our first stored block (collection started part-way through that height) has no tip and
 no stored block to compare with. It is left out of the page and counted in the API response (`before_first_block`).
 
-Each episode on the page shows these facts next to its kind, and its details show every template from its pools
+Each episode on the page shows these facts next to its kind. Its details show the fork chart of its height, the same
+as the height page's: every feed's templates at that height, coloured by the parent each built on, with a line where
+each block at height − 1 and at the height (best chain or stale) reached our node. Only seen times are drawn: blocks
+from before the node's arrival times were recorded get no line (the header time is the miner's claim, not an
+arrival), and a stale block known only from the stale-block records is drawn at the time the backend first recorded
+it, which can trail its arrival by a poll interval. Below the chart, the list of the episode's pools' templates
 around its minutes, each labelled by the parent it built on (our best chain, a stale block, this parent, or another
-one), with the arrival of the blocks at height − 1 and at the height.
+one).
 
 **Invalid coinbase**: the backend's analysis flags a block whose height had templates paying more than the subsidy
 with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.analysis`, one entry per template).

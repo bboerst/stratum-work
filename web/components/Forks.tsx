@@ -6,6 +6,7 @@ import { Info } from "lucide-react";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
 import { layoutTimeline, placeEpisodes } from "./unknown-parents/layout";
 import HeightForkTimeline from "./HeightForkTimeline";
+import type { ParentKind } from "@/lib/parentKind";
 import { pagePath } from "@/lib/forksPath";
 
 /**
@@ -612,6 +613,14 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   );
 }
 
+/**
+ * The episode's parent and its kind, for the fork chart where the height has no best block to compare with (another
+ * chain's height): an inferred kind only; a recorded stale block or an invalid coinbase on our chain needs no hint.
+ */
+function kindHint(e: Episode): Record<string, ParentKind> | null {
+  return e.kind === "stale" || e.kind === "invalid_coinbase" ? null : { [e.parent]: e.kind };
+}
+
 /** The heights an episode's templates claim (usually one: its height), ascending. */
 function forkHeights(e: Episode): number[] {
   const hs = [...new Set(e.heights?.length ? e.heights : [e.height])].sort((a, b) => a - b);
@@ -634,6 +643,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const data = drill?.parent === episode.parent ? drill.data : null;
   const templates = useMemo(() => data?.templates ?? [], [data]);
   const present = useMemo(() => new Set(templates.map(t => t.parent)), [templates]);
+  const hint = useMemo(() => kindHint(episode), [episode]);
 
   return (
     <section className="mt-8 rounded-xl border border-border p-4" aria-label="Episode details">
@@ -667,7 +677,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
           <div className="mt-6 border-t border-border/60 pt-4">
             {forkHeights(episode).map(h => (
               <HeightForkTimeline key={h} height={h} title={forkHeights(episode).length > 1 ? `Fork at ${fmtInt(h)}` : "Fork"}
-                invalidCoinbasePools={episode.invalid_coinbase?.pools.map(p => p.pool)} />
+                invalidCoinbasePools={episode.invalid_coinbase?.pools.map(p => p.pool)} kindHint={hint} />
             ))}
           </div>
           <button type="button" className="mt-4 text-xs text-foreground/60 hover:text-foreground"

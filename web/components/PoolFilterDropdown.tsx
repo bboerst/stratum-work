@@ -56,11 +56,11 @@ export function PoolFilterDropdown() {
             : "text-muted-foreground hover:text-foreground hover:bg-muted"
           }
         `}
-        title="Filter mining pools"
+        title="Filter feeds (the pools we collect from)"
       >
         <Filter className="h-4 w-4" />
         <span className="hidden sm:inline">
-          Pools{allPools.length > 0 ? ` (${visiblePoolCount}/${allPools.length})` : ""}
+          Feeds{allPools.length > 0 ? ` (${visiblePoolCount}/${allPools.length})` : ""}
         </span>
       </button>
 
@@ -95,7 +95,7 @@ export function PoolFilterDropdown() {
             >
               {allPools.length === 0 && (
                 <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                  Waiting for pools…
+                  Waiting for feeds…
                 </div>
               )}
               {allPools.map(pool => (

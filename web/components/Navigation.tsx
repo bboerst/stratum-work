@@ -24,7 +24,8 @@ export default function Navigation({ children }: NavigationProps) {
           <div className="flex min-w-0 flex-1 space-x-1 overflow-x-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href;
+              // a page's own sub-paths too (/forks/<height>), but not every path under the home page
+              const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
               
               return (
                 <Link

@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/forksRoute.test.ts)
 import { enableHistoricalData } from "../../../lib/db/blocks";
 import {
-  DEFAULT_RANGE, LEGACY_RANGES, RANGE_BLOCKS, UNKNOWN_PARENTS_RANGES, getBestTipHeight, type UnknownParentsRange,
+  DEFAULT_RANGE, LEGACY_RANGES, UNKNOWN_PARENTS_RANGES, type UnknownParentsRange,
 } from "../../../lib/db/unknown-parents";
-import { getDrill, getEpisodes, type Drill, type Episode } from "../../../lib/unknownParents";
+import { getDrill, type Drill, type Episode } from "../../../lib/unknownParents";
 import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
+import { getSummary } from "../../../lib/forksSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -32,25 +33,12 @@ export const dynamic = "force-dynamic";
  *       episode of that range's summary
  *
  * The summary reads the backend's per-(parent, pool) tables of unknown and of stale parents (a few ms each) and the
- * findings; it's computed once per SUMMARY_MS per process and
- * range and served stale while a refresh runs. A drill-in is looked up in that summary (so it reads only the
+ * findings; it's computed once per SUMMARY_MS per process and range and served stale while a refresh runs
+ * (lib/forksSummary.ts, shared with the Forks pages). A drill-in is looked up in that summary (so it reads only the
  * episode's pools, heights and minutes) and cached for DRILL_MS.
  */
-const SUMMARY_MS = 5 * 60_000;
 const DRILL_MS = 60_000;
 const DRILL_CACHE_ENTRIES = 50;
-
-interface SummaryResponse {
-  enabled: boolean;
-  supported: boolean;
-  range?: UnknownParentsRange;
-  blocks?: number | null;
-  tip_height?: number | null;
-  from_height?: number | null;
-  generated_at?: number;         // ms
-  before_first_block?: number;   // episodes that began before our first stored block: not shown
-  episodes?: Episode[];
-}
 
 interface DrillResponse extends Drill {
   enabled: true;
@@ -58,44 +46,7 @@ interface DrillResponse extends Drill {
   episode: Episode;
 }
 
-// The summary entry being served per range: `settled` once its read finished, `fallback` = the previous result,
-// served while this one is still running.
-interface SummaryEntry { at: number; promise: Promise<SummaryResponse>; settled: SummaryResponse | null; fallback: SummaryResponse | null }
-const summaries = new Map<UnknownParentsRange, SummaryEntry>();
 const drills = new Map<string, { at: number; promise: Promise<DrillResponse> }>();
-
-function refreshSummary(range: UnknownParentsRange, now: number, fallback: SummaryResponse | null): SummaryEntry {
-  const entry: SummaryEntry = {
-    at: now, settled: null, fallback,
-    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range), getBestTipHeight()]).then(([all, tip_height]) => {
-      // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
-      // (collection started mid-height): not shown, and counted in the response.
-      const episodes = all.filter(e => e.facts.tip_at_first !== null);
-      const before_first_block = all.length - episodes.length;
-      const blocks = RANGE_BLOCKS[range];
-      const from_height = tip_height === null ? null : blocks !== null ? tip_height - blocks
-        : episodes.reduce((m, e) => (e.facts.tip_at_first === null ? m : Math.min(m, e.facts.tip_at_first)), tip_height);
-      return { enabled: true, supported: true, range, blocks, tip_height, from_height, generated_at: Date.now(), before_first_block, episodes };
-    }),
-  };
-  entry.promise.then(r => { entry.settled = r; }, () => {
-    // Don't keep a failure: serve the previous result (if any) as stale, so the next request retries.
-    if (summaries.get(range) !== entry) return;
-    if (fallback) summaries.set(range, { at: 0, promise: Promise.resolve(fallback), settled: fallback, fallback: null });
-    else summaries.delete(range);
-  });
-  summaries.set(range, entry);
-  return entry;
-}
-
-async function getSummary(range: UnknownParentsRange): Promise<SummaryResponse> {
-  const now = Date.now();
-  const current = summaries.get(range);
-  // Stale (or none yet): start one refresh, and serve the last good result meanwhile.
-  const entry = !current || now - current.at > SUMMARY_MS
-    ? refreshSummary(range, now, current?.settled ?? current?.fallback ?? null) : current;
-  return entry.settled ?? entry.fallback ?? entry.promise;
-}
 
 const PARENT_RE = /^[0-9a-f]{64}$/;
 

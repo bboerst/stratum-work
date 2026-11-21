@@ -45,6 +45,7 @@ const drillRows = (): DrillRows => ({
 
 async function loadRoute({ historical = true, blacklist = '' } = {}) {
   vi.resetModules();
+  delete (globalThis as { __forksSummaries?: unknown }).__forksSummaries;   // the summary cache (lib/forksSummary.ts)
   vi.stubEnv('POOL_BLACKLIST', blacklist);
   vi.stubEnv('EXTRANONCE1_MASK_KEY', 'route-key');
   const getEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => [poolRow()]);

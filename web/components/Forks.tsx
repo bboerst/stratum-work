@@ -5,6 +5,7 @@ import * as d3 from "d3";
 import { Info } from "lucide-react";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
 import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
+import { pagePath } from "@/lib/forksPath";
 
 /**
  * Forks (/api/forks): templates built on a block other than our best one, as episodes (one per parent), in
@@ -123,8 +124,8 @@ const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // 
 const RANGE_LABEL: Record<Range, string> = { "6e": "12,096 blocks", "26e": "52,416 blocks", all: "All" };
 const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
-  stale: "Stale",
-  bitcoin_block: "Stale · unrecorded",
+  stale: "Race",
+  bitcoin_block: "Race · unrecorded",
   other_chain: "Other chain",
   invalid_parent: "Invalid parent",
   invalid_coinbase: "Invalid coinbase",
@@ -768,15 +769,19 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Keep a choice in the page's URL (shareable), without a navigation. */
-function setUrl(key: string, value: string | null) {
-  const url = new URL(window.location.href);
-  if (value === null) url.searchParams.delete(key); else url.searchParams.set(key, value);
-  window.history.replaceState(null, "", url);
+/**
+ * The address for what's shown (shareable): the selected episode's short link (/forks/<height>[/<kind>], no range:
+ * lib/forksPath.ts), or /forks with a range other than the default.
+ */
+function pageUrl(selected: Episode | null, all: Episode[], range: Range): string {
+  if (selected) return pagePath(selected, all, range);
+  return range === DEFAULT_RANGE ? "/forks" : `/forks?range=${range}`;
 }
 
-export default function Forks() {
-  const [range, setRange] = useState<Range>(DEFAULT_RANGE);
+/** initial: the episode a short link opens (resolved on the server) and the range it was found in. */
+export default function Forks({ initial = null }: { initial?: { range: Range; parent: string } | null }) {
+  const initialRange = initial?.range ?? null, initialParent = initial?.parent ?? null;
+  const [range, setRange] = useState<Range>(initialRange ?? DEFAULT_RANGE);
   // each range's last answer (switching back is instant; a late answer only fills its own range)
   const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
   const [kind, setKind] = useState<Kind | "all">("all");
@@ -789,7 +794,12 @@ export default function Forks() {
     .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
 
   useEffect(() => {
-    // a shared link's range and episode (?range=…&parent=…)
+    // A short link's episode (resolved on the server), else a link's ?range=… and an older link's ?parent=… (the
+    // server redirects those to the short link when it can; one it couldn't resolve is looked up here).
+    if (initialRange && initialParent) {
+      load(initialRange).then(() => setSelected(initialParent));
+      return;
+    }
     const q = new URLSearchParams(window.location.search);
     const asked = q.get("range") ?? "";
     const legacy = Object.hasOwn(LEGACY_RANGES, asked);
@@ -798,22 +808,19 @@ export default function Forks() {
     load(r).then(() => {
       setRange(r);
       if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
-      if (legacy) setUrl("range", r === DEFAULT_RANGE ? null : r);   // a legacy value: rewritten
     });
-  }, [load]);
+  }, [load, initialRange, initialParent]);
   const summary = loaded[range] ?? null;
 
   // Clicking the selected episode again deselects it (and closes its details).
   const select = useCallback((parent: string) => {
     const next = selected === parent ? null : parent;
     setSelected(next);
-    setUrl("parent", next);
     if (next) requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }, [selected]);
   const chooseRange = (r: Range) => {
     if (r === range) return;
     setRange(r);
-    setUrl("range", r === DEFAULT_RANGE ? null : r);
     load(r);
   };
 
@@ -825,6 +832,18 @@ export default function Forks() {
     return c;
   }, [all]);
   const selectedEpisode = all.find(e => e.parent === selected) ?? null;
+  // the other episodes at the selected one's height (a race and another chain's parent can share one)
+  const sameHeight = useMemo(() => (selectedEpisode ? all.filter(e => e.height === selectedEpisode.height && e !== selectedEpisode) : []),
+    [all, selectedEpisode]);
+
+  // Keep the address on what's shown (shareable), once the range's summary is in: history.replaceState, which Next.js
+  // keeps in step with its router, so no navigation, no server render, no scroll. A selection the summary doesn't
+  // have (an old link to an episode out of range, or the range still loading) leaves the address alone.
+  useEffect(() => {
+    if (!summary?.episodes || (selected && !selectedEpisode)) return;
+    const next = pageUrl(selectedEpisode, all, range);
+    if (window.location.pathname + window.location.search !== next) window.history.replaceState(null, "", next);
+  }, [summary, selected, selectedEpisode, all, range]);
 
   const shownRange = range;
   const rangePicker = (
@@ -867,6 +886,17 @@ export default function Forks() {
         </div>
       )}
       <div ref={detailsRef} className="scroll-mt-4">
+        {sameHeight.length > 0 && (
+          <div className="mt-8 -mb-5 flex flex-wrap items-center gap-2 text-xs text-foreground/60" aria-label="Also at this height">
+            also at {fmtInt(selectedEpisode!.height)}:
+            {sameHeight.map(e => (
+              <button key={e.parent} type="button" onClick={() => select(e.parent)} title={factsTitle(e)}
+                className="rounded-full border border-border px-2.5 py-0.5 text-foreground hover:bg-foreground/5">
+                <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
+              </button>
+            ))}
+          </div>
+        )}
         {selectedEpisode && <DrillIn key={selectedEpisode.parent} episode={selectedEpisode} range={shownRange} />}
       </div>
       <div className="mt-8">

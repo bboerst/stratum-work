@@ -284,7 +284,7 @@ The rules, in order:
 1. **Another chain**: the difficulty isn't Bitcoin's, or it is unknown and the height is more than one block from our
    tip. This comes before the proof-of-work check on purpose: another chain's block at a lower difficulty fails
    Bitcoin's target, and would otherwise look like an invalid Bitcoin parent.
-2. **Unrecorded stale block** ("Stale · unrecorded"): Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
+2. **Unrecorded stale block** ("Race · unrecorded"): Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
    target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
    lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
    seconds before the page was computed, before we stored it: the page is recomputed every 5 minutes, so such an

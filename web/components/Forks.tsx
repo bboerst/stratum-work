@@ -124,8 +124,8 @@ const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // 
 const RANGE_LABEL: Record<Range, string> = { "6e": "12,096 blocks", "26e": "52,416 blocks", all: "All" };
 const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
-  stale: "Stale",
-  bitcoin_block: "Stale · unrecorded",
+  stale: "Race",
+  bitcoin_block: "Race · unrecorded",
   other_chain: "Other chain",
   invalid_parent: "Invalid parent",
   invalid_coinbase: "Invalid coinbase",

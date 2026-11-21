@@ -475,6 +475,12 @@ export default function ForkTimeline({
   // a label is about 50 px wide: closer arrivals alternate rows
   const markers = placeBlockMarkers(blocks, timeZones, minTime, maxTime, (56 / plotW) * 100);
   const invalid = new Set(invalidCoinbasePools ?? []);
+  // tick labels at least ~36 px apart, so a narrow (phone) plot doesn't stack them
+  const shownTicks: typeof ticks = [];
+  for (const t of ticks) {
+    const prev = shownTicks[shownTicks.length - 1];
+    if (!prev || ((t.pct - prev.pct) / 100) * plotW >= 36) shownTicks.push(t);
+  }
 
   return (
     <div ref={ref} className="mt-2">
@@ -568,7 +574,7 @@ export default function ForkTimeline({
           className="relative h-4 mb-0.5"
           style={{ marginLeft: `${LABEL_W}px` }}
         >
-          {ticks.map((t, i) => (
+          {shownTicks.map((t, i) => (
             <span
               key={i}
               className="absolute text-[9px] text-muted-foreground/60 -translate-x-1/2 select-none"

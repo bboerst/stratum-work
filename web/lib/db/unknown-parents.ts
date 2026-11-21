@@ -465,6 +465,16 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
        ) l ON l.prev_hash = d.prev_hash
       ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
     [excludePools, ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1])).rows;
+  const blocks = await getDrillBlocks(q.height, excludePools);
+  return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
+}
+
+/**
+ * Every block we know at h - 1 and h (best chain and stale), with its arrival and miner: the drill-in's blocks, and the
+ * link-preview card's (two indexed height lookups). A block off the best chain mined by an excluded pool isn't named.
+ */
+export async function getDrillBlocks(height: number, excludePools: string[]): Promise<DrillBlockRow[]> {
+  const pool = getPgPool();
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
@@ -477,8 +487,8 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)
       ORDER BY 2, 3`,
-    [q.height])).rows;
+    [height])).rows;
   const hidden = new Set(excludePools.map(p => p.toLowerCase()));
   for (const b of blocks) if (!b.best && b.miner && hidden.has(b.miner.toLowerCase())) b.miner = null;
-  return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
+  return blocks;
 }

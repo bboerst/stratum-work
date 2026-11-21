@@ -1,6 +1,8 @@
 // Relative imports so the route and pages using it can be unit-tested (lib/__tests__/forksRoute.test.ts)
 import { enableHistoricalData } from "./db/blocks";
-import { RANGE_BLOCKS, getBestTipHeight, type UnknownParentsRange } from "./db/unknown-parents";
+import {
+  RANGE_BLOCKS, getBestTipHeight, getDrillBlocks, type DrillBlockRow, type UnknownParentsRange,
+} from "./db/unknown-parents";
 import { getEpisodes, type Episode } from "./unknownParents";
 import { blacklistedPoolNames } from "./poolBlacklist";
 
@@ -76,6 +78,35 @@ export async function loadEpisodes(range: UnknownParentsRange): Promise<Episode[
     return (await getSummary(range)).episodes ?? null;
   } catch (error) {
     console.error("Error reading forks:", error);
+    return null;
+  }
+}
+
+const BLOCKS_MS = 5 * 60_000;
+const BLOCKS_ENTRIES = 200;
+const blockStore = globalThis as { __forksCardBlocks?: Map<number, { at: number; promise: Promise<DrillBlockRow[]> }> };
+const blockCache = (blockStore.__forksCardBlocks ??= new Map());
+
+/**
+ * The blocks we know at height - 1 and height (getDrillBlocks: the drill-in's, with its miner rule), for the
+ * link-preview card; cached per height for BLOCKS_MS (at most BLOCKS_ENTRIES heights). null: nothing to read.
+ */
+export async function loadBlocksAt(height: number): Promise<DrillBlockRow[] | null> {
+  if (!enableHistoricalData) return null;
+  const now = Date.now();
+  let entry = blockCache.get(height);
+  if (!entry || now - entry.at > BLOCKS_MS) {
+    const promise = getDrillBlocks(height, blacklistedPoolNames());
+    entry = { at: now, promise };
+    blockCache.delete(height);
+    blockCache.set(height, entry);
+    while (blockCache.size > BLOCKS_ENTRIES) blockCache.delete(blockCache.keys().next().value as number);
+    promise.catch(() => { if (blockCache.get(height)?.promise === promise) blockCache.delete(height); });
+  }
+  try {
+    return await entry.promise;
+  } catch (error) {
+    console.error("Error reading blocks for a forks card:", error);
     return null;
   }
 }

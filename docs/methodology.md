@@ -170,6 +170,12 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
 
 A block's header time is set by the miner and can be minutes off, so it isn't used as an arrival time.
 
+A block's mining pool is identified when the block is stored, from its coinbase against the public pool list of that
+time (**inferred**: a pool's addresses and tags are its claim, not proof). The name stays as identified: a later list
+that renames a pool, or moves an address to another pool, doesn't rewrite it, because the name is the attribution at
+the time. Only a block still "Unknown" is filled in when a newer list identifies it (for example a pool tag added to
+the list later).
+
 A block's header facts (transaction count, size, weight, version, merkle root, bits, nonce, difficulty) are what our
 Bitcoin node reports for it (**observed**): from the full block when the backend stores it, or, for blocks stored
 before these were recorded, from the node's block header. A header has no size or weight, so those stay empty for

@@ -31,6 +31,7 @@ def block(h, pool, addresses=("bc1qpool",), method="address"):
 
 POOL_A = {"id": 1, "name": "A", "match_type": "address", "identification_method": "address"}
 POOL_B = {"id": 2, "name": "B", "match_type": "address", "identification_method": "address"}
+UNKNOWN = {"name": "Unknown", "id": "unknown"}
 
 
 class ReidentifyTests(unittest.TestCase):
@@ -41,14 +42,22 @@ class ReidentifyTests(unittest.TestCase):
             raise AssertionError("re-identification must not call RPC")
         self.main.retry_rpc = no_rpc
 
-    def test_changed_pool_is_updated_without_rpc(self):
+    def test_unknown_block_is_identified_without_rpc(self):
         self.main.identify_pool_from_data = lambda pools, script, addrs: dict(POOL_B)
-        store = self.main.store = FakeStore([block(10, POOL_A)])
+        store = self.main.store = FakeStore([block(10, dict(UNKNOWN), method="none")])
         stats = self.main.reidentify_pools()
         self.assertEqual(stats["changed"], 1)
         h, mp, pi, _ = store.updates[0]
         self.assertEqual(mp, POOL_B)
         self.assertEqual(pi, {"mining_pool": POOL_B, "method": "address", "addresses_considered": ["bc1qpool"]})
+
+    def test_identified_block_keeps_its_pool_when_the_list_renames_or_reassigns(self):
+        # The stored name is the historical attribution: a later list (rename, or the address moved to another pool)
+        # must not rewrite it.
+        self.main.identify_pool_from_data = lambda pools, script, addrs: dict(POOL_B)
+        store = self.main.store = FakeStore([block(10, POOL_A)])
+        stats = self.main.reidentify_pools()
+        self.assertEqual((stats["changed"], stats["kept_identified"], store.updates), (0, 1, []))
 
     def test_unchanged_pool_is_not_written(self):
         self.main.identify_pool_from_data = lambda pools, script, addrs: dict(POOL_A)
@@ -59,21 +68,25 @@ class ReidentifyTests(unittest.TestCase):
     def test_identification_uses_stored_script_and_addresses(self):
         seen = []
         self.main.identify_pool_from_data = lambda pools, script, addrs: seen.append((script, addrs)) or dict(POOL_A)
-        self.main.store = FakeStore([block(10, POOL_A, addresses=["a1", "a2"])])
+        self.main.store = FakeStore([block(10, dict(UNKNOWN), addresses=["a1", "a2"], method="none")])
         self.main.reidentify_pools()
         self.assertEqual(seen, [("03aabbcc", ["a1", "a2"])])
 
-    def test_no_match_becomes_unknown(self):
+    def test_identified_block_is_not_downgraded_to_unknown(self):
         self.main.identify_pool_from_data = lambda pools, script, addrs: {}
         store = self.main.store = FakeStore([block(10, POOL_A)])
         self.main.reidentify_pools()
-        _, mp, pi, _ = store.updates[0]
-        self.assertEqual(mp, {"name": "Unknown", "id": "unknown"})
-        self.assertEqual(pi["method"], "none")
+        self.assertEqual(store.updates, [])
+
+    def test_unknown_block_still_unmatched_is_not_written(self):
+        self.main.identify_pool_from_data = lambda pools, script, addrs: {}
+        store = self.main.store = FakeStore([block(10, dict(UNKNOWN), method="none")])
+        self.main.reidentify_pools()
+        self.assertEqual(store.updates, [])
 
     def test_blocks_without_stored_addresses_are_left_alone(self):
         self.main.identify_pool_from_data = lambda pools, script, addrs: dict(POOL_B)
-        store = self.main.store = FakeStore([block(10, POOL_A, addresses=None)])
+        store = self.main.store = FakeStore([block(10, dict(UNKNOWN), addresses=None)])
         stats = self.main.reidentify_pools()
         self.assertEqual((stats["skipped_no_addresses"], store.updates), (1, []))
 
@@ -90,7 +103,7 @@ class ReidentifyTests(unittest.TestCase):
                 raise ValueError("boom")
             return dict(POOL_B)
         self.main.identify_pool_from_data = identify
-        store = self.main.store = FakeStore([block(11, POOL_A, addresses=["bad"]), block(10, POOL_A)])
+        store = self.main.store = FakeStore([block(11, dict(UNKNOWN), addresses=["bad"], method="none"), block(10, dict(UNKNOWN), method="none")])
         stats = self.main.reidentify_pools()
         self.assertEqual((stats["errors"], stats["changed"], len(store.updates)), (1, 1, 1))
 

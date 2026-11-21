@@ -459,8 +459,12 @@ def _same(a: Any, b: Any) -> bool:
 
 
 def reidentify_pools() -> Dict[str, int]:
-    """Re-run pool identification for every stored block with the current definitions; write only what changed."""
-    stats = {"checked": 0, "changed": 0, "skipped_no_addresses": 0, "errors": 0}
+    """Fill in the pool of stored blocks still "Unknown", using the current definitions.
+
+    A block that already names a pool keeps it, even when the list later renames or reassigns that pool: the name is
+    the historical attribution at the time it was identified. Only an Unknown block, which a newer list can identify
+    (e.g. a tag added later), is updated."""
+    stats = {"checked": 0, "changed": 0, "skipped_no_addresses": 0, "kept_identified": 0, "errors": 0}
     if not store.enabled:
         logger.warning("Historical data disabled or DB unavailable; skipping pool re-identification")
         return stats
@@ -472,6 +476,9 @@ def reidentify_pools() -> Dict[str, int]:
     for block in store.blocks_for_reidentify():
         stats["checked"] += 1
         try:
+            if (block.get("mining_pool") or {}).get("id", "unknown") not in ("unknown", None):
+                stats["kept_identified"] += 1
+                continue
             previous = block.get("pool_identification")
             addresses = previous.get("addresses_considered") if isinstance(previous, dict) else None
             if not isinstance(addresses, list):
@@ -1065,6 +1072,11 @@ def start_background_workers():
     if METRICS_PORT > 0:
         metrics.serve(METRICS_PORT)
     load_pools_once()
+    # The list's hash isn't kept across restarts (Python's hash() is per process), so a list change picked up at
+    # startup would otherwise never reach stored Unknown blocks. Fill them in once per start; it writes only what
+    # changed. A full reindex re-identifies every block itself and needs the same lock.
+    if pools_cache and not START_FULL_REINDEX_ON_BOOT:
+        request_pool_reidentify()
     start_stale_block_tracker()
     threading.Thread(target=sync_then_fill_gaps, daemon=True, name="sync_gap_fill").start()
     threading.Thread(target=zmq_listener, daemon=True).start()

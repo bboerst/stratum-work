@@ -50,6 +50,8 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
 
   async function route(blacklist: string) {
     vi.resetModules();
+    // cold: these tests edit the rows directly, without the backend's re-fill (new filled_at) the cache keys on
+    delete (globalThis as { __templateSetEpochs?: unknown }).__templateSetEpochs;
     Object.assign(process.env, {
       PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
       PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable', POOL_BLACKLIST: blacklist,
@@ -168,6 +170,7 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
       PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
       PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
     });
+    delete (globalThis as { __templateSetEpochs?: unknown }).__templateSetEpochs;   // cold (the rows were edited above)
     const db = await import('../db/template-providers');
     const { feedProviders, groupEpochs } = await import('../templateProviders');
     try {
@@ -200,6 +203,45 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
       const gx = groupEpochs(withX.nodes, withX.pairs, withX.counted).get(E0);
       expect(feedProviders([fa, fc, fx], gx)).toEqual({ providers: 2, provider_groups: [[fc, fx], [fa]] });
     } finally {
+      const { getPgPool } = await import('../db/pg');
+      await getPgPool().end();
+      delete (global as unknown as { stratumPgPool?: unknown }).stratumPgPool;
+    }
+  });
+
+  it('the shared per-epoch read, after a height is filled, equals a cold read', async () => {
+    vi.resetModules();
+    Object.assign(process.env, {
+      PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
+      PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
+    });
+    const store = globalThis as { __templateSetEpochs?: unknown };
+    delete store.__templateSetEpochs;
+    const db = await import('../db/template-providers');
+    const sortRows = <T,>(rs: T[]) => rs.map(r => JSON.stringify(r)).sort();
+    const mine = (i: { nodes: { epoch: number }[]; pairs: { epoch: number }[]; counted: { epoch: number }[] }) => ({
+      counted: i.counted.filter(c => c.epoch === E0 || c.epoch === E1),
+      nodes: sortRows(i.nodes.filter(n => n.epoch === E0 || n.epoch === E1)),
+      pairs: sortRows(i.pairs.filter(p => p.epoch === E0 || p.epoch === E1)),
+    });
+    const h = h1 + 6;
+    try {
+      const before = mine(await db.getEpochGroupInputs([E0, E1], [fx]));
+      // the backend fills a height of E1 (heights row and its counts, as replace_template_sets does)
+      await admin.query(`INSERT INTO template_set_heights (height, templates) VALUES ($1, 40)`, [h]);
+      await feedRow(h, fa, A, 7); await feedRow(h, fc, C, 5); await feedRow(h, fx, B, 9);
+      await pairRow(h, fa, A, fc, C, 4); await pairRow(h, fc, C, fx, B, 5);
+      const warm = mine(await db.getEpochGroupInputs([E0, E1], [fx]));
+      expect(warm).not.toEqual(before);
+      expect(warm.counted).toEqual([{ epoch: E0, heights: 2 }, { epoch: E1, heights: 2 }]);
+      expect(JSON.stringify(warm)).not.toContain(fx);
+      delete store.__templateSetEpochs;
+      expect(warm).toEqual(mine(await db.getEpochGroupInputs([E0, E1], [fx])));
+    } finally {
+      for (const t of ['template_set_pairs', 'template_set_feeds', 'template_set_heights']) {
+        await admin.query(`DELETE FROM ${t} WHERE height = $1`, [h]);
+      }
+      delete store.__templateSetEpochs;
       const { getPgPool } = await import('../db/pg');
       await getPgPool().end();
       delete (global as unknown as { stratumPgPool?: unknown }).stratumPgPool;

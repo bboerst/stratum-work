@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  deriveTemplateProviders, groupEpoch, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
+  deriveTemplateProviders, feedProviders, groupEpoch, groupEpochs, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
   type BlockRow, type NodeRow, type PairRow, type ProviderInputs, type TemplateGroup,
 } from '../templateProviders';
 
@@ -196,3 +196,44 @@ function checkShape(raw: Record<string, unknown>) {
   const labels = (raw.pies as { label: string }[]).map(p => p.label);
   expect(labels).toEqual(['144 blocks', '2,016 blocks', '12,096 blocks', '52,416 blocks', 'All']);
 }
+
+describe('feedProviders (Forks: template providers per episode)', () => {
+  // providers: A = feed-a + feed-b, B = feed-c; feed-d alternates payers: its node paying pool 9 has the most sets and
+  // is on B; feed-s has too few sets to link (unknown); feed-z isn't in the epoch at all (unknown)
+  const nodes = [node('feed-a', 1, 50), node('feed-b', 2, 45), node('feed-c', 3, 40), node('feed-d', 1, 6), node('feed-d', 9, 30),
+    node('feed-s', 4, 4)];
+  const pairs = [pair(['feed-a', 1], ['feed-b', 2], 45), pair(['feed-c', 3], ['feed-d', 9], 30), pair(['feed-a', 1], ['feed-d', 1], 6)];
+  const g = groupEpoch(nodes, pairs);
+
+  it('groups the feeds by provider, largest first, then in the feeds\' order; counts the providers', () => {
+    expect(feedProviders(['feed-c', 'feed-a', 'feed-b'], g)).toEqual({ providers: 2, provider_groups: [['feed-a', 'feed-b'], ['feed-c']] });
+    expect(feedProviders(['feed-c', 'feed-a'], g)).toEqual({ providers: 2, provider_groups: [['feed-c'], ['feed-a']] });
+    expect(feedProviders(['feed-a', 'feed-a'], g)).toEqual({ providers: 1, provider_groups: [['feed-a']] });
+  });
+
+  it('takes a feed\'s provider from its node with the most sets', () => {
+    expect(feedProviders(['feed-d', 'feed-c'], g)).toEqual({ providers: 1, provider_groups: [['feed-d', 'feed-c']] });
+  });
+
+  it('leaves a feed below the set minimum, or not in the epoch, unknown (in no group, not a provider)', () => {
+    expect(feedProviders(['feed-a', 'feed-s', 'feed-z'], g)).toEqual({ providers: 1, provider_groups: [['feed-a']] });
+    expect(feedProviders(['feed-s', 'feed-z'], g)).toEqual({ providers: 0, provider_groups: [] });
+  });
+
+  it('is null without the epoch\'s groups (never another epoch\'s)', () => {
+    expect(feedProviders(['feed-a'], undefined)).toEqual({ providers: null, provider_groups: [] });
+    const by = groupEpochs([node('feed-a', 1, 10, 10, 3)], [], [{ epoch: 3, heights: 10 }, { epoch: 4, heights: 0 }]);
+    expect([...by.keys()]).toEqual([3]);
+    expect(feedProviders(['feed-a'], by.get(4))).toEqual({ providers: null, provider_groups: [] });
+    expect(feedProviders(['feed-a'], by.get(3))).toEqual({ providers: 1, provider_groups: [['feed-a']] });
+  });
+
+  it('groups each epoch with its own rows', () => {
+    const by = groupEpochs(
+      [node('feed-a', 1, 10, 10, 0), node('feed-b', 2, 10, 10, 0), node('feed-a', 1, 10, 10, 1), node('feed-b', 2, 10, 10, 1)],
+      [pair(['feed-a', 1], ['feed-b', 2], 10, 0), pair(['feed-a', 1], ['feed-b', 2], 2, 1)],
+      [{ epoch: 0, heights: 2016 }, { epoch: 1, heights: 2016 }]);
+    expect(feedProviders(['feed-a', 'feed-b'], by.get(0)).providers).toBe(1);
+    expect(feedProviders(['feed-a', 'feed-b'], by.get(1)).providers).toBe(2);
+  });
+});

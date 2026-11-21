@@ -310,6 +310,15 @@ The page's "Invalid" filter takes all invalid work, work that could never make a
 invalid coinbases. In an episode's details, each pool's run of invalid templates is marked on its lane where the
 coinbase parses.
 
+**Providers per episode** (**modelled**). Several pools on one parent can be one template provider sending the same
+work under different names, or several independent ones reacting to the same thing at once. Each episode counts the
+[template providers](#template-providers) among its pools, with the groups of the difficulty epoch our tip was in
+when its first template arrived (not the templates' height, which for another chain is that chain's): the 80% rule
+on identical transaction sets in that epoch. A pool's provider is that of its node with the most sets; a pool with
+fewer than 5 sets in the epoch, or none, has an unknown provider and isn't counted as one. An epoch with no counted
+heights gives no count, never another epoch's: older episodes have none until the history is counted. Like the
+groups themselves, a shared provider says the pools received the same work, not that they share an owner.
+
 ## Template providers
 
 "Who builds the templates" on the home page groups our feeds by **template provider**: whatever chooses the

@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql } from '../db/unknown-parents';
+import type { EpochGroupInputs } from '../db/template-providers';
 
 const P1 = '00'.repeat(10) + '12'.repeat(22);   // meets the target of BITS
 const BITS = 0x17034219;
@@ -54,13 +55,17 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getBestTipHeight = vi.fn<() => Promise<number | null>>(async () => TIP);
   const getStaleEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => []);
   const getInvalidCoinbaseFlags = vi.fn<() => Promise<InvalidCoinbaseFlagSql[]>>(async () => []);
+  const getEpochGroupInputs = vi.fn<(epochs: number[], exclude: string[]) => Promise<EpochGroupInputs>>(
+    async () => ({ nodes: [], pairs: [], counted: [] }));
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
+  vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
     ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight,
     getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
   }));
   const route = await import('../../app/api/forks/route');
-  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags };
+  return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
+    getEpochGroupInputs };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
@@ -71,6 +76,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.doUnmock('../db/blocks');
   vi.doUnmock('../db/unknown-parents');
+  vi.doUnmock('../db/template-providers');
 });
 
 describe('GET /api/forks', () => {
@@ -99,8 +105,34 @@ describe('GET /api/forks', () => {
       facts: { tip_at_first: 900_000, tip_at_last: 900_001, tip_offset: 0, nbits: ['17034219'], bitcoin_bits: '17034219',
         bitcoin_bits_at: '17034219', bitcoin_difficulty: true, pow_ok: true, pow_bits: '17034219', in_stale_blocks: false,
         stale_block: null },
-      kind: 'bitcoin_block', invalid_coinbase: null,
+      kind: 'bitcoin_block', invalid_coinbase: null, providers: null, provider_groups: [],
     }]);
+  });
+
+  it('counts template providers per episode with its epoch\'s groups (blacklist passed; unknown feeds in none)', async () => {
+    const { route, getEpisodePoolRows, getEpochGroupInputs } = await loadRoute({ blacklist: 'Hidden' });
+    // one episode, pools P, Q, R, U: P and Q share a provider, R builds its own, U has too few sets in the epoch
+    getEpisodePoolRows.mockResolvedValueOnce(['P', 'Q', 'R', 'U'].map((pool, i) => poolRow({ pool, first_ms: String(1000 + i) })));
+    const E = Math.floor(900_001 / 2016);
+    getEpochGroupInputs.mockResolvedValueOnce({
+      counted: [{ epoch: E, heights: 2016 }],
+      nodes: [
+        { epoch: E, feed: 'P', pool_id: 1, sets: 50, templates: 60 }, { epoch: E, feed: 'Q', pool_id: 1, sets: 40, templates: 40 },
+        { epoch: E, feed: 'R', pool_id: 2, sets: 30, templates: 30 }, { epoch: E, feed: 'U', pool_id: 3, sets: 4, templates: 4 },
+      ],
+      pairs: [{ epoch: E, feed_a: 'P', pool_a: 1, feed_b: 'Q', pool_b: 1, shared: 40 }],
+    });
+    const body = await (await get(route)).json();
+    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);
+    expect(body.episodes[0]).toMatchObject({ providers: 2, provider_groups: [['P', 'Q'], ['R']] });
+  });
+
+  it('gives null providers for an epoch with no counted heights, and when the tables are missing', async () => {
+    const { route, getEpochGroupInputs } = await loadRoute();
+    getEpochGroupInputs.mockRejectedValueOnce(Object.assign(new Error('relation does not exist'), { code: '42P01' }));
+    const res = await get(route);
+    expect(res.status).toBe(200);
+    expect((await res.json()).episodes[0]).toMatchObject({ providers: null, provider_groups: [] });
   });
 
   it('serves the alias /api/unknown-parents from the same handler and caches', async () => {
@@ -427,5 +459,16 @@ describe('summary source', () => {
     await db.getEpisodePoolRows([], '26e');
     expect(sql.some(t => t.includes('FROM templates'))).toBe(false);
     expect(sql.some(t => t.includes('FROM unknown_parent_pools u'))).toBe(true);
+  });
+});
+
+describe('providers per episode', () => {
+  it('judges an episode by the epoch our tip was in when it began, not its templates\' height', async () => {
+    const { providerEpoch } = await import('../unknownParents');
+    const e = (tip: number | null, height: number) => ({ height, facts: { tip_at_first: tip } }) as unknown as Parameters<typeof providerEpoch>[0];
+    expect(providerEpoch(e(2015, 2016))).toBe(1);        // first template for height 2,016: epoch 1
+    expect(providerEpoch(e(2014, 2015))).toBe(0);
+    expect(providerEpoch(e(900_000, 6_976_415))).toBe(Math.floor(900_001 / 2016));   // another chain's height
+    expect(providerEpoch(e(null, 900_001))).toBeNull();
   });
 });

@@ -19,6 +19,8 @@ import {
 import {
   NEAR_TIP, bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind,
 } from './parentKind';
+import { getEpochGroupInputs } from './db/template-providers';
+import { EPOCH_BLOCKS, feedProviders, groupEpochs, type EpochGroups } from './templateProviders';
 import { parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
 import { addressFromScript } from '../utils/addressFromScript';
 import { decodeOpReturnScript } from '../utils/mergeMining';
@@ -159,10 +161,13 @@ export interface Episode {
   facts: EpisodeFacts;
   kind: EpisodeKind;             // 'stale' recorded; otherwise INFERRED from the facts (lib/parentKind.ts)
   invalid_coinbase: InvalidCoinbase | null;
+  providers: number | null;      // template providers among its pools (feeds), MODELLED with the groups of the epoch
+                                 // our tip was in when it began (withProviders); null: that epoch isn't counted
+  provider_groups: string[][];   // its pools per provider; a pool whose provider is unknown there is in none
 }
 
 /** An episode before its facts are read. */
-export type EpisodeDraft = Omit<Episode, 'facts' | 'kind' | 'invalid_coinbase'> & { nbitsCounts: Map<number, number> };
+export type EpisodeDraft = Omit<Episode, 'facts' | 'kind' | 'invalid_coinbase' | 'providers' | 'provider_groups'> & { nbitsCounts: Map<number, number> };
 
 const hex32 = (n: number) => n.toString(16).padStart(8, '0');
 
@@ -218,7 +223,37 @@ export async function getEpisodes(excludePools: string[], range: UnknownParentsR
   ]);
   const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  return withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
+  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
+  return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), excludePools));
+}
+
+/**
+ * The epoch whose template providers an episode is judged by: the one our tip was in when its first template arrived
+ * (tip_at_first + 1 is the height being mined then). Not the templates' own height, which for another chain is that
+ * chain's. Null without a tip.
+ */
+export function providerEpoch(e: Episode): number | null {
+  return e.facts.tip_at_first === null ? null : Math.floor((e.facts.tip_at_first + 1) / EPOCH_BLOCKS);
+}
+
+/** Those epochs' groups; none while the template_set tables don't exist yet (the web deployed before the migration). */
+async function readEpochGroups(epochs: number[], excludePools: string[]): Promise<Map<number, EpochGroups>> {
+  try {
+    const { nodes, pairs, counted } = await getEpochGroupInputs(epochs, excludePools);
+    return groupEpochs(nodes, pairs, counted);
+  } catch (error: unknown) {
+    if ((error as { code?: string })?.code !== '42P01') throw error;
+    console.warn("Forks: the template_set tables don't exist yet (migration pending): no providers");
+    return new Map();
+  }
+}
+
+/** Each episode's template providers (feedProviders), with its epoch's groups (null when that epoch isn't counted). */
+export function withProviders(episodes: Episode[], groups: Map<number, EpochGroups>): Episode[] {
+  return episodes.map(e => {
+    const epoch = providerEpoch(e);
+    return { ...e, ...feedProviders(e.pools.map(p => p.pool), epoch === null ? undefined : groups.get(epoch)) };
+  });
 }
 
 /** A finding's offenders per pool, without the excluded pools (null when none is left). */
@@ -270,7 +305,7 @@ export function withInvalidCoinbase(
         tip_at_first: flag.height - 1, tip_at_last: flag.height - 1, tip_offset: 0, nbits: [], bitcoin_bits: null,
         bitcoin_bits_at: null, bitcoin_difficulty: null, pow_ok: true, pow_bits: '', in_stale_blocks: false, stale_block: null,
       },
-      kind: 'invalid_coinbase', invalid_coinbase: ic,
+      kind: 'invalid_coinbase', invalid_coinbase: ic, providers: null, provider_groups: [],
     });
   }
   return [...out, ...extra].sort((a, b) => a.first_ms - b.first_ms || (a.parent < b.parent ? -1 : 1));
@@ -342,6 +377,8 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[],
       },
       kind: f?.in_stale ? 'stale' : parentKind(pf),
       invalid_coinbase: null,
+      providers: null,
+      provider_groups: [],
     };
   });
 }

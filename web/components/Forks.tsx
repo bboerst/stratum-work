@@ -247,7 +247,7 @@ function PoolChips({ e, max = 6 }: { e: Episode; max?: number }) {
   return (
     <div className="flex flex-wrap gap-1">
       {shown.map(p => (
-        <span key={p.pool} className="rounded bg-foreground/10 px-1.5 py-0.5 text-[11px] whitespace-nowrap"
+        <span key={p.pool} className="rounded bg-foreground/10 px-1.5 py-px text-[11px] whitespace-nowrap"
           title={`${fmtInt(p.templates)} templates · connection ${p.connections.join(", ")}`}>
           {p.pool}
         </span>
@@ -261,7 +261,7 @@ function PoolChips({ e, max = 6 }: { e: Episode; max?: number }) {
 function ProvidersCell({ e }: { e: Episode }) {
   const p = providerInfo(e);
   return (
-    <td className="px-3 py-2.5 font-mono text-right text-xs whitespace-nowrap" title={p?.title ?? "not counted for this height yet"}>
+    <td className="px-3 py-1 font-mono text-right text-xs whitespace-nowrap" title={p?.title ?? "not counted for this height yet"}>
       {p ? <>{p.n}{p.unknown.length > 0 && <span className="text-foreground/40"> +{p.unknown.length}?</span>}</> : <span className="text-foreground/30">–</span>}
     </td>
   );
@@ -301,9 +301,9 @@ function Tooltip({ x, y, width, children }: { x: number; y: number; width: numbe
 // ---------------------------------------------------------------------------------------------------------------------
 // Timeline
 
-const ROW_H = 24;
-const MARK_H = 16;
-const AXIS_H = 20;
+const ROW_H = 14;   // slim rows: the marks carry the meaning, the pool names only need to stay legible
+const MARK_H = 9;
+const AXIS_H = 18;
 
 /** The timeline in Bitcoin time: x = block height, from `start` to `end` (our tip). */
 function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
@@ -375,7 +375,7 @@ function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
           ))}
         </g>
         {layout.pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 4} fontSize={12} textAnchor="end"
+          <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 3.5} fontSize={11} textAnchor="end"
             fontWeight={focusPools.has(p) ? 700 : 400}
             className={focus && focusPools.has(p) ? "fill-foreground" : "fill-foreground/60"}>
             <title>{p}</title>{shortName(p, labelW < 100)}
@@ -430,11 +430,11 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
   };
   return (
     <>
-      <ul className="md:hidden space-y-2">
+      <ul className="md:hidden space-y-1.5">
         {rows.map(e => (
           <li key={e.parent}>
             <button type="button" onClick={() => onSelect(e.parent)} title={factsTitle(e)}
-              className={`w-full rounded-lg border border-border px-3 py-2.5 text-left text-xs space-y-1.5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
+              className={`w-full rounded-lg border border-border px-3 py-1.5 text-left text-xs space-y-1 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-sm">{fmtInt(e.height)} <span className="text-foreground/60 text-xs">· {fmtDuration(e.duration_ms)}</span></span>
                 <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
@@ -463,17 +463,17 @@ function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; s
             {rows.map(e => (
               <tr key={e.parent} onClick={() => onSelect(e.parent)}
                 className={`border-b border-border/60 cursor-pointer hover:bg-foreground/5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
-                <td className="px-3 py-2.5 font-mono">{fmtInt(e.height)}</td>
-                <td className="px-3 py-2.5"><PoolChips e={e} /></td>
+                <td className="px-3 py-1 font-mono">{fmtInt(e.height)}</td>
+                <td className="px-3 py-1"><PoolChips e={e} /></td>
                 <ProvidersCell e={e} />
-                <td className="px-3 py-2.5 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-1 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
+                <td className="px-3 py-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
                     {e.invalid_coinbase && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
                   </div>
                 </td>
-                <td className="px-3 py-2.5 text-xs text-foreground/40 text-right whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
+                <td className="px-3 py-1 text-xs text-foreground/40 text-right whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
               </tr>
             ))}
           </tbody>
@@ -734,12 +734,15 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
         })()}
       </svg>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        {checks.map(c => (
-          <span key={c.label} title={c.title}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 ${c.ok === null ? "border-border text-foreground/60" : c.ok ? "border-emerald-600/50 text-emerald-500" : "border-rose-600/50 text-rose-500"}`}>
-            {c.ok === null ? "?" : c.ok ? "✓" : "✗"} {c.label}
-          </span>
-        ))}
+        {/* the checks as chips, styled like the pool chips; each chip's background is its result */}
+        <span className="inline-flex flex-wrap items-center gap-1">
+          {checks.map(c => (
+            <span key={c.label} title={c.title} className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 whitespace-nowrap ${c.ok === null ? "bg-foreground/10 text-foreground/60" : c.ok ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/20 text-rose-700 dark:text-rose-300"}`}>
+              <span>{c.ok === null ? "?" : c.ok ? "✓" : "✗"}</span>
+              {c.label}
+            </span>
+          ))}
+        </span>
         <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
       </div>
     </div>

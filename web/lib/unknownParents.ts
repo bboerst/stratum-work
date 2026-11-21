@@ -12,7 +12,7 @@
 import { maskTemplate } from './connectionMask';
 import { templateRowToMiningNotify } from './db/pg-mapping';
 import {
-  DEFAULT_RANGE, DRILL_MARGIN_MS, RANGE_BLOCKS, getDrillRows, getEpisodeFacts, getEpisodePoolRows, getInvalidCoinbaseFlags,
+  DEFAULT_RANGE, DRILL_MARGIN_MS, RANGE_BLOCKS, getBestTipHeight, getDrillRows, getEpisodeFacts, getEpisodePoolRows, getInvalidCoinbaseFlags,
   getStaleEpisodePoolRows, type DrillTemplateRow, type EpisodeFactsSql, type EpisodePoolSql, type InvalidCoinbaseFlagSql,
   type ParentLabel, type UnknownParentsRange,
 } from './db/unknown-parents';
@@ -218,13 +218,29 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
  * facts per episode, then the invalid-coinbase findings (withInvalidCoinbase).
  */
 export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<Episode[]> {
+  // The providers' epochs are known only from the episodes' facts; read the range's epochs (from our tip) alongside
+  // the episodes instead of after them, then any that an episode begun before the range needs.
+  const predicted = getBestTipHeight().then(tip => rangeEpochs(tip, RANGE_BLOCKS[range]));
+  const early = predicted.then(epochs => readEpochGroups(epochs, excludePools));
+  early.catch(() => {});   // awaited below; not unhandled while the episodes are read
   const [unknown, stale, flags] = await Promise.all([
     getEpisodePoolRows(excludePools, range), getStaleEpisodePoolRows(excludePools, range), getInvalidCoinbaseFlags(),
   ]);
   const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
   const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
-  return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), excludePools));
+  const read = new Set(await predicted), groups = new Map(await early);
+  const missing = [...new Set(episodes.map(providerEpoch).filter((e): e is number => e !== null && !read.has(e)))];
+  if (missing.length > 0) for (const [e, g] of await readEpochGroups(missing, excludePools)) groups.set(e, g);
+  return withProviders(episodes, groups);
+}
+
+/** The epochs from rangeBlocks below our tip to the one being mined (null: all history, from epoch 0); none without a tip. */
+export function rangeEpochs(tip: number | null, rangeBlocks: number | null): number[] {
+  if (tip === null) return [];
+  const hi = Math.floor((tip + 1) / EPOCH_BLOCKS);
+  const lo = rangeBlocks === null ? 0 : Math.max(0, Math.floor((tip - rangeBlocks) / EPOCH_BLOCKS));
+  return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
 }
 
 /**

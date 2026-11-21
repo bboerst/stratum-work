@@ -186,6 +186,15 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
       expect(feedProviders([fa, fb, fc], groups.get(E0))).toEqual({ providers: 2, provider_groups: [[fa, fb], [fc]] });
       expect(feedProviders([fa, fb], groups.get(E1))).toEqual({ providers: 2, provider_groups: [[fa], [fb]] });
       expect(feedProviders([fa], groups.get(E1 + 1))).toEqual({ providers: null, provider_groups: [] });   // not counted
+      // an excluded pool paid by a feed that isn't excluded (X, paid by fx): that node and its pairs are dropped, so
+      // nothing is named after it or grouped through it; fx keeps its other nodes
+      const noX = await db.getEpochGroupInputs([E0], [NAME[X]]);
+      expect(noX.nodes.some(n => n.pool_id === X)).toBe(false);
+      expect(noX.pairs.some(p => p.pool_a === X || p.pool_b === X)).toBe(false);
+      expect(noX.nodes.some(n => n.feed === fx && n.pool_id === B)).toBe(true);
+      const gNoX = groupEpochs(noX.nodes, noX.pairs, noX.counted).get(E0)!;
+      expect(gNoX.groups.flatMap(g => g.payers)).not.toContain(X);
+      expect(feedProviders([fa, fc, fx], gNoX)).toEqual({ providers: 2, provider_groups: [[fc, fx], [fa]] });
       // collected, fx is a provider with fc
       const withX = await db.getEpochGroupInputs([E0], []);
       const gx = groupEpochs(withX.nodes, withX.pairs, withX.counted).get(E0);

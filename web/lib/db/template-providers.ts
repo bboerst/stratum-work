@@ -35,19 +35,26 @@ export async function getTemplateProviderInputs(excluded: string[]): Promise<Omi
 
 /**
  * The node and pair rows summed per epoch, over heights [from, to) (to null: no upper bound; the tables' keys lead
- * with height), without the excluded feeds: their nodes and every pair touching them.
+ * with height), without the excluded names: a node whose feed is excluded, or whose paid pool is (pools.name, so
+ * another feed's templates paying an excluded pool add no node named after it either), and every pair touching one.
  */
 async function nodesAndPairs(excluded: string[], from: number, to: number | null): Promise<{ nodes: NodeRow[]; pairs: PairRow[] }> {
   const pool = getPgPool();
   const upTo = to ?? 2_147_483_647;
+  // the excluded pools' ids (none for an empty list): a node paying one is dropped like an excluded feed's
+  const xp = `(SELECT id FROM pools WHERE name = ANY ($1::text[]))`;
   const [nodes, pairs] = await Promise.all([
     pool.query(
       `SELECT height / ${EPOCH_BLOCKS} AS epoch, feed, pool_id, sum(sets) AS sets, sum(templates) AS templates
-         FROM template_set_feeds WHERE height >= $2 AND height < $3 AND feed <> ALL ($1::text[]) GROUP BY 1, 2, 3`,
+         FROM template_set_feeds
+        WHERE height >= $2 AND height < $3 AND feed <> ALL ($1::text[]) AND (pool_id IS NULL OR pool_id NOT IN ${xp})
+        GROUP BY 1, 2, 3`,
       [excluded, from, upTo]),
     pool.query(
       `SELECT height / ${EPOCH_BLOCKS} AS epoch, feed_a, pool_a, feed_b, pool_b, sum(shared) AS shared
-         FROM template_set_pairs WHERE height >= $2 AND height < $3 AND feed_a <> ALL ($1::text[]) AND feed_b <> ALL ($1::text[])
+         FROM template_set_pairs
+        WHERE height >= $2 AND height < $3 AND feed_a <> ALL ($1::text[]) AND feed_b <> ALL ($1::text[])
+          AND (pool_a IS NULL OR pool_a NOT IN ${xp}) AND (pool_b IS NULL OR pool_b NOT IN ${xp})
         GROUP BY 1, 2, 3, 4, 5`,
       [excluded, from, upTo]),
   ]);

@@ -123,8 +123,25 @@ describe('GET /api/forks', () => {
       pairs: [{ epoch: E, feed_a: 'P', pool_a: 1, feed_b: 'Q', pool_b: 1, shared: 40 }],
     });
     const body = await (await get(route)).json();
-    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);
+    // read alongside the episodes: the range's epochs from our tip (E among them), so no second read
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
+    expect(getEpochGroupInputs.mock.calls[0][0]).toContain(E);
+    expect(getEpochGroupInputs.mock.calls[0][1]).toEqual(['Hidden']);
     expect(body.episodes[0]).toMatchObject({ providers: 2, provider_groups: [['P', 'Q'], ['R']] });
+  });
+
+  it('reads the epoch of an episode that began before the range afterwards', async () => {
+    const { route, getBestTipHeight, getEpochGroupInputs } = await loadRoute();
+    getBestTipHeight.mockResolvedValue(900_000 + 30 * 2016);   // the episode's epoch is below the range's
+    const E = Math.floor(900_001 / 2016);
+    getEpochGroupInputs.mockImplementation(async epochs => (epochs.includes(E)
+      ? { counted: [{ epoch: E, heights: 2016 }], nodes: [{ epoch: E, feed: 'P', pool_id: 1, sets: 10, templates: 10 }], pairs: [] }
+      : { counted: [], nodes: [], pairs: [] }));
+    const body = await (await get(route)).json();
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(2);
+    expect(getEpochGroupInputs.mock.calls[0][0]).not.toContain(E);
+    expect(getEpochGroupInputs.mock.calls[1][0]).toEqual([E]);
+    expect(body.episodes[0]).toMatchObject({ providers: 1, provider_groups: [['P']] });
   });
 
   it('gives null providers for an epoch with no counted heights, and when the tables are missing', async () => {
@@ -470,5 +487,13 @@ describe('providers per episode', () => {
     expect(providerEpoch(e(2014, 2015))).toBe(0);
     expect(providerEpoch(e(900_000, 6_976_415))).toBe(Math.floor(900_001 / 2016));   // another chain's height
     expect(providerEpoch(e(null, 900_001))).toBeNull();
+  });
+
+  it('reads the range\'s epochs from our tip: below it by the range, up to the one being mined', async () => {
+    const { rangeEpochs } = await import('../unknownParents');
+    expect(rangeEpochs(null, 12_096)).toEqual([]);
+    expect(rangeEpochs(2015, 2016)).toEqual([0, 1]);          // the next height, 2,016, opens epoch 1
+    expect(rangeEpochs(10 * 2016 + 5, 2 * 2016)).toEqual([8, 9, 10]);
+    expect(rangeEpochs(3 * 2016, null)).toEqual([0, 1, 2, 3]);
   });
 });

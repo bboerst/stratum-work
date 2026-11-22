@@ -371,6 +371,11 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect(a2).toMatchObject({ auxpow: true, auxpow_root: 'ab'.repeat(32), prev_hash: X_A, height: H, scriptsig_height: 1_000_000 });
   });
 
+  it('getDrillBlocks says which arrivals are our seen times and which come from the stale records only', async () => {
+    const rows = await db.getDrillBlocks(H, []);
+    expect(rows.map(b => [b.block_hash, b.seen, b.stale_only])).toEqual([[B1, true, false], [S1, true, true], [B0, true, false]]);
+  });
+
   it('serves the recorded stale block S1 as a stale episode: its pool inside the window, not the blacklisted one', async () => {
     for (const range of ['', '?range=26e', '?range=all']) {
       const { body, text } = await get(range);

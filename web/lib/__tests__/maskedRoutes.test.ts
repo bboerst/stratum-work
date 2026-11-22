@@ -79,6 +79,7 @@ describe('served templates carry masked extranonce1', () => {
   it('/api/analysis-data (including coinbaseRaw and the ASCII text)', async () => {
     vi.doMock('../db/blocks', () => ({ getBlockByHeight: vi.fn(async () => null), getInterestingBlocks: vi.fn(async () => []), getHighestBlock: vi.fn(async () => ({ height: 100000 })) }));
     vi.doMock('../db/mining-notify', () => ({ getAllMiningNotifyAtHeight: vi.fn(async () => templates()) }));
+    vi.doMock('../db/unknown-parents', () => ({ getDrillBlocks: vi.fn(async () => []) }));
     const { GET } = await import('../../app/api/analysis-data/route');
     const text = await (await GET(new NextRequest('http://test/api/analysis-data?height=100001'))).text();
     const served = JSON.parse(text).results[0].mining_notifications;

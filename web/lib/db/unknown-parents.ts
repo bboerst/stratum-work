@@ -412,6 +412,9 @@ export interface DrillBlockRow {
   block_hash: string;                   // display hex
   height: number;
   arrival_ms: string;                   // coalesce(seen_at, block_time); a stale-only block: first_seen
+  seen: boolean;                        // arrival_ms is a time we saw it (seen_at; first_seen), not the header time
+  stale_only: boolean;                  // known from stale_blocks only: first_seen is when the backend's chain-tips
+                                        // poll first recorded it (on a new block or a timer), not our node's arrival
   best: boolean;
   miner: string | null;                 // the block's identified pool (a stale block's: null when it's a hidden pool)
 }
@@ -470,19 +473,20 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
 }
 
 /**
- * Every block we know at h - 1 and h (best chain and stale), with its arrival and miner: the drill-in's blocks, and the
- * link-preview card's (two indexed height lookups). A block off the best chain mined by an excluded pool isn't named.
+ * Every block we know at h - 1 and h (best chain and stale), with its arrival and miner: the drill-in's blocks, the
+ * link-preview card's, and the fork timeline's arrival markers (/api/analysis-data; two indexed height lookups). A block off the best chain mined by an excluded pool isn't named.
  */
 export async function getDrillBlocks(height: number, excludePools: string[]): Promise<DrillBlockRow[]> {
   const pool = getPgPool();
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
+            b.seen_at IS NOT NULL AS seen, false AS stale_only,
             EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best,
             nullif(b.mining_pool->>'name', '') AS miner
        FROM blocks b WHERE b.height BETWEEN $1::int - 1 AND $1::int
      UNION ALL
-     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false,
+     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, s.first_seen IS NOT NULL, true, false,
             nullif(s.mining_pool->>'name', '')
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)

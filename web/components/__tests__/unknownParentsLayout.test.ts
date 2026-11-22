@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { laneSegments, layoutTimeline, placeEpisodes, timeX } from '../unknown-parents/layout';
+import { layoutTimeline, placeEpisodes, timeX } from '../unknown-parents/layout';
 
 const ep = (parent: string, from: number, to: number, pools: string[], kind = 'bitcoin_block') =>
   ({ parent, kind, from, to, pools: pools.map(pool => ({ pool })) });
@@ -69,30 +69,5 @@ describe('layoutTimeline', () => {
   });
   it('is empty without episodes', () => {
     expect(layoutTimeline([], 0, 1, 100)).toEqual({ pools: [], marks: [] });
-  });
-});
-
-describe('laneSegments', () => {
-  it('merges a pool\'s consecutive templates on one parent, until its next parent', () => {
-    const segs = laneSegments([
-      { pool: 'A', t: 0, label: 'best' }, { pool: 'A', t: 10, label: 'best' }, { pool: 'A', t: 30, label: 'this' },
-      { pool: 'A', t: 50, label: 'this' }, { pool: 'A', t: 60, label: 'best' },
-      { pool: 'B', t: 40, label: 'this' },
-    ], 0, 100, 100, 2);
-    expect(segs).toEqual([
-      { pool: 'A', label: 'best', x: 0, w: 30, from: 0, to: 10, n: 2 },
-      { pool: 'A', label: 'this', x: 30, w: 30, from: 30, to: 50, n: 2 },
-      { pool: 'A', label: 'best', x: 60, w: 2, from: 60, to: 60, n: 1 },   // the last run: at least the minimum
-      { pool: 'B', label: 'this', x: 40, w: 2, from: 40, to: 40, n: 1 },
-    ]);
-  });
-  it('splits a run where the key (e.g. the parent block) changes', () => {
-    const segs = laneSegments([
-      { pool: 'A', t: 0, label: 'best', key: 1 }, { pool: 'A', t: 10, label: 'best', key: 1 }, { pool: 'A', t: 20, label: 'best', key: 2 },
-    ], 0, 100, 100, 2);
-    expect(segs.map(s => [s.from, s.to, s.w])).toEqual([[0, 10, 20], [20, 20, 2]]);
-  });
-  it('keeps a minimum-width run at the right edge inside the plot', () => {
-    expect(laneSegments([{ pool: 'A', t: 100, label: 'this' }], 0, 100, 100, 4)[0]).toMatchObject({ x: 96, w: 4 });
   });
 });

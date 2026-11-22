@@ -27,8 +27,11 @@ export interface SummaryResponse {
 
 // The summary entry being served per range: `settled` once its read finished, `fallback` = the previous result,
 // served while this one is still running.
-/** A summary without template providers (the page's strip), cached apart: 'all' without them is a few seconds cold. */
-export type SummaryKey = UnknownParentsRange | 'all-lite';
+/**
+ * A summary without template providers (`<range>-lite`: the Forks page, which doesn't show them), cached apart: all
+ * history with them takes about a minute cold, without them a few seconds.
+ */
+export type SummaryKey = UnknownParentsRange | `${UnknownParentsRange}-lite`;
 
 interface SummaryEntry { at: number; promise: Promise<SummaryResponse>; settled: SummaryResponse | null; fallback: SummaryResponse | null }
 // On globalThis: Next.js bundles the API route, the pages and the image routes separately, each with its own copy of
@@ -38,10 +41,10 @@ const store = globalThis as { __forksSummaries?: Map<SummaryKey, SummaryEntry> }
 const summaries = (store.__forksSummaries ??= new Map<SummaryKey, SummaryEntry>());
 
 function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse | null): SummaryEntry {
-  const range: UnknownParentsRange = key === 'all-lite' ? 'all' : key;
+  const range = key.replace(/-lite$/, '') as UnknownParentsRange;
   const entry: SummaryEntry = {
     at: now, settled: null, fallback,
-    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range, { providers: key !== 'all-lite' }), getBestTipHeight()]).then(([all, tip_height]) => {
+    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range, { providers: !key.endsWith('-lite') }), getBestTipHeight()]).then(([all, tip_height]) => {
       // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
       // (collection started mid-height): not shown, and counted in the response.
       const episodes = all.filter(e => e.facts.tip_at_first !== null);

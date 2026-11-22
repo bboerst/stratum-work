@@ -28,7 +28,9 @@ export function buildTimeZones(
   if (transitionTimesNs.length === 0) return null;
 
   const PADDING_NS = Math.min(5_000_000_000, duration * 0.10);
-  const GAP_THRESHOLD_NS = Math.max(10_000_000_000, duration * 0.15);
+  // events closer than this share one zone: 5% of the span, so a few stragglers minutes apart don't merge into one long
+  // zone that takes the width from the first seconds (where the choices are)
+  const GAP_THRESHOLD_NS = Math.max(10_000_000_000, duration * 0.05);
   const GAP_VISUAL_PCT = 2.5;
 
   const eventPoints = [globalMinNs, ...transitionTimesNs, globalMaxNs];

@@ -328,7 +328,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const [shown, setShown] = useState(LIST_PAGE);
   useEffect(() => {
     const ctl = new AbortController();
-    fetch(`/api/forks?parent=${episode.parent}&range=${range}`, { signal: ctl.signal })
+    fetch(`/api/forks?parent=${episode.parent}&range=${range}&providers=0`, { signal: ctl.signal })
       .then(r => r.json())
       .then((d: DrillResponse) => setDrill({ parent: episode.parent, data: d }))
       .catch(e => { if (e?.name !== "AbortError") setDrill({ parent: episode.parent, data: { error: String(e) } }); });
@@ -339,7 +339,7 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const present = useMemo(() => new Set(templates.map(t => t.parent)), [templates]);
 
   return (
-    <section className="mt-8 rounded-xl border border-border p-4" aria-label="Episode details">
+    <section className="mb-3 rounded-xl border border-border p-4" aria-label="Episode details">
       {!data && <p className="py-8 text-center text-xs text-foreground/60">Loading…</p>}
       {data?.error && <p className="text-sm text-red-500">{data.error}</p>}
       {data && !data.error && (
@@ -503,8 +503,8 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
   return [...sides.values()].sort((a, b) => (a.tone === "canonical" ? -1 : 0) - (b.tone === "canonical" ? -1 : 0));
 }
 
-function RaceRowView({ row, open, highlighted, onToggle, onHover, range, rowRef }: {
-  row: RaceRow<Episode>; open: boolean; highlighted: boolean; onToggle: () => void; onHover: (on: boolean) => void;
+function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range, rowRef }: {
+  row: RaceRow<Episode>; open: boolean; highlighted: boolean; target: boolean; onToggle: () => void; onHover: (on: boolean) => void;
   range: Range; rowRef: (el: HTMLElement | null) => void;
 }) {
   const [seen, setSeen] = useState(false);
@@ -516,10 +516,15 @@ function RaceRowView({ row, open, highlighted, onToggle, onHover, range, rowRef 
     io.observe(own.current);
     return () => io.disconnect();
   }, [timed, seen]);
-  const lanes = useLanes(row.heights, timed && (seen || open || highlighted), open || highlighted);
+  // hovering only outlines; the row a viewer jumped to, or opened, is read first
+  const lanes = useLanes(row.heights, timed && (seen || open || target), open || target);
   const sides = useMemo(() => sidesOf(row, lanes), [row, lanes]);
   const first = lanes?.get(row.heights[0]) ?? null;
-  const mini = useMemo(() => (first ? chartProps(first) : null), [first]);
+  const charts = useMemo(() => new Map(row.heights.map(h => {
+    const l = lanes?.get(h);
+    return [h, l ? chartProps(l) : null] as const;
+  })), [row.heights, lanes]);
+  const mini = first ? charts.get(row.heights[0]) ?? null : null;
   const primary = row.episodes[0];
   const [evidence, setEvidence] = useState(false);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -558,7 +563,9 @@ function RaceRowView({ row, open, highlighted, onToggle, onHover, range, rowRef 
           ))}
           {timed && !open && (
             <span className="mt-2 block min-h-6">
-              {mini ? <MiniForkTimeline {...mini} /> : <span className="block h-20 animate-pulse rounded-sm bg-foreground/5" />}
+              {mini ? <MiniForkTimeline {...mini} />
+                : lanes ? <span className="block text-[11px] text-foreground/50">timeline unavailable</span>
+                : <span className="block h-20 animate-pulse rounded-sm bg-foreground/5" />}
             </span>
           )}
         </span>
@@ -566,11 +573,12 @@ function RaceRowView({ row, open, highlighted, onToggle, onHover, range, rowRef 
       {open && (
         <div className="mt-3">
           {timed ? row.heights.map(h => {
-            const l = lanes?.get(h);
+            const c = charts.get(h);
             return (
               <div key={h} className="mb-4">
                 {row.heights.length > 1 && <div className="mb-1 text-xs text-foreground/60">at {fmtInt(h)}</div>}
-                {l ? <ForkTimeline {...chartProps(l)} embedded /> : lanes ? null : <p className="py-6 text-center text-xs text-foreground/60">Loading…</p>}
+                {c ? <ForkTimeline {...c} embedded />
+                  : <p className="py-6 text-center text-xs text-foreground/60">{lanes ? "Timeline unavailable." : "Loading…"}</p>}
               </div>
             );
           }) : row.heights.map(h => <HeightForkTimeline key={h} height={h} kindHint={{ [primary.parent]: primary.kind as ParentKind }} />)}
@@ -621,7 +629,7 @@ function HistoryStrip({ strip, range, showOther, active, onPick, onHover }: {
     <div className="mb-6">
       <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <span className="inline-flex items-center gap-1.5"><span className={`inline-block h-2.5 w-2.5 rounded-sm ${KIND_BG.stale}`} />Race {fmtInt(races)}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />Invalid {fmtInt(rows.length - races)}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />Invalid {fmtInt(rows.filter(r => r[3]).length)}</span>
         <span className="text-foreground/55">races our feeds built on · 1 column = 1 epoch</span>
       </div>
       <div className="flex items-end gap-px" onPointerLeave={() => { setLabel(null); onHover(null); }}>
@@ -679,11 +687,12 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
   const [lastOpened, setLastOpened] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [targetKey, setTargetKey] = useState<string | null>(null);
   const [jump, setJump] = useState<{ key: string; height: number; open: boolean } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const rowEls = useRef(new Map<string, HTMLElement>());
 
-  const load = useCallback((r: Range) => fetch(`/api/forks?range=${r}`)
+  const load = useCallback((r: Range) => fetch(`/api/forks?range=${r}&providers=0`)
     .then(res => res.json())
     .then((d: SummaryResponse) => setLoaded(m => ({ ...m, [r]: d })))
     .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
@@ -744,6 +753,7 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
     if (!matches(row, kind) && row.kind !== "other_chain") setKind("all");
     if (jump.open) { setOpenKeys(s => new Set(s).add(row.key)); setLastOpened(row.key); }
     setHoverKey(row.key);
+    setTargetKey(row.key);
     setNote(null);
     requestAnimationFrame(() => rowEls.current.get(row.key)?.scrollIntoView({ block: "start" }));
     setJump(null);
@@ -799,9 +809,6 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   else if (!summary.enabled) body = <p className="text-sm text-foreground/60">Historical data is disabled on this deployment.</p>;
   else body = (
     <>
-      {strip?.rows && <HistoryStrip strip={strip} range={range} showOther={showOther} active={hoverKey}
-        onPick={(key, height) => setJump({ key, height, open: false })} onHover={setHoverKey} />}
-      {note && <p className="-mt-4 mb-4 text-xs text-foreground/60">{note}</p>}
       <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by kind">
         {chip("all", kind === "all", () => setKind("all"), rows.filter(r => r.kind !== "other_chain").length + (showOther ? counts.other_chain ?? 0 : 0))}
         {CHIPS.filter(k => k !== "other_chain" && counts[k]).map(k => chip(k, kind === k, () => setKind(k), counts[k]!))}
@@ -816,7 +823,7 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />invalid work</span>
       </div>
       {shown.map(r => (
-        <RaceRowView key={r.key} row={r} range={range} open={openKeys.has(r.key)} highlighted={hoverKey === r.key}
+        <RaceRowView key={r.key} row={r} range={range} open={openKeys.has(r.key)} highlighted={hoverKey === r.key} target={targetKey === r.key}
           onToggle={() => toggle(r.key)} onHover={on => setHoverKey(on ? r.key : null)}
           rowRef={el => { if (el) rowEls.current.set(r.key, el); else rowEls.current.delete(r.key); }} />
       ))}
@@ -836,6 +843,10 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
         </h1>
         <p className="mt-1 text-sm text-foreground/60">Templates built on a block other than our best one · {RANGE_TEXT[range]}</p>
       </div>
+      {/* all history, whatever range the list below is loading */}
+      {strip?.rows && <HistoryStrip strip={strip} range={range} showOther={showOther} active={hoverKey}
+        onPick={(key, height) => setJump({ key, height, open: false })} onHover={setHoverKey} />}
+      {note && <p className="-mt-4 mb-4 text-xs text-foreground/60">{note}</p>}
       {body}
     </div>
   );

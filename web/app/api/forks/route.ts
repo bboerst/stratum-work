@@ -45,6 +45,8 @@ export const dynamic = "force-dynamic";
  *       { range, blocks (N; null for all), tip_height (our best-chain tip; null with no blocks), from_height,
  *       generated_at (ms), before_first_block, episodes: Episode[] } (oldest first); from_height is tip_height -
  *       blocks, or for all the lowest tip_at_first of the episodes (tip_height when there is none)
+ *   GET /api/forks?range=…&providers=0
+ *       the same without template providers (providers null, provider_groups empty): what the page reads
  *   GET /api/forks?view=strip
  *       all history as the page's strip (stripView, below)
  *   GET /api/forks?parent=<64 hex, display order>[&range=...]
@@ -84,25 +86,27 @@ export async function GET(request: Request) {
     if (params.get("view") === "strip") {
       return NextResponse.json(stripView(await getSummary("all-lite")), { headers: { "Cache-Control": "public, max-age=60" } });
     }
+    // providers=0: without the template providers (the page doesn't show them; they cost most of a cold read)
+    const key = params.get("providers") === "0" ? (`${range}-lite` as const) : range;
     if (parent === null) {
-      return NextResponse.json(await getSummary(range), { headers: { "Cache-Control": "public, max-age=60" } });
+      return NextResponse.json(await getSummary(key), { headers: { "Cache-Control": "public, max-age=60" } });
     }
     const p = parent.toLowerCase();
     if (!PARENT_RE.test(p)) return NextResponse.json({ error: "parent must be 64 hex characters" }, { status: 400 });
-    const episode = (await getSummary(range)).episodes?.find(e => e.parent === p);
+    const episode = (await getSummary(key)).episodes?.find(e => e.parent === p);
     if (!episode) return NextResponse.json({ error: "no such episode in this range" }, { status: 404 });
 
     const now = Date.now();
-    const key = `${range}:${p}`;
-    let entry = drills.get(key);
+    const cacheKey = `${key}:${p}`;
+    let entry = drills.get(cacheKey);
     if (!entry || now - entry.at > DRILL_MS) {
       const promise = getDrill(episode, blacklistedPoolNames())
         .then((d): DrillResponse => ({ enabled: true, supported: true, episode, ...d }));
       entry = { at: now, promise };
-      drills.delete(key);
-      drills.set(key, entry);
+      drills.delete(cacheKey);
+      drills.set(cacheKey, entry);
       while (drills.size > DRILL_CACHE_ENTRIES) drills.delete(drills.keys().next().value as string);
-      promise.catch(() => { if (drills.get(key)?.promise === promise) drills.delete(key); });
+      promise.catch(() => { if (drills.get(cacheKey)?.promise === promise) drills.delete(cacheKey); });
     }
     return NextResponse.json(await entry.promise, { headers: { "Cache-Control": "public, max-age=60" } });
   } catch (error: unknown) {

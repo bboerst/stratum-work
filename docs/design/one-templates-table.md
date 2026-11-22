@@ -154,7 +154,7 @@ The variants:
 3. **Move the rows:** per source and 7-day range, one transaction deletes them from `templates_other` and inserts them into `templates` (~1.13M rows), writing each row's `chain` and `reason` to `template_routing_labels` (migration `20261118000007`); then `compress_chunk()` on the chunks it touched. TimescaleDB recompresses only the touched segments (one source in one chunk each).
    - **Measured:** 82,087 rows into 8 compressed chunks took 57 MB of WAL for the insert and 129 MB for the recompression (2.6 s + 2.4 s), and left no partially compressed chunks.
    - **Production:** the insert scales with rows, about 0.8 GB for 1.16M. The recompression scales with the compressed size of the touched (source, chunk) segments; measure it before the move with `SELECT count(DISTINCT (source_id, time_bucket('7 days', received_at))) FROM templates_other`.
-   - Run it one chunk's time range at a time, with a `COMMIT` and a pause between, so WAL archiving keeps up and `PostgresWALArchiveBacklog` doesn't fire.
+   - Run it one chunk's time range at a time, with a `COMMIT` and a pause between, so WAL archiving keeps up instead of building a backlog.
 4. **Drop** `templates_other`, its policy, views and grants, and the `chain` type, in the same migration after a check that the rows moved equal the rows in `templates_other`. Then delete the code listed in section 3.
 
 **Rollback:**

@@ -8,7 +8,7 @@
 #   release published   build + push all components as  :<release tag>, :latest and :sha-<7>
 #   workflow_dispatch   build + push the chosen components at the selected ref as :sha-<7>
 #
-# Deployments pin sha-<7> tags. Promotion (dev -> prod) bumps the same tag in the deploy repo; images are never
+# Deployments pin sha-<7> tags and promote the same image from dev to prod; images are never
 # rebuilt for prod. arm64 builds run on native arm runners (no QEMU); a final job joins the per-arch digests into
 # one multi-arch tag.
 name: images

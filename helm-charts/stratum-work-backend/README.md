@@ -75,16 +75,16 @@ The backend service can be configured with the following environment variables:
 Example (CloudNativePG, verified TLS):
 ```yaml
 env:
-  PG_HOST: stratum-pg-rw
+  PG_HOST: my-pg-rw
   PG_USER: backend
   PG_SSLMODE: verify-full
   PG_SSLROOTCERT: /etc/postgres-ca/ca.crt
 envValueFrom:
   PG_PASSWORD:
-    secretKeyRef: { name: stratum-pg-backend, key: password }
+    secretKeyRef: { name: my-pg-backend, key: password }
 extraVolumes:
   - name: postgres-ca
-    secret: { secretName: stratum-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
+    secret: { secretName: my-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
 extraVolumeMounts:
   - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
 ```

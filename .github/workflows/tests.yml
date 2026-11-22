@@ -1,5 +1,5 @@
 # Unit tests and static checks that no other workflow runs:
-#   web           vitest, tsc --noEmit, eslint (Postgres-backed web tests skip without PG_TEST_*)
+#   web           vitest, tsc --noEmit, eslint (Postgres-backed web tests skip without PG_TEST_*; web-db.yml runs them)
 #   collector-go  gofmt, go vet, go test (the golden test against the frozen Python collector fixture included; the
 #                 Postgres sink test runs in db.yml)
 #   backend       backend unit tests (pytest; Postgres-backed tests skip without PG_TEST_*, db.yml runs them)

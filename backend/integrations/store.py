@@ -182,7 +182,10 @@ class PostgresStore:
     def blocks_for_reidentify(self) -> Iterator[Dict[str, Any]]:
         rows = self._run(lambda c: c.execute(
             "SELECT encode(block_hash, 'hex'), height, encode(coinbase_script_sig, 'hex'), mining_pool,"
-            " analysis -> 'pool_identification' FROM blocks ORDER BY height DESC").fetchall())
+            " analysis -> 'pool_identification' FROM blocks"
+            # Only blocks still Unknown can change (identified blocks keep their pool), and reading every block's JSON
+            # in one fetch was enough to OOM the backend at startup.
+            " WHERE coalesce(mining_pool ->> 'id', 'unknown') = 'unknown' ORDER BY height DESC").fetchall())
         return iter({"block_hash": h, "height": height, "coinbase_script_sig": script, "mining_pool": mp,
                      "pool_identification": pi, "analysis_is_object": True} for h, height, script, mp, pi in rows)
 

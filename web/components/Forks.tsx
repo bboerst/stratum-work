@@ -393,18 +393,24 @@ interface Lanes {
 const laneReads = new Map<number, Promise<Lanes | null>>();
 let reading = 0;
 const queued: (() => void)[] = [];
+const waiting = new Map<number, () => void>();   // queued reads by height, so an urgent one can start at once
 function readLanes(height: number, urgent = false): Promise<Lanes | null> {
   const known = laneReads.get(height);
-  if (known) return known;
+  if (known) {
+    const start = urgent ? waiting.get(height) : undefined;
+    if (start) { queued.splice(queued.indexOf(start), 1); waiting.delete(height); start(); }
+    return known;
+  }
   const p = new Promise<Lanes | null>(resolve => {
     const run = () => {
+      waiting.delete(height);
       reading++;
       fetch(`/api/forks/timeline?height=${height}`)
         .then(r => (r.ok ? r.json() : null)).catch(() => null)
         .then((v: Lanes | null) => { reading--; queued.pop()?.(); resolve(v); });
     };
     // the row a viewer jumped to or opened doesn't queue
-    if (reading < 2 || urgent) run(); else queued.push(run);
+    if (reading < 2 || urgent) run(); else { queued.push(run); waiting.set(height, run); }
   });
   laneReads.set(height, p);
   p.then(v => { if (!v) laneReads.delete(height); });
@@ -588,7 +594,7 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
           </button>
           {evidence && row.episodes.map(e => <DrillIn key={e.parent} episode={e} range={range} />)}
           <button ref={closeRef} type="button" onClick={() => { onToggle(); requestAnimationFrame(() => { own.current?.scrollIntoView({ block: "nearest" }); head.current?.focus({ preventScroll: true }); }); }}
-            className="sticky bottom-0 z-10 mt-2 flex h-8 w-full items-center justify-center gap-2 rounded bg-secondary text-xs hover:bg-foreground/15">
+            className="sticky bottom-0 z-10 mt-2 flex h-8 w-full items-center justify-center gap-2 rounded border border-border bg-muted text-xs shadow-[0_-6px_12px_-6px_rgba(0,0,0,0.35)] hover:bg-card">
             <span aria-hidden className="inline-block h-1.5 w-1.5 translate-y-0.5 rotate-[225deg] border-b-2 border-r-2 border-current" />
             Collapse {fmtInt(row.heights[0])}
           </button>
@@ -832,7 +838,7 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6" style={{ ["--fork-race" as string]: "#1550a4", ["--fork-bad" as string]: "#e11d48" }}>
+    <div className="mx-auto max-w-7xl px-4 py-6 [--fork-race:#1550a4] [--fork-bad:#e11d48] dark:[--fork-race:#3b82f6] dark:[--fork-bad:#f43f5e]">
       <div className="mb-5">
         <h1 className="flex items-center gap-2 text-xl font-semibold">
           Forks

@@ -95,7 +95,7 @@ export function prevHashStatusOf(
 }
 
 const STATUS_LABEL: Record<PrevHashStatus, string> = {
-  canonical: "canonical",
+  canonical: "active chain",
   stale: "stale",
   unknown: "unknown",
 };

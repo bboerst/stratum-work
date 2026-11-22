@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-// Relative imports so the route can be unit-tested (lib/__tests__/forksTimelineRoute.test.ts)
+// Relative imports, like the other routes, so it can be unit-tested
 import { enableHistoricalData } from "../../../../lib/db/blocks";
 import { getForkLanes, type ForkLanes } from "../../../../lib/forkLanes";
 import { getSummary } from "../../../../lib/forksSummary";

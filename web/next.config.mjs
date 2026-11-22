@@ -2,7 +2,7 @@
 
 const nextConfig = {
   // Hostnames (not URLs) allowed to use dev-only resources such as hot reload when the dev
-  // server is opened from another machine, e.g. "my-devbox,my-devbox.tailnet.ts.net".
+  // server is opened from another machine, e.g. "my-devbox,my-devbox.example.internal".
   // Next.js only applies this in `next dev`.
   allowedDevOrigins: (process.env.ALLOWED_DEV_ORIGINS ?? "")
     .split(",")

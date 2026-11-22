@@ -6,7 +6,7 @@ adds. Used by .github/workflows/images.yml (job `scan`, pull requests only).
 
 A finding is (vulnerability id, package, installed version); "fixable" = Trivy has a fixed version. Only findings in
 the PR's image and not in :main count as new, so a vulnerable base image that :main already has doesn't block every
-PR (the deployment repo's weekly scan tracks those). Without MAIN.json (no :main image yet) every finding is new.
+PR (the deployment's own scanning tracks those). Without MAIN.json (no :main image yet) every finding is new.
 Exit 1 if a new fixable finding has a severity in --fail-on. The summary (Markdown) lists new findings only, and
 counts for the rest.
 """

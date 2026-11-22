@@ -179,7 +179,7 @@ Compose changes that apply only to your machine (port bindings, extra services) 
 services:
   web:
     ports: !override
-      - "100.64.0.10:3000:3000"   # e.g. only on a VPN address
+      - "192.0.2.10:3000:3000"    # e.g. only on a VPN address
   postgres:
     ports: !override
       - "127.0.0.1:5432:5432"     # keep infrastructure on loopback

@@ -27,17 +27,21 @@ export interface SummaryResponse {
 
 // The summary entry being served per range: `settled` once its read finished, `fallback` = the previous result,
 // served while this one is still running.
+/** A summary without template providers (the page's strip), cached apart: 'all' without them is a few seconds cold. */
+export type SummaryKey = UnknownParentsRange | 'all-lite';
+
 interface SummaryEntry { at: number; promise: Promise<SummaryResponse>; settled: SummaryResponse | null; fallback: SummaryResponse | null }
 // On globalThis: Next.js bundles the API route, the pages and the image routes separately, each with its own copy of
 // this module, and one cache per process is the point (a short link's first view would otherwise read every range
 // again). Tests delete it to start cold.
-const store = globalThis as { __forksSummaries?: Map<UnknownParentsRange, SummaryEntry> };
-const summaries = (store.__forksSummaries ??= new Map<UnknownParentsRange, SummaryEntry>());
+const store = globalThis as { __forksSummaries?: Map<SummaryKey, SummaryEntry> };
+const summaries = (store.__forksSummaries ??= new Map<SummaryKey, SummaryEntry>());
 
-function refreshSummary(range: UnknownParentsRange, now: number, fallback: SummaryResponse | null): SummaryEntry {
+function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse | null): SummaryEntry {
+  const range: UnknownParentsRange = key === 'all-lite' ? 'all' : key;
   const entry: SummaryEntry = {
     at: now, settled: null, fallback,
-    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range), getBestTipHeight()]).then(([all, tip_height]) => {
+    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range, { providers: key !== 'all-lite' }), getBestTipHeight()]).then(([all, tip_height]) => {
       // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
       // (collection started mid-height): not shown, and counted in the response.
       const episodes = all.filter(e => e.facts.tip_at_first !== null);
@@ -50,16 +54,16 @@ function refreshSummary(range: UnknownParentsRange, now: number, fallback: Summa
   };
   entry.promise.then(r => { entry.settled = r; }, () => {
     // Don't keep a failure: serve the previous result (if any) as stale, so the next request retries.
-    if (summaries.get(range) !== entry) return;
-    if (fallback) summaries.set(range, { at: 0, promise: Promise.resolve(fallback), settled: fallback, fallback: null });
-    else summaries.delete(range);
+    if (summaries.get(key) !== entry) return;
+    if (fallback) summaries.set(key, { at: 0, promise: Promise.resolve(fallback), settled: fallback, fallback: null });
+    else summaries.delete(key);
   });
-  summaries.set(range, entry);
+  summaries.set(key, entry);
   return entry;
 }
 
 /** The range's summary (callers check enableHistoricalData first: this reads the database). */
-export async function getSummary(range: UnknownParentsRange): Promise<SummaryResponse> {
+export async function getSummary(range: SummaryKey): Promise<SummaryResponse> {
   const now = Date.now();
   const current = summaries.get(range);
   // Stale (or none yet): start one refresh, and serve the last good result meanwhile.

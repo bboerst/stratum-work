@@ -355,6 +355,7 @@ export interface EpisodeFactsSql {
   stale_height: number | null;          // ... its height, how its header reached us, and its miner when identified
   stale_header_source: string | null;
   stale_miner: string | null;
+  stale_prev?: string | null;           // ... and its parent (display order)
 }
 
 /**
@@ -388,7 +389,7 @@ export async function getEpisodeFacts(eps: EpisodeFactsQuery[]): Promise<Episode
             et.tip, et.tip_last,
             ${bits('e.h - 1')} AS bits_prev, ${bits('e.h')} AS bits_at,
             s.block_hash IS NOT NULL AS in_stale, s.height AS stale_height, s.header_source AS stale_header_source,
-            s.mining_pool->>'name' AS stale_miner
+            s.mining_pool->>'name' AS stale_miner, encode(s.prev_hash, 'hex') AS stale_prev
        FROM e LEFT JOIN et ON et.i = e.i
        LEFT JOIN stale_blocks s ON s.block_hash = decode(e.parent, 'hex') AND s.reorged_in_at IS NULL
       ORDER BY e.i`,

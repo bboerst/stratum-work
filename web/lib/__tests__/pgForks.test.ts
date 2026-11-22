@@ -415,7 +415,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
       const up = await import('../unknownParents');
       const eps = await up.getEpisodes([hidden], 'all');
       const s1 = eps.find(e => e.parent === S1)!;
-      expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: null });
+      expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: null, prev: B2 });
       expect(JSON.stringify(eps)).not.toContain(hidden);
       expect(JSON.stringify(await up.getDrill(s1, [hidden]))).not.toContain(hidden);
     } finally {

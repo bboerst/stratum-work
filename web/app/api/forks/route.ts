@@ -6,7 +6,24 @@ import {
 } from "../../../lib/db/unknown-parents";
 import { getDrill, type Drill, type Episode } from "../../../lib/unknownParents";
 import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
-import { getSummary } from "../../../lib/forksSummary";
+import { getSummary, type SummaryResponse } from "../../../lib/forksSummary";
+import { raceRows } from "../../../lib/forkRaces";
+
+/**
+ * GET /api/forks?view=strip: the page's history strip, all history in a few KB: per row (lib/forkRaces.ts: a race
+ * per fork point, every other episode alone; other chains apart) [position, height, kind, invalid (0/1), key], and
+ * the epochs with another chain's work.
+ */
+function stripView(s: SummaryResponse) {
+  const rows = raceRows((s.episodes ?? []).filter(e => e.kind !== "other_chain"));
+  const other = [...new Set((s.episodes ?? []).filter(e => e.kind === "other_chain" && e.facts.tip_at_first !== null)
+    .map(e => Math.floor((e.facts.tip_at_first! + 1) / 2016)))].sort((a, b) => a - b);
+  return {
+    enabled: s.enabled, supported: s.supported, tip_height: s.tip_height ?? null, from_height: s.from_height ?? null,
+    generated_at: s.generated_at, other_chain_epochs: other,
+    rows: rows.map(r => [r.position, r.heights[0], r.kind, r.invalid ? 1 : 0, r.key] as const),
+  };
+}
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +45,8 @@ export const dynamic = "force-dynamic";
  *       { range, blocks (N; null for all), tip_height (our best-chain tip; null with no blocks), from_height,
  *       generated_at (ms), before_first_block, episodes: Episode[] } (oldest first); from_height is tip_height -
  *       blocks, or for all the lowest tip_at_first of the episodes (tip_height when there is none)
+ *   GET /api/forks?view=strip
+ *       all history as the page's strip (stripView, below)
  *   GET /api/forks?parent=<64 hex, display order>[&range=...]
  *       one episode's drill-in: { episode, from_ms, to_ms, templates (decoded, each labelled by its parent),
  *       truncated, blocks (every block we know at height - 1 and height, with arrival) }; 404 if the parent isn't an
@@ -62,6 +81,9 @@ export async function GET(request: Request) {
   }
   const parent = params.get("parent");
   try {
+    if (params.get("view") === "strip") {
+      return NextResponse.json(stripView(await getSummary("all-lite")), { headers: { "Cache-Control": "public, max-age=60" } });
+    }
     if (parent === null) {
       return NextResponse.json(await getSummary(range), { headers: { "Cache-Control": "public, max-age=60" } });
     }

@@ -169,7 +169,7 @@ describe('GET /api/forks', () => {
     const res = await get(route);
     const text = await res.clone().text();
     expect(text.toLowerCase()).not.toContain('hidden');
-    expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: null });
+    expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: null, prev: null });
   });
 
   it('badges the episodes at a finding\'s height (per pool, excluded pools left out)', async () => {

@@ -105,6 +105,9 @@ function cases(): Record<string, Case[]> {
       { qs: `height=${H - 1}`, allow: [
         HISTORY,
         { path: '$.results[*].previous_block.mining_pool.name', why: BLOCK_MINER.why },
+        // the fork chart's arrival markers: getDrillBlocks keeps a best-chain block's miner (only a stale block's
+        // excluded miner is dropped), as the blocks strip does
+        { path: '$.results[*].blocks[*].miner', why: BLOCK_MINER.why },
       ] },
       { qs: 'interesting=true', allow: [
         { path: '$.items[*].analysis.flags[*].details.offenders[*].pool_name', why: BLOCK_FINDING.why },
@@ -122,6 +125,8 @@ function cases(): Record<string, Case[]> {
       { qs: `range=all&parent=${U}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT }] },
       { qs: `range=all&parent=${S}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT }] },
     ],
+    // the Forks rows' timeline: excluded pools are left out of it, as from the rest of /api/forks
+    'forks/timeline': [{ qs: `height=${H}` }],
     'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
     'pools': [{}],
     'realtime-prefill': [{}],
@@ -185,7 +190,7 @@ async function callStream(): Promise<{ status: number; text: string; body: unkno
 async function call(route: string, c: Case, blacklist: string): Promise<{ status: number; text: string; body: unknown }> {
   vi.resetModules();
   const g = globalThis as Record<string, unknown>;
-  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks']) delete g[k];
+  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks', '__forkLanes']) delete g[k];
   Object.assign(process.env, {
     PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
     PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',

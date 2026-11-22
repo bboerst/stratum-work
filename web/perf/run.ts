@@ -180,8 +180,11 @@ async function measure(browser: Browser, o: Options, t: Target, fixture: Fixture
         return json(url.searchParams.get("interesting") ? { items: [] } : { results: [] });
       case "/api/forks": {
         const parent = url.searchParams.get("parent");
+        if (url.searchParams.get("view") === "strip") return json(fixture.forksStrip(nowS));
         return json(parent ? fixture.unknownParentDrill(nowS, parent) : fixture.unknownParents(nowS));
       }
+      case "/api/forks/timeline":
+        return json(fixture.forkLanes(nowS, Number(url.searchParams.get("height"))));
       case "/api/stream":
         return route.abort();
       default:

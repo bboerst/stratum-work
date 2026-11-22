@@ -202,6 +202,45 @@ export class Fixture {
     };
   }
 
+  /**
+   * /api/forks?view=strip: 90 races and invalid rows over 65 epochs (all history), as the page's strip reads them.
+   */
+  forksStrip(nowS: number) {
+    const r = rng(this.opts.seed + 11);
+    const tip = this.tipAt(nowS), from = tip - 65 * 2016;
+    const rows = Array.from({ length: 90 }, (_, i) => {
+      const pos = from + Math.floor(((i + r()) / 90) * (tip - from));
+      const kind = i % 23 === 7 ? "invalid_parent" : i % 19 === 3 ? "bitcoin_block" : "stale";
+      return [pos, pos, kind, i % 9 === 4 ? 1 : 0, "00".repeat(28) + hexOf(i, 4)];
+    });
+    for (const e of this.unknownParents(nowS).episodes) {
+      if (e.kind !== "other_chain") rows.push([e.facts.tip_at_first + 1, e.height, e.kind, e.invalid_coinbase ? 1 : 0, e.parent]);
+    }
+    return { enabled: true, supported: true, tip_height: tip, from_height: from, generated_at: nowS * 1000,
+      other_chain_epochs: [Math.floor((tip - 3000) / 2016)], rows };
+  }
+
+  /**
+   * /api/forks/timeline?height=…: one race's runs, as the server sends them: about 30 pools, most on the block that
+   * stayed, a few on the stale one, some switching, one with a run of invalid work.
+   */
+  forkLanes(nowS: number, height: number) {
+    const r = rng(this.opts.seed + height);
+    const active = this.prevHash(height - 1), stale = "00".repeat(9) + randHex(r, 19) + "0000";
+    const lanes = Array.from({ length: Math.min(30, this.opts.pools) }, (_, k) => {
+      const start = Math.floor(r() * 3000), onStale = k % 5 === 0;
+      const runs: [number, number, 0 | 1][] = [[start, onStale ? 1 : 0, 0]];
+      if (k % 7 === 3) runs.push([start + 1000, onStale ? 1 : 0, 1], [start + 20_000, onStale ? 1 : 0, 0]);
+      if (onStale && k % 10 === 0) runs.push([start + 40_000 + Math.floor(r() * 20_000), 0, 0]);
+      return { pool: this.pools[k].name, runs, end: 70_000 + Math.floor(r() * 20_000) };
+    });
+    return {
+      height, active, from_ms: this.blockTime(height - 1) * 1000, last_ms: 80_000,
+      parents: [{ hash: active, status: "canonical", kind: null }, { hash: stale, status: "stale", kind: null }],
+      lanes, blocks: [{ hash: active, height: height - 1, seen_ms: this.blockTime(height - 1) * 1000, best: true, miner: this.pools[1].name }],
+    };
+  }
+
   /** /api/forks?parent=…: the episode's pools, a template every 5 s each over its minutes ± 5 (thousands). */
   unknownParentDrill(nowS: number, parent: string) {
     const summary = this.unknownParents(nowS);

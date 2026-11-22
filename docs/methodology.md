@@ -276,7 +276,7 @@ two hours keeps all its templates. History before that, or after a longer outage
 (`python -m unknown_parents --backfill`, in 7-day chunks). The ranges are counted in Bitcoin time, in blocks below
 our tip (the highest best-chain block), not in days: an episode is in a range when its last template arrived at or
 after the best-chain block N blocks below the tip did (`coalesce(seen_at, block_time)`); it is shown with all its
-templates even if it began before the range. The timeline's axis is block heights too. Another chain's templates
+templates even if it began before the range. The strip above the list is in block heights too. Another chain's templates
 carry that chain's heights, so an episode is placed by our tip when its first and last templates arrived (the
 heights being mined then), read per episode as `tip_at_first` and `tip_at_last`; dates are only shown on hover.
 Until the table has rows, the default view reads templates directly, over the last 90 days, as it did before.
@@ -309,14 +309,28 @@ The rules, in order:
 An episode that began before our first stored block (collection started part-way through that height) has no tip and
 no stored block to compare with. It is left out of the page and counted in the API response (`before_first_block`).
 
-Each episode on the page shows these facts next to its kind. Its details show the fork chart of its height, the same
+**Rows and races.** The page lists **races** rather than episodes: a race is counted once per fork point, not once per
+block, so a branch two blocks deep is one row. Episodes are joined into one race only on a recorded fact: a recorded
+stale block whose parent is another episode's recorded stale block, or two recorded stale blocks at one height with
+the same parent. Nothing is joined on heights or times alone, so the next block of a branch we never recorded (its
+parent unknown to us) stays a row of its own. Every other episode is a row of its own. The page counts only races our
+feeds built on: a stale block that no feed of ours built on isn't in it (see [Blocks](#blocks) for the public list).
+Above the list, every row of all history is a square in the column of the difficulty epoch it began in; the list
+below follows the chosen range.
+
+**A row's timeline** (`/api/forks/timeline`, `web/lib/forkLanes.ts`) is the fork chart of its height, the same chart
 as the height page's: every feed's templates at that height, coloured by the parent each built on, with a line where
-each block at height − 1 and at the height (best chain or stale) reached our node. Only seen times are drawn: blocks
-from before the node's arrival times were recorded get no line (the header time is the miner's claim, not an
-arrival), and a stale block known only from the stale-block records is drawn at the time the backend first recorded
-it, which can trail its arrival by a poll interval. Below the chart, the list of the episode's pools' templates
-around its minutes, each labelled by the parent it built on (our best chain, a stale block, this parent, or another
-one).
+each block at height − 1 and at the height reached our node. Only seen times are drawn: blocks from before the
+node's arrival times were recorded get no line (the header time is the miner's claim, not an arrival), nor does a
+stale block known only from the stale-block records (the time it was first recorded is not when it reached our node).
+The row reads it thin: one stream per pool (the de-duplicated templates), as runs, each starting where a pool's
+parent changes or its work turns invalid or valid. The read covers the height's time window widened to the row's
+episodes, since a feed can stay on a losing parent for hours. Each pool's last run ends when that pool first worked
+on the next height, or at its own last template when we saw none there: silence isn't drawn as work. These ends,
+like the switches, are what the chart's compressed time axis keeps in view. Each block of the race is listed with the
+pools whose first work at that height was on it, and an arrow on a pool that later moved. Opening a row shows the
+chart at full size; a row's evidence (the checks its kind rests on and the templates around its minutes, each
+labelled by the parent it built on) is behind a toggle there.
 
 **Invalid coinbase**: the backend's analysis flags a block whose height had templates paying more than the subsidy
 with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.analysis`, one entry per template).
@@ -324,10 +338,12 @@ Each episode at that height that was at our tip (within one block of it, and not
 badge: the pools and what they paid against the subsidy. A finding at a height where nothing forked is a row of its
 own (kind `invalid_coinbase`), so no finding is lost. Pools hidden from the site are left out of the badge too.
 The page's "Invalid" filter takes all invalid work, work that could never make a valid block: invalid parents and
-invalid coinbases. In an episode's details, each pool's run of invalid templates is marked on its lane where the
-coinbase parses.
+invalid coinbases. On a row's timeline a template is marked invalid only where the finding names its pool at that
+height, by the finding's own rule: empty, and its coinbase pays more than the subsidy, reassembled with the stored
+extranonce2 length or the one other length that parses. So the marks agree with the finding, on whichever block the
+work was (it can be the block that stayed).
 
-**Providers per episode** (**modelled**). Several pools on one parent can be one template provider sending the same
+**Providers per episode** (**modelled**; in the API's `providers`, no longer on the page). Several pools on one parent can be one template provider sending the same
 work under different names, or several independent ones reacting to the same thing at once. Each episode counts the
 [template providers](#template-providers) among its pools, with the groups of the difficulty epoch our tip was in
 when its first template arrived (not the templates' height, which for another chain is that chain's): the 80% rule

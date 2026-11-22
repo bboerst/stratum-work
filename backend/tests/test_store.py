@@ -152,7 +152,9 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         # and its replacement. A top height above anything else checks the tip.
         h, top = self.h + 30, 8_000_000 + int(time.time()) % 50_000
         for height, hb in ((h, "d1"), (h + 1, "d2"), (h + 2, "d3"), (h + 2, "d4"), (top, "d5")):
-            self.store.save_block(self._block(height, hb), is_new_block=False)
+            # d1 Unknown, so the re-identify read (Unknown blocks only) must still return it although it is stale
+            pool = {"id": "unknown", "name": "Unknown"} if hb == "d1" else None
+            self.store.save_block(self._block(height, hb, pool=pool), is_new_block=False)
         try:
             with self.psycopg.connect(self.admin) as c:
                 self._stale(c, "d1", h)
@@ -189,10 +191,13 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
     def test_reidentify_reads_and_updates_only_pool_fields(self):
         h = self.h + 20
         hx = "c3" * 32
-        block = self._block(h, "c3")
+        block = self._block(h, "c3", pool={"id": "unknown", "name": "Unknown"})
         block["analysis"] = {"pool_identification": {"method": "address", "addresses_considered": ["bc1qx"]},
                              "flags": [{"type": "kept"}]}
         self.store.save_block(block, is_new_block=True)
+        self.store.save_block(self._block(h, "c4"), is_new_block=True)    # identified: never read for re-identification
+        read = {b["block_hash"] for b in self.store.blocks_for_reidentify()}
+        self.assertNotIn("c4" * 32, read)
         mine = [b for b in self.store.blocks_for_reidentify() if b["block_hash"] == hx]
         self.assertEqual(len(mine), 1)
         self.assertEqual(mine[0]["coinbase_script_sig"], "0393e20e")

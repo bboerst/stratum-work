@@ -44,7 +44,7 @@ Inventory of every MongoDB read and write in `collector/`, `backend/` and `web/`
 | R9 | `backend/main.py` startup sync | `blocks`: highest, lowest, heights in a range, by height | Backfill missing blocks | Startup |
 | R10 | `backend/main.py` `start_full_reindex_background` | all `blocks` by height, descending | Manual full reindex (off by default) | Rare |
 | R11 | `backend/analytics/pool_identification.py` | `pools` all | Pool identification cache | Startup / daily |
-| R12 | backups (deployment) | `mining_notify` by `height >=` *h*; full dumps | Weekly full, daily incremental | Daily |
+| R12 | backups (deployment) | `mining_notify` by `height >=` *h*; full and incremental dumps | Backups | Periodic |
 
 **Summary:** every `mining_notify` read is "all templates at height *h*", sometimes BTC-only, sometimes grouped by pool. Nothing reads by time range, pool range, or content today.
 
@@ -162,7 +162,7 @@ SELECT pool, class, copies, sites, site_first_seen FROM templates_dedup WHERE he
 ```
 
 ### Database users and credentials (from day one)
-The current MongoDB setup has every component sharing one admin account, with the password in plaintext in deployment manifests. Not again:
+Every component gets its own least-privilege login; no shared admin account, and no passwords in manifests:
 - **Least-privilege roles:**
   - `collector` (INSERT on `templates`/`templates_other`/`templates_rejected`/`ingest_events`, upsert on `sources`)
   - `backend` (read `templates`, `templates_rejected` and `ingest_events`, write `blocks`/`pools`)
@@ -217,7 +217,7 @@ Same 1.17 days, compressed with the production settings (segment by source, orde
 | Uncompressed hot data (last 2 days, before the columnstore policy) | ≈ 0.2 GB |
 | `blocks` (incl. `analysis` JSON) | ≈ 0.1 GB |
 
-**Sizing for the new cluster (#1):** a **100 GB volume per Postgres instance** (×2: primary + replica) covers today's data, ~3 years of growth, WAL and compression headroom. Volumes can be grown online later.
+**Sizing:** about **100 GB per Postgres instance** covers today's data, ~3 years of growth, WAL and compression headroom.
 
 ### Query latency
 Median of 7 runs, warm cache, candidate A compressed, vs. the same data in MongoDB with production's indexes (`mining_notify`: `_id`, `height`; `blocks`: `_id` only).
@@ -294,4 +294,4 @@ Per document → row (all lossless):
 
 ### Collector site
 New collectors run from a different place on the network, so **absolute latency and first-seen times change at T0**. Comparisons between pools at the same height stay valid, because every pool is measured from the same site.
-- Add **`sources.site`** (e.g. `old-cluster` for backfilled history, plus the new cluster's name), so analyses and charts can split or annotate at T0.
+- Add **`sources.site`** (e.g. `old-cluster` for backfilled history, plus each collection site's own name), so analyses and charts can split or annotate at T0.

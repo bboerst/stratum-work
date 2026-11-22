@@ -93,9 +93,8 @@ envValueFrom:
 The chart fails if a key exists in both maps. There is no default database
 credential; releases must supply an explicit value or Secret reference.
 
-The deployment repository renders each release with its own values and checks
-these settings against its manifests. Releases built from a Git source with Flux
-Revision reconciliation pick up chart changes without a chart version bump.
+Releases installed from a Git source (rather than a packaged chart version) pick
+up chart changes without a chart version bump.
 
 ## Autoscaling
 

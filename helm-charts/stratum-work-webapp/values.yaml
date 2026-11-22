@@ -159,7 +159,7 @@ envValueFrom: {}
 # Extra volumes and mounts, e.g. the Postgres CA certificate for PG_SSLMODE=verify-full (PG_SSLROOTCERT):
 #   extraVolumes:
 #     - name: postgres-ca
-#       secret: { secretName: stratum-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
+#       secret: { secretName: my-pg-ca, items: [{ key: ca.crt, path: ca.crt }] }
 #   extraVolumeMounts:
 #     - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
 extraVolumes: []

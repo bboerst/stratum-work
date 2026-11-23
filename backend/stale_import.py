@@ -1,6 +1,6 @@
 """Stale blocks our node never saw, from the public stale-blocks dataset (#243). Postgres mode only.
 
-Templates prove that a block existed when pools built on it: a template's prev_hash is the hash of the block it builds
+Templates point to a block we may not have stored when pools built on it: a template's prev_hash is the hash of the block it builds
 on. When that hash is no block we know (bitcoin_parents: blocks and stale_blocks), the block lost a race before our
 node had it, or it is from before stale-block tracking (backend/stale_blocks.py records only what the node's
 getchaintips knows). Our node can't give us its header, but the public dataset github.com/bitcoin-data/stale-blocks

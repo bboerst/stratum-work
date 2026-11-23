@@ -185,8 +185,8 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
   a block that lost a race (it was briefly the tip where it was recorded) while the winner is missing. A block that
   replaces such a block is stored without a seen time: it was found long after it arrived, so the detection time
   would pass for an arrival time. The replaced block stays stored and is marked stale, not deleted.
-- Before 18 November 2026 the seen time was taken when the block had been processed and saved, typically 0.6 to 1
-  second after it arrived (median 0.84 s in one sample). Those rows have `seen_via` NULL and run late by about that much.
+- Before 18 November 2026 the seen time was taken when the block had been processed and saved, about 1 s after
+  it arrived (median 0.84 s in one sample). Those rows have `seen_via` NULL and run late by about that much.
 
 A block's header time is set by the miner and can be minutes off, so it isn't used as an arrival time.
 

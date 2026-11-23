@@ -164,15 +164,15 @@ hidden, and a pool's "first seen" time is the earliest arrival over all its exac
 connections got it, not when the pool sent it. Since 21 November 2026 our connections are at two sites, so first seen
 can come from either; `site_first_seen` keeps each site's own. The rules are in `db/migrations/20261116200001_one_stream_per_pool.sql`.
 
-## Pools hidden from the live site
+## Pools excluded from the live site
 
-A pool can be hidden from the live site (`POOL_BLACKLIST`): its live work is not served. That is the realtime stream,
+A pool can be excluded from the live site (`POOL_BLACKLIST`): its live work is not served. That is the realtime stream,
 the realtime pre-fill, and every template above our tip (the work being handed out right now), on any route. Its
 history is: at heights at or below our tip, every analysis view includes it like any other pool (the height page and
 its templates, first seen, Forks, template providers, the blocks it mined, stale blocks). The boundary is per template
-height against our best-chain tip (`filterBlacklistedAboveTip`, `web/lib/poolBlacklist.ts`); while the tip is unknown,
+height against our tip (`filterBlacklistedAboveTip`, `web/lib/poolBlacklist.ts`); while the tip is unknown,
 the pool is left out of every height (fail closed). The web's Postgres tests check it over every API route
-(`pgExclusionInvariant.test.ts`): no live work of a hidden pool in any response, and every place its history appears
+(`pgExclusionInvariant.test.ts`): no live work of an excluded pool in any response, and every place its history appears
 listed with its reason.
 
 ## Blocks
@@ -183,9 +183,9 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
 - A block our node didn't announce, but which was found later when the stored chain was checked against the node's
   (after a reorganisation or an outage), is marked `seen_via = 'reconcile'`. Its time is only when it was found.
 - Blocks loaded from older history, or filled in later, have no seen time.
-- The block stored as "the block at a height" must be the one on our node's best chain. Recent heights are checked
+- The block stored as "the block at a height" must be the one on our node's active chain. Recent heights are checked
   after every block; every height in the stored history is checked once a day, because a history backfill can carry
-  a block that lost a race (it was briefly the tip where it was recorded) while the winner is missing. A block that
+  a block that lost a race (it was briefly the tip where it was recorded) while the active chain's block is missing. A block that
   replaces such a block is stored without a seen time: it was found long after it arrived, so the detection time
   would pass for an arrival time. The replaced block stays stored and is marked stale, not deleted.
 - Before 18 November 2026 the seen time was taken when the block had been processed and saved, about 1 s after
@@ -239,9 +239,9 @@ Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and e
   headers and blocks observed on the Bitcoin network. Its headers are proven here by commitment: the templates name
   the block's hash, and the header must hash to it. A header from it is stored only if every check passes: it
   hashes to the dataset's hash and to the hash the templates built on; the hash meets the proof of work its `bits`
-  claim, within Bitcoin's limit, and those `bits` equal our best block's at the same height (where we have them); it
-  builds on our best block at the height below; its height is the templates' height minus one; and our best block
-  at that height is a different block. A full block from the dataset must parse exactly, carry that header, and its
+  claim, within Bitcoin's limit, and those `bits` equal the active chain's block's at the same height (where we have them); it
+  builds on the active chain's block at the height below; its height is the templates' height minus one; and the
+  active chain's block at that height is a different block. A full block from the dataset must parse exactly, carry that header, and its
   transactions must hash to the header's merkle root; its coinbase, size, weight and pool are then filled like our
   node's. A parent seen from only one pool is treated the same way. Such a
   row has status `not-in-node` (no status of our node applies), is never `was_active`, and its `first_seen` is the
@@ -261,7 +261,7 @@ job re-sent long after its block, isn't shown as a current Bitcoin template, and
 the stored facts improve ([design](design/one-templates-table.md)). The templates filed under the old rule were moved
 back into `templates`; what the old rule decided for each of them is kept as a fact in `template_routing_labels`.
 
-The "Forks" page shows every template built on a parent other than our best block, over the last 6 or 26 difficulty
+The "Forks" page shows every template built on a parent other than the active chain's block, over the last 6 or 26 difficulty
 epochs (12,096 or 52,416 blocks) or all history, grouped by that parent into **episodes**: one parent, the height its
 templates build, the pools that built on it and on which of their connections (labelled a, b, … in each pool's (site,
 replica) order, so a letter always names the same connection), when the first and last template arrived, and how many
@@ -270,18 +270,18 @@ either a **stale block we recorded** (in `stale_blocks` and not reorged back in;
 we know** (neither in `blocks` nor in `stale_blocks`; its kind is inferred, below).
 
 Templates on a recorded stale block are counted per block: the templates at its height + 1 whose previous block is
-that block and that arrived inside that height's time window, de-duplicated like the rest (their merge-mining share
+that block and that arrived inside that height's time window, de-duplicated like the rest (their merge-mining template share
 isn't counted: it would mean reading every coinbase). The backend keeps these counts in `stale_parent_pools`, the
 twin of the unknown parents' summary below (`backend/stale_parents.py`): one row per stale block and pool, counted
 facts only, recomputed whole from the stored templates (never added to) for every stale block whose height window
 overlaps the last hours (new templates can only arrive inside it, and its window moves when blocks at its heights
-arrive) or that has no row yet (a block recorded since, also from the public dataset or by the best-chain check);
+arrive) or that has no row yet (a block recorded since, also from the public dataset or by the active-chain check);
 `python -m stale_parents --backfill` recomputes every stale block, also after a block stored late at an old height
 (the gap fill) has moved an old window. Whether a block is still stale
 is checked each time the page is read, so a block reorged back in drops out with no cleanup. The web's Postgres tests
 compare the table field for field with the direct read of templates, which the page uses while the table is empty.
 Its episode shows the block's height, how its header reached us and, when identified, its miner (also when that pool
-is hidden from the site: which pool mined a block is history, not realtime work).
+is excluded from the site: which pool mined a block is history, not realtime work).
 
 Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
 keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the
@@ -299,8 +299,8 @@ the startup sync (`backend/unknown_parents.py`). Each parent is read whole: the 
 times of its templates seen now plus those already in the table, an hour wider, so a parent that lasts longer than
 two hours is meant to keep all its templates. History before that, or after a longer outage, comes from the backfill
 (`python -m unknown_parents --backfill`, in 7-day chunks). The ranges are counted in Bitcoin time, in blocks below
-our tip (the highest best-chain block), not in days: an episode is in a range when its last template arrived at or
-after the best-chain block N blocks below the tip did (`coalesce(seen_at, block_time)`); it is shown with all its
+our tip (the highest active-chain block), not in days: an episode is in a range when its last template arrived at or
+after the active-chain block N blocks below the tip did (`coalesce(seen_at, block_time)`); it is shown with all its
 templates even if it began before the range. The strip above the list is in block heights too. Another chain's templates
 carry that chain's heights, so an episode is placed by our tip when its first and last templates arrived (the
 heights being mined then), read per episode as `tip_at_first` and `tip_at_last`; dates are only shown on hover.
@@ -309,10 +309,10 @@ Until the table has rows, the default view reads templates directly, over the la
 What each unknown parent is gets **inferred** when the page is read, never stored, from these facts
 (`web/lib/parentKind.ts`):
 
-- **Bitcoin's difficulty**: whether the templates' `nbits` equal the `bits` of our best-chain block at height − 1
+- **Bitcoin's difficulty**: whether the templates' `nbits` equal the `bits` of our active-chain block at height − 1
   (at a difficulty retarget height, the block at the height itself, since the template's target is the new
   period's). Unknown when we store no Bitcoin block there.
-- **Distance from our tip**: height − 1 minus the highest best-chain block that had reached us by the first template.
+- **Distance from our tip**: height − 1 minus the highest active-chain block that had reached us by the first template.
 - **Proof of work**: the parent hash, read as a 256-bit number, is at or below the target encoded by Bitcoin's `bits`
   at height − 1 (or by the templates' own `nbits` when no Bitcoin block is stored there).
 
@@ -361,13 +361,13 @@ hours. Each pool's last run ends when that pool first worked on the next height,
 saw none there: silence isn't drawn as work. These ends, like the switches, are what the chart's compressed time axis
 keeps in view. Each block of the race is listed with the pools whose first work at that height was on it, and an
 arrow on a pool that also built on another block; a block no pool started on is still listed, with the pools that
-built on it for a while, and so is one none of our feeds sent a template on, marked as such (often the winner, mined
+built on it for a while, and so is one none of our feeds sent a template on, marked as such (often the active chain's block, mined
 on first by its own pool, whose feed we may not collect). Pools that share a template provider in the row's epoch
 (the rule of the template providers page) are grouped together.
 
 **Going back to the block before.** A pool's run on a parent at the height normally lasts until its next template
 at the height, so a pool that builds on a block at height − 1 and then returns to work at height − 1 itself, on the
-block before (our best block at height − 2), would look as if it stayed. The row also reads, for each pool, the
+block before (the active chain's block at height − 2), would look as if it stayed. The row also reads, for each pool, the
 templates at height − 1 on that block that one of its connections sent right after a template of its own at the
 height: a fact per connection, from the raw templates, since the de-duplicated stream takes each template's first
 copy across connections and a connection still sending its last height − 1 jobs while another has moved on would
@@ -375,15 +375,15 @@ look like a return. One connection per pool, the one the de-duplicated stream ra
 the same stream as the rest of the lane; it is a neutral grey run, not hatched (it isn't a parent at the height),
 and lasts until the pool's next template at the height. The read stays between that connection's first and last
 template at the height, inside the row's window, at most 5,000 rows, so a stuck feed re-sending an old job after it
-moved on isn't read. Without a stored best block at height − 2 there is no such read. The row then says how many of
-the pools that built on a parent other than our best block went back to the block before. The block before is our
-best block at height − 2, not read from the parent's header (we have none for a block we never recorded).
+moved on isn't read. Without a stored active-chain block at height − 2 there is no such read. The row then says how many of
+the pools that built on a parent other than the active chain's block went back to the block before. The block before is the
+active chain's block at height − 2, not read from the parent's header (we have none for a block we never recorded).
 
 **A soft fork's chain isn't shown.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110:
 version bit 4, blocks 961,632 to 963,647) makes a node that enforces it reject every block in the window that doesn't
 signal, so its chain can split from Bitcoin's (BIP-110's did at 961,632). Work on that chain isn't a race on Bitcoin's
 chain, so the Forks page leaves it out and the summary counts it (`soft_fork_chains`). An episode is left out when its
-parent is a block at height − 1 inside the window, our best block there doesn't signal, and every template on the
+parent is a block at height − 1 inside the window, the active chain's block there doesn't signal, and every template on the
 parent signals. All three are recorded facts; nothing about the parent block itself needs to be known (at 961,634 it's
 a block we never recorded).
 
@@ -394,8 +394,8 @@ labelled by the parent it built on) is behind a toggle there.
 with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.analysis`, one entry per template).
 Each episode at that height that was at our tip (within one block of it, and not another chain's) carries it as a
 badge: the pools and what they paid against the subsidy. A finding at a height where nothing forked is a row of its
-own (kind `invalid_coinbase`), so no finding is lost. A pool hidden from the live site is in the badge too: a finding
-on a block of our best chain is history.
+own (kind `invalid_coinbase`), so no finding is lost. A pool excluded from the live site is in the badge too: a finding
+on a block of the active chain is history.
 The page's "Invalid" filter takes all invalid work, work that could never make a valid block: invalid parents and
 invalid coinbases. On a row's timeline a template is marked invalid only where the finding names its pool at that
 height, by the finding's own rule: empty, and its coinbase pays more than the subsidy, reassembled with the stored
@@ -404,17 +404,17 @@ work was (it can be the block that stayed).
 
 **Providers per episode** (**modelled**; in the API's `providers`, no longer on the page). Several pools on one parent can be one template provider sending the same
 work under different names, or several independent ones reacting to the same thing at once. Each episode counts the
-[template providers](#template-providers) among its pools, with the groups of the difficulty epoch our tip was in
+[template providers](#template-providers) among its pools, with the template providers of the difficulty epoch our tip was in
 when its first template arrived (not the templates' height, which for another chain is that chain's): the 80% rule
 on identical transaction sets in that epoch. A pool's provider is that of its node with the most sets; a pool with
 fewer than 5 sets in the epoch, or none, has an unknown provider and isn't counted as one. An epoch with no counted
 heights gives no count, never another epoch's: older episodes have none until the history is counted. Like the
-groups themselves, a shared provider says the pools received the same work, not that they share an owner.
+providers themselves, a shared provider says the pools received the same work, not that they share an owner.
 
-**Pools hidden from the live site** follow the [site-wide rule](#pools-hidden-from-the-live-site): a hidden pool's
+**Pools excluded from the live site** follow the [site-wide rule](#pools-excluded-from-the-live-site): an excluded pool's
 work at or below our tip is shown like any other pool's (its tiles, its lanes, its templates in a row's evidence, its
 offenders in a finding, its template provider), and its templates above our tip are left out of every Forks read (the
-next height's, while a race at the tip is still open). Forks fails closed in one more case: a hidden pool is always
+next height's, while a race at the tip is still open). Forks fails closed in one more case: an excluded pool is always
 left out of another chain's work, whose heights aren't Bitcoin's. The tip used is the one the summary was read at (at
 most five minutes old): never ahead of ours, so it can only leave out more.
 
@@ -455,19 +455,19 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 
 - **Sharing a provider.** Two nodes share a template provider when the sets both received are at least 80% of the
   smaller node's sets, and each has at least 5.
-- **Strongest partner.** Each node links only to the partner it overlaps most: the highest share, then the most shared
+- **Strongest partner.** Each node links only to the partner it overlaps most: the highest overlap, then the most shared
   sets. Nodes on one provider overlap almost completely. A feed that alternates between two providers overlaps each
-  only partly, so it joins one of them and doesn't merge the two. The providers are the connected groups of these
+  only partly, so it joins one of them and doesn't merge the two. The providers are the connected components of these
   links.
 - **Which blocks count for a provider.** A block counts for the provider of its pool's node with the most sets in
   that epoch (an unidentified block is "unidentified"). It is "not on our feeds" when none of our feeds pays its pool.
 - **Miner-built.** A block whose coinbase names a DATUM template creator is miner-built, a kind of its own, split by
   creator. Creators that are the pool's own template servers are the exception (`POOL_OWN_TEMPLATE_CREATORS`, name
   prefixes, none by default): their blocks count for the pool.
-- **Per epoch.** Each block counts with its own epoch's groups. A new epoch whose first heights aren't counted yet
-  uses the last counted epoch's groups. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
+- **Per epoch.** Each block counts with its own epoch's template providers. A new epoch whose first heights aren't counted yet
+  uses the last counted epoch's providers. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
   and all blocks from the first counted epoch, exact by height.
-- **Pools hidden from the live site** are counted like any other ([the rule](#pools-hidden-from-the-live-site)): the
+- **Pools excluded from the live site** are counted like any other ([the rule](#pools-excluded-from-the-live-site)): the
   counts are per height once its receive window has closed, so they are history.
 
 **What it does not claim:**

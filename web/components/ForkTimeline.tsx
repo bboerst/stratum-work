@@ -196,7 +196,7 @@ const fmtHeight = (h: number) => h.toLocaleString("en-US");
 function markerTitle(m: BlockMarker): string {
   const at = new Date(m.seenMs).toISOString().slice(11, 23);
   const when = m.firstWork ? "first built on by our feeds" : m.staleOnly ? "first recorded" : "reached us";
-  return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${when} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}${
+  return `block ${fmtHeight(m.height)} · ${m.best ? "active chain" : "stale"} · ${when} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}${
     m.firstWork ? " (when it reached our node wasn't recorded)" : ""}`;
 }
 

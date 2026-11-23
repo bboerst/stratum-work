@@ -5,7 +5,7 @@ import {
   DEFAULT_RANGE, LEGACY_RANGES, UNKNOWN_PARENTS_RANGES, type UnknownParentsRange,
 } from "../../../lib/db/unknown-parents";
 import { getDrill, providerEpoch, readEpochGroups, type Drill, type Episode } from "../../../lib/unknownParents";
-import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
+import { excludedAt, realtimeExclusion } from "../../../lib/poolBlacklist";
 import { getSummary, type SummaryResponse } from "../../../lib/forksSummary";
 import { raceRows } from "../../../lib/forkRaces";
 
@@ -29,14 +29,17 @@ function stripView(s: SummaryResponse) {
  * GET /api/forks?view=providers: the template providers of each epoch with a Forks row, for grouping a row's pool tiles:
  * { epochs: { [epoch]: string[][] } }, each a provider's feeds (the rule is lib/templateProviders.ts, as on the
  * template providers page). An epoch whose providers aren't counted is absent.
- * Excluded pools are left out (readEpochRows). Read once per PROVIDERS_MS per process.
+ * POOL_BLACKLIST pools are included (counted per finished height: history), unless our tip is unknown. Read once
+ * per PROVIDERS_MS per process.
  */
 const PROVIDERS_MS = 5 * 60_000;
 const providersCache: { at: number; promise: Promise<{ epochs: Record<number, string[][]> }> } | { at: 0; promise: null } = { at: 0, promise: null };
 async function providersView(): Promise<{ epochs: Record<number, string[][]> }> {
   const s = await getSummary("all-lite");
   const wanted = [...new Set((s.episodes ?? []).map(providerEpoch).filter((e): e is number => e !== null))];
-  const groups = await readEpochGroups(wanted, blacklistedPoolNames());
+  // counted per finished height: the excluded pools are history there (left out only with no tip)
+  const ex = realtimeExclusion(s.tip_height);
+  const groups = await readEpochGroups(wanted, excludedAt(ex, ex.tip ?? Infinity));
   const epochs: Record<number, string[][]> = {};
   for (const [epoch, g] of groups) {
     const by = new Map<number, string[]>();
@@ -59,9 +62,10 @@ export const dynamic = "force-dynamic";
  * (invalid_coinbase); a finding with no episode at its height is a row of its own (kind 'invalid_coinbase'). Over a
  * range in Bitcoin time: the episodes whose last template arrived after the best-chain block 6 difficulty epochs
  * (12,096 blocks, default) or 26 epochs (52,416 blocks) below our tip did, or all history. Read-only. With historical
- * data disabled it answers enabled: false, supported: false without touching a database. POOL_BLACKLIST pools are
- * left out of this endpoint entirely: their templates, connections, findings and the episodes only they built on. (The
- * page's fork chart reads /api/analysis-data, which keeps them at mined heights, as the height page does.) The earlier range
+ * data disabled it answers enabled: false, supported: false without touching a database. POOL_BLACKLIST is
+ * realtime-only (lib/poolBlacklist.ts): an excluded pool's work at or below our tip is history and is shown (its
+ * episodes, connections, findings, drill-in templates); its templates above the tip, all of them while the tip is
+ * unknown, and its work on another chain (whose heights aren't Bitcoin's) are left out. The earlier range
  * values 90d and 1y are read as 6e and 26e (shared links); responses name the new ones. Work on a soft fork's own chain
  * (BIP-110's split, lib/softForks.ts) isn't a race on Bitcoin's chain: left out, and counted in soft_fork_chains. /api/unknown-parents is an
  * alias (the page's former name).
@@ -130,14 +134,16 @@ export async function GET(request: Request) {
     }
     const p = parent.toLowerCase();
     if (!PARENT_RE.test(p)) return NextResponse.json({ error: "parent must be 64 hex characters" }, { status: 400 });
-    const episode = (await getSummary(key)).episodes?.find(e => e.parent === p);
+    const summary = await getSummary(key);
+    const episode = summary.episodes?.find(e => e.parent === p);
     if (!episode) return NextResponse.json({ error: "no such episode in this range" }, { status: 404 });
 
     const now = Date.now();
     const cacheKey = `${key}:${p}`;
     let entry = drills.get(cacheKey);
     if (!entry || now - entry.at > DRILL_MS) {
-      const promise = getDrill(episode, blacklistedPoolNames())
+      // the summary's tip: never ahead of ours, so an excluded pool's templates above it stay out
+      const promise = getDrill(episode, realtimeExclusion(summary.tip_height))
         .then((d): DrillResponse => ({ enabled: true, supported: true, episode, ...d }));
       entry = { at: now, promise };
       drills.delete(cacheKey);

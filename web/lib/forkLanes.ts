@@ -9,6 +9,7 @@
  */
 import { getFirstWork, getLaneEnds, getLaneFacts, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
 import { getDrillBlocks } from './db/unknown-parents';
+import { excludedAt, type RealtimeExclusion } from './poolBlacklist';
 import { knownBlockHashes } from './db/postgres';
 import { classifyPrevHashes, unknownParentKinds, type PrevHashStatus } from './forkStatus';
 import { parseCoinbase } from '../utils/coinbaseParser';
@@ -101,14 +102,19 @@ export function buildRuns(
   };
 }
 
+const unzip = (pairs: [string, string][]): [string[], string[]] => [pairs.map(p => p[0]), pairs.map(p => p[1])];
+
 /**
  * The height's timeline. `span`: the receive times of the episodes at this height, which the read always covers.
  * A stale block that only the stale-block records know has no arrival time at our node (its time is when it was
  * first recorded), so it gets no seen time here and no arrival marker.
  */
 export async function getForkLanes(
-  height: number, span: { fromMs: number; toMs: number }, excludePools: string[],
+  height: number, span: { fromMs: number; toMs: number }, ex: RealtimeExclusion,
 ): Promise<ForkLanes> {
+  // POOL_BLACKLIST is realtime-only: an excluded pool is left out of the reads of a height above our tip (the next
+  // height's, while this one is the tip), and kept at or below it
+  const excludePools = excludedAt(ex, height), excludeNext = excludedAt(ex, height + 1);
   // Independent reads go out together: each is a round trip to the database.
   const blocksRead = getDrillBlocks(height);
   blocksRead.catch(() => {});
@@ -122,10 +128,10 @@ export async function getForkLanes(
   const blocks = await blocksRead;
   const unseen = (b: (typeof blocks)[number]) => !(b.seen && !b.stale_only);
   const [endRows, known, workRows] = await Promise.all([
-    getLaneEnds(height, [...lastUs.keys()], [...lastUs.values()], span.toMs),
+    getLaneEnds(height, ...unzip([...lastUs].filter(([pool]) => !excludeNext.includes(pool))), span.toMs),
     facts.active ? knownBlockHashes(hashes) : Promise.resolve(null),
     // the next height's work on this height's blocks (the block that ended the race), where no arrival was recorded
-    getFirstWork(height + 1, blocks.filter(b => b.height === height && unseen(b)).map(b => b.block_hash), runs.from_ms, span.toMs, excludePools),
+    getFirstWork(height + 1, blocks.filter(b => b.height === height && unseen(b)).map(b => b.block_hash), runs.from_ms, span.toMs, excludeNext),
   ]);
   // first work on a block at height - 1: the earliest run on it
   const work = new Map(workRows.map(r => [r.hash, Number(r.at_us) / 1000]));

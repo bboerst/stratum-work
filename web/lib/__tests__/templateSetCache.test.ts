@@ -176,6 +176,20 @@ describe('readEpochRows', () => {
     expect(renamed.get(E)!.nodes).toHaveLength(1);
   });
 
+  it('keeps one cache per exclusion: callers with different lists (Forks, the providers page) don\'t re-read each other\'s', async () => {
+    const m = await load();
+    const open = await m.readEpochRows([]);
+    const shut = await m.readEpochRows(['Pool A']);
+    db.reads = [];
+    for (let i = 0; i < 2; i++) {
+      expect(view(await m.readEpochRows([]))).toEqual(view(open));
+      expect(view(await m.readEpochRows(['Pool A']))).toEqual(view(shut));
+    }
+    expect(db.reads).toEqual([]);                                   // fingerprints checked, nothing re-read
+    expect(shut.get(E)!.nodes).toEqual([]);                         // and each keeps its own filtering
+    expect(open.get(E)!.nodes).toHaveLength(1);
+  });
+
   it('drops excluded feeds and pools from what both consumers get', async () => {
     const m = await load();
     fill(E * EB + 10, 'feed-hidden');

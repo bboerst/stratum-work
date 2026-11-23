@@ -20,6 +20,7 @@ import {
   NEAR_TIP, bitcoinDifficulty, connectionLabel, parentKind, parentPowOk, tipOffset, type ParentKind,
 } from './parentKind';
 import { getEpochGroupInputs } from './db/template-providers';
+import { excludedAt, excludedEverywhere, type RealtimeExclusion } from './poolBlacklist';
 import { EPOCH_BLOCKS, feedProviders, groupEpochs, type EpochGroups } from './templateProviders';
 import { parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
 import { addressFromScript } from '../utils/addressFromScript';
@@ -217,19 +218,38 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
  * The range's episodes: the rows per parent and pool, of unknown parents (getEpisodePoolRows) and of stale ones
  * (getStaleEpisodePoolRows; the two sets of parents are disjoint: an unknown parent is in no block table), then the
  * facts per episode, then the invalid-coinbase findings (withInvalidCoinbase).
+ *
+ * POOL_BLACKLIST is realtime-only (`ex`, lib/poolBlacklist.ts): an excluded pool's row stays when every height it
+ * gave is at or below our tip (history), and is left out when any is above it or the tip is unknown. Another chain's
+ * heights aren't Bitcoin's, so an excluded pool is left out of every 'other_chain' episode (fail closed): those
+ * episodes are drafted again without it.
  */
 export async function getEpisodes(
-  excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE, { providers = true }: { providers?: boolean } = {},
+  ex: RealtimeExclusion, range: UnknownParentsRange = DEFAULT_RANGE, { providers = true }: { providers?: boolean } = {},
 ): Promise<Episode[]> {
   const [unknown, stale, flags] = await Promise.all([
-    getEpisodePoolRows(excludePools, range), getStaleEpisodePoolRows(excludePools, range), getInvalidCoinbaseFlags(),
+    getEpisodePoolRows([], range), getStaleEpisodePoolRows([], range), getInvalidCoinbaseFlags(),
   ]);
-  const drafts = draftEpisodes([...unknown, ...stale]);
-  const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts), flags, excludePools, RANGE_BLOCKS[range]);
+  const excluded = (pool: string) => ex.pools.includes(pool);
+  const history = (heights: string[]) => heights.length > 0 && heights.every(h => excludedAt(ex, Number(h)).length === 0);
+  const rows = [...unknown, ...stale].filter(r => !excluded(r.pool) || history(Object.keys(r.heights ?? {})));
+  const build = async (rs: EpisodePoolSql[]) => {
+    const drafts = draftEpisodes(rs);
+    return finishEpisodes(drafts, await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms }))));
+  };
+  let episodes = await build(rows);
+  const foreign = new Set(episodes.filter(e => e.kind === 'other_chain' && e.pools.some(p => excluded(p.pool))).map(e => e.parent));
+  if (foreign.size > 0) {
+    const again = await build(rows.filter(r => foreign.has(r.parent) && !excluded(r.pool)));
+    episodes = [...episodes.filter(e => !foreign.has(e.parent)), ...again]
+      .sort((a, b) => a.first_ms - b.first_ms || (a.parent < b.parent ? -1 : 1));
+  }
+  // findings are on best blocks (at or below the tip); the template providers are counted per finished height
+  const below = excludedAt(ex, ex.tip ?? Infinity);
+  episodes = withInvalidCoinbase(episodes, flags, below, RANGE_BLOCKS[range]);
   // template providers take one cached read per epoch (seconds per epoch when cold): skipped where nothing shows them
   if (!providers) return episodes;
-  return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), excludePools));
+  return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), below));
 }
 
 /**
@@ -340,14 +360,15 @@ export interface Drill {
 // A long episode (a feed stuck on one parent for hours) would read hours of every pool's templates: read its start only.
 export const DRILL_MAX_SPAN_MS = 30 * 60_000;
 
-export async function getDrill(e: Episode, excludePools: string[]): Promise<Drill> {
+export async function getDrill(e: Episode, ex: RealtimeExclusion): Promise<Drill> {
   const clipped = e.last_ms - e.first_ms > DRILL_MAX_SPAN_MS;
   const from_ms = e.first_ms - DRILL_MARGIN_MS;
   const to_ms = (clipped ? e.first_ms + DRILL_MAX_SPAN_MS : e.last_ms) + DRILL_MARGIN_MS;
   // an invalid-coinbase row's key is our best block: its templates are labelled 'best', not 'this'
   const parent = e.kind === 'invalid_coinbase' ? '' : e.parent;
   const rows = await getDrillRows(
-    { parent, height: e.height, pools: e.pools.map(p => p.pool), from_ms, to_ms }, excludePools);
+    { parent, height: e.height, pools: e.pools.map(p => p.pool), from_ms, to_ms },
+    e.kind === 'other_chain' ? excludedEverywhere(ex) : ex);   // another chain's heights aren't ours: no tip applies
   return {
     from_ms, to_ms, truncated: rows.truncated, clipped,
     templates: rows.templates.map(toUnknownParentTemplate),

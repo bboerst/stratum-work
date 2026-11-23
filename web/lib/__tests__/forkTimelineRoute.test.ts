@@ -12,7 +12,7 @@ async function loadRoute({ historical = true, episodes = [ep()], final = true } 
   vi.resetModules();
   delete (globalThis as { __forkLanes?: unknown }).__forkLanes;
   vi.stubEnv('POOL_BLACKLIST', 'Hidden');
-  const getSummary = vi.fn(async () => ({ enabled: true, supported: true, episodes }));
+  const getSummary = vi.fn(async () => ({ enabled: true, supported: true, tip_height: 900_010, episodes }));
   const getForkLanes = vi.fn(async (height: number) => ({ height, pools: [] }));
   const isHeightFinal = vi.fn(async () => final);
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
@@ -59,7 +59,8 @@ describe('GET /api/forks/timeline', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
     expect(await res.json()).toEqual({ height: 900_001, pools: [] });
-    expect(getForkLanes).toHaveBeenCalledWith(900_001, { fromMs: 500, toMs: 9000 }, ['Hidden']);
+    // the summary's tip: the excluded pool's history (at or below it) is read, its work above it isn't
+    expect(getForkLanes).toHaveBeenCalledWith(900_001, { fromMs: 500, toMs: 9000 }, { pools: ['Hidden'], tip: 900_010 });
     await get('?height=900001');
     expect(getForkLanes).toHaveBeenCalledTimes(1);
   });

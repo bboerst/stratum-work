@@ -1,18 +1,21 @@
 /**
- * The exclusion invariant (POOL_BLACKLIST): an excluded pool is invisible in every API response, as a feed and as a
- * payee or miner, as if it had never been collected. Every route under app/api is found on disk, so a new route fails
+ * The exclusion invariant (POOL_BLACKLIST): an excluded pool's realtime work (templates above our tip) is in no API
+ * response, and the pool is named nowhere else except where the code documents why (its history: blocks it mined,
+ * analysis at mined heights, Forks below the tip). Every route under app/api is found on disk, so a new route fails
  * this suite until it has a case here. Each case is called twice against one seeded, migrated database (as a user in
  * the stratum_web role):
  *   - with no blacklist: the excluded name must appear, so the seed reaches that route (a known-case gate);
  *   - with POOL_BLACKLIST set: the name (case-insensitive) must appear nowhere except at the JSON paths of that case's
  *     allowlist, every allowlist entry must still be hit (a stale entry fails), and the control pool must appear.
- * The allowlist holds documented behaviour that keeps the name, each entry with the reason the code gives for it.
+ * The allowlist holds documented behaviour that keeps the name, each entry with the reason the code gives for it. A
+ * route that shows the pool's history (Forks) also checks by value that none of its work above the tip is served
+ * (`aboveTip`: present without the blacklist, absent with it).
  *
  * Seed (synthetic names only): feeds ExcludedPoolX (excluded) and ControlPoolY, both with templates, on a short chain
  * B(H-2) mined by the excluded pool, B(H-1) by the control pool, B(H) by the control pool (the tip, seconds old),
  * plus a stale block S at H-1 mined by the excluded pool. Templates at H on B(H-1), on S (a stale parent), on U (an
  * unknown parent, both feeds) and on UX (an unknown parent only the excluded feed built on); at H+1 (above the tip)
- * on B(H). The control feed's templates at H also name the excluded pool in their coinbase (a payee), and the
+ * on B(H) and on UA (an unknown parent at H, both feeds; one of the excluded feed's inside U's drill-in minutes). The control feed's templates at H also name the excluded pool in their coinbase (a payee), and the
  * transaction-set counts behind template providers have the control feed paying the excluded pool. An invalid-coinbase
  * finding on B(H) lists both pools as offenders. The forks summaries are filled by the functions the backend calls.
  *
@@ -67,6 +70,12 @@ interface Case {
   /** The route serves no pool data at all (no seeded name can reach it): only "never names it" is checked. */
   noPoolData?: string;
   allow?: Allowed[];
+  /**
+   * The route shows an excluded pool's history (heights at or below our tip) but not its realtime work: the excluded
+   * pool's work above the tip found in the body, by value (the paths can't tell heights apart). Must be non-empty
+   * without the blacklist (the seed reaches it) and empty with it.
+   */
+  aboveTip?: (body: any) => unknown[];   // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 // Documented behaviour that names the excluded pool. Keep each entry to the narrowest path, with the code's reason.
@@ -96,8 +105,29 @@ const HISTORY: Allowed = {
     + 'above the tip are filtered (filterBlacklistedAboveTip)',
 };
 
+const FORKS_HISTORY = 'POOL_BLACKLIST is realtime-only: an excluded pool\'s work at or below our tip is history, '
+  + 'shown in Forks (getEpisodes, getDrill, getForkLanes); above the tip it is left out (aboveTip)';
+const PROVIDERS_HISTORY = 'template providers are counted per finished height: history, so Forks groups an excluded '
+  + 'feed\'s tile with its provider (left out only while the tip is unknown)';
+const FORKS_SUMMARY: Allowed[] = [
+  { path: '$.episodes[*].pools[*].pool', why: FORKS_HISTORY },
+  { path: '$.episodes[*].invalid_coinbase.pools[*].pool', why: FORKS_HISTORY },
+  { path: '$.episodes[*].provider_groups[*][*]', why: PROVIDERS_HISTORY },
+];
+const FORKS_DRILL: Allowed[] = [
+  { path: '$.episode.pools[*].pool', why: FORKS_HISTORY },
+  { path: '$.episode.invalid_coinbase.pools[*].pool', why: FORKS_HISTORY },
+  { path: '$.episode.provider_groups[*][*]', why: PROVIDERS_HISTORY },
+  { path: '$.templates[*].pool_name', why: FORKS_HISTORY },
+];
+const jobOf = (id: string) => id.split('-').pop()!;
+const aboveTipTemplates = (b: { templates: { id: string }[] }) => b.templates.filter(t => ABOVE_TIP_JOBS.includes(jobOf(t.id)));
+const excludedOn = (parent: string) => (b: { episodes: { parent: string; pools: { pool: string }[] }[] }) =>
+  b.episodes.filter(e => e.parent === parent).flatMap(e => e.pools).filter(p => p.pool === EXCLUDED);
+
 let H = 0;          // set in beforeAll
-let S = '', U = '', UX = '', TXID = '';
+let S = '', U = '', UX = '', UA = '', TXID = '';
+let ABOVE_TIP_JOBS: string[] = [];   // the excluded feed's templates at H + 1 on UA (above the tip)
 
 function cases(): Record<string, Case[]> {
   return {
@@ -123,18 +153,26 @@ function cases(): Record<string, Case[]> {
       { qs: 'n=20', allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
       { qs: `height=${H - 1}&n=6`, allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
     ],
+    // Forks: an excluded pool's work at or below our tip is history and shown; above it, it is left out (getEpisodes)
     'forks': [
-      { qs: 'range=all', allow: [STALE_MINER] },
-      { qs: 'view=providers' },
+      { qs: 'range=all', allow: [STALE_MINER, ...FORKS_SUMMARY], aboveTip: excludedOn(UA) },
+      { qs: 'view=providers', allow: [{ path: `$.epochs.${Math.floor(H / 2016)}[*][*]`, why: PROVIDERS_HISTORY }] },
       // a drill-in shows every template in the episode's minutes, each labelled by its parent: the control feed's work
-      // on B(H-1) too
+      // on B(H-1) too, and the excluded feed's at H; not its templates at H + 1 inside those minutes
       { qs: `range=all&parent=${U}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT },
-        { path: '$.blocks[*].miner', why: DRILL_MINER }] },
+        { path: '$.blocks[*].miner', why: DRILL_MINER }, ...FORKS_DRILL,
+        { path: '$.episode.invalid_coinbase.pools[*].pool', why: FORKS_HISTORY },
+        { path: '$.episode.provider_groups[*][*]', why: PROVIDERS_HISTORY }], aboveTip: aboveTipTemplates },
       { qs: `range=all&parent=${S}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT },
-        { path: '$.blocks[*].miner', why: DRILL_MINER }, { path: '$.episode.facts.stale_block.miner', why: STALE_MINER.why }] },
+        { path: '$.blocks[*].miner', why: DRILL_MINER }, { path: '$.episode.facts.stale_block.miner', why: STALE_MINER.why },
+        ...FORKS_DRILL] },
     ],
-    // the Forks rows' timeline: excluded pools are left out of it, as from the rest of /api/forks
-    'forks/timeline': [{ qs: `height=${H}`, allow: [{ path: '$.blocks[*].miner', why: DRILL_MINER }] }],
+    // the Forks rows' timeline, by the same rule: at H (our tip) the excluded feed's lane shows; at H + 1 it doesn't
+    'forks/timeline': [
+      { qs: `height=${H}`, allow: [{ path: '$.blocks[*].miner', why: DRILL_MINER },
+        { path: '$.lanes[*].pool', why: FORKS_HISTORY }] },
+      { qs: `height=${H + 1}`, aboveTip: (b: { lanes: { pool: string }[] }) => b.lanes.filter(l => l.pool === EXCLUDED) },
+    ],
     'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
     'pools': [{}],
     'realtime-prefill': [{}],
@@ -150,7 +188,7 @@ function cases(): Record<string, Case[]> {
     'template-providers': [{ qs: 'range=all' }],
     'tx': [{ qs: `txids=${TXID}`, noPoolData: 'mempool transactions: no pool fields' }],
     'tx/[txid]': [{ params: { txid: TXID }, noPoolData: 'mempool transactions: no pool fields' }],
-    'unknown-parents': [{ qs: 'range=all', allow: [STALE_MINER] }],
+    'unknown-parents': [{ qs: 'range=all', allow: [STALE_MINER, ...FORKS_SUMMARY], aboveTip: excludedOn(UA) }],
   };
 }
 
@@ -241,7 +279,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
   const r3 = run.toString(16).padStart(6, '0');
   const hash = (k: string) => '00' + r3 + k.repeat(24) + 'ffffffff';   // display order; meets BITS read this way only
   const [B2, B1, B0] = [hash('b2'), hash('b1'), hash('b0')];
-  S = hash('5e'); U = hash('3a'); UX = hash('3b');
+  S = hash('5e'); U = hash('3a'); UX = hash('3b'); UA = hash('3c');
   TXID = 'ee'.repeat(32);
   const SITE = `zz-excl-${run}`;
   const tagHex = Buffer.from(`/${EXCLUDED}/`).toString('hex');
@@ -264,7 +302,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     [at, sid[feed], height, `j${++job}`, parent, o.cb1 ?? cb1(), CB2, o.branch ?? '11'.repeat(32), BITS, 1_790_000_000 + job]);
 
   async function cleanup() {
-    const hs = [U, UX, S];
+    const hs = [U, UX, UA, S];
     await admin.query(`DELETE FROM unknown_parent_pools WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)`, [hs]);
     await admin.query(`DELETE FROM stale_parent_pools WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)`, [hs]);
     for (const t of ['template_set_pairs', 'template_set_feeds', 'template_set_heights']) {
@@ -314,12 +352,18 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     }
     await tpl(EXCLUDED, H, NOW - 900, UX);
     for (const feed of [EXCLUDED, CONTROL]) await tpl(feed, H + 1, NOW - 60, B0);
+    // UA: an unknown parent at H, worked on at H + 1 (above the tip): the excluded feed's work there is realtime, one
+    // template of it inside U's drill-in minutes
+    ABOVE_TIP_JOBS = [];
+    await tpl(EXCLUDED, H + 1, NOW - 995, UA); ABOVE_TIP_JOBS.push(`j${job}`);
+    await tpl(CONTROL, H + 1, NOW - 50, UA);
+    await tpl(EXCLUDED, H + 1, NOW - 45, UA); ABOVE_TIP_JOBS.push(`j${job}`);
     // the forks summaries, as the backend writes them
     await admin.query(
       `SELECT unknown_parent_pools_refresh(x.prev_hash, x.heights, x.t_from, x.t_to)
          FROM (SELECT prev_hash, array_agg(DISTINCT height) AS heights, min(received_at) AS t_from, max(received_at) AS t_to
                  FROM templates WHERE prev_hash = ANY (SELECT stratum_prev_hash_to_block_hash(decode(h, 'hex')) FROM unnest($1::text[]) h)
-                GROUP BY prev_hash) x`, [[U, UX]]);
+                GROUP BY prev_hash) x`, [[U, UX, UA]]);
     await admin.query(
       `SELECT stale_parent_pools_refresh(s.block_hash, s.height + 1, w.w_from, w.w_to)
          FROM stale_blocks s CROSS JOIN LATERAL template_height_windows(s.height + 1, s.height + 1) w
@@ -366,6 +410,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
         if (!c.noPoolData) {
           expect(EXCLUDED_RE.test(open.text), `${label}: the seed doesn't reach this case (no ${EXCLUDED} without a blacklist)`).toBe(true);
         }
+        if (c.aboveTip) expect(c.aboveTip(open.body).length, `${label}: the seed doesn't reach its work above the tip`).toBeGreaterThan(0);
 
         const shut = await call(route, c, EXCLUDED);
         expect(shut.status, `${label}: ${shut.text.slice(0, 300)}`).toBe(200);
@@ -377,6 +422,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
         const unhit = [...allowed].filter(p => !paths.includes(p));
         expect(unhit, `${label}: allowlist entries no longer needed (remove them)`).toEqual([]);
         if (!c.noPoolData) expect(CONTROL_RE.test(shut.text), `${label}: the control pool is missing`).toBe(true);
+        if (c.aboveTip) expect(c.aboveTip(shut.body), `${label} shows the excluded pool's work above the tip`).toEqual([]);
       }
     }, 60_000);
   }

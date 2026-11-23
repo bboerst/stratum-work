@@ -8,7 +8,7 @@ export default defineVisual({
   title: "Pool clocks",
   description: "The time some pools write into their coinbase, compared with the block header's ntime or our receive time.",
   icon: Clock,
-  status: "beta",
+  status: "lab",                 // not listed outside development; still served at /v/pool-clocks
   settings: poolClocksSettings,
   component: PoolClocks,
   about: [

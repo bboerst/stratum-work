@@ -109,6 +109,9 @@ export function buildRuns(
 export async function getForkLanes(
   height: number, span: { fromMs: number; toMs: number }, excludePools: string[],
 ): Promise<ForkLanes> {
+  // Independent reads go out together: each is a round trip to the database.
+  const blocksRead = getDrillBlocks(height, excludePools);
+  blocksRead.catch(() => {});
   const facts = await getLaneFacts(height, span.fromMs, span.toMs);
   const subsidies = new Map<string, number>();
   for (const o of facts.offenders ?? []) {
@@ -116,15 +119,18 @@ export async function getForkLanes(
   }
   const rows = await getLaneTemplates(height, facts.t_from, facts.t_to, excludePools, [...subsidies.keys()]);
   const { hashes, lastUs, ...runs } = buildRuns(rows, subsidies);
-  const ends = new Map((await getLaneEnds(height, [...lastUs.keys()], [...lastUs.values()], span.toMs))
-    .map(r => [r.pool, Number(r.end_us) / 1000 - runs.from_ms]));
+  const [endRows, known] = await Promise.all([
+    getLaneEnds(height, [...lastUs.keys()], [...lastUs.values()], span.toMs),
+    facts.active ? knownBlockHashes(hashes) : Promise.resolve(null),
+  ]);
+  const ends = new Map(endRows.map(r => [r.pool, Number(r.end_us) / 1000 - runs.from_ms]));
   for (const lane of runs.lanes) lane.end = ends.get(lane.pool) ?? lane.end;
 
-  const status = facts.active ? classifyPrevHashes(hashes, facts.active, await knownBlockHashes(hashes)) : null;
+  const status = facts.active && known ? classifyPrevHashes(hashes, facts.active, known) : null;
   const hexBits = (bits: string | null) => (bits === null ? null : Number(bits).toString(16).padStart(8, '0'));
   const kinds = unknownParentKinds(status, rows.map(r => ({ prev_hash: r.parent, nbits: Number(r.nbits) })), height,
     hexBits(facts.bits_prev), hexBits(facts.bits_at));
-  const blocks = await getDrillBlocks(height, excludePools);
+  const blocks = await blocksRead;
 
   return {
     height,

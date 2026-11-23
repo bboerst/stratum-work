@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import HeightForkTimeline from "./HeightForkTimeline";
 import ForkTimeline, { MiniForkTimeline } from "./ForkTimeline";
-import { raceRows, type RaceRow } from "@/lib/forkRaces";
+import { isRace, raceRows, type RaceRow } from "@/lib/forkRaces";
 import type { ArrivalBlock } from "@/lib/forkTimelineAxis";
 import { reverseHex } from "@/utils/formatters";
 import type { ParentKind } from "@/lib/parentKind";
@@ -468,6 +468,9 @@ interface Side { hash: string; tone: string; label: string; title: string; pools
  * went; one with invalid work is rose. Pools the summary lists that the timeline doesn't show on a block (work at
  * another height of the row) join the side of the block they built on.
  */
+/** A side that is a block at the height before (ours or a stale one): two of them make the row a race. */
+const isBlockSide = (s: Side) => s.tone === "canonical" || s.tone === "stale";
+
 function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null): Side[] {
   const sides = new Map<string, Side>();
   const toneOf = (p: Lanes["parents"][number]) => (p.status === "canonical" ? "canonical" : p.status === "stale" ? "stale" : p.kind ?? "undetermined");
@@ -547,17 +550,24 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
         <span className="w-24 shrink-0 max-sm:mb-2 max-sm:flex max-sm:w-auto max-sm:items-baseline max-sm:gap-2.5">
           <span className="block font-mono text-sm font-semibold">{fmtInt(row.heights[0])}{row.heights.length > 1 ? ` – ${fmtInt(row.heights[row.heights.length - 1])}` : ""}</span>
           <span className="block text-[10px] text-foreground/55" title={fmtLocal(row.first_ms)}>{fmtUtc(row.first_ms).slice(0, 10)}</span>
-          <span className="block text-[10px] text-foreground/55">{fmtDuration(row.last_ms - row.first_ms)}</span>
+          <span className="block text-[10px] text-foreground/55">{isRace(row.kind) ? "race · " : ""}{fmtDuration(row.last_ms - row.first_ms)}</span>
           {kinds.filter(k => k !== "stale").map(k => <span key={k} className="mt-1 block text-[10px] leading-3 text-foreground/70 [&>span]:whitespace-normal [&>span]:text-[10px]"><KindChip kind={k} /></span>)}
         </span>
         <span className="block min-w-0 flex-1">
-          {sides.map(s => (
-            <span key={s.hash} className="mb-1.5 flex gap-2 max-sm:block">
+          {sides.map((s, i) => (
+            <Fragment key={s.hash}>
+            {i > 0 && isBlockSide(s) && isBlockSide(sides[i - 1]) && (
+              <span className="-mt-0.5 mb-1 block w-28 pl-4 text-[10px] font-semibold uppercase tracking-wider text-foreground/45 max-sm:w-auto">vs</span>
+            )}
+            <span className="mb-1.5 flex gap-2 max-sm:block">
               <span className="flex w-28 shrink-0 items-start gap-1.5 self-start text-xs leading-4 max-sm:mb-1 max-sm:w-auto" title={s.title}>
                 <span className={`mt-[3px] inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${SIDE_DOT[s.tone]}`} aria-hidden />
-                <span className="min-w-0 break-words">{s.label}</span>
+                <span className="min-w-0 break-words max-sm:flex max-sm:items-baseline max-sm:gap-2">
+                  {s.label}
+                  {isBlockSide(s) && <span className="block font-mono text-[10px] leading-4 text-foreground/50">…{s.hash.slice(-8)}</span>}
+                </span>
               </span>
-              <span className="flex min-w-0 flex-wrap gap-0.5">
+              <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">
                 {s.pools.map(p => (
                   <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}
                     title={`${p.pool}${p.invalid ? " · invalid work" : ""}${p.to ? " · moved to another block" : ""}`}>
@@ -566,6 +576,7 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
                 ))}
               </span>
             </span>
+            </Fragment>
           ))}
           {timed && !open && (
             <span className="mt-2 block min-h-6">

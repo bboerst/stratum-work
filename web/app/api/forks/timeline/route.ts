@@ -41,8 +41,9 @@ export async function GET(request: Request) {
     const now = Date.now();
     let entry: Entry | undefined = cache.get(height);
     if (!entry || now - entry.at > entry.ttl) {
-      const final = await isHeightFinal(height).catch(() => false);
       const promise = getForkLanes(height, span, blacklistedPoolNames());
+      promise.catch(() => {});           // handled below; read alongside isHeightFinal
+      const final = await isHeightFinal(height).catch(() => false);
       entry = { at: now, ttl: final ? CACHE_MS : OPEN_MS, promise };
       cache.delete(height);
       cache.set(height, entry);

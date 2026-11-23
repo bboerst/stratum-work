@@ -1,4 +1,4 @@
-import { Activity, Layers, ScatterChart, Table, Workflow } from "lucide-react";
+import { Layers, ScatterChart, Table, Workflow } from "lucide-react";
 import { listedVisuals } from "@/visuals/registry";
 
 export const navItems = [
@@ -21,18 +21,13 @@ export const navItems = [
     description: "Sankey diagram visualization",
   },
   {
-    href: "/infra",
-    label: "Infra",
-    icon: Activity,
-    description: "Realtime Stratum infrastructure metrics",
-  },
-  {
     href: "/forks",
     label: "Forks",
     icon: Layers,
     description: "Templates built on a block other than our best one, as episodes, with what each parent is",
   },
-  // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>.
+  // Visuals from the registry (web/visuals/, #157): each is served at /v/<id>. The Infra page (/infra) is served but
+  // not listed.
   ...listedVisuals().map((v) => ({
     href: `/v/${v.id}`,
     label: v.title,

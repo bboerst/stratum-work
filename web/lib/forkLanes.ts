@@ -7,6 +7,7 @@
  * by that finding's rule (backend/analytics/invalid_coinbase_no_merkle.py): empty, and its coinbase pays more than the
  * subsidy, reassembled with the stored extranonce2 length or the one other length that parses.
  */
+import { followsDeployment } from './softForks';
 import { getFirstWork, getLaneEnds, getLaneFacts, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
 import { getDrillBlocks } from './db/unknown-parents';
 import { knownBlockHashes } from './db/postgres';
@@ -22,6 +23,7 @@ export interface LaneParent {
   hash: string;                  // display order
   status: PrevHashStatus | null; // null: no best block at height - 1 to compare with
   kind: ParentKind | null;       // of an unknown parent, inferred
+  follows: string | null;        // the deployment its chain follows (lib/softForks.ts), e.g. 'BIP-110'
 }
 
 export interface ForkLanes {
@@ -119,6 +121,11 @@ export async function getForkLanes(
   }
   const rows = await getLaneTemplates(height, facts.t_from, facts.t_to, excludePools, [...subsidies.keys()]);
   const { hashes, lastUs, ...runs } = buildRuns(rows, subsidies);
+  const versionsOf = new Map<string, number[]>();
+  for (const r of rows) {
+    if (!versionsOf.has(r.parent)) versionsOf.set(r.parent, []);
+    versionsOf.get(r.parent)!.push(Number(r.version));
+  }
   const blocks = await blocksRead;
   const unseen = (b: (typeof blocks)[number]) => !(b.seen && !b.stale_only);
   const [endRows, known, workRows] = await Promise.all([
@@ -144,7 +151,11 @@ export async function getForkLanes(
     height,
     active: facts.active,
     ...runs,
-    parents: hashes.map(hash => ({ hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null })),
+    parents: hashes.map(hash => ({
+      hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null,
+      follows: followsDeployment(height, hash === facts.active,
+        facts.active_version === null ? null : Number(facts.active_version), versionsOf.get(hash) ?? [])?.name ?? null,
+    })),
     blocks: blocks.map(b => ({
       hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
       seen_ms: b.seen && !b.stale_only ? Number(b.arrival_ms) : null, stale_only: b.stale_only,

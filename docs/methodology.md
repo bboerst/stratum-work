@@ -255,8 +255,8 @@ arrive) or that has no row yet (a block recorded since, also from the public dat
 (the gap fill) has moved an old window. Whether a block is still stale
 is checked each time the page is read, so a block reorged back in drops out with no cleanup. The web's Postgres tests
 compare the table field for field with the direct read of templates, which the page uses while the table is empty.
-Its episode shows the block's height, how its header reached us and, when identified, its miner (not named when it
-is a pool hidden from the site).
+Its episode shows the block's height, how its header reached us and, when identified, its miner (also when that pool
+is hidden from the site: which pool mined a block is history, not realtime work).
 
 Counting that per request would mean reading months of templates (all history takes about a minute), so the backend
 keeps a summary, `unknown_parent_pools`: one row per unknown parent and pool with **counted facts only**, the
@@ -320,15 +320,26 @@ below follows the chosen range.
 
 **A row's timeline** (`/api/forks/timeline`, `web/lib/forkLanes.ts`) is the fork chart of its height, the same chart
 as the height page's: every feed's templates at that height, coloured by the parent each built on, with a line where
-each block at height − 1 and at the height reached our node. Only seen times are drawn: blocks from before the
-node's arrival times were recorded get no line (the header time is the miner's claim, not an arrival), nor does a
-stale block known only from the stale-block records (the time it was first recorded is not when it reached our node).
+each block at height − 1 and at the height reached our node. Where that wasn't recorded (blocks from before the
+node's arrival times were, and a stale block known only from the stale-block records, whose time is when it was first
+recorded), the line is dashed and drawn where our feeds first built on the block: its first template as a parent, at
+the height for a block at height − 1 and at the next height for a block at the height. Not the header time: the miner
+sets it, and it can be minutes off (at 971,187 it was 89 s after our feeds were already building on the block). The
+compressed axis never folds over a block's line.
 The row reads it thin: one stream per pool (the de-duplicated templates), as runs, each starting where a pool's
 parent changes or its work turns invalid or valid. The read covers the height's time window widened to the row's
 episodes, since a feed can stay on a losing parent for hours. Each pool's last run ends when that pool first worked
 on the next height, or at its own last template when we saw none there: silence isn't drawn as work. These ends,
 like the switches, are what the chart's compressed time axis keeps in view. Each block of the race is listed with the
-pools whose first work at that height was on it, and an arrow on a pool that later moved. Opening a row shows the
+pools whose first work at that height was on it, and an arrow on a pool that also built on another block; a block no
+pool started on is still listed, with the pools that built on it for a while. Pools that share a template provider in
+the row's epoch (the rule of the template providers page) are grouped together.
+
+**A soft fork's chain.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110: version bit
+4, blocks 961,632 to 963,647) makes a node that enforces it reject every block in the window that doesn't signal. A
+parent is labelled as that deployment's chain when it is a block at height − 1 inside the window, our best block there
+doesn't signal, and every template on the parent signals. All three are recorded facts; nothing about the parent block
+itself needs to be known (at 961,634 it's a block we never recorded). Opening a row shows the
 chart at full size; a row's evidence (the checks its kind rests on and the templates around its minutes, each
 labelled by the parent it built on) is behind a toggle there.
 

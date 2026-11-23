@@ -23,13 +23,15 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
   let admin: Client;
   const sid: Record<string, number> = {};
 
-  const insert = (src: string, s: number, height: number, job: string, br: string, ntime: number, cb: string) =>
+  // latency: s * 1000 ms (so each row's estimate says which row it is) unless given; method 'tcp' unless given
+  const insert = (src: string, s: number, height: number, job: string, br: string, ntime: number, cb: string,
+                  lat: number | null = s * 1000, method: string | null = 'tcp') =>
     admin.query(
       `INSERT INTO templates (received_at, source_id, height, job_id, prev_hash, coinbase1, coinbase2, merkle_branches,
                               version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length, latency_ms, latency_method)
        VALUES (to_timestamp($1::float8), $2, $3, $4, decode(repeat('11', 32), 'hex'), decode($5, 'hex'), '\\xffffffff',
-               decode(repeat($6, 32), 'hex'), 536870912, 386000000, $7, true, decode($5, 'hex'), 8, $8, 'tcp')`,
-      [T0 + s, sid[src], height, job, cb, br, ntime, s * 1000]);
+               decode(repeat($6, 32), 'hex'), 536870912, 386000000, $7, true, decode($5, 'hex'), 8, $8, $9::latency_method)`,
+      [T0 + s, sid[src], height, job, cb, br, ntime, lat, method]);
 
   beforeAll(async () => {
     Object.assign(process.env, {
@@ -55,9 +57,13 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     }
     // primary ci/a, secondaries ci/b and ci2/a
     await insert('ci/a', 0.020, h, 'a1', 'aa', 100, 'a1');
-    await insert('ci/b', 0.010, h, 'b7', 'aa', 100, 'b1');    // exact copy of a1, earlier: hidden
+    await insert('ci/b', 0.010, h, 'b7', 'aa', 100, 'b1', 10, 'app');   // exact copy of a1, earlier: hidden
     await insert('ci2/a', 0.015, h, 'c3', 'aa', 99, 'c1');    // same job, other ntime, ci/a active: hidden
     await insert('ci/a', 30.0, h, 'a2', 'aa', 130, 'a2');     // the primary re-sends the job: shown
+    await insert('ci/a', 31.0, h, 'a3', 'ee', 140, 'a3');     // shown; first seen from ci2/a's copy, which has no estimate
+    await insert('ci2/a', 30.5, h, 'c4', 'ee', 140, 'c4', null, null);
+    await insert('ci/a', 32.0, h, 'a4', 'ff', 150, 'a4', 7);  // shown; ci/b's copy at the same µs: the primary's estimate
+    await insert('ci/b', 32.0, h, 'b4', 'ff', 150, 'b4', 70, 'app');
     await insert('ci/b', 5.0, h, 'b8', 'bb', 105, 'b2');      // its own job, ci/a active: hidden (secondary stream)
     await insert('ci/b', 200.0, h, 'b9', 'cc', 300, 'b3');    // ci/a silent for 170 s: shown (gap fill)
     // one collector: a re-send with a new ntime and an exact repeat are all kept
@@ -80,15 +86,18 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
   const us = (s: number) => String(BigInt(Math.round((T0 + s) * 1e6)));
   const hexNs = (s: number) => (BigInt(us(s)) * BigInt(1000)).toString(16);
 
-  it('R1: one stream per pool, gap fills shown; first seen from the earlier copy', async () => {
+  it('R1: one stream per pool, gap fills shown; first seen and its latency from the earlier copy', async () => {
     const got = await pg.templatesAtHeight(h);
-    expect(got.map(t => [t.pool_name, jobId(t), t.coinbase1, t.ntime, t.lat_ms])).toEqual([
-      [name, 'a1', 'a1', '00000064', 20],     // the primary's own fields
-      [name, 'a2', 'a2', '00000082', 30000],
-      [name, 'b9', 'b3', '0000012c', 200000],
+    expect(got.map(t => [t.pool_name, jobId(t), t.coinbase1, t.ntime, t.timestamp, t.lat_ms, t.lat_m])).toEqual([
+      // the primary's own template fields, shown at the secondary's earlier copy with THAT connection's estimate
+      // (10 ms, app), not the primary's (20 ms, tcp): the latency-adjusted time is one connection's
+      [name, 'a1', 'a1', '00000064', hexNs(0.010), 10, 'app'],
+      [name, 'a2', 'a2', '00000082', hexNs(30.0), 30000, 'tcp'],   // no earlier copy: its own
+      [name, 'a3', 'a3', '0000008c', hexNs(30.5), null, null],     // the first copy had no estimate: none
+      [name, 'a4', 'a4', '00000096', hexNs(32.0), 7, 'tcp'],       // a copy at the same µs: the primary's
+      [name, 'b9', 'b3', '0000012c', hexNs(200.0), 200000, 'tcp'], // gap fill: its own
     ]);
     expect(got[0].id).toBe(`${sid['ci/a']}-${us(0.020)}-a1`);   // own receive time in the id
-    expect(got[0].timestamp).toBe(hexNs(0.010));                 // shown time: the secondary's earlier copy
   });
 
   it('R1: one collector per pool returns the raw rows', async () => {
@@ -102,8 +111,8 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
 
   it('R2: every row at the height, whenever received, de-duplicated; R1 leaves out the late one', async () => {
     const got = await pg.allTemplatesAtHeight(h);
-    expect(got.map(jobId)).toEqual(['a1', 'a2', 'b9', 'oa']);
-    expect(got[3].timestamp).toBe(hexNs(LATE + 1.0));   // first seen: the other connection's earlier exact copy
+    expect(got.map(jobId)).toEqual(['a1', 'a2', 'a3', 'a4', 'b9', 'oa']);
+    expect(got[5].timestamp).toBe(hexNs(LATE + 1.0));   // first seen: the other connection's earlier exact copy
     expect((await pg.templatesAtHeight(h)).map(jobId)).not.toContain('oa');
   });
 

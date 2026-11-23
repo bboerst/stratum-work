@@ -97,6 +97,27 @@ describe('templateRowToMiningNotify', () => {
     expect(doc.timestamp).toBe(timestampHexFromMicros('1794491650100000'));
     expect(doc.id).toBe('3-1794491650123456-2687119');
   });
+
+  it('with a first-seen time, takes the latency of the copy that set it, not the row\'s own', () => {
+    const doc = templateRowToMiningNotify(templateRow({
+      received_us: '1794491650123456', first_seen_us: '1794491650100000', latency_ms: 24.336, latency_method: 'tcp',
+      first_seen_latency_ms: 61.5, first_seen_latency_method: 'app',
+    }));
+    expect([doc.lat_ms, doc.lat_m]).toEqual([61.5, 'app']);
+  });
+
+  it('with a first-seen time whose copy has no estimate, has none (never the row\'s own)', () => {
+    const doc = templateRowToMiningNotify(templateRow({
+      first_seen_us: '1794491650100000', latency_ms: 24.336, latency_method: 'tcp',
+      first_seen_latency_ms: null, first_seen_latency_method: null,
+    }));
+    expect([doc.lat_ms, doc.lat_m]).toEqual([null, null]);
+  });
+
+  it('without a first-seen time, the row\'s own receive time goes with its own latency', () => {
+    const doc = templateRowToMiningNotify(templateRow({ latency_ms: 24.336, latency_method: 'tcp' }));
+    expect([doc.lat_ms, doc.lat_m]).toEqual([24.336, 'tcp']);
+  });
 });
 
 function blockRow(overrides: Partial<BlockRow> = {}): BlockRow {

@@ -75,11 +75,15 @@ export async function isHeightFinal(height: number): Promise<boolean> {
   return w?.final === true;
 }
 
-/** R1: Bitcoin templates at a height (one stream per pool across replicas), earliest first. */
+/**
+ * R1: Bitcoin templates at a height (one stream per pool across replicas), earliest first. The latency is the first
+ * copy's (first_seen_latency_*, migration 20261123000001): the shown time is that copy's receive time.
+ */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
   const [from, to] = await heightWindow(height);
   const rows = await query<TemplateRow>(
-    `SELECT ${DEDUP_COLUMNS}, j.latency_ms, j.latency_method::text AS latency_method
+    `SELECT ${DEDUP_COLUMNS}, j.first_seen_latency_ms,
+            j.first_seen_latency_method::text AS first_seen_latency_method
        FROM templates_dedup($1, $1, $2, $3) j
       ORDER BY j.first_seen, j.source_id, j.job_id`,
     [height, from, to],

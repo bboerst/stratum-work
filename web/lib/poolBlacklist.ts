@@ -10,7 +10,7 @@ export function isPoolBlacklisted(name: string | undefined | null): boolean {
   return blacklistedPools.has(name);
 }
 
-/** The POOL_BLACKLIST names, for reads that exclude them in SQL (e.g. /api/forks, which hides them entirely). */
+/** The POOL_BLACKLIST names, for reads that exclude them in SQL (with the tip rule: realtimeExclusion, below). */
 export function blacklistedPoolNames(): string[] {
   return [...blacklistedPools];
 }
@@ -24,9 +24,10 @@ export function filterBlacklistedItems<T>(
 }
 
 /**
- * POOL_BLACKLIST hides pools from the realtime view only; their history stays available to downstream analysis
- * (first-seen, forks). Templates for a height above the chain tip are the work being handed out right now, i.e. the
- * realtime view under another URL, so they are filtered there. An unknown tip filters too (fail closed).
+ * POOL_BLACKLIST hides live streaming only (the stream, the realtime pre-fill, templates above the tip); every analysis
+ * view keeps the pool at mined heights (docs/methodology.md, "Pools hidden from the live site"). Templates for a
+ * height above the chain tip are the work being handed out right now, i.e. the realtime view under another URL, so
+ * they are filtered there. An unknown tip filters too (fail closed).
  */
 export function filterBlacklistedAboveTip<T>(
   items: T[],

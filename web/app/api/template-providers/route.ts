@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { enableHistoricalData } from "../../../lib/db/blocks";
 import { getTemplateProviderInputs } from "../../../lib/db/template-providers";
 import { deriveTemplateProviders, type TemplateProviders } from "../../../lib/templateProviders";
-import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +18,8 @@ export const dynamic = "force-dynamic";
  *       404 while nothing is counted yet (also before the migration has created the tables), or with historical data
  *       disabled (the home page leaves the section out).
  *
- * POOL_BLACKLIST names are dropped before grouping, as feeds and as pools paid: they add no node, pair, feed or pool
- * name, and an excluded pool's blocks (like a pool only excluded feeds pay) are "not on our feeds". POOL_OWN_TEMPLATE_CREATORS (comma-separated prefixes, default none) names the DATUM template
+ * POOL_BLACKLIST hides live work only, so excluded pools are counted here like any other: the transaction sets are
+ * counted per height once its receive window has closed (history). POOL_OWN_TEMPLATE_CREATORS (comma-separated prefixes, default none) names the DATUM template
  * creators that are a pool's own template servers: their blocks count as the pool's, not as miner-built. Computed once
  * per SUMMARY_MS per process and served stale while a refresh runs.
  */
@@ -37,7 +36,7 @@ let current: Entry | null = null;
 function refresh(now: number, fallback: TemplateProviders | null): Entry {
   const entry: Entry = {
     at: now, settled: undefined, fallback,
-    promise: getTemplateProviderInputs(blacklistedPoolNames())
+    promise: getTemplateProviderInputs([])
       .then(inputs => deriveTemplateProviders({ ...inputs, ownCreatorPrefixes: ownCreatorPrefixes() })),
   };
   entry.promise.then(r => { entry.settled = r; }, () => {

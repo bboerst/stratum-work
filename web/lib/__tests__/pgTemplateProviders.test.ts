@@ -112,8 +112,22 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     await admin.end();
   });
 
+  /** The page as if fx had never been collected: its rows set aside for the call, then put back. */
+  async function withoutFx<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = await admin.query(`SELECT * FROM template_set_feeds WHERE feed = $1`, [fx]);
+    const savedPairs = await admin.query(`SELECT * FROM template_set_pairs WHERE feed_a = $1 OR feed_b = $1`, [fx]);
+    await admin.query(`DELETE FROM template_set_pairs WHERE feed_a = $1 OR feed_b = $1`, [fx]);
+    await admin.query(`DELETE FROM template_set_feeds WHERE feed = $1`, [fx]);
+    try {
+      return await fn();
+    } finally {
+      for (const r of saved.rows) await feedRow(r.height, r.feed, r.pool_id, r.sets);
+      for (const r of savedPairs.rows) await pairRow(r.height, r.feed_a, r.pool_a, r.feed_b, r.pool_b, r.shared);
+    }
+  }
+
   it('derives columns, pies and names from the counts', async () => {
-    const { status, body } = await route(fx);
+    const { status, body } = await withoutFx(() => route(''));
     expect(status).toBe(200);
     const mine = (c: { label: string }) => c.label === h0.toLocaleString('en-US') || c.label === h1.toLocaleString('en-US');
     const cols = body.columns.filter(mine);
@@ -137,23 +151,23 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     expect(body.heights_counted).toBe(3);
   });
 
-  it('an excluded feed is as if it never existed', async () => {
-    const excluded = await route(fx);
-    expect(JSON.stringify(excluded.body)).not.toContain(fx);
-    expect(JSON.stringify(excluded.body)).not.toContain(NAME[X]);
-    // the same database without fx's rows, no blacklist
-    const saved = await admin.query(`SELECT * FROM template_set_feeds WHERE feed = $1`, [fx]);
-    const savedPairs = await admin.query(`SELECT * FROM template_set_pairs WHERE feed_a = $1 OR feed_b = $1`, [fx]);
-    await admin.query(`DELETE FROM template_set_pairs WHERE feed_a = $1 OR feed_b = $1`, [fx]);
-    await admin.query(`DELETE FROM template_set_feeds WHERE feed = $1`, [fx]);
-    try {
-      const without = await route('');
-      const strip = (b: Record<string, unknown>) => ({ ...b, generated_at: 0 });
-      expect(strip(excluded.body)).toEqual(strip(without.body));
-    } finally {
-      for (const r of saved.rows) await feedRow(r.height, r.feed, r.pool_id, r.sets);
-      for (const r of savedPairs.rows) await pairRow(r.height, r.feed_a, r.pool_a, r.feed_b, r.pool_b, r.shared);
-    }
+  it('counts a POOL_BLACKLIST feed like any other (it hides live work only); excluded in the read, it never existed', async () => {
+    const strip = (b: Record<string, unknown>) => ({ ...b, generated_at: 0 });
+    const blacklisted = await route(fx);
+    expect(strip(blacklisted.body)).toEqual(strip((await route('')).body));
+    // the read's own exclusion (Forks uses it while our tip is unknown): the same as without fx's rows
+    vi.resetModules();
+    delete (globalThis as { __templateSetEpochs?: unknown }).__templateSetEpochs;
+    const db = await import('../db/template-providers');
+    const excluded = await db.getTemplateProviderInputs([fx]);
+    expect(JSON.stringify(excluded)).not.toContain(fx);
+    delete (globalThis as { __templateSetEpochs?: unknown }).__templateSetEpochs;
+    const without = await withoutFx(() => db.getTemplateProviderInputs([]));
+    expect(JSON.stringify(excluded.nodes)).toEqual(JSON.stringify(without.nodes));
+    expect(JSON.stringify(excluded.pairs)).toEqual(JSON.stringify(without.pairs));
+    const { getPgPool } = await import('../db/pg');
+    await getPgPool().end();
+    delete (global as unknown as { stratumPgPool?: unknown }).stratumPgPool;
     // and with fx collected, fx is where B's blocks and fc go
     const withX = await route('');
     expect(JSON.stringify(withX.body)).toContain(fx);

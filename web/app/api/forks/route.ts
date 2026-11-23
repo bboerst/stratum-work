@@ -62,12 +62,13 @@ export const dynamic = "force-dynamic";
  * data disabled it answers enabled: false, supported: false without touching a database. POOL_BLACKLIST pools are
  * left out of this endpoint entirely: their templates, connections, findings and the episodes only they built on. (The
  * page's fork chart reads /api/analysis-data, which keeps them at mined heights, as the height page does.) The earlier range
- * values 90d and 1y are read as 6e and 26e (shared links); responses name the new ones. /api/unknown-parents is an
+ * values 90d and 1y are read as 6e and 26e (shared links); responses name the new ones. Work on a soft fork's own chain
+ * (BIP-110's split, lib/softForks.ts) isn't a race on Bitcoin's chain: left out, and counted in soft_fork_chains. /api/unknown-parents is an
  * alias (the page's former name).
  *
  *   GET /api/forks[?range=6e|26e|all]
  *       { range, blocks (N; null for all), tip_height (our best-chain tip; null with no blocks), from_height,
- *       generated_at (ms), before_first_block, episodes: Episode[] } (oldest first); from_height is tip_height -
+ *       generated_at (ms), before_first_block, soft_fork_chains, episodes: Episode[] } (oldest first); from_height is tip_height -
  *       blocks, or for all the lowest tip_at_first of the episodes (tip_height when there is none)
  *   GET /api/forks?range=…&providers=0
  *       the same without template providers (providers null, provider_groups empty): what the page reads

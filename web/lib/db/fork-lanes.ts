@@ -14,7 +14,6 @@ export interface LaneTemplateSql {
   at_us: string;                 // first seen, µs since the epoch
   parent: string;                // display-order hex
   nbits: string;
-  version: string;
   empty: boolean;
   coinbase1: string | null;      // only an empty template of a pool in the finding
   extranonce1: string | null;
@@ -26,7 +25,6 @@ export interface LaneFactsSql {
   t_from: string;
   t_to: string;
   active: string | null;         // our best block at height - 1
-  active_version: string | null; // its version
   bits_prev: string | null;
   bits_at: string | null;
   offenders: { pool_name?: string; subsidy_sats?: number | null }[] | null;
@@ -39,7 +37,6 @@ export async function getLaneFacts(height: number, spanFromMs: number, spanToMs:
     `SELECT least(w.t_from, to_timestamp($2::double precision / 1000) - interval '1 second')::text AS t_from,
             greatest(w.t_to, to_timestamp($3::double precision / 1000) + interval '1 second')::text AS t_to,
             ${best('$1::int - 1', "encode(b.block_hash, 'hex')")} AS active,
-            ${best('$1::int - 1', 'b.version')}::text AS active_version,
             ${best('$1::int - 1', 'b.bits')}::text AS bits_prev,
             ${best('$1::int', 'b.bits')}::text AS bits_at,
             (SELECT f->'details'->'offenders'
@@ -68,7 +65,7 @@ export async function getLaneTemplates(
   }
   const { rows } = await getPgPool().query<LaneTemplateSql>(
     `SELECT j.pool, (extract(epoch FROM j.first_seen) * 1000000)::bigint AS at_us,
-            encode(stratum_prev_hash_to_block_hash(j.prev_hash), 'hex') AS parent, j.nbits::text AS nbits, j.version::text AS version,
+            encode(stratum_prev_hash_to_block_hash(j.prev_hash), 'hex') AS parent, j.nbits::text AS nbits,
             coalesce(octet_length(j.merkle_branches), 0) = 0 AS empty,
             ${coinbase}
        FROM templates_dedup($1::int, $1::int, $2::timestamptz, $3::timestamptz) j

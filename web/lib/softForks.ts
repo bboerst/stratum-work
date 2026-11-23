@@ -31,3 +31,6 @@ export function followsDeployment(
   return MANDATORY_SIGNALS.find(d => height - 1 >= d.from && height - 1 <= d.to && !signals(bestVersion, d.bit)
     && versions.every(v => signals(v, d.bit))) ?? null;
 }
+
+/** Whether work at `height` builds on a parent inside some deployment's mandatory window (a candidate to check). */
+export const inMandatoryWindow = (height: number) => MANDATORY_SIGNALS.some(d => height - 1 >= d.from && height - 1 <= d.to);

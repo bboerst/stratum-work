@@ -1,15 +1,17 @@
 // Relative imports so the route and pages using it can be unit-tested (lib/__tests__/forksRoute.test.ts)
 import { enableHistoricalData } from "./db/blocks";
 import {
-  RANGE_BLOCKS, getBestTipHeight, getDrillBlocks, type DrillBlockRow, type UnknownParentsRange,
+  RANGE_BLOCKS, getBestTipHeight, getDrillBlocks, getParentVersions, type DrillBlockRow, type UnknownParentsRange,
 } from "./db/unknown-parents";
 import { getEpisodes, type Episode } from "./unknownParents";
 import { blacklistedPoolNames } from "./poolBlacklist";
+import { followsDeployment, inMandatoryWindow } from "./softForks";
 
 /**
  * The Forks summary per range, shared by /api/forks and the Forks pages (short links, link previews, the preview
  * image): computed once per SUMMARY_MS per process and range, and served stale while a refresh runs. POOL_BLACKLIST
- * pools are left out of every read.
+ * pools are left out of every read. Work on a soft fork's own chain (lib/softForks.ts: BIP-110's split) isn't a race
+ * on Bitcoin's chain: it isn't shown, and is counted in the response.
  */
 export const SUMMARY_MS = 5 * 60_000;
 
@@ -22,6 +24,7 @@ export interface SummaryResponse {
   from_height?: number | null;
   generated_at?: number;         // ms
   before_first_block?: number;   // episodes that began before our first stored block: not shown
+  soft_fork_chains?: number;     // episodes on a soft fork's own chain (withoutSoftForkChains): not shown
   episodes?: Episode[];
 }
 
@@ -44,7 +47,9 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
   const range = key.replace(/-lite$/, '') as UnknownParentsRange;
   const entry: SummaryEntry = {
     at: now, settled: null, fallback,
-    promise: Promise.all([getEpisodes(blacklistedPoolNames(), range, { providers: !key.endsWith('-lite') }), getBestTipHeight()]).then(([all, tip_height]) => {
+    promise: Promise.all([
+      getEpisodes(blacklistedPoolNames(), range, { providers: !key.endsWith('-lite') }).then(withoutSoftForkChains), getBestTipHeight(),
+    ]).then(([{ episodes: all, hidden: soft_fork_chains }, tip_height]) => {
       // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
       // (collection started mid-height): not shown, and counted in the response.
       const episodes = all.filter(e => e.facts.tip_at_first !== null);
@@ -52,7 +57,7 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
       const blocks = RANGE_BLOCKS[range];
       const from_height = tip_height === null ? null : blocks !== null ? tip_height - blocks
         : episodes.reduce((m, e) => (e.facts.tip_at_first === null ? m : Math.min(m, e.facts.tip_at_first)), tip_height);
-      return { enabled: true, supported: true, range, blocks, tip_height, from_height, generated_at: Date.now(), before_first_block, episodes };
+      return { enabled: true, supported: true, range, blocks, tip_height, from_height, generated_at: Date.now(), before_first_block, soft_fork_chains, episodes };
     }),
   };
   entry.promise.then(r => { entry.settled = r; }, () => {
@@ -63,6 +68,25 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
   });
   summaries.set(key, entry);
   return entry;
+}
+
+/**
+ * The episodes without those on a soft fork's own chain (followsDeployment: a parent inside its mandatory window,
+ * our best block there not signalling, every template on the parent signalling), and how many were left out. Only
+ * episodes inside a window are read again (a few heights).
+ */
+export async function withoutSoftForkChains(episodes: Episode[]): Promise<{ episodes: Episode[]; hidden: number }> {
+  const candidates = episodes.filter(e => inMandatoryWindow(e.height));
+  if (candidates.length === 0) return { episodes, hidden: 0 };
+  const rows = await getParentVersions(candidates.map(e => ({ parent: e.parent, height: e.height, first_ms: e.first_ms, last_ms: e.last_ms })),
+    blacklistedPoolNames());
+  const hide = new Set<Episode>();
+  for (const r of rows) {
+    const e = candidates[r.i - 1];
+    const bestVersion = r.best_version === null ? null : Number(r.best_version);
+    if (followsDeployment(e.height, r.best_hash === e.parent, bestVersion, r.versions.map(Number))) hide.add(e);
+  }
+  return { episodes: episodes.filter(e => !hide.has(e)), hidden: hide.size };
 }
 
 /** The range's summary (callers check enableHistoricalData first: this reads the database). */

@@ -10,7 +10,7 @@ const PAID = coinbaseTotal(CB1, 'aabbccdd', 4, CB2);
 const SUBSIDY = 312_500_000;
 
 const t = (pool: string, us: number, parent: string, o: Partial<LaneTemplateSql> = {}): LaneTemplateSql => ({
-  pool, at_us: String(us), parent, nbits: '386000000', version: '536870912', empty: false,
+  pool, at_us: String(us), parent, nbits: '386000000', empty: false,
   coinbase1: null, extranonce1: null, coinbase2: null, extranonce2_length: null, ...o,
 });
 const bad = (pool: string, us: number, parent: string) => t(pool, us, parent, { empty: true, coinbase1: CB1, extranonce1: 'aabbccdd', coinbase2: CB2, extranonce2_length: 4 });

@@ -335,12 +335,15 @@ pools whose first work at that height was on it, and an arrow on a pool that als
 pool started on is still listed, with the pools that built on it for a while. Pools that share a template provider in
 the row's epoch (the rule of the template providers page) are grouped together.
 
-**A soft fork's chain.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110: version bit
-4, blocks 961,632 to 963,647) makes a node that enforces it reject every block in the window that doesn't signal. A
-parent is labelled as that deployment's chain when it is a block at height − 1 inside the window, our best block there
-doesn't signal, and every template on the parent signals. All three are recorded facts; nothing about the parent block
-itself needs to be known (at 961,634 it's a block we never recorded). Opening a row shows the
-chart at full size; a row's evidence (the checks its kind rests on and the templates around its minutes, each
+**A soft fork's chain isn't shown.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110:
+version bit 4, blocks 961,632 to 963,647) makes a node that enforces it reject every block in the window that doesn't
+signal, so its chain can split from Bitcoin's (BIP-110's did at 961,632). Work on that chain isn't a race on Bitcoin's
+chain, so the Forks page leaves it out and the summary counts it (`soft_fork_chains`). An episode is left out when its
+parent is a block at height − 1 inside the window, our best block there doesn't signal, and every template on the
+parent signals. All three are recorded facts; nothing about the parent block itself needs to be known (at 961,634 it's
+a block we never recorded).
+
+Opening a row shows the chart at full size; a row's evidence (the checks its kind rests on and the templates around its minutes, each
 labelled by the parent it built on) is behind a toggle there.
 
 **Invalid coinbase**: the backend's analysis flags a block whose height had templates paying more than the subsidy

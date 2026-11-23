@@ -9,7 +9,7 @@
  * findings (a badge on the episodes at that height, else a row of its own; excluded pools left out).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql } from '../db/unknown-parents';
+import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql, ParentVersionsSql } from '../db/unknown-parents';
 import type { EpochGroupInputs } from '../db/template-providers';
 
 const P1 = '00'.repeat(10) + '12'.repeat(22);   // meets the target of BITS
@@ -57,15 +57,16 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getInvalidCoinbaseFlags = vi.fn<() => Promise<InvalidCoinbaseFlagSql[]>>(async () => []);
   const getEpochGroupInputs = vi.fn<(epochs: number[], exclude: string[]) => Promise<EpochGroupInputs>>(
     async () => ({ nodes: [], pairs: [], counted: [] }));
+  const getParentVersions = vi.fn<(q: unknown[], exclude: string[]) => Promise<ParentVersionsSql[]>>(async () => []);
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
     ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight,
-    getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
+    getStaleEpisodePoolRows, getInvalidCoinbaseFlags, getParentVersions,
   }));
   const route = await import('../../app/api/forks/route');
   return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
-    getEpochGroupInputs };
+    getEpochGroupInputs, getParentVersions };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
@@ -219,6 +220,23 @@ describe('GET /api/forks', () => {
     const body = await (await get(route)).json();
     expect(body.episodes).toEqual([]);
     expect(body.before_first_block).toBe(1);
+  });
+
+  it("leaves out work on a soft fork's own chain (BIP-110), and counts it; reads only episodes in its window", async () => {
+    const { route, getEpisodePoolRows, getParentVersions } = await loadRoute();
+    expect(getParentVersions).not.toHaveBeenCalled();                                        // 900,001: outside
+    const at = (h: number) => poolRow({ heights: { [h]: 3 } });
+    getEpisodePoolRows.mockResolvedValue([at(961_633)]);
+    getParentVersions.mockResolvedValueOnce([{ i: 1, best_hash: BEST, best_version: String(0x20006000), versions: [String(0x20000010)] }]);
+    const body = await (await get(route, '?range=all')).json();
+    expect(getParentVersions.mock.calls[0][0]).toEqual([{ parent: P1, height: 961_633, first_ms: 1000, last_ms: 5000 }]);
+    expect(body.episodes).toEqual([]);
+    expect(body.soft_fork_chains).toBe(1);
+    // mixed evidence (one template doesn't signal): shown
+    getParentVersions.mockResolvedValueOnce([{ i: 1, best_hash: BEST, best_version: String(0x20006000), versions: [String(0x20000010), String(0x20006000)] }]);
+    const mixed = await (await get(route, '?range=26e')).json();
+    expect(mixed.episodes).toHaveLength(1);
+    expect(mixed.soft_fork_chains).toBe(0);
   });
 
   it('validates the parent and 404s one that is no episode', async () => {

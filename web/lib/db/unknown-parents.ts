@@ -496,3 +496,41 @@ export async function getDrillBlocks(height: number): Promise<DrillBlockRow[]> {
     [height])).rows;
   return blocks;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Soft-fork chains (lib/softForks.ts)
+
+export interface ParentVersionsQuery { parent: string; height: number; first_ms: number; last_ms: number }
+
+export interface ParentVersionsSql {
+  i: number;                            // the query's index
+  best_hash: string | null;             // our best block at height - 1 (display hex)
+  best_version: string | null;          // its version
+  versions: string[];                   // every version among the templates on the parent at height, in the episode's times
+}
+
+/**
+ * For each candidate (an episode's parent): our best block at height - 1 and its version, and every distinct version of
+ * the templates built on the parent (excluded pools left out). Only called for the few episodes inside a deployment's
+ * mandatory window, each bounded by its height and receive times.
+ */
+export async function getParentVersions(qs: ParentVersionsQuery[], excludePools: string[]): Promise<ParentVersionsSql[]> {
+  if (qs.length === 0) return [];
+  const best = (col: string) => `(SELECT ${col} FROM blocks_best b WHERE b.height = c.h - 1
+                                   ORDER BY coalesce(b.seen_at, b.block_time), b.block_hash LIMIT 1)`;
+  const { rows } = await getPgPool().query<ParentVersionsSql>(
+    `WITH c AS (
+       SELECT * FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS c(parent, h, first_ms, last_ms, i)
+     )
+     SELECT c.i::int AS i, ${best("encode(b.block_hash, 'hex')")} AS best_hash, ${best('b.version')}::text AS best_version,
+            ARRAY(SELECT DISTINCT t.version::text FROM templates t JOIN sources s ON s.id = t.source_id
+                   WHERE t.height = c.h
+                     AND t.received_at >= timestamptz 'epoch' + (c.first_ms - 1000) * interval '1 millisecond'
+                     AND t.received_at <= timestamptz 'epoch' + (c.last_ms + 1000) * interval '1 millisecond'
+                     AND stratum_prev_hash_to_block_hash(t.prev_hash) = decode(c.parent, 'hex')
+                     AND s.name <> ALL ($5::text[])) AS versions
+       FROM c ORDER BY c.i`,
+    [qs.map(q => q.parent), qs.map(q => q.height), qs.map(q => q.first_ms), qs.map(q => q.last_ms), excludePools],
+  );
+  return rows;
+}

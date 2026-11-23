@@ -383,7 +383,7 @@ interface Lanes {
   active: string | null;
   from_ms: number;
   last_ms: number;
-  parents: { hash: string; status: "canonical" | "stale" | "unknown" | null; kind: ParentKind | null; follows?: string | null }[];
+  parents: { hash: string; status: "canonical" | "stale" | "unknown" | null; kind: ParentKind | null }[];
   lanes: { pool: string; runs: [number, number, 0 | 1][]; end: number }[];
   blocks: ArrivalBlock[];
 }
@@ -462,7 +462,6 @@ const SIDE_TEXT: Record<string, string> = {
 
 interface Side {
   hash: string; tone: string; label: string; title: string;
-  follows?: string | null;   // the deployment its chain follows (lib/softForks.ts)
   pools: { pool: string; to: string | null; invalid: boolean; visit?: boolean }[];
 }
 
@@ -504,9 +503,7 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
       const other = [...lane.runs].reverse().find(r => r[1] !== lane.runs[0][1]);
       if (h !== row.heights[0] && (first.status === "canonical" || placed.has(lane.pool))) continue;
       const tone = toneOf(first);
-      const side = add(first.hash, tone, labelOf(first, minerOf), titleOf(first, h));
-      side.follows ??= first.follows ?? null;
-      side.pools.push({
+      add(first.hash, tone, labelOf(first, minerOf), titleOf(first, h)).pools.push({
         pool: lane.pool, to: other ? toneOf(l.parents[other[1]]) : null, invalid: lane.runs.some(r => r[2] === 1),
       });
       placed.add(lane.pool);
@@ -516,7 +513,6 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
     l.parents.forEach((par, i) => {
       if (sides.has(par.hash) || (par.status !== "canonical" && par.status !== "stale")) return;
       const side = add(par.hash, toneOf(par), labelOf(par, minerOf), titleOf(par, h));
-      side.follows ??= par.follows ?? null;
       for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
         if (lane.runs.some(r => r[1] === i)) side.pools.push({ pool: lane.pool, to: null, invalid: lane.runs.some(r => r[1] === i && r[2] === 1), visit: true });
       }
@@ -616,12 +612,6 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
                 <span className="min-w-0 break-words max-sm:flex max-sm:items-baseline max-sm:gap-2">
                   {s.label}
                   {isBlockSide(s) && <span className="block font-mono text-[10px] leading-4 text-foreground/50">…{s.hash.slice(-8)}</span>}
-                  {s.follows && (
-                    <span className="mt-0.5 block w-fit rounded-sm border border-amber-500/60 px-1 text-[10px] leading-4 text-amber-700 dark:text-amber-400"
-                      title={`${s.follows} chain: every template on it signals ${s.follows}, in its mandatory-signalling window, and our best chain's block there doesn't`}>
-                      {s.follows} chain
-                    </span>
-                  )}
                 </span>
               </span>
               <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">

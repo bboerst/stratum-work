@@ -8,10 +8,8 @@
  *   edge     two nodes share a template provider when the transaction sets both received are at least SHARE_MIN (80%)
  *            of the smaller node's sets, both having at least SETS_MIN (5). Sets are counted per height, so the same
  *            set at two heights is two units (the backend's counts add up exactly).
- *   partner  each node links only to its strongest partner: the highest overlap, then the most shared sets, then
- *            the greater node key. Nodes on one template provider overlap almost fully; a node alternating between two
- *            providers overlaps each only partly, so it joins one provider instead of merging two.
- *   group    the connected components of those links: one template provider each.
+ *   group    the connected components of the edges: one template provider each. A node can't join two separate
+ *            providers: at least 80% of its sets on each would need sets both providers received, so they share one.
  *   feed     a feed's provider (Forks: providers per episode) is the group of its node with the most sets, when that
  *            node has at least SETS_MIN; otherwise unknown.
  * Blocks (our best chain, exact by height):
@@ -123,7 +121,7 @@ export function groupEpoch(nodes: readonly Omit<NodeRow, "epoch">[], pairs: read
     adj.get(a)!.set(b, { r, shared: sh });
     adj.get(b)!.set(a, { r, shared: sh });
   }
-  // strongest partner per node, joined by union-find
+  // every edge, joined by union-find
   const parent = new Map<NodeKey, NodeKey>();
   const find = (x: NodeKey): NodeKey => {
     let r = x;
@@ -134,17 +132,12 @@ export function groupEpoch(nodes: readonly Omit<NodeRow, "epoch">[], pairs: read
   };
   const keys = [...info.keys()].sort();
   for (const k of keys) parent.set(k, k);
-  for (const a of [...adj.keys()].sort()) {
-    let best: NodeKey | null = null, bestE = { r: -1, shared: -1 };
-    for (const [b, e] of adj.get(a)!) {
-      if (e.r > bestE.r || (e.r === bestE.r && (e.shared > bestE.shared || (e.shared === bestE.shared && best !== null && b > best)))) {
-        best = b; bestE = e;
-      }
+  for (const [a, bs] of adj) {
+    for (const b of bs.keys()) {
+      if (!parent.has(b)) parent.set(b, b);
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(rb < ra ? ra : rb, rb < ra ? rb : ra);
     }
-    if (best === null) continue;
-    if (!parent.has(best)) parent.set(best, best);
-    const ra = find(a), rb = find(best);
-    if (ra !== rb) parent.set(rb < ra ? ra : rb, rb < ra ? rb : ra);
   }
   const index = new Map<NodeKey, number>(), groups: EpochGroups["groups"] = [], groupOf = new Map<NodeKey, number>();
   for (const k of keys) {

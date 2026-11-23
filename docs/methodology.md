@@ -332,7 +332,8 @@ episodes, since a feed can stay on a losing parent for hours. Each pool's last r
 on the next height, or at its own last template when we saw none there: silence isn't drawn as work. These ends,
 like the switches, are what the chart's compressed time axis keeps in view. Each block of the race is listed with the
 pools whose first work at that height was on it, and an arrow on a pool that also built on another block; a block no
-pool started on is still listed, with the pools that built on it for a while. Pools that share a template provider in
+pool started on is still listed, with the pools that built on it for a while, and so is one none of our feeds sent a
+template on, marked as such (often the winner, mined on first by its own pool, whose feed we may not collect). Pools that share a template provider in
 the row's epoch (the rule of the template providers page) are grouped together.
 
 **A soft fork's chain isn't shown.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110:

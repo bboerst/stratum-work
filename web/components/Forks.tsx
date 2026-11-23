@@ -463,6 +463,7 @@ const SIDE_TEXT: Record<string, string> = {
 interface Side {
   hash: string; tone: string; label: string; title: string;
   pools: { pool: string; to: string | null; invalid: boolean; visit?: boolean }[];
+  unbuilt?: boolean;             // a block of the race none of our feeds built on (e.g. a pool's own, kept to itself)
 }
 
 /**
@@ -471,7 +472,8 @@ interface Side {
  * went; one with invalid work is rose. Pools the summary lists that the timeline doesn't show on a block (work at
  * another height of the row) join the side of the block they built on. A block at the height before that no pool
  * started on still gets its side (it may be the one that stayed), listing the pools that built on it for a while,
- * outlined.
+ * outlined; so does one no feed of ours built on at all (a race's block, often its miner's own, mined on before any of
+ * our feeds saw it).
  */
 /** A side that is a block at the height before (ours or a stale one): two of them make the row a race. */
 const isBlockSide = (s: Side) => s.tone === "canonical" || s.tone === "stale";
@@ -517,6 +519,13 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
         if (lane.runs.some(r => r[1] === i)) side.pools.push({ pool: lane.pool, to: null, invalid: lane.runs.some(r => r[1] === i && r[2] === 1), visit: true });
       }
     });
+    if (!isRace(row.kind)) continue;
+    for (const b of l.blocks) {
+      if (b.height !== h - 1 || sides.has(b.hash)) continue;
+      const tone = b.best ? "canonical" : "stale";
+      add(b.hash, tone, b.miner ?? "unknown",
+        `${b.best ? "our best block" : "a stale block"} at ${fmtInt(h - 1)} · ${b.hash} · none of our feeds built on it`).unbuilt = true;
+    }
   }
   // before the timeline is in (or for another chain's row): the summary's own pools, on the episode's parent
   for (const e of row.episodes) {
@@ -615,6 +624,7 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
                 </span>
               </span>
               <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">
+                {s.unbuilt && s.pools.length === 0 && <span className="text-[10px] leading-4 italic text-foreground/50">none of our feeds built on it</span>}
                 {clusterTiles(s.pools, providers).map(run => {
                   const tiles = run.map(p => (
                   <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.visit ? `border border-dashed ${p.invalid ? "border-rose-500" : "border-foreground/40"} leading-[14px]` : p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}

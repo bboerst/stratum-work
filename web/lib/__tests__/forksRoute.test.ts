@@ -128,6 +128,57 @@ describe('GET /api/forks', () => {
     expect(body.episodes[0]).toMatchObject({ providers: 2, provider_groups: [['P', 'Q'], ['R']] });
   });
 
+  it('serves the page\'s summary without template providers (providers=0), cached apart', async () => {
+    const { route, getEpochGroupInputs, getEpisodePoolRows } = await loadRoute();
+    const body = await (await get(route, '?providers=0')).json();
+    expect(getEpochGroupInputs).not.toHaveBeenCalled();
+    expect(body.episodes[0]).toMatchObject({ providers: null, provider_groups: [] });
+    await get(route);                                        // with providers: a read of its own
+    expect(getEpisodePoolRows).toHaveBeenCalledTimes(2);
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves the strip (view=strip): all history as compact rows, without providers', async () => {
+    const { route, getEpisodePoolRows, getEpochGroupInputs } = await loadRoute();
+    const res = await get(route, '?view=strip');
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
+    const body = await res.json();
+    expect(getEpisodePoolRows.mock.calls[0][1]).toBe('all');
+    expect(getEpochGroupInputs).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ enabled: true, supported: true, tip_height: TIP, other_chain_epochs: [] });
+    expect(body).not.toHaveProperty('episodes');
+    expect(body.rows).toHaveLength(1);
+    const [, height, kind, invalid, key] = body.rows[0];
+    expect([height, kind, invalid, typeof key]).toEqual([900_001, 'bitcoin_block', 0, 'string']);
+  });
+
+  it('serves each epoch\'s template providers (view=providers), excluded pools passed, cached', async () => {
+    const { route, getEpochGroupInputs } = await loadRoute({ blacklist: 'Hidden' });
+    const E = Math.floor(900_001 / 2016);
+    getEpochGroupInputs.mockResolvedValueOnce({
+      counted: [{ epoch: E, heights: 2016 }],
+      nodes: [
+        { epoch: E, feed: 'P', pool_id: 1, sets: 50, templates: 60 }, { epoch: E, feed: 'Q', pool_id: 1, sets: 40, templates: 40 },
+        { epoch: E, feed: 'R', pool_id: 2, sets: 30, templates: 30 },
+      ],
+      pairs: [{ epoch: E, feed_a: 'P', pool_a: 1, feed_b: 'Q', pool_b: 1, shared: 40 }],
+    });
+    const res = await get(route, '?view=providers');
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+    expect(await res.json()).toEqual({ epochs: { [E]: [['P', 'Q'], ['R']] } });
+    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);
+    await get(route, '?view=providers');
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep an empty providers view (a failed read), so the next request retries', async () => {
+    const { route, getEpochGroupInputs } = await loadRoute();
+    getEpochGroupInputs.mockRejectedValueOnce(new Error('statement timeout'));
+    expect(await (await get(route, '?view=providers')).json()).toEqual({ epochs: {} });
+    await get(route, '?view=providers');
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(2);
+  });
+
   it('gives null providers for an epoch with no counted heights, when the tables are missing, or the read fails', async () => {
     for (const err of [Object.assign(new Error('relation does not exist'), { code: '42P01' }), new Error('statement timeout')]) {
       const { route, getEpochGroupInputs } = await loadRoute();

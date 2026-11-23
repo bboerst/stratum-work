@@ -82,9 +82,10 @@ export async function getEpochGroupInputs(epochs: number[], excluded: string[]):
 // changed or that are new: after the first read, usually just the current one. The callers keep their own 5-minute
 // caches and refresh in the background, so this runs about once per 5 minutes per caller.
 //
-// The rows are filtered by the excluded names when read, so the cache holds one exclusion, scoped by the names and the
-// ids of the pools they name: if either differs (another list, a pool renamed to or from an excluded name), every
-// epoch is read again, so the filtering is exactly that of a fresh read.
+// The rows are filtered by the excluded names when read, so there is one cache per list of names (the template providers
+// page passes POOL_BLACKLIST; Forks passes none, its excluded pools being history there). Each is scoped by its names
+// and the ids of the pools they name: if the ids differ (a pool renamed to or from an excluded name), every epoch is
+// read again, so the filtering is exactly that of a fresh read.
 
 export interface EpochRows { fingerprint: string; heights: number; nodes: NodeRow[]; pairs: PairRow[] }
 interface EpochCache {
@@ -95,16 +96,21 @@ interface EpochCache {
 }
 // On globalThis: Next.js bundles each route separately, each with its own copy of this module, and one read per process
 // is the point. Tests delete it to start cold.
-const store = globalThis as { __templateSetEpochs?: EpochCache };
-const cache = () => (store.__templateSetEpochs ??= { scope: null, names: null, epochs: new Map(), inflight: null });
+const store = globalThis as { __templateSetEpochs?: Map<string, EpochCache> };
+function cache(names: string): EpochCache {
+  const all = (store.__templateSetEpochs ??= new Map());
+  let c = all.get(names);
+  if (!c) all.set(names, (c = { scope: null, names: null, epochs: new Map(), inflight: null }));
+  return c;
+}
 
 /**
  * Each counted epoch's rows, excluded names dropped (see above). Concurrent callers share one refresh. A failed
  * refresh serves the last good rows for the same names (logged; the next read tries again), or throws without any.
  */
 export function readEpochRows(excluded: string[]): Promise<Map<number, EpochRows>> {
-  const c = cache();
   const names = JSON.stringify(excluded);
+  const c = cache(names);
   if (c.inflight?.names === names) return c.inflight.promise;
   const promise = refreshEpochRows(c, excluded).finally(() => { if (c.inflight?.promise === promise) c.inflight = null; });
   c.inflight = { names, promise };

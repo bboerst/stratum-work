@@ -122,6 +122,9 @@ Limits:
   server that builds the job.
 - It is refreshed about once a minute, not per template.
 - Templates without an estimate are shown unadjusted. Turn the setting off to see arrival times exactly as recorded.
+- A template shown at its first-seen time (the earliest of its exact copies on the pool's connections, see below) is
+  adjusted with the estimate of the connection that received that copy, never another connection's. If that copy has
+  no estimate, the template is shown unadjusted.
 
 ## Which templates belong to a height
 

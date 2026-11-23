@@ -49,8 +49,10 @@ export interface TemplateRow {
   clean_jobs: boolean;
   extranonce1: Buffer;
   extranonce2_length: number;
-  latency_ms?: number | null;
+  latency_ms?: number | null;     // this row's own connection's estimate
   latency_method?: string | null;
+  first_seen_latency_ms?: number | null;    // templates_dedup: the estimate of the copy that set first_seen
+  first_seen_latency_method?: string | null;
 }
 
 export interface BlockRow {
@@ -120,8 +122,12 @@ export function templateId(row: Pick<TemplateRow, 'source_id' | 'received_us' | 
  * A templates row → the MiningNotify shape.
  * `timestamp` is the first-seen time when the read provides one (templates_dedup: a secondary replica's copy may have
  * arrived earlier); `id` always uses the row's own receive time, so it stays the table's de-duplication key.
+ * `lat_ms` / `lat_m` always belong to the connection whose receive time is `timestamp`: with a first-seen time, the
+ * first copy's estimate (null if it had none, never another connection's), so the latency-adjusted time doesn't mix
+ * one connection's arrival with another's RTT/2.
  */
 export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
+  const firstSeen = row.first_seen_us != null;
   return {
     id: templateId(row),
     height: row.height,
@@ -137,8 +143,8 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     clean_jobs: row.clean_jobs,
     extranonce1: hex(row.extranonce1),
     extranonce2_length: row.extranonce2_length,
-    lat_ms: row.latency_ms ?? null,
-    lat_m: row.latency_method ?? null,
+    lat_ms: (firstSeen ? row.first_seen_latency_ms : row.latency_ms) ?? null,
+    lat_m: (firstSeen ? row.first_seen_latency_method : row.latency_method) ?? null,
   };
 }
 

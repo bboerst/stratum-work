@@ -226,7 +226,7 @@ export async function getEpisodes(
   ]);
   const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
+  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts), flags, excludePools, RANGE_BLOCKS[range]);
   // template providers take one cached read per epoch (seconds per epoch when cold): skipped where nothing shows them
   if (!providers) return episodes;
   return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), excludePools));
@@ -357,10 +357,9 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
 
 /**
  * Attach the facts (getEpisodeFacts rows, in the drafts' order) and the kind: 'stale' when recorded, else inferred.
- * A stale block's miner that is one of the excluded pools (compared case-insensitively) isn't named.
+ * A stale block names its miner whoever it is: which pool mined a block is history, not realtime work.
  */
-export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[], excludePools: string[] = []): Episode[] {
-  const excluded = new Set(excludePools.map(p => p.toLowerCase()));
+export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[]): Episode[] {
   return drafts.map((d, i) => {
     const f = facts[i];
     const nbitsMain = modeOf(d.nbitsCounts);
@@ -380,7 +379,7 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[],
         in_stale_blocks: Boolean(f?.in_stale),
         stale_block: f?.in_stale && f.stale_height != null
           ? { height: Number(f.stale_height), header_source: f.stale_header_source ?? null,
-              miner: f.stale_miner && !excluded.has(f.stale_miner.toLowerCase()) ? f.stale_miner : null,
+              miner: f.stale_miner ?? null,
               prev: f.stale_prev ?? null }
           : null,
       },

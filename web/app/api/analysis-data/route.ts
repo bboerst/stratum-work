@@ -3,7 +3,7 @@ import { getBlockByHeight, getHighestBlock, getInterestingBlocks, knownBlockHash
 import { classifyPrevHashes, unknownParentKinds } from "@/lib/forkStatus";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
 import { maskTemplates } from "@/lib/connectionMask";
-import { blacklistedPoolNames, filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
+import { filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
 import { getDrillBlocks } from "@/lib/db/unknown-parents";
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
@@ -153,9 +153,9 @@ export async function GET(request: NextRequest) {
 
       // The fork timeline's arrival markers: every block we know at height - 1 and height (best and stale), with the
       // time our node saw it; null when that wasn't recorded (older history: no marker). The Forks drill-in's blocks
-      // (getDrillBlocks, same miner rule). Markers are extras: a failed read leaves them out, not the height.
+      // (getDrillBlocks: every block names its miner). Markers are extras: a failed read leaves them out, not the height.
       const blocks = enableHistoricalData
-        ? await getDrillBlocks(height, blacklistedPoolNames()).then(
+        ? await getDrillBlocks(height).then(
             rows => rows.map(b => ({
               hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
               seen_ms: b.seen ? Number(b.arrival_ms) : null, stale_only: b.stale_only,

@@ -103,7 +103,7 @@ export async function loadBlocksAt(height: number): Promise<DrillBlockRow[] | nu
   const now = Date.now();
   let entry = blockCache.get(height);
   if (!entry || now - entry.at > BLOCKS_MS) {
-    const promise = getDrillBlocks(height, blacklistedPoolNames());
+    const promise = getDrillBlocks(height);
     entry = { at: now, promise };
     blockCache.delete(height);
     blockCache.set(height, entry);

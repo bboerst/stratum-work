@@ -110,7 +110,7 @@ export async function getForkLanes(
   height: number, span: { fromMs: number; toMs: number }, excludePools: string[],
 ): Promise<ForkLanes> {
   // Independent reads go out together: each is a round trip to the database.
-  const blocksRead = getDrillBlocks(height, excludePools);
+  const blocksRead = getDrillBlocks(height);
   blocksRead.catch(() => {});
   const facts = await getLaneFacts(height, span.fromMs, span.toMs);
   const subsidies = new Map<string, number>();

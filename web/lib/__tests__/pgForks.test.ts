@@ -372,7 +372,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
   });
 
   it('getDrillBlocks says which arrivals are our seen times and which come from the stale records only', async () => {
-    const rows = await db.getDrillBlocks(H, []);
+    const rows = await db.getDrillBlocks(H);
     expect(rows.map(b => [b.block_hash, b.seen, b.stale_only])).toEqual([[B1, true, false], [S1, true, true], [B0, true, false]]);
   });
 
@@ -407,17 +407,18 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect((await db.getStaleEpisodePoolRows([hidden], 'all')).filter(r => r.parent === S1).map(r => r.pool)).toEqual([multi]);
   });
 
-  it('does not name a stale block\'s miner that is a blacklisted pool, in the summary or the drill-in', async () => {
+  it('names a stale block\'s miner even when it is a blacklisted pool, in the summary and the drill-in (history)', async () => {
     await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
       [S1, JSON.stringify({ name: hidden })]);
     try {
-      // the episodes as the route builds them (its summary is cached per range), and the drill-in
+      // the episodes as the route builds them (its summary is cached per range), and the drill-in: which pool mined a
+      // block is history, which the blacklist doesn't filter
       const up = await import('../unknownParents');
       const eps = await up.getEpisodes([hidden], 'all');
       const s1 = eps.find(e => e.parent === S1)!;
-      expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: null, prev: B2 });
-      expect(JSON.stringify(eps)).not.toContain(hidden);
-      expect(JSON.stringify(await up.getDrill(s1, [hidden]))).not.toContain(hidden);
+      expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: hidden, prev: B2 });
+      // but none of its work is listed
+      expect(eps.flatMap(e => e.pools.map(p => p.pool))).not.toContain(hidden);
     } finally {
       await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
         [S1, JSON.stringify({ name: 'Synthetic Miner' })]);

@@ -1,10 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import ForkTimeline from "./ForkTimeline";
-import { reverseHex } from "@/utils/formatters";
-import type { PrevHashStatus } from "@/lib/forkStatus";
-import type { ParentKind } from "@/lib/parentKind";
+import HeightForkTimeline from "./HeightForkTimeline";
 
 type AnalysisFlag = {
   key?: string;
@@ -24,78 +21,25 @@ interface BlockWithAnalysis {
   analysis?: AnalysisData;
 }
 
-interface RawMiningNotify {
-  pool_name?: string | null;
-  timestamp: string;
-  prev_hash: string;
-}
-
-interface AnalysisDataResult {
-  height: number;
-  mining_notifications?: RawMiningNotify[];
-  previous_block?: {
-    hash?: string;
-  } | null;
-  prev_hash_status?: Record<string, PrevHashStatus> | null;
-  prev_hash_kind?: Record<string, ParentKind> | null;
-}
-
-interface AnalysisDataResponse {
-  results?: AnalysisDataResult[];
-}
-
 export default function AnalyticsPanel({ height }: { height: number }) {
   const [block, setBlock] = useState<BlockWithAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
-  const [miningNotifications, setMiningNotifications] = useState<RawMiningNotify[]>([]);
-  const [prevBlockHash, setPrevBlockHash] = useState<string | undefined>(undefined);
-  const [prevHashStatus, setPrevHashStatus] = useState<Record<string, PrevHashStatus> | null>(null);
-  const [prevHashKind, setPrevHashKind] = useState<Record<string, ParentKind> | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         setLoading(true);
-        const [blockRes, analysisRes] = await Promise.all([
-          fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" }),
-          fetch(`/api/analysis-data?height=${height}`, { cache: "no-store" }),
-        ]);
+        const blockRes = await fetch(`/api/blocks?height=${height}&n=1`, { cache: "no-store" });
         const blockData = await blockRes.json();
         const items: BlockWithAnalysis[] = Array.isArray(blockData.blocks) ? blockData.blocks : [];
         const found = items.find((b) => b.height === height) || null;
 
-        let notifs: RawMiningNotify[] = [];
-        let canonicalHash: string | undefined;
-        let statuses: Record<string, PrevHashStatus> | null = null;
-        let kinds: Record<string, ParentKind> | null = null;
-        try {
-          const analysisData = await analysisRes.json();
-          const analysisResponse = analysisData as AnalysisDataResponse;
-          const analysisResults: AnalysisDataResult[] = Array.isArray(analysisResponse.results)
-            ? analysisResponse.results
-            : [];
-          const analysisResult = analysisResults.find((result) => result.height === height) || null;
-          notifs = analysisResult?.mining_notifications ?? [];
-          canonicalHash = analysisResult?.previous_block?.hash;
-          statuses = analysisResult?.prev_hash_status ?? null;
-          kinds = analysisResult?.prev_hash_kind ?? null;
-        } catch { /* ignore */ }
-
         if (!cancelled) {
           setBlock(found);
-          setMiningNotifications(notifs);
-          setPrevBlockHash(canonicalHash);
-          setPrevHashStatus(statuses);
-          setPrevHashKind(kinds);
         }
       } catch {
         if (!cancelled) {
           setBlock(null);
-          setMiningNotifications([]);
-          setPrevBlockHash(undefined);
-          setPrevHashStatus(null);
-          setPrevHashKind(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -112,14 +56,12 @@ export default function AnalyticsPanel({ height }: { height: number }) {
     return block.analysis.flags as AnalysisFlag[];
   }, [block]);
 
-  const forkTimelineNotifications = useMemo(
-    () =>
-      miningNotifications.map((notification) => ({
-        ...notification,
-        prev_hash: reverseHex(notification.prev_hash),
-      })),
-    [miningNotifications]
-  );
+  // pools whose coinbase at this height is invalid (the backend's finding): marked on their fork-timeline rows
+  const invalidPools = useMemo(() => {
+    const f = flags.find((x) => x.key === "invalid_coinbase_no_merkle");
+    const offenders = (f?.details as { offenders?: Array<{ pool_name?: string }> } | undefined)?.offenders ?? [];
+    return [...new Set(offenders.map((o) => o.pool_name).filter((p): p is string => !!p))];
+  }, [flags]);
 
   if (loading) {
     return (
@@ -128,13 +70,7 @@ export default function AnalyticsPanel({ height }: { height: number }) {
   }
 
   function renderPrevHashFork() {
-    if (forkTimelineNotifications.length === 0) return null;
-    return <ForkTimeline
-        notifications={forkTimelineNotifications}
-        canonicalBlockHash={prevBlockHash}
-        prevHashStatus={prevHashStatus}
-        prevHashKind={prevHashKind}
-      />;
+    return <HeightForkTimeline height={height} invalidCoinbasePools={invalidPools} />;
   }
 
   function renderInvalidTemplates(flag: AnalysisFlag) {

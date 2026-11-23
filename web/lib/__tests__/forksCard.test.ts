@@ -13,7 +13,7 @@ const ep = (o: Partial<Episode> = {}): Episode => ({
   templates: 24, auxpow_templates: 0, auxpow_share: 0, kind: 'stale', invalid_coinbase: null, providers: null, provider_groups: [],
   facts: {
     tip_at_first: 900_000, tip_at_last: 900_000, tip_offset: 0, nbits: [], bitcoin_bits: null, bitcoin_bits_at: null,
-    bitcoin_difficulty: true, pow_ok: true, pow_bits: '', in_stale_blocks: true, stale_block: { height: 900_000, header_source: null, miner: 'Pool Z' },
+    bitcoin_difficulty: true, pow_ok: true, pow_bits: '', in_stale_blocks: true, stale_block: { height: 900_000, header_source: null, miner: 'Pool Z', prev: null },
   },
   ...o,
 });
@@ -57,7 +57,7 @@ describe('cardModel', () => {
   });
   it('a stale block whose miner is an excluded pool (null in the facts) shows its hash, as on the page', () => {
     const e = ep();
-    e.facts.stale_block = { height: 900_000, header_source: null, miner: null };
+    e.facts.stale_block = { height: 900_000, header_source: null, miner: null, prev: null };
     expect(cardModel(e, blocks).tiles[2]).toMatchObject({ sub: '0000…7b2196', style: 'stale' });
   });
   it('an unknown parent at our tip: a dashed outline with its hash; no blocks read: heights only', () => {

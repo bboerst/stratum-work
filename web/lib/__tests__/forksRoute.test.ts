@@ -9,7 +9,7 @@
  * findings (a badge on the episodes at that height, else a row of its own; excluded pools left out).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql } from '../db/unknown-parents';
+import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql, ParentVersionsSql } from '../db/unknown-parents';
 import type { EpochGroupInputs } from '../db/template-providers';
 
 const P1 = '00'.repeat(10) + '12'.repeat(22);   // meets the target of BITS
@@ -35,7 +35,7 @@ const flag = (o: Partial<InvalidCoinbaseFlagSql> = {}): InvalidCoinbaseFlagSql =
 });
 const drillRows = (): DrillRows => ({
   truncated: false,
-  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', best: true, miner: 'P' }],
+  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', seen: true, stale_only: false, best: true, miner: 'P' }],
   templates: [{
     source_id: 1, source_name: 'P', received_us: '1000123', height: 900_001, job_id: 'j1',
     prev_hash: Buffer.from('11'.repeat(32), 'hex'), coinbase1: Buffer.from('01', 'hex'), coinbase2: Buffer.from('02', 'hex'),
@@ -57,15 +57,16 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getInvalidCoinbaseFlags = vi.fn<() => Promise<InvalidCoinbaseFlagSql[]>>(async () => []);
   const getEpochGroupInputs = vi.fn<(epochs: number[], exclude: string[]) => Promise<EpochGroupInputs>>(
     async () => ({ nodes: [], pairs: [], counted: [] }));
+  const getParentVersions = vi.fn<(q: unknown[], exclude: string[]) => Promise<ParentVersionsSql[]>>(async () => []);
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
     ...(await importOriginal<object>()), getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight,
-    getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
+    getStaleEpisodePoolRows, getInvalidCoinbaseFlags, getParentVersions,
   }));
   const route = await import('../../app/api/forks/route');
   return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
-    getEpochGroupInputs };
+    getEpochGroupInputs, getParentVersions };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
@@ -127,6 +128,57 @@ describe('GET /api/forks', () => {
     expect(body.episodes[0]).toMatchObject({ providers: 2, provider_groups: [['P', 'Q'], ['R']] });
   });
 
+  it('serves the page\'s summary without template providers (providers=0), cached apart', async () => {
+    const { route, getEpochGroupInputs, getEpisodePoolRows } = await loadRoute();
+    const body = await (await get(route, '?providers=0')).json();
+    expect(getEpochGroupInputs).not.toHaveBeenCalled();
+    expect(body.episodes[0]).toMatchObject({ providers: null, provider_groups: [] });
+    await get(route);                                        // with providers: a read of its own
+    expect(getEpisodePoolRows).toHaveBeenCalledTimes(2);
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves the strip (view=strip): all history as compact rows, without providers', async () => {
+    const { route, getEpisodePoolRows, getEpochGroupInputs } = await loadRoute();
+    const res = await get(route, '?view=strip');
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
+    const body = await res.json();
+    expect(getEpisodePoolRows.mock.calls[0][1]).toBe('all');
+    expect(getEpochGroupInputs).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ enabled: true, supported: true, tip_height: TIP, other_chain_epochs: [] });
+    expect(body).not.toHaveProperty('episodes');
+    expect(body.rows).toHaveLength(1);
+    const [, height, kind, invalid, key] = body.rows[0];
+    expect([height, kind, invalid, typeof key]).toEqual([900_001, 'bitcoin_block', 0, 'string']);
+  });
+
+  it('serves each epoch\'s template providers (view=providers), excluded pools passed, cached', async () => {
+    const { route, getEpochGroupInputs } = await loadRoute({ blacklist: 'Hidden' });
+    const E = Math.floor(900_001 / 2016);
+    getEpochGroupInputs.mockResolvedValueOnce({
+      counted: [{ epoch: E, heights: 2016 }],
+      nodes: [
+        { epoch: E, feed: 'P', pool_id: 1, sets: 50, templates: 60 }, { epoch: E, feed: 'Q', pool_id: 1, sets: 40, templates: 40 },
+        { epoch: E, feed: 'R', pool_id: 2, sets: 30, templates: 30 },
+      ],
+      pairs: [{ epoch: E, feed_a: 'P', pool_a: 1, feed_b: 'Q', pool_b: 1, shared: 40 }],
+    });
+    const res = await get(route, '?view=providers');
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+    expect(await res.json()).toEqual({ epochs: { [E]: [['P', 'Q'], ['R']] } });
+    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);
+    await get(route, '?view=providers');
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep an empty providers view (a failed read), so the next request retries', async () => {
+    const { route, getEpochGroupInputs } = await loadRoute();
+    getEpochGroupInputs.mockRejectedValueOnce(new Error('statement timeout'));
+    expect(await (await get(route, '?view=providers')).json()).toEqual({ epochs: {} });
+    await get(route, '?view=providers');
+    expect(getEpochGroupInputs).toHaveBeenCalledTimes(2);
+  });
+
   it('gives null providers for an epoch with no counted heights, when the tables are missing, or the read fails', async () => {
     for (const err of [Object.assign(new Error('relation does not exist'), { code: '42P01' }), new Error('statement timeout')]) {
       const { route, getEpochGroupInputs } = await loadRoute();
@@ -161,15 +213,13 @@ describe('GET /api/forks', () => {
       facts: { in_stale_blocks: true, stale_block: { height: 900_000, header_source: 'node', miner: 'M' }, pow_ok: true } });
   });
 
-  it('does not name a stale block\'s miner that is an excluded pool', async () => {
+  it('names a stale block\'s miner even when it is an excluded pool (which pool mined a block is history)', async () => {
     const { route, getEpisodeFacts, getStaleEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden' });
     getStaleEpisodePoolRows.mockResolvedValueOnce([poolRow({ parent: P2, pool: 'S', first_ms: '500', last_ms: '700', auxpow: null })]);
     getEpisodeFacts.mockImplementationOnce(async q => q.map((_, i) => i === 0
       ? facts({ i: 1, in_stale: true, stale_height: 900_000, stale_header_source: 'node', stale_miner: 'HIDDEN' }) : facts({ i: 2 })));
     const res = await get(route);
-    const text = await res.clone().text();
-    expect(text.toLowerCase()).not.toContain('hidden');
-    expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: null });
+    expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: 'HIDDEN', prev: null });
   });
 
   it('badges the episodes at a finding\'s height (per pool, excluded pools left out)', async () => {
@@ -221,6 +271,23 @@ describe('GET /api/forks', () => {
     const body = await (await get(route)).json();
     expect(body.episodes).toEqual([]);
     expect(body.before_first_block).toBe(1);
+  });
+
+  it("leaves out work on a soft fork's own chain (BIP-110), and counts it; reads only episodes in its window", async () => {
+    const { route, getEpisodePoolRows, getParentVersions } = await loadRoute();
+    expect(getParentVersions).not.toHaveBeenCalled();                                        // 900,001: outside
+    const at = (h: number) => poolRow({ heights: { [h]: 3 } });
+    getEpisodePoolRows.mockResolvedValue([at(961_633)]);
+    getParentVersions.mockResolvedValueOnce([{ i: 1, best_hash: BEST, best_version: String(0x20006000), versions: [String(0x20000010)] }]);
+    const body = await (await get(route, '?range=all')).json();
+    expect(getParentVersions.mock.calls[0][0]).toEqual([{ parent: P1, height: 961_633, first_ms: 1000, last_ms: 5000 }]);
+    expect(body.episodes).toEqual([]);
+    expect(body.soft_fork_chains).toBe(1);
+    // mixed evidence (one template doesn't signal): shown
+    getParentVersions.mockResolvedValueOnce([{ i: 1, best_hash: BEST, best_version: String(0x20006000), versions: [String(0x20000010), String(0x20006000)] }]);
+    const mixed = await (await get(route, '?range=26e')).json();
+    expect(mixed.episodes).toHaveLength(1);
+    expect(mixed.soft_fork_chains).toBe(0);
   });
 
   it('validates the parent and 404s one that is no episode', async () => {

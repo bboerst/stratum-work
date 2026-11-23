@@ -83,6 +83,11 @@ const BLOCK_FINDING: Allowed = {
   path: '$.blocks[*].analysis.flags[*].details.offenders[*].pool_name',
   why: 'a block\'s stored analysis findings are served as stored (blocks strip, invalid-coinbase badge)',
 };
+const STALE_MINER: Allowed = {
+  path: '$.episodes[*].facts.stale_block.miner',
+  why: 'a stale block names the pool that mined it, like any block: history, not realtime work (finishEpisodes)',
+};
+const DRILL_MINER = 'every block at h - 1 and h names its miner, stale or not (getDrillBlocks), like the blocks strip';
 const COINBASE_TEXT = 'a template\'s coinbase text, decoded as the pool sent it: the control feed\'s coinbase names the '
   + 'pool it pays (another feed\'s raw bytes; filtering them would mean dropping that feed\'s templates)';
 const HISTORY: Allowed = {
@@ -99,12 +104,15 @@ function cases(): Record<string, Case[]> {
     'analysis-data': [
       { qs: `height=${H}`, allow: [
         HISTORY,
+        { path: '$.results[*].blocks[*].miner', why: DRILL_MINER },
         { path: '$.results[*].mining_notifications[*].coinbaseScriptASCII', why: COINBASE_TEXT },
       ] },
       { qs: `height=${H + 1}` },
       { qs: `height=${H - 1}`, allow: [
         HISTORY,
         { path: '$.results[*].previous_block.mining_pool.name', why: BLOCK_MINER.why },
+        // the fork chart's arrival markers: getDrillBlocks names every block's miner, as the blocks strip does
+        { path: '$.results[*].blocks[*].miner', why: BLOCK_MINER.why },
       ] },
       { qs: 'interesting=true', allow: [
         { path: '$.items[*].analysis.flags[*].details.offenders[*].pool_name', why: BLOCK_FINDING.why },
@@ -116,12 +124,17 @@ function cases(): Record<string, Case[]> {
       { qs: `height=${H - 1}&n=6`, allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
     ],
     'forks': [
-      { qs: 'range=all' },
+      { qs: 'range=all', allow: [STALE_MINER] },
+      { qs: 'view=providers' },
       // a drill-in shows every template in the episode's minutes, each labelled by its parent: the control feed's work
       // on B(H-1) too
-      { qs: `range=all&parent=${U}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT }] },
-      { qs: `range=all&parent=${S}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT }] },
+      { qs: `range=all&parent=${U}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT },
+        { path: '$.blocks[*].miner', why: DRILL_MINER }] },
+      { qs: `range=all&parent=${S}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT },
+        { path: '$.blocks[*].miner', why: DRILL_MINER }, { path: '$.episode.facts.stale_block.miner', why: STALE_MINER.why }] },
     ],
+    // the Forks rows' timeline: excluded pools are left out of it, as from the rest of /api/forks
+    'forks/timeline': [{ qs: `height=${H}`, allow: [{ path: '$.blocks[*].miner', why: DRILL_MINER }] }],
     'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
     'pools': [{}],
     'realtime-prefill': [{}],
@@ -137,7 +150,7 @@ function cases(): Record<string, Case[]> {
     'template-providers': [{ qs: 'range=all' }],
     'tx': [{ qs: `txids=${TXID}`, noPoolData: 'mempool transactions: no pool fields' }],
     'tx/[txid]': [{ params: { txid: TXID }, noPoolData: 'mempool transactions: no pool fields' }],
-    'unknown-parents': [{ qs: 'range=all' }],
+    'unknown-parents': [{ qs: 'range=all', allow: [STALE_MINER] }],
   };
 }
 
@@ -185,7 +198,7 @@ async function callStream(): Promise<{ status: number; text: string; body: unkno
 async function call(route: string, c: Case, blacklist: string): Promise<{ status: number; text: string; body: unknown }> {
   vi.resetModules();
   const g = globalThis as Record<string, unknown>;
-  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks']) delete g[k];
+  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks', '__forkLanes']) delete g[k];
   Object.assign(process.env, {
     PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
     PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',

@@ -126,6 +126,7 @@ export interface StaleBlockFacts {
   height: number;
   header_source: string | null;  // how its header reached us (stale_blocks.header_source)
   miner: string | null;          // the pool that mined it, when identified (stale_blocks.mining_pool.name)
+  prev: string | null;           // its parent (display order): links the blocks of one branch into one race
 }
 
 /**
@@ -217,13 +218,17 @@ export function draftEpisodes(rows: EpisodePoolSql[]): EpisodeDraft[] {
  * (getStaleEpisodePoolRows; the two sets of parents are disjoint: an unknown parent is in no block table), then the
  * facts per episode, then the invalid-coinbase findings (withInvalidCoinbase).
  */
-export async function getEpisodes(excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE): Promise<Episode[]> {
+export async function getEpisodes(
+  excludePools: string[], range: UnknownParentsRange = DEFAULT_RANGE, { providers = true }: { providers?: boolean } = {},
+): Promise<Episode[]> {
   const [unknown, stale, flags] = await Promise.all([
     getEpisodePoolRows(excludePools, range), getStaleEpisodePoolRows(excludePools, range), getInvalidCoinbaseFlags(),
   ]);
   const drafts = draftEpisodes([...unknown, ...stale]);
   const facts = await getEpisodeFacts(drafts.map(d => ({ parent: d.parent, height: d.height, first_ms: d.first_ms, last_ms: d.last_ms })));
-  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts, excludePools), flags, excludePools, RANGE_BLOCKS[range]);
+  const episodes = withInvalidCoinbase(finishEpisodes(drafts, facts), flags, excludePools, RANGE_BLOCKS[range]);
+  // template providers take one cached read per epoch (seconds per epoch when cold): skipped where nothing shows them
+  if (!providers) return episodes;
   return withProviders(episodes, await readEpochGroups(episodes.map(providerEpoch).filter((e): e is number => e !== null), excludePools));
 }
 
@@ -240,7 +245,7 @@ export function providerEpoch(e: Episode): number | null {
  * Those epochs' groups. None (every episode's providers null) when they can't be read: the template_set tables don't
  * exist yet (the web deployed before the migration), or the read failed (a timeout): the episodes are served anyway.
  */
-async function readEpochGroups(epochs: number[], excludePools: string[]): Promise<Map<number, EpochGroups>> {
+export async function readEpochGroups(epochs: number[], excludePools: string[]): Promise<Map<number, EpochGroups>> {
   try {
     const { nodes, pairs, counted } = await getEpochGroupInputs(epochs, excludePools);
     return groupEpochs(nodes, pairs, counted);
@@ -352,10 +357,9 @@ export async function getDrill(e: Episode, excludePools: string[]): Promise<Dril
 
 /**
  * Attach the facts (getEpisodeFacts rows, in the drafts' order) and the kind: 'stale' when recorded, else inferred.
- * A stale block's miner that is one of the excluded pools (compared case-insensitively) isn't named.
+ * A stale block names its miner whoever it is: which pool mined a block is history, not realtime work.
  */
-export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[], excludePools: string[] = []): Episode[] {
-  const excluded = new Set(excludePools.map(p => p.toLowerCase()));
+export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[]): Episode[] {
   return drafts.map((d, i) => {
     const f = facts[i];
     const nbitsMain = modeOf(d.nbitsCounts);
@@ -375,7 +379,8 @@ export function finishEpisodes(drafts: EpisodeDraft[], facts: EpisodeFactsSql[],
         in_stale_blocks: Boolean(f?.in_stale),
         stale_block: f?.in_stale && f.stale_height != null
           ? { height: Number(f.stale_height), header_source: f.stale_header_source ?? null,
-              miner: f.stale_miner && !excluded.has(f.stale_miner.toLowerCase()) ? f.stale_miner : null }
+              miner: f.stale_miner ?? null,
+              prev: f.stale_prev ?? null }
           : null,
       },
       kind: f?.in_stale ? 'stale' : parentKind(pf),

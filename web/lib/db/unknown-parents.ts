@@ -355,6 +355,7 @@ export interface EpisodeFactsSql {
   stale_height: number | null;          // ... its height, how its header reached us, and its miner when identified
   stale_header_source: string | null;
   stale_miner: string | null;
+  stale_prev?: string | null;           // ... and its parent (display order)
 }
 
 /**
@@ -388,7 +389,7 @@ export async function getEpisodeFacts(eps: EpisodeFactsQuery[]): Promise<Episode
             et.tip, et.tip_last,
             ${bits('e.h - 1')} AS bits_prev, ${bits('e.h')} AS bits_at,
             s.block_hash IS NOT NULL AS in_stale, s.height AS stale_height, s.header_source AS stale_header_source,
-            s.mining_pool->>'name' AS stale_miner
+            s.mining_pool->>'name' AS stale_miner, encode(s.prev_hash, 'hex') AS stale_prev
        FROM e LEFT JOIN et ON et.i = e.i
        LEFT JOIN stale_blocks s ON s.block_hash = decode(e.parent, 'hex') AND s.reorged_in_at IS NULL
       ORDER BY e.i`,
@@ -412,8 +413,11 @@ export interface DrillBlockRow {
   block_hash: string;                   // display hex
   height: number;
   arrival_ms: string;                   // coalesce(seen_at, block_time); a stale-only block: first_seen
+  seen: boolean;                        // arrival_ms is a time we saw it (seen_at; first_seen), not the header time
+  stale_only: boolean;                  // known from stale_blocks only: first_seen is when the backend's chain-tips
+                                        // poll first recorded it (on a new block or a timer), not our node's arrival
   best: boolean;
-  miner: string | null;                 // the block's identified pool (a stale block's: null when it's a hidden pool)
+  miner: string | null;                 // the block's identified pool
 }
 
 export interface DrillQuery {
@@ -465,30 +469,68 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
        ) l ON l.prev_hash = d.prev_hash
       ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
     [excludePools, ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1])).rows;
-  const blocks = await getDrillBlocks(q.height, excludePools);
+  const blocks = await getDrillBlocks(q.height);
   return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
 }
 
 /**
- * Every block we know at h - 1 and h (best chain and stale), with its arrival and miner: the drill-in's blocks, and the
- * link-preview card's (two indexed height lookups). A block off the best chain mined by an excluded pool isn't named.
+ * Every block we know at h - 1 and h (best chain and stale), with its arrival and miner: the drill-in's blocks, the
+ * link-preview card's, and the fork timeline's arrival markers (/api/analysis-data; two indexed height lookups). Every block names its miner, stale or not, excluded pool or not:
+ * which pool mined a block is history, not realtime work.
  */
-export async function getDrillBlocks(height: number, excludePools: string[]): Promise<DrillBlockRow[]> {
+export async function getDrillBlocks(height: number): Promise<DrillBlockRow[]> {
   const pool = getPgPool();
   const blocks = (await pool.query<DrillBlockRow>(
     `SELECT encode(b.block_hash, 'hex') AS block_hash, b.height,
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
+            b.seen_at IS NOT NULL AS seen, false AS stale_only,
             EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best,
             nullif(b.mining_pool->>'name', '') AS miner
        FROM blocks b WHERE b.height BETWEEN $1::int - 1 AND $1::int
      UNION ALL
-     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, false,
+     SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, s.first_seen IS NOT NULL, true, false,
             nullif(s.mining_pool->>'name', '')
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)
       ORDER BY 2, 3`,
     [height])).rows;
-  const hidden = new Set(excludePools.map(p => p.toLowerCase()));
-  for (const b of blocks) if (!b.best && b.miner && hidden.has(b.miner.toLowerCase())) b.miner = null;
   return blocks;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Soft-fork chains (lib/softForks.ts)
+
+export interface ParentVersionsQuery { parent: string; height: number; first_ms: number; last_ms: number }
+
+export interface ParentVersionsSql {
+  i: number;                            // the query's index
+  best_hash: string | null;             // our best block at height - 1 (display hex)
+  best_version: string | null;          // its version
+  versions: string[];                   // every version among the templates on the parent at height, in the episode's times
+}
+
+/**
+ * For each candidate (an episode's parent): our best block at height - 1 and its version, and every distinct version of
+ * the templates built on the parent (excluded pools left out). Only called for the few episodes inside a deployment's
+ * mandatory window, each bounded by its height and receive times.
+ */
+export async function getParentVersions(qs: ParentVersionsQuery[], excludePools: string[]): Promise<ParentVersionsSql[]> {
+  if (qs.length === 0) return [];
+  const best = (col: string) => `(SELECT ${col} FROM blocks_best b WHERE b.height = c.h - 1
+                                   ORDER BY coalesce(b.seen_at, b.block_time), b.block_hash LIMIT 1)`;
+  const { rows } = await getPgPool().query<ParentVersionsSql>(
+    `WITH c AS (
+       SELECT * FROM unnest($1::text[], $2::int[], $3::bigint[], $4::bigint[]) WITH ORDINALITY AS c(parent, h, first_ms, last_ms, i)
+     )
+     SELECT c.i::int AS i, ${best("encode(b.block_hash, 'hex')")} AS best_hash, ${best('b.version')}::text AS best_version,
+            ARRAY(SELECT DISTINCT t.version::text FROM templates t JOIN sources s ON s.id = t.source_id
+                   WHERE t.height = c.h
+                     AND t.received_at >= timestamptz 'epoch' + (c.first_ms - 1000) * interval '1 millisecond'
+                     AND t.received_at <= timestamptz 'epoch' + (c.last_ms + 1000) * interval '1 millisecond'
+                     AND stratum_prev_hash_to_block_hash(t.prev_hash) = decode(c.parent, 'hex')
+                     AND s.name <> ALL ($5::text[])) AS versions
+       FROM c ORDER BY c.i`,
+    [qs.map(q => q.parent), qs.map(q => q.height), qs.map(q => q.first_ms), qs.map(q => q.last_ms), excludePools],
+  );
+  return rows;
 }

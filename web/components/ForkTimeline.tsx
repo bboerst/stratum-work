@@ -4,11 +4,18 @@ import React, { useMemo, useState } from "react";
 import { formatPrevBlockHash, reverseHex } from "@/utils/formatters";
 import type { PrevHashStatus } from "@/lib/forkStatus";
 import type { ParentKind } from "@/lib/parentKind";
+import {
+  axisDomain, buildTimeZones, mapTimeToVisual, placeBlockMarkers, type ArrivalBlock, type BlockMarker, type TimeZone,
+  markerBlocks,
+} from "@/lib/forkTimelineAxis";
+import { useElementWidth } from "@/visuals/framework/useElementWidth";
 
 interface MiningNotification {
   pool_name?: string | null;
   timestamp: string;
   prev_hash: string;
+  /** Work the height's invalid-coinbase finding is about (the Forks page's runs): drawn rose. */
+  invalid?: boolean;
 }
 
 interface ForkTimelineProps {
@@ -18,6 +25,24 @@ interface ForkTimelineProps {
   prevHashStatus?: Record<string, PrevHashStatus> | null;
   /** Per unknown prev hash (block hash, display order): the kind the server infers (lib/parentKind.ts). */
   prevHashKind?: Record<string, ParentKind> | null;
+  /** The blocks at height - 1 and height (best and stale) with our node's seen time: a marker each where it reached us. */
+  blocks?: ArrivalBlock[] | null;
+  /** Pools with an invalid coinbase at this height (the backend's finding): a rose ✗ on their row. */
+  invalidCoinbasePools?: string[] | null;
+  /**
+   * Kinds the caller already knows (block hash, display order), used only where the server gave no status: a height
+   * with no stored block at height - 1 (another chain's) has none, but the Forks page knows its episode's kind.
+   */
+  kindHint?: Record<string, ParentKind> | null;
+  /** The chart's heading (default "Fork"). */
+  title?: string;
+  /**
+   * Where each pool's last run ends (ns, the notifications' clock): when it moved on to the next height. Without it a
+   * run lasts to the last template of any pool. Each end also counts as an event of the axis.
+   */
+  ends?: Record<string, number> | null;
+  /** Inside a Forks row: no heading, sort or legend (the row has them), no total. */
+  embedded?: boolean;
 }
 
 const PREV_HASH_COLORS = [
@@ -29,6 +54,7 @@ const PREV_HASH_COLORS = [
   "#06b6d4", // cyan-500
 ];
 const CANONICAL_HASH_COLOR = "#f59e0b"; // amber-500
+const INVALID_COLOR = "#f43f5e"; // rose-500: work the height's invalid-coinbase finding is about
 const STALE_HASH_COLOR = "#1550a4"; // slate-500 (muted/disabled look)
 const UNKNOWN_HASH_COLOR = "#6b7280"; // gray-500: a parent we have no block for, kind undetermined
 // Unknown parents by inferred kind, in the Forks page's colours: a Bitcoin block we never recorded is a stale block
@@ -70,7 +96,7 @@ export function prevHashStatusOf(
 }
 
 const STATUS_LABEL: Record<PrevHashStatus, string> = {
-  canonical: "canonical",
+  canonical: "active chain",
   stale: "stale",
   unknown: "unknown",
 };
@@ -105,18 +131,11 @@ function parseTimestampToNs(ts: string): number {
   return 0;
 }
 
-interface TimeZone {
-  type: "active" | "gap";
-  startNs: number;
-  endNs: number;
-  visualStartPct: number;
-  visualEndPct: number;
-}
-
 interface TimelineSegment {
   startNs: number;
   endNs: number;
   prevHash: string;
+  invalid?: boolean;
 }
 
 interface VisualSegment {
@@ -125,6 +144,7 @@ interface VisualSegment {
   prevHash: string;
   tooltip: string;
   isStale: boolean;
+  invalid: boolean;
 }
 
 interface PoolTimelineData {
@@ -135,102 +155,32 @@ interface PoolTimelineData {
   firstNs: number;
 }
 
-function formatRelativeTime(ns: number): string {
+export function formatRelativeTime(ns: number): string {
   const sec = ns / 1_000_000_000;
   if (sec < 0.001) return "0s";
   if (sec < 1) return `${(sec * 1000).toFixed(0)}ms`;
   if (sec < 60) return `${sec.toFixed(1)}s`;
-  return `${(sec / 60).toFixed(1)}m`;
+  // whole seconds up to two minutes, so neighbouring ticks don't round to the same minute ("1.2m 1.2m")
+  if (sec < 120) return `${Math.round(sec)}s`;
+  if (sec < 7200) return `${(sec / 60).toFixed(1)}m`;
+  return `${(sec / 3600).toFixed(1)}h`;
 }
 
-function buildTimeZones(
-  transitionTimesNs: number[],
-  globalMinNs: number,
-  globalMaxNs: number,
-): TimeZone[] | null {
-  const duration = globalMaxNs - globalMinNs;
-  if (duration <= 0) return null;
+const fmtHeight = (h: number) => h.toLocaleString("en-US");
 
-  const durationSec = duration / 1_000_000_000;
-  if (durationSec < 60) return null;
-  if (transitionTimesNs.length === 0) return null;
-
-  const PADDING_NS = Math.min(5_000_000_000, duration * 0.10);
-  const GAP_THRESHOLD_NS = Math.max(10_000_000_000, duration * 0.15);
-  const GAP_VISUAL_PCT = 2.5;
-
-  const eventPoints = [globalMinNs, ...transitionTimesNs, globalMaxNs];
-  const rawZones = eventPoints.map((t) => ({
-    start: Math.max(globalMinNs, t - PADDING_NS),
-    end: Math.min(globalMaxNs, t + PADDING_NS),
-  }));
-
-  rawZones.sort((a, b) => a.start - b.start);
-  const merged: Array<{ start: number; end: number }> = [{ ...rawZones[0] }];
-  for (let i = 1; i < rawZones.length; i++) {
-    const last = merged[merged.length - 1];
-    if (rawZones[i].start <= last.end + GAP_THRESHOLD_NS) {
-      last.end = Math.max(last.end, rawZones[i].end);
-    } else {
-      merged.push({ ...rawZones[i] });
-    }
-  }
-
-  if (merged.length <= 1) return null;
-
-  const numGaps = merged.length - 1;
-  const totalGapPct = Math.min(numGaps * GAP_VISUAL_PCT, 12);
-  const perGapPct = totalGapPct / numGaps;
-  const activePct = 100 - totalGapPct;
-  const totalActiveDuration = merged.reduce((s, z) => s + (z.end - z.start), 0);
-  if (totalActiveDuration <= 0) return null;
-
-  const zones: TimeZone[] = [];
-  let pos = 0;
-  for (let i = 0; i < merged.length; i++) {
-    const z = merged[i];
-    const zPct = ((z.end - z.start) / totalActiveDuration) * activePct;
-    zones.push({
-      type: "active",
-      startNs: z.start,
-      endNs: z.end,
-      visualStartPct: pos,
-      visualEndPct: pos + zPct,
-    });
-    pos += zPct;
-    if (i < merged.length - 1) {
-      zones.push({
-        type: "gap",
-        startNs: z.end,
-        endNs: merged[i + 1].start,
-        visualStartPct: pos,
-        visualEndPct: pos + perGapPct,
-      });
-      pos += perGapPct;
-    }
-  }
-  return zones;
+function markerTitle(m: BlockMarker): string {
+  const at = new Date(m.seenMs).toISOString().slice(11, 23);
+  const when = m.firstWork ? "first built on by our feeds" : m.staleOnly ? "first recorded" : "reached us";
+  return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${when} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}${
+    m.firstWork ? " (when it reached our node wasn't recorded)" : ""}`;
 }
 
-function mapTimeToVisual(
-  timeNs: number,
-  zones: TimeZone[] | null,
-  globalMinNs: number,
-  durationNs: number,
-): number {
-  if (!zones || durationNs <= 0) {
-    return ((timeNs - globalMinNs) / durationNs) * 100;
-  }
-  for (const zone of zones) {
-    if (timeNs <= zone.endNs) {
-      if (timeNs < zone.startNs) return zone.visualStartPct;
-      const span = zone.endNs - zone.startNs;
-      if (span <= 0) return zone.visualStartPct;
-      const frac = (timeNs - zone.startNs) / span;
-      return zone.visualStartPct + frac * (zone.visualEndPct - zone.visualStartPct);
-    }
-  }
-  return zones[zones.length - 1].visualEndPct;
+/** A marker label's alignment: centred on its line, but kept inside the plot near either end (about 26 px of room). */
+function labelShift(m: BlockMarker, plotW: number): string {
+  const edgePct = (26 / plotW) * 100;
+  if (m.edge === "before" || (m.edge === null && m.pct < edgePct)) return "";
+  if (m.edge === "after" || m.pct > 100 - edgePct) return "-translate-x-full";
+  return "-translate-x-1/2";
 }
 
 function splitSegmentAtGaps(
@@ -257,27 +207,47 @@ function splitSegmentAtGaps(
   return result;
 }
 
-export default function ForkTimeline({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind }: ForkTimelineProps) {
-  const computed = useMemo(() => {
+type ModelInput = Pick<ForkTimelineProps, "notifications" | "canonicalBlockHash" | "prevHashStatus" | "prevHashKind" | "blocks" | "kindHint" | "ends">;
+
+/** The chart's model (rows, segments, axis, colours): shared by the chart and its miniature, so both agree exactly. */
+export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends }: ModelInput) {
+  {
     // Convert big-endian block_hash to raw stratum format for comparison
     const canonicalRaw = canonicalBlockHash
       ? reverseHex(canonicalBlockHash).toLowerCase()
       : null;
-    const kindOf = (hash: string): ParentKind | undefined => prevHashKind?.[reverseHex(hash).toLowerCase()];
+    const hintOf = (hash: string): ParentKind | undefined =>
+      canonicalRaw === null ? kindHint?.[reverseHex(hash).toLowerCase()] : undefined;
+    const kindOf = (hash: string): ParentKind | undefined => prevHashKind?.[reverseHex(hash).toLowerCase()] ?? hintOf(hash);
+    // no best block to compare with: a parent the caller knows is shown as unknown, of that kind
+    const statusOf = (hash: string): PrevHashStatus | null =>
+      prevHashStatusOf(hash, canonicalRaw, prevHashStatus) ?? (hintOf(hash) ? "unknown" : null);
     const parsed = notifications
       .filter((n) => n.pool_name && n.prev_hash && n.timestamp)
       .map((n) => ({
         poolName: n.pool_name!,
         prevHash: n.prev_hash.toLowerCase(),
         timeNs: parseTimestampToNs(n.timestamp),
+        invalid: n.invalid === true,
       }))
       .filter((n) => n.timeNs > 0)
       .sort((a, b) => a.timeNs - b.timeNs);
 
     if (parsed.length === 0) return null;
 
-    const minTime = parsed[0].timeNs;
-    const maxTime = parsed[parsed.length - 1].timeNs;
+    // The templates' span; the axis also takes in block arrivals just outside it (lib/forkTimelineAxis.ts). Without
+    // blocks the two are the same. A pool's last run ends at the last template, not at the axis' end.
+    const endOf = (pool: string, last: number) => {
+      const e = ends?.[pool];
+      return typeof e === "number" && Number.isFinite(e) && e >= last ? e : null;
+    };
+    const lastByPool = new Map<string, number>();
+    parsed.forEach((p) => lastByPool.set(p.poolName, p.timeNs));
+    const poolEnds = [...lastByPool].map(([pool, last]) => endOf(pool, last)).filter((e): e is number => e !== null);
+    const dataMaxTime = Math.max(parsed[parsed.length - 1].timeNs, ...poolEnds);
+    // each block at its arrival where recorded, else when our feeds first built on it (lib/forkTimelineAxis.ts markerBlocks)
+    const seenBlocks = markerBlocks(blocks);
+    const { minNs: minTime, maxNs: maxTime } = axisDomain(parsed[0].timeNs, dataMaxTime, seenBlocks);
     const duration = maxTime - minTime;
 
     // Assign colors by frequency
@@ -296,11 +266,11 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
     // Build raw per-pool timelines and collect transition events
     const poolMap = new Map<
       string,
-      Array<{ timeNs: number; prevHash: string }>
+      Array<{ timeNs: number; prevHash: string; invalid: boolean }>
     >();
     parsed.forEach((p) => {
       if (!poolMap.has(p.poolName)) poolMap.set(p.poolName, []);
-      poolMap.get(p.poolName)!.push({ timeNs: p.timeNs, prevHash: p.prevHash });
+      poolMap.get(p.poolName)!.push({ timeNs: p.timeNs, prevHash: p.prevHash, invalid: p.invalid });
     });
 
     const transitionTimes: number[] = [];
@@ -315,23 +285,30 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
     poolMap.forEach((entries, poolName) => {
       const segments: TimelineSegment[] = [];
       let currentHash = entries[0].prevHash;
+      let currentInvalid = entries[0].invalid;
       let segStart = entries[0].timeNs;
       let switched = false;
+      if (currentInvalid) transitionTimes.push(segStart);
 
       for (let i = 1; i < entries.length; i++) {
-        if (entries[i].prevHash !== currentHash) {
+        if (entries[i].prevHash !== currentHash || entries[i].invalid !== currentInvalid) {
           segments.push({
             startNs: segStart,
             endNs: entries[i].timeNs,
             prevHash: currentHash,
+            invalid: currentInvalid,
           });
+          // a change of parent, or invalid work starting or ending: both are what the axis should show
           transitionTimes.push(entries[i].timeNs);
+          if (entries[i].prevHash !== currentHash) switched = true;
           currentHash = entries[i].prevHash;
+          currentInvalid = entries[i].invalid;
           segStart = entries[i].timeNs;
-          switched = true;
         }
       }
-      segments.push({ startNs: segStart, endNs: maxTime, prevHash: currentHash });
+      const end = endOf(poolName, entries[entries.length - 1].timeNs);
+      if (end !== null) transitionTimes.push(end);
+      segments.push({ startNs: segStart, endNs: end ?? (ends ? entries[entries.length - 1].timeNs : dataMaxTime), prevHash: currentHash, invalid: currentInvalid });
 
       rawTimelines.push({
         poolName,
@@ -352,6 +329,11 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
     });
 
     // Build time zones for compression
+    // a block's line is an event too: a quiet stretch is never compressed over it
+    for (const b of seenBlocks) {
+      const t = b.seen_ms! * 1_000_000;
+      if (t >= minTime && t <= maxTime) transitionTimes.push(t);
+    }
     const timeZones = buildTimeZones(transitionTimes, minTime, maxTime);
     const compressed = timeZones !== null;
 
@@ -373,7 +355,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
           const widthPct = Math.max(rightPct - leftPct, 0.3);
           const relStart = formatRelativeTime(sub.startNs - minTime);
           const relEnd = formatRelativeTime(sub.endNs - minTime);
-          const status = prevHashStatusOf(seg.prevHash, canonicalRaw, prevHashStatus);
+          const status = statusOf(seg.prevHash);
           const isStale = status !== null && status !== "canonical"; // hatched: not the best parent
           const label = labelOf(status, kindOf(seg.prevHash));
           const staleLabel = label !== null ? ` (${label})` : "";
@@ -382,7 +364,8 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
             widthPct,
             prevHash: seg.prevHash,
             isStale,
-            tooltip: `${raw.poolName}${staleLabel}\n${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
+            invalid: seg.invalid === true,
+            tooltip: `${raw.poolName}${staleLabel}${seg.invalid ? " · invalid work" : ""}\n${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
           });
         }
       }
@@ -467,6 +450,9 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
       }
     }
 
+    // A label equal to the one before it says nothing: keep the first
+    for (let i = ticks.length - 1; i > 0; i--) if (ticks[i].label === ticks[i - 1].label) ticks.splice(i, 1);
+
     // Grid lines: from ticks + gap boundaries
     const gridLines: number[] = ticks.map((t) => t.pct);
     if (compressed && timeZones) {
@@ -480,20 +466,18 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
 
     // Build a map of hash → canonical/stale status
     const hashStatus = new Map<string, PrevHashStatus | null>();
-    sortedHashes.forEach((h) => hashStatus.set(h, prevHashStatusOf(h, canonicalRaw, prevHashStatus)));
+    sortedHashes.forEach((h) => hashStatus.set(h, statusOf(h)));
 
-    // Force semantic colors when canonical side is known.
-    if (canonicalRaw !== null) {
-      sortedHashes.forEach((h) => {
-        const status = hashStatus.get(h);
-        if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
-        else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
-        else if (status === "unknown") {
-          const kind = kindOf(h);
-          colorMap.set(h, kind ? KIND_COLOR[kind] : UNKNOWN_HASH_COLOR);
-        }
-      });
-    }
+    // Semantic colors wherever a status is known (the canonical side, or a kind the caller knows)
+    sortedHashes.forEach((h) => {
+      const status = hashStatus.get(h);
+      if (status === "canonical") colorMap.set(h, CANONICAL_HASH_COLOR);
+      else if (status === "stale") colorMap.set(h, STALE_HASH_COLOR);
+      else if (status === "unknown") {
+        const kind = kindOf(h);
+        colorMap.set(h, kind ? KIND_COLOR[kind] : UNKNOWN_HASH_COLOR);
+      }
+    });
 
     return {
       poolTimelines,
@@ -506,12 +490,30 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
       gapIndicators,
       duration,
       compressed,
+      timeZones,
+      minTime,
+      maxTime,
+      seenBlocks,
     };
-  }, [notifications, canonicalBlockHash, prevHashStatus, prevHashKind]);
+  }
+}
+
+export type ForkTimelineModel = NonNullable<ReturnType<typeof forkTimelineModel>>;
+
+export default function ForkTimeline({
+  notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, invalidCoinbasePools, kindHint, title = "Fork",
+  ends, embedded = false,
+}: ForkTimelineProps) {
+  const { ref, width } = useElementWidth<HTMLDivElement>();
+  const computed = useMemo(
+    () => forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends }),
+    [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends],
+  );
 
   const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
 
-  if (!computed || computed.poolTimelines.length === 0) return null;
+  // an empty element rather than null, so the width observer has its element from the first render
+  if (!computed || computed.poolTimelines.length === 0) return <div ref={ref} />;
 
   const {
     poolTimelines,
@@ -524,6 +526,9 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
     gapIndicators,
     duration,
     compressed,
+    timeZones,
+    minTime,
+    maxTime,
   } = computed;
 
   const displayTimelines =
@@ -531,12 +536,23 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
       ? [...poolTimelines].sort((a, b) => a.firstNs - b.firstNs)
       : poolTimelines;
 
-  const LABEL_W = 140;
+  const LABEL_W = width < 480 ? 92 : 140;
+  const plotW = Math.max(50, width - LABEL_W);
+  // a label is about 50 px wide: closer arrivals alternate rows
+  const markers = placeBlockMarkers(computed.seenBlocks, timeZones, minTime, maxTime, (56 / plotW) * 100);
+  const invalid = new Set(invalidCoinbasePools ?? []);
+  // tick labels at least ~36 px apart, so a narrow (phone) plot doesn't stack them
+  const shownTicks: typeof ticks = [];
+  for (const t of ticks) {
+    const prev = shownTicks[shownTicks.length - 1];
+    if (!prev || ((t.pct - prev.pct) / 100) * plotW >= 36) shownTicks.push(t);
+  }
 
   return (
-    <div className="mt-2">
+    <div ref={ref} className={embedded ? "" : "mt-2"}>
+      {!embedded && (<>
       <div className="flex items-center gap-3 mb-3">
-        <div className="text-sm font-semibold">Fork</div>
+        <div className="text-sm font-semibold">{title}</div>
         <div className="flex items-center gap-1.5 text-[10px]">
           <span className="text-muted-foreground">Sort:</span>
           <div className="flex items-center rounded-md border border-border overflow-hidden">
@@ -588,7 +604,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
               </div>
               {status === "canonical" && (
                 <span className="text-[9px] font-semibold text-emerald-400 shrink-0">
-                  Canonical
+                  Active chain
                 </span>
               )}
               {status === "stale" && (
@@ -612,7 +628,16 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
             (quiet periods compressed)
           </span>
         )}
+        {markers.length > 0 && (
+          <span className="text-[9px] text-muted-foreground/60">
+            {markers.some((m) => !m.firstWork) && "│ when a block reached our node"}
+            {markers.some((m) => !m.firstWork) && markers.some((m) => m.firstWork) && " · "}
+            {markers.some((m) => m.firstWork) && "┆ when our feeds first built on a block (its arrival wasn't recorded)"}
+            {markers.some((m) => !m.best) ? <> · <span className="text-[#1550a4] dark:text-blue-400">stale</span></> : null}
+          </span>
+        )}
       </div>
+      </>)}
 
       {/* Time axis */}
       {duration > 0 && ticks.length > 0 && (
@@ -620,7 +645,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
           className="relative h-4 mb-0.5"
           style={{ marginLeft: `${LABEL_W}px` }}
         >
-          {ticks.map((t, i) => (
+          {shownTicks.map((t, i) => (
             <span
               key={i}
               className="absolute text-[9px] text-muted-foreground/60 -translate-x-1/2 select-none"
@@ -648,17 +673,47 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
         </div>
       )}
 
+      {/* Block arrivals: the height above each marker line, two rows so blocks seen moments apart stay legible */}
+      {markers.length > 0 && (
+        <div className="relative h-6" style={{ marginLeft: `${LABEL_W}px` }}>
+          {markers.map((m) => (
+            <span
+              key={m.hash}
+              className={`absolute font-mono text-[9px] leading-none whitespace-nowrap select-none ${
+                m.best ? "text-foreground/60" : "text-[#1550a4] dark:text-blue-400"
+              } ${labelShift(m, plotW)}`}
+              style={{ left: `${m.pct}%`, top: m.row === 1 ? 0 : 12 }}
+              title={markerTitle(m)}
+            >
+              {m.edge === "before" ? `‹ ${fmtHeight(m.height)}` : m.edge === "after" ? `${fmtHeight(m.height)} ›` : fmtHeight(m.height)}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Pool rows */}
-      <div>
+      <div className="relative">
+        {markers.some((m) => m.edge === null) && (
+          <div className="absolute inset-y-0 right-0 pointer-events-none z-10" style={{ left: `${LABEL_W}px` }} aria-hidden>
+            {markers.filter((m) => m.edge === null).map((m) => (
+              <div
+                key={m.hash}
+                className={`absolute inset-y-0 w-0 border-l ${m.firstWork ? "border-dashed" : ""} ${m.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
+                style={{ left: `${m.pct}%` }}
+              />
+            ))}
+          </div>
+        )}
         {displayTimelines.map((pool) => {
+          const bad = invalid.has(pool.poolName);
           return (
             <div key={pool.poolName} className="flex items-center h-[22px] group">
                 <div
-                  className="shrink-0 text-[11px] truncate text-right pr-2.5 text-muted-foreground"
+                  className={`shrink-0 text-[11px] truncate text-right pr-2.5 ${bad ? "text-rose-500" : "text-muted-foreground"}`}
                   style={{ width: `${LABEL_W}px` }}
-                  title={pool.poolName}
+                  title={bad ? `${pool.poolName}: invalid coinbase at this height` : pool.poolName}
                 >
-                  {pool.poolName}
+                  {bad ? "✗ " : ""}{pool.poolName}
                 </div>
 
                 <div className="flex-1 h-[14px] rounded-[3px] bg-muted/30 relative overflow-hidden">
@@ -693,7 +748,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
                       style={{
                         left: `${vs.leftPct}%`,
                         width: `${Math.max(vs.widthPct, 0.3)}%`,
-                        backgroundColor: colorMap.get(vs.prevHash) || "#666",
+                        backgroundColor: vs.invalid ? INVALID_COLOR : colorMap.get(vs.prevHash) || "#666",
                         opacity: 0.82,
                       }}
                       title={vs.tooltip}
@@ -716,7 +771,7 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
       </div>
 
       {/* Duration label */}
-      {duration > 0 && (
+      {!embedded && duration > 0 && (
         <div
           className="text-[10px] text-muted-foreground/50 mt-2"
           style={{ marginLeft: `${LABEL_W}px` }}
@@ -724,6 +779,56 @@ export default function ForkTimeline({ notifications, canonicalBlockHash, prevHa
           Total span: {formatRelativeTime(duration)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The chart in miniature, for a closed Forks row: one 4 px line per pool, in the chart's own order, on its own axis,
+ * with no names, and the blocks' lines unlabelled (opening the row shows the chart itself). The axis ticks stay, so time still reads.
+ */
+export function MiniForkTimeline(props: ModelInput) {
+  const { notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends } = props;
+  const m = useMemo(
+    () => forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends }),
+    [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends],
+  );
+  if (!m || m.poolTimelines.length === 0) return null;
+  const shown: typeof m.ticks = [];
+  for (const t of m.ticks) {
+    const prev = shown[shown.length - 1];
+    if (!prev || t.pct - prev.pct >= 9) shown.push(t);
+  }
+  // the blocks' lines, unlabelled (the open chart names them)
+  const lines = placeBlockMarkers(m.seenBlocks, m.timeZones, m.minTime, m.maxTime, 0).filter((b) => b.edge === null);
+  return (
+    <div aria-hidden className="relative">
+      {lines.length > 0 && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10" style={{ bottom: "1.25rem" }}>
+          {lines.map((b) => (
+            <div key={b.hash} className={`absolute inset-y-0 w-0 border-l ${b.firstWork ? "border-dashed" : ""} ${b.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
+              style={{ left: `${b.pct}%` }} />
+          ))}
+        </div>
+      )}
+      {m.poolTimelines.map((pool) => (
+        <div key={pool.poolName} className="relative mb-0.5 h-1 overflow-hidden bg-muted/30">
+          {pool.visualSegments.map((vs, i) => (
+            <div key={i} className="absolute inset-y-0"
+              style={{ left: `${vs.leftPct}%`, width: `${Math.max(vs.widthPct, 0.3)}%`,
+                backgroundColor: vs.invalid ? INVALID_COLOR : m.colorMap.get(vs.prevHash) || "#666" }} />
+          ))}
+          {m.gapIndicators.map((g, i) => (
+            <div key={`g${i}`} className="absolute inset-y-0 bg-background" style={{ left: `${g.leftPct}%`, width: `${g.widthPct}%` }} />
+          ))}
+        </div>
+      ))}
+      <div className="relative mt-1 h-3.5 text-[9px] text-muted-foreground/70">
+        {shown.map((t, i) => (
+          <span key={i} className={`absolute whitespace-nowrap ${i === 0 ? "" : i === shown.length - 1 && t.pct > 92 ? "-translate-x-full" : "-translate-x-1/2"}`}
+            style={{ left: `${t.pct}%` }}>{t.label}</span>
+        ))}
+      </div>
     </div>
   );
 }

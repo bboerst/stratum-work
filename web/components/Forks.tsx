@@ -1,10 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as d3 from "d3";
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
-import { useElementWidth } from "@/visuals/framework/useElementWidth";
-import { laneSegments, layoutTimeline, placeEpisodes, timeX } from "./unknown-parents/layout";
+import HeightForkTimeline from "./HeightForkTimeline";
+import ForkTimeline, { MiniForkTimeline } from "./ForkTimeline";
+import { isRace, raceRows, type RaceRow } from "@/lib/forkRaces";
+import type { ArrivalBlock } from "@/lib/forkTimelineAxis";
+import { reverseHex } from "@/utils/formatters";
+import type { ParentKind } from "@/lib/parentKind";
 import { pagePath } from "@/lib/forksPath";
 
 /**
@@ -42,7 +45,7 @@ interface Episode {
     pow_ok: boolean;
     pow_bits: string;
     in_stale_blocks: boolean;
-    stale_block: { height: number; header_source: string | null; miner: string | null } | null;
+    stale_block: { height: number; header_source: string | null; miner: string | null; prev: string | null } | null;
   };
   kind: Kind;
   invalid_coinbase: InvalidCoinbase | null;
@@ -114,12 +117,6 @@ const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/meth
  */
 const CHIPS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
 const CHIP_LABEL: Partial<Record<Kind, string>> = { invalid_parent: "Invalid" };
-function matchesKind(e: Episode, k: Kind): boolean {
-  if (k === "invalid_parent") return e.kind === "invalid_parent" || e.kind === "invalid_coinbase" || e.invalid_coinbase !== null;
-  return e.kind === k;
-}
-
-const KINDS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "invalid_coinbase", "undetermined"];
 const RANGES: Range[] = ["6e", "26e", "all"];
 const DEFAULT_RANGE: Range = "6e";
 const LEGACY_RANGES: Record<string, Range> = { "90d": "6e", "1y": "26e" };   // earlier links' wall-clock values
@@ -135,14 +132,6 @@ const KIND_LABEL: Record<Kind, string> = {
 };
 // Categorical colours (light / dark): blue = a stale block (the fork view's stale blue; lighter when we never recorded
 // it: the same family), violet = another chain, rose = invalid (an outline for an invalid coinbase on our own chain)
-const KIND_FILL: Record<Kind, string> = {
-  stale: "fill-[#1550a4] dark:fill-blue-500",
-  bitcoin_block: "fill-sky-400",
-  other_chain: "fill-violet-600 dark:fill-violet-500",
-  invalid_parent: "fill-rose-600 dark:fill-rose-500",
-  invalid_coinbase: "fill-transparent stroke-rose-500",
-  undetermined: "fill-gray-500",
-};
 const KIND_BG: Record<Kind, string> = {
   stale: "bg-[#1550a4] dark:bg-blue-500",
   bitcoin_block: "bg-sky-400",
@@ -151,19 +140,13 @@ const KIND_BG: Record<Kind, string> = {
   invalid_coinbase: "border-2 border-rose-500",
   undetermined: "bg-gray-500",
 };
-// Drill-in: the episode's own parent in the text colour (the subject), amber = our best chain (as in the fork view),
-// blue = a known stale block, gray = another unknown parent
+// Drill-in's template list: the episode's own parent in the text colour (the subject), amber = our best chain and
+// blue = a known stale block (the fork timeline's colours), gray = another unknown parent
 const LABELS: ParentLabel[] = ["this", "best", "stale", "other"];
 const LABEL_TEXT: Record<ParentLabel, string> = { this: "this parent", best: "best chain", stale: "stale", other: "other" };
-const LABEL_FILL: Record<ParentLabel, string> = {
-  this: "fill-foreground",
-  best: "fill-amber-600",
-  stale: "fill-[#1550a4] dark:fill-blue-500",
-  other: "fill-gray-400 dark:fill-gray-500",
-};
 const LABEL_BG: Record<ParentLabel, string> = {
   this: "bg-foreground",
-  best: "bg-amber-600",
+  best: "bg-amber-500",
   stale: "bg-[#1550a4] dark:bg-blue-500",
   other: "bg-gray-400 dark:bg-gray-500",
 };
@@ -179,12 +162,6 @@ function fmtDuration(ms: number): string {
   return `${(s / 3600).toFixed(1)}h`;
 }
 
-/** A pool name that fits the lane labels (about 7 px per character at 12 px). */
-const shortName = (p: string, narrow: boolean) => {
-  const max = narrow ? 9 : 16;
-  return p.length > max ? `${p.slice(0, max - 1)}…` : p;
-};
-
 /** One-line summary of the facts the kind rests on, for tooltips. */
 function factsTitle(e: Episode): string {
   const f = e.facts;
@@ -197,36 +174,6 @@ function factsTitle(e: Episode): string {
   ].join(" · ");
 }
 
-const fmtBtc = (sats: number) => (sats / 1e8).toFixed(8);
-
-const plural = (n: number, word: string) => `${fmtInt(n)} ${word}${n === 1 ? "" : "s"}`;
-
-/**
- * The episode's template providers (docs/methodology.md "Template providers"): how many independent ones its pools
- * are on, in the epoch it began in. Null when that epoch isn't counted; `unknown` = pools whose provider isn't known there.
- */
-function providerInfo(e: Episode): { n: number; groups: string[][]; unknown: string[]; text: string; title: string } | null {
-  if (e.providers === null || e.providers === undefined) return null;
-  const groups = e.provider_groups ?? [];
-  const known = new Set(groups.flat());
-  const unknown = e.pools.map(p => p.pool).filter(p => !known.has(p));
-  const n = e.providers;
-  const text = n === 0 ? "provider unknown" : `${plural(n, "provider")}${unknown.length ? ` · ${fmtInt(unknown.length)} unknown` : ""}`;
-  const title = [`${plural(n, "template provider")} among ${plural(e.pools.length, "pool")} (identical transaction sets in that difficulty epoch; not ownership)`,
-    ...groups.map(g => g.join(", ")), ...(unknown.length ? [`provider unknown: ${unknown.join(", ")}`] : [])].join("\n");
-  return { n, groups, unknown, text, title };
-}
-
-/** The invalid-coinbase finding at the episode's height: a small rose badge, the pools and amounts on hover. */
-function InvalidCoinbaseBadge({ ic }: { ic: InvalidCoinbase }) {
-  const title = ic.pools.map(p => `${p.pool}: ${p.templates} template${p.templates > 1 ? "s" : ""} · paid ${fmtBtc(p.total_sats)} BTC${p.subsidy_sats === null ? "" : ` vs subsidy ${fmtBtc(p.subsidy_sats)}`}`).join("\n");
-  return (
-    <span title={`Coinbase above the subsidy with no transactions, at height ${fmtInt(ic.height)}\n${title}`}
-      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-rose-600/50 px-2 py-0.5 text-[11px] text-rose-600 dark:text-rose-400">
-      ✗ invalid coinbase · {ic.pools.length} pool{ic.pools.length > 1 ? "s" : ""}
-    </span>
-  );
-}
 
 function KindChip({ kind, title, alsoInvalid = false }: { kind: Kind; title?: string; alsoInvalid?: boolean }) {
   return (
@@ -242,384 +189,8 @@ function KindChip({ kind, title, alsoInvalid = false }: { kind: Kind; title?: st
   );
 }
 
-function PoolChips({ e, max = 6 }: { e: Episode; max?: number }) {
-  const shown = e.pools.slice(0, max);
-  return (
-    <div className="flex flex-wrap gap-1">
-      {shown.map(p => (
-        <span key={p.pool} className="rounded bg-foreground/10 px-1.5 py-px text-[11px] whitespace-nowrap"
-          title={`${fmtInt(p.templates)} templates · connection ${p.connections.join(", ")}`}>
-          {p.pool}
-        </span>
-      ))}
-      {e.pools.length > max && <span className="px-1 py-0.5 text-[11px] text-foreground/60">+{e.pools.length - max}</span>}
-    </div>
-  );
-}
-
-/** The table's providers count: the number, "+N?" for pools whose provider is unknown; "–" before that epoch was counted. */
-function ProvidersCell({ e }: { e: Episode }) {
-  const p = providerInfo(e);
-  return (
-    <td className="px-3 py-1 font-mono text-right text-xs whitespace-nowrap" title={p?.title ?? "not counted for this height yet"}>
-      {p ? <>{p.n}{p.unknown.length > 0 && <span className="text-foreground/40"> +{p.unknown.length}?</span>}</> : <span className="text-foreground/30">–</span>}
-    </td>
-  );
-}
-
-/** The details' pools grouped by template provider: a box per provider, a dashed one for the unknown ones. */
-function ProviderGroups({ e }: { e: Episode }) {
-  const p = providerInfo(e);
-  if (!p || e.pools.length < 2) return null;
-  const box = "inline-flex flex-wrap items-center gap-1 rounded-md border px-1.5 py-1";
-  return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px]" aria-label="Pools by template provider">
-      {p.groups.map(g => (
-        <span key={g.join(",")} className={`${box} border-foreground/25`} title={`one template provider: ${g.join(", ")}`}>
-          {g.map(pool => <span key={pool} className="rounded bg-foreground/10 px-1.5 py-0.5 whitespace-nowrap">{pool}</span>)}
-        </span>
-      ))}
-      {p.unknown.length > 0 && (
-        <span className={`${box} border-dashed border-foreground/25`} title="provider unknown in that difficulty epoch (too few transaction sets counted)">
-          <span className="px-0.5 text-foreground/50">?</span>
-          {p.unknown.map(pool => <span key={pool} className="rounded bg-foreground/5 px-1.5 py-0.5 whitespace-nowrap text-foreground/60">{pool}</span>)}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function Tooltip({ x, y, width, children }: { x: number; y: number; width: number; children: React.ReactNode }) {
-  return (
-    <div className="pointer-events-none absolute z-10 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs shadow-lg"
-      style={{ left: Math.max(0, Math.min(x, width - 190)), top: y, width: 190 }}>
-      {children}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Timeline
-
-const ROW_H = 14;   // slim rows: the marks carry the meaning, the pool names only need to stay legible
-const MARK_H = 9;
-const AXIS_H = 18;
-
-/** The timeline in Bitcoin time: x = block height, from `start` to `end` (our tip). */
-function EpisodeTimeline({ episodes, start, end, selected, onSelect }: {
-  episodes: Episode[]; start: number; end: number; selected: string | null; onSelect: (p: string) => void;
-}) {
-  const { ref, width } = useElementWidth<HTMLDivElement>();
-  const labelW = width < 520 ? 76 : 120;
-  const plotW = Math.max(50, width - labelW - 8);
-  const { placed, unplaced } = useMemo(() => placeEpisodes(episodes, start, end), [episodes, start, end]);
-  const layout = useMemo(() => layoutTimeline(placed, start, end, plotW, 5), [placed, start, end, plotW]);
-  const byParent = useMemo(() => new Map(episodes.map(e => [e.parent, e])), [episodes]);
-  const [hover, setHover] = useState<{ parent: string; x: number; y: number } | null>(null);
-  const ticks = useMemo(() => {
-    const s = d3.scaleLinear().domain([start, end]).range([0, plotW]);
-    return s.ticks(Math.max(3, Math.min(7, Math.floor(plotW / 110)))).map(v => ({ x: s(v), label: fmtInt(v) }));
-  }, [start, end, plotW]);
-  const h = layout.pools.length * ROW_H + AXIS_H;
-  const hovered = hover ? byParent.get(hover.parent) : null;
-  // Hovering an episode brings it forward: its marks on every pool's row are outlined over a column, the rest stay
-  // almost as they were (a light fade), and its pools' row labels light up, so episodes close in height can be told
-  // apart. The selected episode keeps its column and outline.
-  const focus = hover?.parent ?? null;
-  const focusPools = useMemo(() => new Set(focus ? (byParent.get(focus)?.pools ?? []).map(p => p.pool) : []), [focus, byParent]);
-  const spanFor = focus ?? selected;
-  const focusSpan = useMemo(() => {
-    if (!spanFor) return null;
-    const ms = layout.marks.filter(m => m.parent === spanFor);
-    if (ms.length === 0) return null;
-    const x0 = Math.min(...ms.map(m => m.x)), x1 = Math.max(...ms.map(m => m.x + m.w));
-    return { x: x0 - 3, w: x1 - x0 + 6 };
-  }, [spanFor, layout]);
-
-  return (
-    <div ref={ref} className="relative w-full">
-      <svg width={width} height={h} role="img" className="block text-foreground/60">
-        <desc>One row per pool over the last {fmtInt(Math.max(0, end - start))} blocks; a mark per episode, over the heights being mined while it lasted, coloured by its inferred kind.</desc>
-        <g transform={`translate(${labelW},0)`}>
-          {ticks.map(t => (
-            <g key={t.x}>
-              <line x1={t.x} x2={t.x} y1={0} y2={h - AXIS_H} stroke="currentColor" strokeOpacity={0.12} />
-              {/* a label near the right edge ends at its line, so it stays inside the plot */}
-              <text x={t.x > plotW - 50 ? t.x - 3 : t.x + 3} y={h - 5} fontSize={11} fill="currentColor"
-                textAnchor={t.x > plotW - 50 ? "end" : "start"}>{t.label}</text>
-            </g>
-          ))}
-          {focusSpan && <rect x={focusSpan.x} y={0} width={focusSpan.w} height={h - AXIS_H} rx={3}
-            className="fill-foreground/10" pointerEvents="none" />}
-          {/* the other marks fade lightly, in one group with one opacity, so overlapping marks don't add up to solid */}
-          {[false, true].map(isFocus => (
-            <g key={String(isFocus)} opacity={focus && !isFocus ? 0.7 : 1}>
-          {layout.marks.map((m, i) => ((focus === m.parent) !== isFocus ? null :
-            <g key={i} className="cursor-pointer" data-episode={m.parent}
-              onMouseEnter={() => setHover({ parent: m.parent, x: labelW + m.x, y: (m.row + 1) * ROW_H + 4 })}
-              onMouseLeave={() => setHover(null)}
-              onClick={() => onSelect(m.parent)}>
-              <rect x={m.x - 4} y={m.row * ROW_H} width={m.w + 8} height={ROW_H} fill="transparent" />
-              <rect x={m.x} y={m.row * ROW_H + (ROW_H - MARK_H) / 2} width={m.w} height={MARK_H} rx={2}
-                className={`${KIND_FILL[m.kind as Kind] ?? KIND_FILL.undetermined} ${focus === m.parent || selected === m.parent ? "stroke-foreground" : ""}`}
-                strokeWidth={focus === m.parent || selected === m.parent ? 1.5 : m.kind === "invalid_coinbase" ? 1.5 : 0}
-                />
-              {/* two findings in one episode (a race with an invalid coinbase): the mark's lower half is rose on the
-                  rows of the pools whose coinbase was invalid */}
-              {m.kind !== "invalid_coinbase" && byParent.get(m.parent)?.invalid_coinbase?.pools.some(p => p.pool === layout.pools[m.row]) && (
-                <rect x={m.x} y={m.row * ROW_H + ROW_H / 2} width={m.w} height={MARK_H / 2} className="fill-rose-500" pointerEvents="none" />
-              )}
-            </g>
-          ))}
-            </g>
-          ))}
-        </g>
-        {layout.pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={i * ROW_H + ROW_H / 2 + 3.5} fontSize={11} textAnchor="end"
-            fontWeight={focusPools.has(p) ? 700 : 400}
-            className={focus && focusPools.has(p) ? "fill-foreground" : "fill-foreground/60"}>
-            <title>{p}</title>{shortName(p, labelW < 100)}
-          </text>
-        ))}
-      </svg>
-      {hovered && hover && (
-        <Tooltip x={hover.x} y={hover.y} width={width}>
-          <KindChip kind={hovered.kind} />
-          <div className="mt-1 font-mono">{fmtInt(hovered.height)}</div>
-          <div className="text-foreground/60">{plural(hovered.pools.length, "pool")}{providerInfo(hovered) ? ` · ${providerInfo(hovered)!.text}` : ""} · {fmtDuration(hovered.duration_ms)}</div>
-          <div className="mt-0.5 text-foreground/80">{hovered.pools.map(p => p.pool).join(", ")}</div>
-          <div className="text-foreground/40">{fmtUtc(hovered.first_ms)} UTC</div>
-        </Tooltip>
-      )}
-      {unplaced > 0 && <p className="mt-1 text-right text-[11px] text-foreground/60">{fmtInt(unplaced)} not placed</p>}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Table
-
-type SortKey = "bitcoin" | "height" | "pools" | "providers" | "duration" | "kind";
-
-function sortValue(e: Episode, k: SortKey): number {
-  switch (k) {
-    case "bitcoin": return (e.facts.tip_at_first ?? -1) * 1e13 + e.first_ms;   // Bitcoin time: our tip when it began
-    case "height": return e.height;
-    case "pools": return e.pools.length;
-    case "providers": return e.providers ?? -1;   // not counted: below 0
-    case "duration": return e.duration_ms;
-    case "kind": return KINDS.indexOf(e.kind);
-  }
-}
-
-function EpisodeTable({ episodes, selected, onSelect }: { episodes: Episode[]; selected: string | null; onSelect: (p: string) => void }) {
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "bitcoin", desc: true });
-  const rows = useMemo(() => [...episodes].sort((a, b) => {
-    const c = sortValue(a, sort.key) - sortValue(b, sort.key) || a.first_ms - b.first_ms;
-    return sort.desc ? -c : c;
-  }), [episodes, sort]);
-  const head = (label: string, k: SortKey, right = false) => {
-    const active = sort.key === k;
-    return (
-      <th className={`px-3 py-2 text-xs font-normal text-foreground/60 cursor-pointer select-none whitespace-nowrap ${right ? "text-right" : "text-left"}`}
-        onClick={() => setSort({ key: k, desc: active ? !sort.desc : k !== "kind" })}
-        aria-sort={active ? (sort.desc ? "descending" : "ascending") : "none"}>
-        {label}{active ? (sort.desc ? " ↓" : " ↑") : ""}
-      </th>
-    );
-  };
-  return (
-    <>
-      <ul className="md:hidden space-y-1.5">
-        {rows.map(e => (
-          <li key={e.parent}>
-            <button type="button" onClick={() => onSelect(e.parent)} title={factsTitle(e)}
-              className={`w-full rounded-lg border border-border px-3 py-1.5 text-left text-xs space-y-1 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-sm">{fmtInt(e.height)} <span className="text-foreground/60 text-xs">· {fmtDuration(e.duration_ms)}</span></span>
-                <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
-              </div>
-              <div className="text-foreground/40" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</div>
-              {e.invalid_coinbase && e.kind !== "invalid_coinbase" && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
-              <PoolChips e={e} max={4} />
-              {providerInfo(e) && <div className="text-foreground/60" title={providerInfo(e)!.title}>{providerInfo(e)!.text}</div>}
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="hidden md:block overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              {head("Height", "height")}
-              {head("Pools", "pools")}
-              {head("Providers", "providers", true)}
-              {head("Duration", "duration", true)}
-              {head("Kind", "kind")}
-              {head("UTC", "bitcoin", true)}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(e => (
-              <tr key={e.parent} onClick={() => onSelect(e.parent)}
-                className={`border-b border-border/60 cursor-pointer hover:bg-foreground/5 ${e.parent === selected ? "bg-foreground/10" : ""}`}>
-                <td className="px-3 py-1 font-mono">{fmtInt(e.height)}</td>
-                <td className="px-3 py-1"><PoolChips e={e} /></td>
-                <ProvidersCell e={e} />
-                <td className="px-3 py-1 font-mono text-right text-xs">{fmtDuration(e.duration_ms)}</td>
-                <td className="px-3 py-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
-                    {e.invalid_coinbase && <InvalidCoinbaseBadge ic={e.invalid_coinbase} />}
-                  </div>
-                </td>
-                <td className="px-3 py-1 text-xs text-foreground/40 text-right whitespace-nowrap" title={fmtLocal(e.first_ms)}>{fmtUtc(e.first_ms)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rows.length === 0 && <p className="py-6 text-center text-xs text-foreground/60">None.</p>}
-    </>
-  );
-}
-
 // ---------------------------------------------------------------------------------------------------------------------
 // Drill-in
-
-const LANE_H = 22;
-const BAR_H = 12;
-
-function Swimlanes({ episode, drill }: { episode: Episode; drill: DrillResponse }) {
-  const { ref, width } = useElementWidth<HTMLDivElement>();
-  const labelW = width < 520 ? 76 : 120;
-  const plotW = Math.max(50, width - labelW - 16);
-  const start = drill.from_ms!, end = drill.to_ms!;
-  const pools = useMemo(() => episode.pools.map(p => p.pool), [episode]);
-  // a run per parent block: the template's height tells the best-chain blocks apart (h - 2, h - 1, h)
-  const segments = useMemo(() => laneSegments((drill.templates ?? []).map(t => ({ pool: t.pool_name, t: t.received_at, label: t.parent, key: t.height })),
-    start, end, plotW, 2), [drill, start, end, plotW]);
-  const lane = useMemo(() => new Map(pools.map((p, i) => [p, i])), [pools]);
-  // Invalid coinbase: an empty template (no merkle branches) paying more than the block subsidy, as the backend's
-  // analysis flags it. Runs of such templates per pool are drawn over the lanes; templates whose coinbase didn't parse
-  // can't be judged here (the episode's badge, from the backend, names their pools).
-  const invalid = useMemo(() => {
-    const subsidy = (h: number) => Math.floor(5_000_000_000 / 2 ** Math.floor(h / 210_000));
-    const byPool = new Map<string, Template[]>();
-    for (const t of drill.templates ?? []) {
-      const l = byPool.get(t.pool_name) ?? []; l.push(t); byPool.set(t.pool_name, l);
-    }
-    const runs: { pool: string; x: number; w: number; n: number; total: number; subsidy: number }[] = [];
-    for (const [pool, ts] of byPool) {
-      ts.sort((a, b) => a.received_at - b.received_at);
-      let cur: { from: number; to: number; n: number; total: number; subsidy: number } | null = null;
-      ts.forEach((t, i) => {
-        const bad = t.merkle_branches === 0 && t.coinbase_ok && t.output_total > subsidy(t.height);
-        const next = ts[i + 1]?.received_at ?? t.received_at + 1000;
-        if (bad) {
-          if (cur) { cur.to = next; cur.n++; } else cur = { from: t.received_at, to: next, n: 1, total: t.output_total, subsidy: subsidy(t.height) };
-        } else if (cur) {
-          const x0 = timeX(cur.from, start, end, plotW), x1 = timeX(cur.to, start, end, plotW);
-          runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: cur.n, total: cur.total, subsidy: cur.subsidy }); cur = null;
-        }
-      });
-      if (cur) {
-        const c: { from: number; to: number; n: number; total: number; subsidy: number } = cur;
-        const x0 = timeX(c.from, start, end, plotW), x1 = timeX(c.to, start, end, plotW);
-        runs.push({ pool, x: x0, w: Math.max(3, x1 - x0), n: c.n, total: c.total, subsidy: c.subsidy });
-      }
-    }
-    return runs;
-  }, [drill, start, end, plotW]);
-  const offenders = useMemo(() => new Set([...(episode.invalid_coinbase?.pools ?? []).map(p => p.pool), ...invalid.map(r => r.pool)]), [episode, invalid]);
-  const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
-  const ticks = useMemo(() => {
-    const s = d3.scaleUtc().domain([start, end]).range([0, plotW]);
-    return s.ticks(Math.max(2, Math.min(6, Math.floor(plotW / 120)))).map(d => ({ x: s(d), label: d3.utcFormat("%H:%M")(d) }));
-  }, [start, end, plotW]);
-  const lanesH = pools.length * LANE_H;
-  const top = 32;   // room for two rows of block labels
-  const h = top + lanesH + AXIS_H;
-  const seg = hover ? segments[hover.i] : null;
-
-  return (
-    <div ref={ref} className="relative w-full">
-      <svg width={width} height={h} role="img" className="block text-foreground/60">
-        <desc>One lane per pool; bars show which parent the pool was building on over time, lines mark when the blocks at height − 1 and height reached us.</desc>
-        <g transform={`translate(${labelW},${top})`}>
-          {ticks.map(t => (
-            <text key={t.x} x={t.x} y={lanesH + 15} fontSize={11} textAnchor="middle" fill="currentColor">{t.label}</text>
-          ))}
-          {segments.map((s, i) => {
-            const row = lane.get(s.pool);
-            if (row === undefined) return null;
-            return (
-              // a 2 px gap where the pool moved on, so runs on different blocks stay apart
-              <rect key={i} x={s.x} y={row * LANE_H + (LANE_H - BAR_H) / 2} width={s.w > 6 ? s.w - 2 : s.w} height={BAR_H} rx={2}
-                className={LABEL_FILL[s.label as ParentLabel]} opacity={hover && hover.i !== i ? 0.75 : 1}
-                onMouseEnter={() => setHover({ i, x: labelW + s.x, y: top + (row + 1) * LANE_H + 2 })}
-                onMouseLeave={() => setHover(null)} />
-            );
-          })}
-          {invalid.map((r, i) => {
-            const row = lane.get(r.pool);
-            if (row === undefined) return null;
-            return (
-              <rect key={`ic${i}`} x={r.x} y={row * LANE_H + (LANE_H - BAR_H) / 2 - 2} width={r.w} height={BAR_H + 4} rx={2}
-                className="fill-rose-500 stroke-rose-300" strokeWidth={1}>
-                <title>{`${r.pool}: ${r.n} empty job${r.n > 1 ? "s" : ""} paying ${(r.total / 1e8).toFixed(8)} BTC, over the ${(r.subsidy / 1e8).toFixed(3)} BTC subsidy (invalid coinbase)`}</title>
-              </rect>
-            );
-          })}
-          {(() => {
-            // Labels of blocks that arrived moments apart would overlap: a label goes up a row when it sits within a
-            // label's width of the previous one (two blocks at one height arrive seconds apart in a race).
-            const rows = new Map<string, number>();
-            let lastX = -Infinity, lastRow = 1;
-            for (const b of [...(drill.blocks ?? [])].sort((a, c) => a.arrival_ms - c.arrival_ms)) {
-              const x = timeX(b.arrival_ms, start, end, plotW);
-              const row = x - lastX < 60 ? 1 - lastRow : 0;
-              rows.set(b.hash, row); lastX = x; lastRow = row;
-            }
-            return (drill.blocks ?? []).map(b => {
-            const label = fmtInt(b.height);   // the block's own height (Bitcoin time), not h-relative shorthand
-            const before = b.arrival_ms < start, after = b.arrival_ms > end;
-            const x = timeX(b.arrival_ms, start, end, plotW);
-            const ly = -6 - 13 * (rows.get(b.hash) ?? 0);
-            const cls = b.best ? "text-amber-600" : "text-[#1550a4] dark:text-blue-500";
-            return (
-              <g key={b.hash} className={cls}>
-                <title>{`block ${label} arrived · ${b.best ? "best chain" : "stale"} · ${fmtUtcS(b.arrival_ms)} UTC`}</title>
-                {!before && !after && <line x1={x} x2={x} y1={ly + 2} y2={lanesH} stroke="currentColor" strokeWidth={1.5} />}
-                <text x={before ? 0 : after ? plotW : x} y={ly} fontSize={11} fill="currentColor"
-                  textAnchor={after ? "end" : before ? "start" : "middle"}>
-                  {before ? `‹ ${label}` : after ? `${label} ›` : label}
-                </text>
-              </g>
-            );
-            });
-          })()}
-        </g>
-        {pools.map((p, i) => (
-          <text key={p} x={labelW - 8} y={top + i * LANE_H + LANE_H / 2 + 4} fontSize={12} textAnchor="end"
-            className={offenders.has(p) ? "fill-rose-500" : "fill-foreground/60"}>
-            <title>{offenders.has(p) ? `${p}: invalid coinbase` : p}</title>{offenders.has(p) ? "✗ " : ""}{shortName(p, labelW < 100)}
-          </text>
-        ))}
-      </svg>
-      {seg && hover && (
-        <Tooltip x={hover.x} y={hover.y} width={width}>
-          <div className="flex items-center gap-1.5">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[seg.label as ParentLabel]}`} aria-hidden />
-            {LABEL_TEXT[seg.label as ParentLabel]}
-          </div>
-          <div className="mt-1 text-foreground/60">{seg.pool} · {seg.n} template{seg.n > 1 ? "s" : ""}</div>
-          <div className="font-mono text-foreground/60">{fmtUtcS(seg.from)}{seg.to > seg.from ? `–${fmtUtcS(seg.to)}` : ""}</div>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
 
 function TemplateRow({ t }: { t: Template }) {
   const [open, setOpen] = useState(false);
@@ -709,7 +280,7 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   ];
   const W = xPrev + TW + 330;
   return (
-    <div className="mb-5">
+    <div>
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
@@ -733,17 +304,19 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
           </text>;
         })()}
       </svg>
-      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        {/* the checks as chips, styled like the pool chips; each chip's background is its result */}
-        <span className="inline-flex flex-wrap items-center gap-1">
-          {checks.map(c => (
-            <span key={c.label} title={c.title} className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 whitespace-nowrap ${c.ok === null ? "bg-foreground/10 text-foreground/60" : c.ok ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/20 text-rose-700 dark:text-rose-300"}`}>
-              <span>{c.ok === null ? "?" : c.ok ? "✓" : "✗"}</span>
-              {c.label}
+      {/* the checks as one quiet line: only the glyph carries the result */}
+      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground/60">
+        {checks.map((c, i) => (
+          <span key={c.label} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            {i > 0 && <span aria-hidden className="text-foreground/30">·</span>}
+            <span title={c.title}>
+              <span className={c.ok === null ? "text-foreground/40" : c.ok ? "text-emerald-500/80" : "text-rose-500/80"}>
+                {c.ok === null ? "?" : c.ok ? "✓" : "✗"}
+              </span>{" "}{c.label}
             </span>
-          ))}
-        </span>
-        <span className="inline-flex items-center gap-1.5 px-1 text-foreground/70">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5 pl-1">→ <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} /></span>
       </div>
     </div>
   );
@@ -753,10 +326,9 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const [drill, setDrill] = useState<{ parent: string; data: DrillResponse } | null>(null);
   const [showList, setShowList] = useState(false);
   const [shown, setShown] = useState(LIST_PAGE);
-  const [copied, setCopied] = useState(false);
   useEffect(() => {
     const ctl = new AbortController();
-    fetch(`/api/forks?parent=${episode.parent}&range=${range}`, { signal: ctl.signal })
+    fetch(`/api/forks?parent=${episode.parent}&range=${range}&providers=0`, { signal: ctl.signal })
       .then(r => r.json())
       .then((d: DrillResponse) => setDrill({ parent: episode.parent, data: d }))
       .catch(e => { if (e?.name !== "AbortError") setDrill({ parent: episode.parent, data: { error: String(e) } }); });
@@ -767,53 +339,26 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
   const present = useMemo(() => new Set(templates.map(t => t.parent)), [templates]);
 
   return (
-    <section className="mt-8 rounded-xl border border-border p-4" aria-label="Episode details">
-      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-        <KindChip kind={episode.kind} title={factsTitle(episode)} alsoInvalid={!!episode.invalid_coinbase && episode.kind !== "invalid_coinbase"} />
-        <span className="font-mono text-base">{fmtInt(episode.height)}</span>
-        <button type="button" className="font-mono text-xs text-foreground/60 hover:text-foreground"
-          title={`${episode.parent} · click to copy`}
-          onClick={() => navigator.clipboard?.writeText(episode.parent).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {})}>
-          {copied ? "copied" : `${episode.parent.slice(0, 6)}…${episode.parent.slice(-6)}`}
-        </button>
-        <span className="text-xs text-foreground/60">
-          {plural(episode.pools.length, "pool")}
-          {providerInfo(episode) && <span title={providerInfo(episode)!.title}> · {providerInfo(episode)!.text}</span>}
-        </span>
-        <span className="text-xs text-foreground/60">{fmtDuration(episode.duration_ms)}</span>
-        {episode.kind !== "invalid_coinbase" && (
-          <span className="text-xs text-foreground/60" title={factsTitle(episode)}>
-            PoW {episode.facts.pow_ok ? "✓" : "✗"}
-          </span>
-        )}
-        {episode.invalid_coinbase && <InvalidCoinbaseBadge ic={episode.invalid_coinbase} />}
-        <span className="ml-auto flex flex-wrap gap-3 text-xs text-foreground/60">
-          {LABELS.filter(l => present.has(l)).map(l => (
-            <span key={l} className="inline-flex items-center gap-1.5">
-              <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[l]}`} aria-hidden />{LABEL_TEXT[l]}
-            </span>
-          ))}
-          {episode.invalid_coinbase && (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" aria-hidden />invalid coinbase
-            </span>
-          )}
-        </span>
-      </div>
-      <ProviderGroups e={episode} />
+    <section className="mb-3 rounded-xl border border-border p-4" aria-label="Episode details">
       {!data && <p className="py-8 text-center text-xs text-foreground/60">Loading…</p>}
       {data?.error && <p className="text-sm text-red-500">{data.error}</p>}
       {data && !data.error && (
         <>
           {episode.kind !== "invalid_coinbase" && <WhyUnknown episode={episode} drill={data} />}
-          <Swimlanes episode={episode} drill={data} />
-          {data.clipped && <p className="mt-1 text-xs text-foreground/50">first 30 min of {fmtDuration(episode.duration_ms)}</p>}
           <button type="button" className="mt-4 text-xs text-foreground/60 hover:text-foreground"
             onClick={() => setShowList(s => !s)} aria-expanded={showList}>
             {showList ? "▾" : "▸"} Templates ({fmtInt(templates.length)}{data.truncated ? "+" : ""})
+            {data.clipped && <span className="text-foreground/50"> · first 30 min of {fmtDuration(episode.duration_ms)}</span>}
           </button>
           {showList && (
             <div className="mt-2 overflow-x-auto">
+              <div className="mb-1 flex flex-wrap gap-3 text-xs text-foreground/60">
+                {LABELS.filter(l => present.has(l)).map(l => (
+                  <span key={l} className="inline-flex items-center gap-1.5">
+                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${LABEL_BG[l]}`} aria-hidden />{LABEL_TEXT[l]}
+                  </span>
+                ))}
+              </div>
               <table className="w-full text-sm">
                 <tbody>{templates.slice(0, shown).map(t => <TemplateRow key={t.id} t={t} />)}</tbody>
               </table>
@@ -831,9 +376,368 @@ function DrillIn({ episode, range }: { episode: Episode; range: Range }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Rows: one per race (lib/forkRaces.ts), its fork timeline from /api/forks/timeline
+
+interface Lanes {
+  height: number;
+  active: string | null;
+  from_ms: number;
+  last_ms: number;
+  parents: { hash: string; status: "canonical" | "stale" | "unknown" | null; kind: ParentKind | null }[];
+  lanes: { pool: string; runs: [number, number, 0 | 1][]; end: number }[];
+  blocks: ArrivalBlock[];
+}
+
+// Timelines are read as rows come into view, two at a time, each height once per page view; the latest asked first,
+// so the rows on screen don't wait behind ones scrolled past.
+const laneReads = new Map<number, Promise<Lanes | null>>();
+let reading = 0;
+const queued: (() => void)[] = [];
+const waiting = new Map<number, () => void>();   // queued reads by height, so an urgent one can start at once
+function readLanes(height: number, urgent = false): Promise<Lanes | null> {
+  const known = laneReads.get(height);
+  if (known) {
+    const start = urgent ? waiting.get(height) : undefined;
+    if (start) { queued.splice(queued.indexOf(start), 1); waiting.delete(height); start(); }
+    return known;
+  }
+  const p = new Promise<Lanes | null>(resolve => {
+    const run = () => {
+      waiting.delete(height);
+      reading++;
+      fetch(`/api/forks/timeline?height=${height}`)
+        .then(r => (r.ok ? r.json() : null)).catch(() => null)
+        .then((v: Lanes | null) => { reading--; queued.pop()?.(); resolve(v); });
+    };
+    // the row a viewer jumped to or opened doesn't queue
+    if (reading < 2 || urgent) run(); else { queued.push(run); waiting.set(height, run); }
+  });
+  laneReads.set(height, p);
+  p.then(v => { if (!v) laneReads.delete(height); });
+  return p;
+}
+
+function useLanes(heights: number[], wanted: boolean, urgent: boolean): Map<number, Lanes | null> | null {
+  const key = heights.join(",");
+  const [got, setGot] = useState<{ key: string; lanes: Map<number, Lanes | null> } | null>(null);
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    Promise.all(key.split(",").map(Number).map(h => readLanes(h, urgent).then(l => [h, l] as const)))
+      .then(all => { if (live) setGot({ key, lanes: new Map(all) }); });
+    return () => { live = false; };
+  }, [key, wanted, urgent]);
+  return got?.key === key ? got.lanes : null;
+}
+
+const nsHex = (ms: number) => Math.round(ms * 1_000_000).toString(16);
+
+/** The fork chart's inputs for one height's runs (the chart is shared with the height page). */
+function chartProps(l: Lanes) {
+  const notifications = l.lanes.flatMap(lane => lane.runs.map(([at, p, bad]) => ({
+    pool_name: lane.pool, timestamp: nsHex(l.from_ms + at), prev_hash: reverseHex(l.parents[p].hash), invalid: bad === 1,
+  })));
+  const ends = Object.fromEntries(l.lanes.map(lane => [lane.pool, Math.round((l.from_ms + lane.end) * 1_000_000)]));
+  const status = Object.fromEntries(l.parents.filter(p => p.status).map(p => [p.hash, p.status!]));
+  const kind = Object.fromEntries(l.parents.filter(p => p.kind).map(p => [p.hash, p.kind!]));
+  return { notifications, ends, canonicalBlockHash: l.active ?? undefined, prevHashStatus: status, prevHashKind: kind, blocks: l.blocks };
+}
+
+const SIDE_DOT: Record<string, string> = {
+  canonical: "bg-amber-600 dark:bg-amber-500",
+  stale: "bg-[#1550a4] dark:bg-blue-500",
+  bitcoin_block: "bg-sky-400",
+  other_chain: "bg-violet-600 dark:bg-violet-500",
+  invalid_parent: "bg-rose-600 dark:bg-rose-500",
+  undetermined: "bg-gray-500",
+};
+const SIDE_TEXT: Record<string, string> = {
+  canonical: "text-amber-600 dark:text-amber-500",
+  stale: "text-[#1550a4] dark:text-blue-400",
+  bitcoin_block: "text-sky-500 dark:text-sky-400",
+  other_chain: "text-violet-600 dark:text-violet-400",
+  invalid_parent: "text-rose-600 dark:text-rose-400",
+  undetermined: "text-gray-500",
+};
+
+interface Side {
+  hash: string; tone: string; label: string; title: string;
+  pools: { pool: string; to: string | null; invalid: boolean; visit?: boolean }[];
+}
 
 /**
- * The address for what's shown (shareable): the selected episode's short link (/forks/<height>[/<kind>], no range:
+ * The row's blocks, each with the pools whose first work at that height was on it: the block that stayed first, then
+ * the others in the order work on them first arrived. A pool that later moved has an arrow in the colour of where it
+ * went; one with invalid work is rose. Pools the summary lists that the timeline doesn't show on a block (work at
+ * another height of the row) join the side of the block they built on. A block at the height before that no pool
+ * started on still gets its side (it may be the one that stayed), listing the pools that built on it for a while,
+ * outlined.
+ */
+/** A side that is a block at the height before (ours or a stale one): two of them make the row a race. */
+const isBlockSide = (s: Side) => s.tone === "canonical" || s.tone === "stale";
+
+function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null): Side[] {
+  const sides = new Map<string, Side>();
+  const toneOf = (p: Lanes["parents"][number]) => (p.status === "canonical" ? "canonical" : p.status === "stale" ? "stale" : p.kind ?? "undetermined");
+  const add = (hash: string, tone: string, label: string, title: string) => {
+    if (!sides.has(hash)) sides.set(hash, { hash, tone, label, title, pools: [] });
+    return sides.get(hash)!;
+  };
+  const placed = new Set<string>();
+  const labelOf = (p: Lanes["parents"][number], minerOf: (hash: string) => string | null) => {
+    const tone = toneOf(p);
+    if (tone !== "canonical" && tone !== "stale") return KIND_LABEL[tone as Kind];
+    return minerOf(p.hash) ?? (tone === "stale" ? row.episodes.find(e => e.parent === p.hash)?.facts.stale_block?.miner ?? null : null) ?? "unknown";
+  };
+  const titleOf = (p: Lanes["parents"][number], h: number) => {
+    const tone = toneOf(p);
+    return `${tone === "canonical" ? "our best block" : tone === "stale" ? "a stale block" : KIND_LABEL[tone as Kind].toLowerCase()} at ${fmtInt(h - 1)} · ${p.hash}`;
+  };
+  for (const h of row.heights) {
+    const l = lanes?.get(h);
+    if (!l) continue;
+    const minerOf = (hash: string) => l.blocks.find(b => b.hash === hash)?.miner ?? null;
+    for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
+      const first = l.parents[lane.runs[0][1]];
+      // where it went: the last other block it built on (it may have come back)
+      const other = [...lane.runs].reverse().find(r => r[1] !== lane.runs[0][1]);
+      if (h !== row.heights[0] && (first.status === "canonical" || placed.has(lane.pool))) continue;
+      const tone = toneOf(first);
+      add(first.hash, tone, labelOf(first, minerOf), titleOf(first, h)).pools.push({
+        pool: lane.pool, to: other ? toneOf(l.parents[other[1]]) : null, invalid: lane.runs.some(r => r[2] === 1),
+      });
+      placed.add(lane.pool);
+    }
+    if (h !== row.heights[0]) continue;
+    // a block no pool started on: still a side of the race, with the pools that visited it
+    l.parents.forEach((par, i) => {
+      if (sides.has(par.hash) || (par.status !== "canonical" && par.status !== "stale")) return;
+      const side = add(par.hash, toneOf(par), labelOf(par, minerOf), titleOf(par, h));
+      for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
+        if (lane.runs.some(r => r[1] === i)) side.pools.push({ pool: lane.pool, to: null, invalid: lane.runs.some(r => r[1] === i && r[2] === 1), visit: true });
+      }
+    });
+  }
+  // before the timeline is in (or for another chain's row): the summary's own pools, on the episode's parent
+  for (const e of row.episodes) {
+    const tone = e.kind === "stale" ? "stale" : e.kind === "invalid_coinbase" ? "canonical" : e.kind;
+    for (const p of e.pools) {
+      if (placed.has(p.pool)) continue;
+      const label = e.kind === "stale" ? e.facts.stale_block?.miner ?? "unknown" : e.kind === "invalid_coinbase" ? "our best block" : KIND_LABEL[e.kind];
+      add(e.parent, tone, label, `${KIND_LABEL[e.kind]} · ${e.parent}`).pools.push({
+        pool: p.pool, to: null, invalid: e.invalid_coinbase?.pools.some(x => x.pool === p.pool) ?? false,
+      });
+      placed.add(p.pool);
+    }
+  }
+  return [...sides.values()].sort((a, b) => (a.tone === "canonical" ? -1 : 0) - (b.tone === "canonical" ? -1 : 0));
+}
+
+/** The epoch a row's template providers are judged by: the one our tip was in when its work began (providerEpoch). */
+const providerEpochOf = (row: RaceRow<Episode>) => Math.floor(((row.episodes[0].facts.tip_at_first ?? row.heights[0] - 1) + 1) / EPOCH);
+
+/**
+ * A side's tiles in runs: the pools that share a template provider together (largest first), then the rest alone, in
+ * the side's order.
+ */
+function clusterTiles<T extends { pool: string }>(pools: T[], providers: string[][] | null): T[][] {
+  if (!providers) return pools.map(p => [p]);
+  const groupOf = new Map<string, number>();
+  providers.forEach((g, i) => g.forEach(f => groupOf.set(f, i)));
+  const by = new Map<number, T[]>();
+  const alone: T[][] = [];
+  for (const p of pools) {
+    const g = groupOf.get(p.pool);
+    if (g === undefined) alone.push([p]);
+    else by.set(g, [...(by.get(g) ?? []), p]);
+  }
+  const groups = [...by.values()].filter(g => g.length > 1).sort((a, b) => b.length - a.length);
+  for (const g of by.values()) if (g.length === 1) alone.push(g);
+  const order = new Map(pools.map((p, i) => [p.pool, i]));
+  alone.sort((a, b) => order.get(a[0].pool)! - order.get(b[0].pool)!);
+  return [...groups, ...alone];
+}
+
+function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range, rowRef, providers }: {
+  providers: string[][] | null;
+  row: RaceRow<Episode>; open: boolean; highlighted: boolean; target: boolean; onToggle: () => void; onHover: (on: boolean) => void;
+  range: Range; rowRef: (el: HTMLElement | null) => void;
+}) {
+  const [seen, setSeen] = useState(false);
+  const own = useRef<HTMLElement | null>(null);
+  const timed = row.kind !== "other_chain";
+  useEffect(() => {
+    if (!timed || seen || !own.current) return;
+    const io = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) setSeen(true); }, { rootMargin: "300px 0px" });
+    io.observe(own.current);
+    return () => io.disconnect();
+  }, [timed, seen]);
+  // hovering only outlines; the row a viewer jumped to, or opened, is read first
+  const lanes = useLanes(row.heights, timed && (seen || open || target), open || target);
+  const sides = useMemo(() => sidesOf(row, lanes), [row, lanes]);
+  const first = lanes?.get(row.heights[0]) ?? null;
+  const charts = useMemo(() => new Map(row.heights.map(h => {
+    const l = lanes?.get(h);
+    return [h, l ? chartProps(l) : null] as const;
+  })), [row.heights, lanes]);
+  const mini = first ? charts.get(row.heights[0]) ?? null : null;
+  const primary = row.episodes[0];
+  const [evidence, setEvidence] = useState(false);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const head = useRef<HTMLButtonElement | null>(null);
+  const kinds = [...new Set(row.episodes.map(e => e.kind))];
+
+  return (
+    <section ref={el => { own.current = el; rowRef(el); }} data-row={row.key}
+      className={`scroll-mt-4 border-t border-border py-3 ${highlighted ? "bg-foreground/5" : ""}`}
+      onPointerEnter={() => onHover(true)} onPointerLeave={() => onHover(false)}>
+      <button ref={head} type="button" onClick={onToggle} aria-expanded={open}
+        className="flex w-full gap-3 text-left max-sm:block max-sm:relative max-sm:pl-5">
+        <span aria-hidden className={`mt-1 inline-block h-2 w-2 shrink-0 border-b-2 border-r-2 border-foreground/60 transition-transform max-sm:absolute max-sm:left-0 max-sm:top-0.5 ${open ? "rotate-45" : "-rotate-45"}`} />
+        <span className="w-24 shrink-0 max-sm:mb-2 max-sm:flex max-sm:w-auto max-sm:items-baseline max-sm:gap-2.5">
+          <span className="block font-mono text-sm font-semibold">{fmtInt(row.heights[0])}{row.heights.length > 1 ? ` – ${fmtInt(row.heights[row.heights.length - 1])}` : ""}</span>
+          <span className="block text-[10px] text-foreground/55" title={fmtLocal(row.first_ms)}>{fmtUtc(row.first_ms).slice(0, 10)}</span>
+          <span className="block text-[10px] text-foreground/55">{isRace(row.kind) ? "race · " : ""}{fmtDuration(row.last_ms - row.first_ms)}</span>
+          {kinds.filter(k => k !== "stale").map(k => <span key={k} className="mt-1 block text-[10px] leading-3 text-foreground/70 [&>span]:whitespace-normal [&>span]:text-[10px]"><KindChip kind={k} /></span>)}
+        </span>
+        <span className="block min-w-0 flex-1">
+          {sides.map((s, i) => (
+            <Fragment key={s.hash}>
+            {i > 0 && isBlockSide(s) && isBlockSide(sides[i - 1]) && (
+              <span className="-mt-0.5 mb-1 block w-28 pl-4 text-[10px] font-semibold uppercase tracking-wider text-foreground/45 max-sm:w-auto">vs</span>
+            )}
+            <span className="mb-1.5 flex gap-2 max-sm:block">
+              <span className="flex w-28 shrink-0 items-start gap-1.5 self-start text-xs leading-4 max-sm:mb-1 max-sm:w-auto" title={s.title}>
+                <span className={`mt-[3px] inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${SIDE_DOT[s.tone]}`} aria-hidden />
+                <span className="min-w-0 break-words max-sm:flex max-sm:items-baseline max-sm:gap-2">
+                  {s.label}
+                  {isBlockSide(s) && <span className="block font-mono text-[10px] leading-4 text-foreground/50">…{s.hash.slice(-8)}</span>}
+                </span>
+              </span>
+              <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">
+                {clusterTiles(s.pools, providers).map(run => {
+                  const tiles = run.map(p => (
+                  <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.visit ? `border border-dashed ${p.invalid ? "border-rose-500" : "border-foreground/40"} leading-[14px]` : p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}
+                    title={`${p.pool}${p.invalid ? " · invalid work" : ""}${p.visit ? " · built on it for a while, started on another block" : p.to ? " · also built on another block" : ""}`}>
+                    {p.pool}{p.to && <span className={p.invalid ? "" : SIDE_TEXT[p.to]}> →</span>}
+                  </span>
+                ));
+                  return run.length > 1
+                    ? <span key={run[0].pool} className="inline-flex flex-wrap gap-0.5 rounded border border-foreground/30 p-px"
+                        title={`one template provider: ${run.map(p => p.pool).join(", ")}`}>{tiles}</span>
+                    : tiles;
+                })}
+              </span>
+            </span>
+            </Fragment>
+          ))}
+          {timed && !open && (
+            <span className="mt-2 block min-h-6">
+              {mini ? <MiniForkTimeline {...mini} />
+                : lanes ? <span className="block text-[11px] text-foreground/50">timeline unavailable</span>
+                : <span className="block h-20 animate-pulse rounded-sm bg-foreground/5" />}
+            </span>
+          )}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3">
+          {timed ? row.heights.map(h => {
+            const c = charts.get(h);
+            return (
+              <div key={h} className="mb-4">
+                {row.heights.length > 1 && <div className="mb-1 text-xs text-foreground/60">at {fmtInt(h)}</div>}
+                {c ? <ForkTimeline {...c} embedded />
+                  : <p className="py-6 text-center text-xs text-foreground/60">{lanes ? "Timeline unavailable." : "Loading…"}</p>}
+              </div>
+            );
+          }) : row.heights.map(h => <HeightForkTimeline key={h} height={h} kindHint={{ [primary.parent]: primary.kind as ParentKind }} />)}
+          <button type="button" className="mb-2 text-xs text-foreground/60 hover:text-foreground"
+            onClick={() => setEvidence(v => !v)} aria-expanded={evidence}>
+            {evidence ? "▾" : "▸"} Evidence and templates
+          </button>
+          {evidence && row.episodes.map(e => <DrillIn key={e.parent} episode={e} range={range} />)}
+          <button ref={closeRef} type="button" onClick={() => { onToggle(); requestAnimationFrame(() => { own.current?.scrollIntoView({ block: "nearest" }); head.current?.focus({ preventScroll: true }); }); }}
+            className="sticky bottom-0 z-10 mt-2 flex h-8 w-full items-center justify-center gap-2 rounded border border-border bg-muted text-xs shadow-[0_-6px_12px_-6px_rgba(0,0,0,0.35)] hover:bg-card">
+            <span aria-hidden className="inline-block h-1.5 w-1.5 translate-y-0.5 rotate-[225deg] border-b-2 border-r-2 border-current" />
+            Collapse {fmtInt(row.heights[0])}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The strip: every race of all history, one square each, a column per difficulty epoch
+
+interface StripResponse {
+  enabled?: boolean;
+  tip_height?: number | null;
+  from_height?: number | null;
+  other_chain_epochs?: number[];
+  rows?: [number, number, string, 0 | 1, string][];
+  error?: string;
+}
+
+function HistoryStrip({ strip, range, showOther, active, onPick, onHover }: {
+  strip: StripResponse; range: Range; showOther: boolean; active: string | null;
+  onPick: (key: string, height: number) => void; onHover: (key: string | null) => void;
+}) {
+  const [label, setLabel] = useState<string | null>(null);
+  const rows = strip.rows ?? [];
+  if (rows.length === 0 || strip.tip_height == null) return null;
+  const from = Math.min(strip.from_height ?? Infinity, ...rows.map(r => r[0]));
+  const first = Math.floor(from / EPOCH), last = Math.floor(strip.tip_height / EPOCH);
+  const cols: (typeof rows)[] = Array.from({ length: last - first + 1 }, () => []);
+  for (const r of [...rows].sort((a, b) => a[0] - b[0])) cols[Math.floor(r[0] / EPOCH) - first]?.push(r);
+  const other = new Set(strip.other_chain_epochs ?? []);
+  const inRange = (pos: number) => RANGE_BLOCKS_PAGE[range] === null || pos > strip.tip_height! - RANGE_BLOCKS_PAGE[range]!;
+  const races = rows.filter(r => r[2] === "stale" || r[2] === "bitcoin_block").length;
+  const what = (r: (typeof rows)[number]) => `${fmtInt(r[1])} · ${r[2] === "stale" || r[2] === "bitcoin_block" ? "race" : KIND_LABEL[r[2] as Kind].toLowerCase()}${r[3] ? " · invalid work" : ""}`;
+  return (
+    <div className="mb-6">
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5"><span className={`inline-block h-2.5 w-2.5 rounded-sm ${KIND_BG.stale}`} />Race {fmtInt(races)}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />Invalid {fmtInt(rows.filter(r => r[3]).length)}</span>
+        <span className="text-foreground/55">races our feeds built on · 1 column = 1 epoch</span>
+      </div>
+      <div className="flex items-end gap-px" onPointerLeave={() => { setLabel(null); onHover(null); }}>
+        {cols.map((c, i) => (
+          // on a phone a square is a few pixels wide: a tap anywhere in its column opens the column's newest row
+          <div key={i} className={`flex min-w-0 flex-1 flex-col-reverse items-center gap-0.5 border-b-2 border-border pb-0.5 max-sm:cursor-pointer ${inRange((first + i + 1) * EPOCH - 1) ? "" : "opacity-40"}`}
+            onClick={e => { if (c.length && window.matchMedia("(max-width: 639px)").matches) { e.preventDefault(); const r = c[c.length - 1]; onPick(r[4], r[1]); } }}>
+            {c.map(r => (
+              <button key={r[4]} type="button" aria-label={what(r)}
+                className={`aspect-square w-full max-w-3.5 rounded-[1px] max-sm:pointer-events-none ${r[2] === "stale" || r[2] === "bitcoin_block" ? (r[3] ? "bg-[linear-gradient(var(--race)_50%,var(--bad)_50%)]" : KIND_BG.stale) : "bg-rose-600 dark:bg-rose-500"} ${active === r[4] ? "outline-2 outline-offset-1 outline-foreground" : "hover:outline-2 hover:outline-offset-1 hover:outline-foreground/70"}`}
+                style={{ ["--race" as string]: "var(--fork-race)", ["--bad" as string]: "var(--fork-bad)" }}
+                onPointerEnter={() => { setLabel(what(r)); onHover(r[4]); }} onFocus={() => setLabel(what(r))}
+                onClick={() => onPick(r[4], r[1])} />
+            ))}
+          </div>
+        ))}
+      </div>
+      {showOther && (
+        <div className="mt-1 flex gap-px" aria-label="Epochs with another chain's work">
+          {cols.map((_, i) => <div key={i} className={`h-1 min-w-0 flex-1 ${other.has(first + i) ? "bg-violet-600 dark:bg-violet-500" : ""}`} />)}
+        </div>
+      )}
+      <div className="relative mt-1 h-4 text-[10px] text-foreground/55">
+        {cols.map((_, i) => (i > 0 && i % 20 === 0 && i < cols.length - 6
+          ? <span key={i} className="absolute" style={{ left: `${(i / cols.length) * 100}%` }}>{fmtInt((first + i) * EPOCH)}</span> : null))}
+      </div>
+      <div className="h-4 text-[10px] text-foreground/70" role="status">{label ?? ""}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+const EPOCH = 2016;
+const RANGE_BLOCKS_PAGE: Record<Range, number | null> = { "6e": 6 * EPOCH, "26e": 26 * EPOCH, all: null };
+
+/**
+ * The address for what's shown (shareable): the opened row's short link (/forks/<height>[/<kind>], no range:
  * lib/forksPath.ts), or /forks with a range other than the default.
  */
 function pageUrl(selected: Episode | null, all: Episode[], range: Range): string {
@@ -847,20 +751,35 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   const [range, setRange] = useState<Range>(initialRange ?? DEFAULT_RANGE);
   // each range's last answer (switching back is instant; a late answer only fills its own range)
   const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
+  const [strip, setStrip] = useState<StripResponse | null>(null);
+  const [providers, setProviders] = useState<Record<number, string[][]> | null>(null);
   const [kind, setKind] = useState<Kind | "all">("all");
-  const [selected, setSelected] = useState<string | null>(null);
-  const detailsRef = useRef<HTMLDivElement>(null);
+  const [showOther, setShowOther] = useState(false);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  const [lastOpened, setLastOpened] = useState<string | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [targetKey, setTargetKey] = useState<string | null>(null);
+  const [jump, setJump] = useState<{ key: string; height: number; open: boolean } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const rowEls = useRef(new Map<string, HTMLElement>());
 
-  const load = useCallback((r: Range) => fetch(`/api/forks?range=${r}`)
+  const load = useCallback((r: Range) => fetch(`/api/forks?range=${r}&providers=0`)
     .then(res => res.json())
     .then((d: SummaryResponse) => setLoaded(m => ({ ...m, [r]: d })))
     .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
 
   useEffect(() => {
+    fetch("/api/forks?view=strip").then(r => r.json()).then(setStrip).catch(() => setStrip({ error: "unavailable" }))
+      // then the template providers, which only group the tiles: rows show ungrouped until they're in
+      .then(() => fetch("/api/forks?view=providers")).then(r => r.json())
+      .then((p: { epochs?: Record<number, string[][]> }) => setProviders(p.epochs ?? {})).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     // A short link's episode (resolved on the server), else a link's ?range=… and an older link's ?parent=… (the
     // server redirects those to the short link when it can; one it couldn't resolve is looked up here).
     if (initialRange && initialParent) {
-      load(initialRange).then(() => setSelected(initialParent));
+      load(initialRange).then(() => setJump({ key: initialParent, height: 0, open: true }));
       return;
     }
     const q = new URLSearchParams(window.location.search);
@@ -870,54 +789,87 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
     const p = q.get("parent");
     load(r).then(() => {
       setRange(r);
-      if (p && /^[0-9a-f]{64}$/i.test(p)) setSelected(p.toLowerCase());
+      if (p && /^[0-9a-f]{64}$/i.test(p)) setJump({ key: p.toLowerCase(), height: 0, open: true });
     });
   }, [load, initialRange, initialParent]);
   const summary = loaded[range] ?? null;
 
-  // Clicking the selected episode again deselects it (and closes its details).
-  const select = useCallback((parent: string) => {
-    const next = selected === parent ? null : parent;
-    setSelected(next);
-    if (next) requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }, [selected]);
+  const all = useMemo(() => summary?.episodes ?? [], [summary]);
+  const rows = useMemo(() => [
+    ...raceRows(all.filter(e => e.kind !== "other_chain")),
+    ...raceRows(all.filter(e => e.kind === "other_chain")),
+  ].sort((a, b) => b.position - a.position || b.first_ms - a.first_ms), [all]);
+  const rowOf = useCallback((parentOrKey: string) => rows.find(r => r.key === parentOrKey || r.episodes.some(e => e.parent === parentOrKey)) ?? null, [rows]);
+  const matches = useCallback((r: RaceRow<Episode>, k: Kind | "all") => {
+    if (r.kind === "other_chain") return k === "other_chain" || (k === "all" && showOther);
+    if (k === "all") return true;
+    if (k === "invalid_parent") return r.invalid;
+    return r.episodes.some(e => e.kind === k);
+  }, [showOther]);
+  const shown = useMemo(() => rows.filter(r => matches(r, kind)), [rows, kind, matches]);
+  const counts = useMemo(() => {
+    const c: Partial<Record<Kind, number>> = {};
+    for (const r of rows) for (const k of CHIPS) if (k === "other_chain" ? r.kind === "other_chain" : r.kind !== "other_chain" && matches(r, k)) c[k] = (c[k] ?? 0) + 1;
+    return c;
+  }, [rows, matches]);
+
+  // A jump (a square, a link): find the row, widening the range when this one doesn't have it; then scroll to it.
+  useEffect(() => {
+    if (!jump || !summary?.episodes) return;
+    const row = rowOf(jump.key);
+    if (!row) {
+      const next = RANGES[RANGES.indexOf(range) + 1];
+      if (next) { setRange(next); if (!loaded[next]) load(next); }
+      else { setNote(jump.height ? `${fmtInt(jump.height)} isn't in the list` : null); setJump(null); }
+      return;
+    }
+    if (row.kind === "other_chain") setShowOther(true);
+    if (!matches(row, kind) && row.kind !== "other_chain") setKind("all");
+    if (jump.open) { setOpenKeys(s => new Set(s).add(row.key)); setLastOpened(row.key); }
+    setHoverKey(row.key);
+    setTargetKey(row.key);
+    setNote(null);
+    requestAnimationFrame(() => rowEls.current.get(row.key)?.scrollIntoView({ block: "start" }));
+    setJump(null);
+  }, [jump, summary, rowOf, range, loaded, load, kind, matches]);
+
+  const toggle = (key: string) => setOpenKeys(s => {
+    const n = new Set(s);
+    if (n.has(key)) n.delete(key); else { n.add(key); setLastOpened(key); }
+    return n;
+  });
+  const opened = lastOpened && openKeys.has(lastOpened) ? rowOf(lastOpened) : [...openKeys].map(k => rowOf(k)).find(Boolean) ?? null;
+
+  // Keep the address on what's shown (shareable), once the range's summary is in: history.replaceState, which Next.js
+  // keeps in step with its router, so no navigation, no server render, no scroll.
+  useEffect(() => {
+    if (!summary?.episodes || jump) return;
+    const next = pageUrl(opened?.episodes[0] ?? null, all, range);
+    if (window.location.pathname + window.location.search !== next) window.history.replaceState(null, "", next);
+  }, [summary, opened, all, range, jump]);
+
   const chooseRange = (r: Range) => {
     if (r === range) return;
     setRange(r);
-    load(r);
+    if (!loaded[r]) load(r);
   };
-
-  const all = useMemo(() => summary?.episodes ?? [], [summary]);
-  const episodes = useMemo(() => (kind === "all" ? all : all.filter(e => matchesKind(e, kind))), [all, kind]);
-  const counts = useMemo(() => {
-    const c: Partial<Record<Kind, number>> = {};
-    for (const e of all) for (const k of CHIPS) if (matchesKind(e, k)) c[k] = (c[k] ?? 0) + 1;
-    return c;
-  }, [all]);
-  const selectedEpisode = all.find(e => e.parent === selected) ?? null;
-  // the other episodes at the selected one's height (a race and another chain's parent can share one)
-  const sameHeight = useMemo(() => (selectedEpisode ? all.filter(e => e.height === selectedEpisode.height && e !== selectedEpisode) : []),
-    [all, selectedEpisode]);
-
-  // Keep the address on what's shown (shareable), once the range's summary is in: history.replaceState, which Next.js
-  // keeps in step with its router, so no navigation, no server render, no scroll. A selection the summary doesn't
-  // have (an old link to an episode out of range, or the range still loading) leaves the address alone.
-  useEffect(() => {
-    if (!summary?.episodes || (selected && !selectedEpisode)) return;
-    const next = pageUrl(selectedEpisode, all, range);
-    if (window.location.pathname + window.location.search !== next) window.history.replaceState(null, "", next);
-  }, [summary, selected, selectedEpisode, all, range]);
-
-  const shownRange = range;
   const rangePicker = (
     <div className="ml-auto inline-flex overflow-hidden rounded-full border border-border text-xs" role="group" aria-label="Range">
       {RANGES.map(r => (
-        <button key={r} onClick={() => chooseRange(r)} aria-pressed={shownRange === r}
-          className={`px-3 py-1.5 transition-colors ${shownRange === r ? "bg-foreground/10" : "text-foreground/60 hover:bg-foreground/5"}`}>
+        <button key={r} onClick={() => chooseRange(r)} aria-pressed={range === r}
+          className={`px-3 py-1.5 transition-colors ${range === r ? "bg-foreground/10" : "text-foreground/60 hover:bg-foreground/5"}`}>
           {RANGE_LABEL[r]}
         </button>
       ))}
     </div>
+  );
+  const chip = (k: Kind | "all", pressed: boolean, onClick: () => void, n: number) => (
+    <button key={k} onClick={onClick} aria-pressed={pressed}
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${pressed ? "border-foreground/60 bg-foreground/10" : "border-border hover:bg-foreground/5"}`}>
+      {k !== "all" && <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[k]}`} aria-hidden />}
+      {k === "all" ? "All" : CHIP_LABEL[k] ?? KIND_LABEL[k]}
+      <span className="font-mono text-foreground/60">{fmtInt(n)}</span>
+    </button>
   );
 
   let body: React.ReactNode;
@@ -931,45 +883,30 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   else if (!summary.enabled) body = <p className="text-sm text-foreground/60">Historical data is disabled on this deployment.</p>;
   else body = (
     <>
-      <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by kind">
-        {(["all", ...CHIPS] as const).filter(k => k === "all" || counts[k]).map(k => (
-          <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${kind === k ? "border-foreground/60 bg-foreground/10" : "border-border hover:bg-foreground/5"}`}>
-            {k !== "all" && <span className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_BG[k]}`} aria-hidden />}
-            {k === "all" ? "All" : CHIP_LABEL[k] ?? KIND_LABEL[k]}
-            <span className="font-mono text-foreground/60">{k === "all" ? all.length : counts[k]}</span>
-          </button>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by kind">
+        {chip("all", kind === "all", () => setKind("all"), rows.filter(r => r.kind !== "other_chain").length + (showOther ? counts.other_chain ?? 0 : 0))}
+        {CHIPS.filter(k => k !== "other_chain" && counts[k]).map(k => chip(k, kind === k, () => setKind(k), counts[k]!))}
+        {counts.other_chain ? chip("other_chain", showOther || kind === "other_chain", () => {
+          if (kind === "other_chain") { setKind("all"); setShowOther(false); } else setShowOther(v => !v);
+        }, counts.other_chain) : null}
         {rangePicker}
       </div>
-      {all.length > 0 && summary.from_height != null && summary.tip_height != null && (
-        <div className="mb-8 rounded-xl border border-border p-4">
-          <EpisodeTimeline episodes={episodes} start={summary.from_height} end={summary.tip_height}
-            selected={selected} onSelect={select} />
-        </div>
-      )}
-      <div ref={detailsRef} className="scroll-mt-4">
-        {sameHeight.length > 0 && (
-          <div className="mt-8 -mb-5 flex flex-wrap items-center gap-2 text-xs text-foreground/60" aria-label="Also at this height">
-            also at {fmtInt(selectedEpisode!.height)}:
-            {sameHeight.map(e => (
-              <button key={e.parent} type="button" onClick={() => select(e.parent)} title={factsTitle(e)}
-                className="rounded-full border border-border px-2.5 py-0.5 text-foreground hover:bg-foreground/5">
-                <KindChip kind={e.kind} title={factsTitle(e)} alsoInvalid={!!e.invalid_coinbase && e.kind !== "invalid_coinbase"} />
-              </button>
-            ))}
-          </div>
-        )}
-        {selectedEpisode && <DrillIn key={selectedEpisode.parent} episode={selectedEpisode} range={shownRange} />}
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-foreground/65">
+        <span className="inline-flex items-center gap-1.5"><span className={`inline-block h-2.5 w-2.5 rounded-sm ${SIDE_DOT.canonical}`} />on the block that stayed</span>
+        <span className="inline-flex items-center gap-1.5"><span className={`inline-block h-2.5 w-2.5 rounded-sm ${SIDE_DOT.stale}`} />on the stale block</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />invalid work</span>
       </div>
-      <div className="mt-8">
-        <EpisodeTable episodes={episodes} selected={selected} onSelect={select} />
-      </div>
+      {shown.map(r => (
+        <RaceRowView key={r.key} row={r} range={range} providers={providers?.[providerEpochOf(r)] ?? null} open={openKeys.has(r.key)} highlighted={hoverKey === r.key} target={targetKey === r.key}
+          onToggle={() => toggle(r.key)} onHover={on => setHoverKey(on ? r.key : null)}
+          rowRef={el => { if (el) rowEls.current.set(r.key, el); else rowEls.current.delete(r.key); }} />
+      ))}
+      {shown.length === 0 && <p className="py-6 text-center text-xs text-foreground/60">None.</p>}
     </>
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6">
+    <div className="mx-auto max-w-7xl px-4 py-6 [--fork-race:#1550a4] [--fork-bad:#e11d48] dark:[--fork-race:#3b82f6] dark:[--fork-bad:#f43f5e]">
       <div className="mb-5">
         <h1 className="flex items-center gap-2 text-xl font-semibold">
           Forks
@@ -978,8 +915,12 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
             <Info className="h-4 w-4" />
           </a>
         </h1>
-        <p className="mt-1 text-sm text-foreground/60">Templates built on a block other than our best one · {RANGE_TEXT[shownRange]}</p>
+        <p className="mt-1 text-sm text-foreground/60">Templates built on a block other than our best one · {RANGE_TEXT[range]}</p>
       </div>
+      {/* all history, whatever range the list below is loading */}
+      {strip?.rows && <HistoryStrip strip={strip} range={range} showOther={showOther} active={hoverKey}
+        onPick={(key, height) => setJump({ key, height, open: false })} onHover={setHoverKey} />}
+      {note && <p className="-mt-4 mb-4 text-xs text-foreground/60">{note}</p>}
       {body}
     </div>
   );

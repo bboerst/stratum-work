@@ -4,6 +4,7 @@ import { classifyPrevHashes, unknownParentKinds } from "@/lib/forkStatus";
 import { getAllMiningNotifyAtHeight } from "@/lib/db/mining-notify";
 import { maskTemplates } from "@/lib/connectionMask";
 import { filterBlacklistedAboveTip } from "@/lib/poolBlacklist";
+import { getDrillBlocks } from "@/lib/db/unknown-parents";
 import { formatCoinbaseRaw, reverseHex } from "@/utils/formatters";
 import { 
   formatCoinbaseScriptASCII, 
@@ -36,7 +37,8 @@ const enableHistoricalData = (process.env.ENABLE_HISTORICAL_DATA ?? "true").toLo
  *       "height": 800000,
  *       "mining_notifications": [...],
  *       "block_details": {...},
- *       "previous_block": {...}
+ *       "previous_block": {...},
+ *       "blocks": [{ hash, height, best, miner, seen_ms, stale_only }]   // blocks at height - 1 and height
  *     },
  *     ...
  *   ]
@@ -149,12 +151,25 @@ export async function GET(request: NextRequest) {
       // For the parents we have no block for: the kind the Forks page infers (other chain, unrecorded block, …).
       const prevHashKind = unknownParentKinds(prevHashStatus, processedData, height, previousBlock?.bits, currentBlock?.bits);
 
+      // The fork timeline's arrival markers: every block we know at height - 1 and height (best and stale), with the
+      // time our node saw it; null when that wasn't recorded (older history: no marker). The Forks drill-in's blocks
+      // (getDrillBlocks: every block names its miner). Markers are extras: a failed read leaves them out, not the height.
+      const blocks = enableHistoricalData
+        ? await getDrillBlocks(height).then(
+            rows => rows.map(b => ({
+              hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
+              seen_ms: b.seen ? Number(b.arrival_ms) : null, stale_only: b.stale_only,
+            })),
+            err => { console.error(`[analysis-data] blocks at ${height}:`, err); return []; })
+        : [];
+
       // Return the result for this height
       return {
         height,
         mining_notifications: processedData,
         prev_hash_status: prevHashStatus,
         prev_hash_kind: prevHashKind,
+        blocks,
         block_details: currentBlock ? {
           height: currentBlock.height,
           hash: currentBlock.block_hash,

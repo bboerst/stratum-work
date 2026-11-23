@@ -533,7 +533,33 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
   return [...sides.values()].sort((a, b) => (a.tone === "canonical" ? -1 : 0) - (b.tone === "canonical" ? -1 : 0));
 }
 
-function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range, rowRef }: {
+/** The epoch a row's template providers are judged by: the one our tip was in when its work began (providerEpoch). */
+const providerEpochOf = (row: RaceRow<Episode>) => Math.floor(((row.episodes[0].facts.tip_at_first ?? row.heights[0] - 1) + 1) / EPOCH);
+
+/**
+ * A side's tiles in runs: the pools that share a template provider together (largest first), then the rest alone, in
+ * the side's order.
+ */
+function clusterTiles<T extends { pool: string }>(pools: T[], providers: string[][] | null): T[][] {
+  if (!providers) return pools.map(p => [p]);
+  const groupOf = new Map<string, number>();
+  providers.forEach((g, i) => g.forEach(f => groupOf.set(f, i)));
+  const by = new Map<number, T[]>();
+  const alone: T[][] = [];
+  for (const p of pools) {
+    const g = groupOf.get(p.pool);
+    if (g === undefined) alone.push([p]);
+    else by.set(g, [...(by.get(g) ?? []), p]);
+  }
+  const groups = [...by.values()].filter(g => g.length > 1).sort((a, b) => b.length - a.length);
+  for (const g of by.values()) if (g.length === 1) alone.push(g);
+  const order = new Map(pools.map((p, i) => [p.pool, i]));
+  alone.sort((a, b) => order.get(a[0].pool)! - order.get(b[0].pool)!);
+  return [...groups, ...alone];
+}
+
+function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range, rowRef, providers }: {
+  providers: string[][] | null;
   row: RaceRow<Episode>; open: boolean; highlighted: boolean; target: boolean; onToggle: () => void; onHover: (on: boolean) => void;
   range: Range; rowRef: (el: HTMLElement | null) => void;
 }) {
@@ -589,12 +615,18 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
                 </span>
               </span>
               <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">
-                {s.pools.map(p => (
+                {clusterTiles(s.pools, providers).map(run => {
+                  const tiles = run.map(p => (
                   <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.visit ? `border border-dashed ${p.invalid ? "border-rose-500" : "border-foreground/40"} leading-[14px]` : p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}
                     title={`${p.pool}${p.invalid ? " · invalid work" : ""}${p.visit ? " · built on it for a while, started on another block" : p.to ? " · also built on another block" : ""}`}>
                     {p.pool}{p.to && <span className={p.invalid ? "" : SIDE_TEXT[p.to]}> →</span>}
                   </span>
-                ))}
+                ));
+                  return run.length > 1
+                    ? <span key={run[0].pool} className="inline-flex flex-wrap gap-0.5 rounded border border-foreground/30 p-px"
+                        title={`one template provider: ${run.map(p => p.pool).join(", ")}`}>{tiles}</span>
+                    : tiles;
+                })}
               </span>
             </span>
             </Fragment>
@@ -720,6 +752,7 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
   // each range's last answer (switching back is instant; a late answer only fills its own range)
   const [loaded, setLoaded] = useState<Partial<Record<Range, SummaryResponse>>>({});
   const [strip, setStrip] = useState<StripResponse | null>(null);
+  const [providers, setProviders] = useState<Record<number, string[][]> | null>(null);
   const [kind, setKind] = useState<Kind | "all">("all");
   const [showOther, setShowOther] = useState(false);
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
@@ -736,7 +769,10 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
     .catch(e => setLoaded(m => ({ ...m, [r]: { enabled: true, supported: true, error: String(e) } }))), []);
 
   useEffect(() => {
-    fetch("/api/forks?view=strip").then(r => r.json()).then(setStrip).catch(() => setStrip({ error: "unavailable" }));
+    fetch("/api/forks?view=strip").then(r => r.json()).then(setStrip).catch(() => setStrip({ error: "unavailable" }))
+      // then the template providers, which only group the tiles: rows show ungrouped until they're in
+      .then(() => fetch("/api/forks?view=providers")).then(r => r.json())
+      .then((p: { epochs?: Record<number, string[][]> }) => setProviders(p.epochs ?? {})).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -861,7 +897,7 @@ export default function Forks({ initial = null }: { initial?: { range: Range; pa
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-600 dark:bg-rose-500" />invalid work</span>
       </div>
       {shown.map(r => (
-        <RaceRowView key={r.key} row={r} range={range} open={openKeys.has(r.key)} highlighted={hoverKey === r.key} target={targetKey === r.key}
+        <RaceRowView key={r.key} row={r} range={range} providers={providers?.[providerEpochOf(r)] ?? null} open={openKeys.has(r.key)} highlighted={hoverKey === r.key} target={targetKey === r.key}
           onToggle={() => toggle(r.key)} onHover={on => setHoverKey(on ? r.key : null)}
           rowRef={el => { if (el) rowEls.current.set(r.key, el); else rowEls.current.delete(r.key); }} />
       ))}

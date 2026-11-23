@@ -245,7 +245,7 @@ export function providerEpoch(e: Episode): number | null {
  * Those epochs' groups. None (every episode's providers null) when they can't be read: the template_set tables don't
  * exist yet (the web deployed before the migration), or the read failed (a timeout): the episodes are served anyway.
  */
-async function readEpochGroups(epochs: number[], excludePools: string[]): Promise<Map<number, EpochGroups>> {
+export async function readEpochGroups(epochs: number[], excludePools: string[]): Promise<Map<number, EpochGroups>> {
   try {
     const { nodes, pairs, counted } = await getEpochGroupInputs(epochs, excludePools);
     return groupEpochs(nodes, pairs, counted);

@@ -4,7 +4,7 @@ import { enableHistoricalData } from "../../../lib/db/blocks";
 import {
   DEFAULT_RANGE, LEGACY_RANGES, UNKNOWN_PARENTS_RANGES, type UnknownParentsRange,
 } from "../../../lib/db/unknown-parents";
-import { getDrill, type Drill, type Episode } from "../../../lib/unknownParents";
+import { getDrill, providerEpoch, readEpochGroups, type Drill, type Episode } from "../../../lib/unknownParents";
 import { blacklistedPoolNames } from "../../../lib/poolBlacklist";
 import { getSummary, type SummaryResponse } from "../../../lib/forksSummary";
 import { raceRows } from "../../../lib/forkRaces";
@@ -23,6 +23,30 @@ function stripView(s: SummaryResponse) {
     generated_at: s.generated_at, other_chain_epochs: other,
     rows: rows.map(r => [r.position, r.heights[0], r.kind, r.invalid ? 1 : 0, r.key] as const),
   };
+}
+
+/**
+ * GET /api/forks?view=providers: the template providers of each epoch with a Forks row, for grouping a row's pool tiles:
+ * { epochs: { [epoch]: string[][] } }, each a provider's feeds (the rule is lib/templateProviders.ts, as on the
+ * template providers page). An epoch whose providers aren't counted is absent.
+ * Excluded pools are left out (readEpochRows). Read once per PROVIDERS_MS per process.
+ */
+const PROVIDERS_MS = 5 * 60_000;
+const providersCache: { at: number; promise: Promise<{ epochs: Record<number, string[][]> }> } | { at: 0; promise: null } = { at: 0, promise: null };
+async function providersView(): Promise<{ epochs: Record<number, string[][]> }> {
+  const s = await getSummary("all-lite");
+  const wanted = [...new Set((s.episodes ?? []).map(providerEpoch).filter((e): e is number => e !== null))];
+  const groups = await readEpochGroups(wanted, blacklistedPoolNames());
+  const epochs: Record<number, string[][]> = {};
+  for (const [epoch, g] of groups) {
+    const by = new Map<number, string[]>();
+    for (const [feed, i] of g.feedOf) by.set(i, [...(by.get(i) ?? []), feed]);
+    const all = [...by.values()]
+      .map(fs => fs.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())))
+      .sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+    if (all.length > 0) epochs[epoch] = all;
+  }
+  return { epochs };
 }
 
 export const dynamic = "force-dynamic";
@@ -49,6 +73,8 @@ export const dynamic = "force-dynamic";
  *       the same without template providers (providers null, provider_groups empty): what the page reads
  *   GET /api/forks?view=strip
  *       all history as the page's strip (stripView, below)
+ *   GET /api/forks?view=providers
+ *       per epoch, the template providers and their feeds (providersView, below)
  *   GET /api/forks?parent=<64 hex, display order>[&range=...]
  *       one episode's drill-in: { episode, from_ms, to_ms, templates (decoded, each labelled by its parent),
  *       truncated, blocks (every block we know at height - 1 and height, with arrival) }; 404 if the parent isn't an
@@ -83,6 +109,16 @@ export async function GET(request: Request) {
   }
   const parent = params.get("parent");
   try {
+    if (params.get("view") === "providers") {
+      const now = Date.now();
+      if (!providersCache.promise || now - providersCache.at > PROVIDERS_MS) {
+        const promise = providersView();
+        Object.assign(providersCache, { at: now, promise });
+        promise.then(r => { if (Object.keys(r.epochs).length === 0) providersCache.at = 0; },   // a failed read (logged) isn't kept
+          () => { if (providersCache.promise === promise) Object.assign(providersCache, { at: 0, promise: null }); });
+      }
+      return NextResponse.json(await providersCache.promise!, { headers: { "Cache-Control": "public, max-age=300" } });
+    }
     if (params.get("view") === "strip") {
       return NextResponse.json(stripView(await getSummary("all-lite")), { headers: { "Cache-Control": "public, max-age=60" } });
     }

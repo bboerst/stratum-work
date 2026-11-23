@@ -125,6 +125,7 @@ function cases(): Record<string, Case[]> {
     ],
     'forks': [
       { qs: 'range=all', allow: [STALE_MINER] },
+      { qs: 'view=providers' },
       // a drill-in shows every template in the episode's minutes, each labelled by its parent: the control feed's work
       // on B(H-1) too
       { qs: `range=all&parent=${U}`, allow: [{ path: '$.templates[*].coinbase_tags', why: COINBASE_TEXT },

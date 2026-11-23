@@ -71,7 +71,8 @@ Both are made only from stored facts, so recomputing them gives the same answer 
 
 A template's time (`received_at`) is when its bytes arrived at the collector (**observed**). It is the operating system
 kernel's receive timestamp for the network data that carried it (`SO_TIMESTAMPNS`), stored to the microsecond. A kernel
-stamp isn't delayed by what the collector program happens to be doing, so busy moments don't shift it.
+stamp is meant not to be delayed by what the collector program happens to be doing, so busy moments shouldn't shift
+it; this is not yet checked against an independent stamp.
 
 Limits:
 
@@ -94,8 +95,8 @@ the largest measured so far is under 20 ms. The clocks are measured continuously
 Since 18 November 2026 the data also records which machine received each template: each collector process writes an
 `ingest_events` `start` row with its machine, and a template's machine is the one in the latest `start` row of its
 source at or before its `received_at`. So a timing comparison between two templates can be tied to the clocks behind
-it. Two templates stamped by the same machine share its clock, so its error cancels out of the difference between
-them.
+it. Two templates stamped by the same machine share its clock, so its error largely cancels out of the difference
+between them, unless the clock was stepped between them.
 
 Limits: across different machines, differences smaller than the two clocks' error bounds added together (typically
 about 11 ms, up to about 36 ms) aren't meaningful.
@@ -104,7 +105,9 @@ about 11 ms, up to about 36 ms) aren't meaningful.
 
 A template arrives some time after the pool sent it. The timing views can subtract an estimate of that delay (the
 **Latency adjusted** setting, on by default, per view), so pools at different network distances can be compared
-(**modelled**). The stored `received_at` is never changed; the adjustment is applied when the data is shown.
+(**modelled**). Tested on the same template's copies received at two network distances, for most testable pools the
+adjustment moved the copies closer together, but brought them within the clock error for only a few, and many pools
+couldn't be tested. The stored `received_at` is never changed; the adjustment is applied when the data is shown.
 
 The estimate (`latency_ms`) is half the connection's round-trip time as measured by the kernel (`tcp`), or by timing
 Stratum requests on proxied connections (`app`); see [latency_tracking](latency_tracking.md). Halving it assumes the path
@@ -130,7 +133,8 @@ hours later at its old height, and another chain's heights can pass through a he
 template's **receive time** does say: work for height h is received after the block at h - 1 arrives and before
 the block at h arrives. So reads of the templates at a height keep only the rows received in that window, from our
 stored blocks: from the arrival of the block at h - 1 to the arrival of the block at h, widened by 2 hours on each
-side (the consensus limit on how far ahead a block header's time may run). At a height without a stored block the
+side (a margin borrowed from the consensus limit on how far ahead a block header's time may run; not measured for
+template arrival). At a height without a stored block the
 nearest stored ones are used, so the window widens but never opens; at the height being mined now it is open-ended.
 
 The window is a judgement made at read time from stored facts: nothing is moved or deleted, and the template details
@@ -143,14 +147,19 @@ restart doesn't leave a gap. Some pools send every connection its own job stream
 that pool's templates. The views show one connection's stream per pool, and another connection's templates only while
 that one had nothing, for example during a reconnect.
 
-"Had nothing" means no template from that connection in the previous 90 seconds. Some pools go longer than that
-between jobs, but a pool sends to all our connections at about the same time, so a quiet pool is quiet on every
-connection and nothing is filled in. Measured over 545 blocks, every filled-in template fell during a disconnect or a
-restart of the shown connection.
+"Had nothing" means no template from that connection in the previous 90 seconds. Some pools go longer than 90
+seconds between templates, and one template often reaches our connections at different times: for many pools by more
+than the clock error, for some by over 100 ms. That a quiet pool is quiet on all our connections together is
+inferred, not measured. Measured over 545 blocks, all 45 filled-in templates fell during a disconnect or a restart of
+the shown connection; a small rate of wrong fills can't be excluded.
 
-A template is treated as a duplicate only when it matches exactly, field for field, with no tolerance. Nothing is
-deleted: every hidden template is kept and classified with the reason it was hidden, and a pool's "first seen" time is
-the earliest arrival over all its exact copies. The rules are in `db/migrations/20261116200001_one_stream_per_pool.sql`.
+A template is treated as a duplicate only when it matches exactly, with no tolerance, on its height, pool,
+`prev_hash`, `merkle_branches`, `version`, `nbits` and `ntime`. An empty template has no transaction set to compare,
+so two exact copies of one can be two templates built independently (for example by two of a pool's servers); first
+seen takes the earliest. Nothing is deleted: every hidden template is kept and classified with the reason it was
+hidden, and a pool's "first seen" time is the earliest arrival over all its exact copies: when the earliest of our
+connections got it, not when the pool sent it. Since 21 November 2026 our connections are at two sites, so first seen
+can come from either; `site_first_seen` keeps each site's own. The rules are in `db/migrations/20261116200001_one_stream_per_pool.sql`.
 
 ## Pools hidden from the live site
 
@@ -177,7 +186,7 @@ announcement arrived (**observed**, `seen_via = 'zmq'`).
   replaces such a block is stored without a seen time: it was found long after it arrived, so the detection time
   would pass for an arrival time. The replaced block stays stored and is marked stale, not deleted.
 - Before 18 November 2026 the seen time was taken when the block had been processed and saved, typically 0.6 to 1
-  second after it arrived (median 0.84 s). Those rows have `seen_via` NULL and run late by about that much.
+  second after it arrived (median 0.84 s in one sample). Those rows have `seen_via` NULL and run late by about that much.
 
 A block's header time is set by the miner and can be minutes off, so it isn't used as an arrival time.
 
@@ -218,9 +227,11 @@ Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and e
   walked back to where it forks, with the node's header for each block and, when the node downloaded it, the full
   block. A block our node had as its tip until a reorganisation is marked `was_active` and linked to the reorg.
 - **From the public stale-blocks dataset** (`bitcoin-data/stale-blocks`, **verified**): blocks our node never had,
-  because they lost before reaching it or are older than stale-block tracking, can still be proved by the templates:
-  pools built on them. When templates from at least two pools at one height build on a previous block we don't know,
-  that is a Bitcoin block we never stored. The [stale-blocks dataset](https://github.com/bitcoin-data/stale-blocks)
+  because they lost before reaching it or are older than stale-block tracking, can still be found through the templates:
+  pools built on them. A previous block we don't know is stored only when the public dataset has it and it passes the
+  checks below. Several pools building on it doesn't by itself prove it was a block (work has been seen on parents
+  that are not blocks): a parent that templates from at least two pools build on but the dataset doesn't have is only
+  reported, not stored. The [stale-blocks dataset](https://github.com/bitcoin-data/stale-blocks)
   (public domain, CC0; [doi:10.5281/zenodo.22667157](https://doi.org/10.5281/zenodo.22667157)) collects stale
   headers and blocks observed on the Bitcoin network. Its headers are proven here by commitment: the templates name
   the block's hash, and the header must hash to it. A header from it is stored only if every check passes: it
@@ -229,7 +240,7 @@ Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and e
   builds on our best block at the height below; its height is the templates' height minus one; and our best block
   at that height is a different block. A full block from the dataset must parse exactly, carry that header, and its
   transactions must hash to the header's merkle root; its coinbase, size, weight and pool are then filled like our
-  node's. A parent seen from only one pool is accepted only when the dataset has it, under the same checks. Such a
+  node's. A parent seen from only one pool is treated the same way. Such a
   row has status `not-in-node` (no status of our node applies), is never `was_active`, and its `first_seen` is the
   earliest template built on it: when we first had evidence of the block. A dataset entry that fails a check is
   reported and not stored. The importer is `backend/stale_import.py`; every candidate and every rejection is in its
@@ -283,7 +294,7 @@ After each new block (once the block is stored) the backend recomputes every unk
 templates, starting where its previous run ended if that was longer ago, and once over the last seven days after
 the startup sync (`backend/unknown_parents.py`). Each parent is read whole: the read covers the heights and receive
 times of its templates seen now plus those already in the table, an hour wider, so a parent that lasts longer than
-two hours keeps all its templates. History before that, or after a longer outage, comes from the backfill
+two hours is meant to keep all its templates. History before that, or after a longer outage, comes from the backfill
 (`python -m unknown_parents --backfill`, in 7-day chunks). The ranges are counted in Bitcoin time, in blocks below
 our tip (the highest best-chain block), not in days: an episode is in a range when its last template arrived at or
 after the best-chain block N blocks below the tip did (`coalesce(seen_at, block_time)`); it is shown with all its
@@ -409,7 +420,7 @@ most five minutes old): never ahead of ours, so it can only leave out more.
 "Who builds the templates" on the home page groups our feeds by **template provider**: whatever chooses the
 transactions. A pool brand doesn't say who that is. Several feeds can carry identical transaction sets, built by one
 template provider and sent under different names. When that provider has a problem, every feed it serves has it at
-the same moment.
+about the same time.
 
 **What is counted** (**observed**, by the backend, `template_set_*`). A height is counted once its receive window has
 closed, two hours after its block, so no template for it can still arrive. Its non-empty templates are counted if they
@@ -417,8 +428,8 @@ arrived in the window ([Which templates belong to a height](#which-templates-bel
 Bitcoin block at h − 1 that we know. Templates for other chains and work on parents we never recorded are not counted.
 
 - **Node.** A template belongs to a node: its feed, plus the pool its coinbase pays or names. The pool is identified
-  as a block's is: the coinbase's output addresses, highest value first, against the pool list, then its scriptSig
-  against the pools' tags ([Blocks](#blocks)). A coinbase that matches no pool, or doesn't parse, is an unidentified
+  as a block's is: the first pool in the pool list that owns any of the coinbase's output addresses, then its
+  scriptSig against the pools' tags ([Blocks](#blocks)). A coinbase that matches no pool, or doesn't parse, is an unidentified
   node, named by its feed.
 - **Transaction set.** A set is the template's merkle branches, compared exactly (`sha256` of the bytes, not stored).
 - **Counts.** Per height, each node gets its distinct sets and templates. Each pair of nodes gets the sets both
@@ -485,7 +496,7 @@ without revealing them. See [first_transaction](first_transaction.md).
 `reported_hashrate` holds each pool's hashrate **as the pool reports it**, collected once a day from a third-party
 pool-statistics site (`python -m reported_hashrate`, off unless configured). It is neither observed nor verified: it
 is a claim the pool publishes about itself, and nothing here checks it. Summed over all pools, the claims exceed the
-site's own network estimate (about 104% in one sample), so they can't all be right.
+site's own network estimate (about 104% in one unpublished sample), so they can't all be right.
 
 It is kept apart from block shares, which are measured from the blocks our node sees: the two are never merged into
 one figure. Each row is one hour of the site's hourly series for one pool (the site's hourly average, floored to the
@@ -507,6 +518,6 @@ differences in that period with care.
 
 **Extranonce values before January 2025 can be stale.**
 - **The cause.** That collector took `extranonce1` and `extranonce2_length` only from the response to its first request (JSON-RPC id 1). Whenever it reconnected without restarting (keep-alive reconnects and retries, from June 2024 on), the new subscribe had a different id. Templates from the new connection kept the previous connection's values. This was fixed in January 2025 (#26).
-- **The effect.** When the new connection's extranonce sizes differed, `coinbase1 + extranonce1 + extranonce2 + coinbase2` no longer forms a valid transaction. A scan of every feed, sampling the first 15 s of each hour from June 2024 to November 2026, found this for a few feeds between July 2024 and February 2025, and only for isolated templates after that. When the sizes matched, the stored `extranonce1` is simply the old connection's, and nothing in the data reveals it.
+- **The effect.** When the new connection's extranonce sizes differed, `coinbase1 + extranonce1 + extranonce2 + coinbase2` no longer forms a valid transaction. A scan of every feed, sampling the first 15 s of each hour from June 2024 to November 2026, found this for a few feeds from July 2024 until the fix in January 2025, and only for isolated templates after that. One feed's mismatches in late January to early February 2025, after the fix, aren't explained by this defect. When the sizes matched, the stored `extranonce1` is simply the old connection's, and nothing in the data reveals it.
 - **What it doesn't affect.** The coinbase outputs sit in `coinbase2` and are unaffected.
 - **How the analysis handles it.** Every template's coinbase is reassembled and parsed strictly: exactly one input spending nothing, at least one output, no bytes missing or left over. If the stored `extranonce2_length` doesn't produce such a transaction, every other length from 0 to 16 is tried, and the coinbase is used only if exactly one length works. Nothing is inferred beyond that. Each block's analysis records, per pool, how many templates needed another length (`coinbase_parse.repaired`) and how many parsed with none (`coinbase_parse.unparsed`, not checked further), so these cases stay visible instead of being dropped.

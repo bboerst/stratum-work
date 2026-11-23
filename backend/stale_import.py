@@ -8,9 +8,10 @@ getchaintips knows). Our node can't give us its header, but the public dataset g
 
 Candidates: (height, prev_hash) pairs of templates whose prev_hash is no known block, read per height chunk through
 the templates height index and only inside each height's receive window (template_height_windows(): a re-sent old job
-or another chain's template at that height doesn't count). A parent with templates from 2 or more pools (distinct
-sources.name) at one height is a Bitcoin block we never stored; a single-pool parent is accepted only if the dataset
-has it. Every candidate's header is checked before anything is stored:
+or another chain's template at that height doesn't count). A parent is stored only if the dataset has it and it
+passes every check below, whether one pool or several (distinct sources.name) built on it: several pools building on a
+parent doesn't by itself prove it was a block. A multi-pool parent the dataset lacks is only reported
+(multi_pool_not_in_dataset). Every candidate's header is checked before anything is stored:
   - hash      dsha256(header), reversed, equals the dataset's hash and the templates' prev_hash
   - pow       the hash meets the header's bits target (and the target is within mainnet's proof-of-work limit)
   - bits      the header's bits equal the best chain block's at the same height (same difficulty period), when we

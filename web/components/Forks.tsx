@@ -141,10 +141,10 @@ const KIND_BG: Record<Kind, string> = {
   invalid_coinbase: "border-2 border-rose-500",
   undetermined: "bg-gray-500",
 };
-// Drill-in's template list: the episode's own parent in the text colour (the subject), amber = our best chain and
+// Drill-in's template list: the episode's own parent in the text colour (the subject), amber = the active chain and
 // blue = a known stale block (the fork timeline's colours), gray = another unknown parent
 const LABELS: ParentLabel[] = ["this", "best", "stale", "other"];
-const LABEL_TEXT: Record<ParentLabel, string> = { this: "this parent", best: "best chain", stale: "stale", other: "other" };
+const LABEL_TEXT: Record<ParentLabel, string> = { this: "this parent", best: "active chain", stale: "stale", other: "other" };
 const LABEL_BG: Record<ParentLabel, string> = {
   this: "bg-foreground",
   best: "bg-amber-500",
@@ -166,7 +166,7 @@ function fmtDuration(ms: number): string {
 /** One-line summary of the facts the kind rests on, for tooltips. */
 function factsTitle(e: Episode): string {
   const f = e.facts;
-  if (e.kind === "invalid_coinbase") return `${KIND_LABEL[e.kind]} · our best block's parent at height ${fmtInt(e.height - 1)}`;
+  if (e.kind === "invalid_coinbase") return `${KIND_LABEL[e.kind]} · the active chain's block at height ${fmtInt(e.height - 1)}`;
   return [
     e.kind === "stale" ? `${KIND_LABEL[e.kind]} (recorded${f.stale_block?.miner ? `, mined by ${f.stale_block.miner}` : ""})` : `${KIND_LABEL[e.kind]} (inferred)`,
     `proof of work ${f.pow_ok ? "✓" : "✗"} (bits ${f.pow_bits})`,
@@ -285,9 +285,9 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
       <svg width={W} height={Y1 + TH + 6} role="img" className="block max-w-full" viewBox={`0 0 ${W} ${Y1 + TH + 6}`}>
         <desc>Our chain at the parent&apos;s height and the next, and below it the parent the templates built on.</desc>
         <text x={X0} y={11} fontSize={10} className="fill-foreground/50">our chain</text>
-        {chain && prev ? tile(xPrev, Y0, fmtInt(prev.height), prev.miner ?? short(prev.hash), STRIP, false, `best block ${fmtInt(prev.height)}${prev.miner ? ` · mined by ${prev.miner}` : ""} · ${prev.hash}`)
+        {chain && prev ? tile(xPrev, Y0, fmtInt(prev.height), prev.miner ?? short(prev.hash), STRIP, false, `active chain block ${fmtInt(prev.height)}${prev.miner ? ` · mined by ${prev.miner}` : ""} · ${prev.hash}`)
               : tile(chain ? xPrev : xNext, Y0, chain ? fmtInt(ph) : f.tip_at_first !== null ? fmtInt(f.tip_at_first) : "—", "", STRIP)}
-        {chain && next ? tile(xNext, Y0, fmtInt(next.height), next.miner ?? short(next.hash), STRIP, false, `best block ${fmtInt(next.height)}${next.miner ? ` · mined by ${next.miner}` : ""} · ${next.hash}`)
+        {chain && next ? tile(xNext, Y0, fmtInt(next.height), next.miner ?? short(next.hash), STRIP, false, `active chain block ${fmtInt(next.height)}${next.miner ? ` · mined by ${next.miner}` : ""} · ${next.hash}`)
               : chain ? tile(xNext, Y0, fmtInt(episode.height), "", STRIP) : null}
         {!chain && <text x={xNext + TW + 12} y={Y0 + TH / 2 + 4} fontSize={11} className="fill-foreground/50">our tip</text>}
         {chain && <line x1={xPrev + 54} x2={xPrev + 54} y1={Y0 + TH} y2={Y1} className="stroke-foreground/30" strokeDasharray="3 3" />}
@@ -384,7 +384,7 @@ interface Lanes {
   active: string | null;
   from_ms: number;
   last_ms: number;
-  // 'previous': the block before (our best block at height - 2), where a pool went back to work at height - 1
+  // 'previous': the block before (the active chain's block at height - 2), where a pool went back to work at height - 1
   parents: { hash: string; status: "canonical" | "stale" | "unknown" | "previous" | null; kind: ParentKind | null }[];
   lanes: { pool: string; runs: [number, number, 0 | 1, 0 | 1][]; end: number }[];
   blocks: ArrivalBlock[];
@@ -496,7 +496,7 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
   };
   const titleOf = (p: Lanes["parents"][number], h: number) => {
     const tone = toneOf(p);
-    return `${tone === "canonical" ? "our best block" : tone === "stale" ? "a stale block" : KIND_LABEL[tone as Kind].toLowerCase()} at ${fmtInt(h - 1)} · ${p.hash}`;
+    return `${tone === "canonical" ? "the active chain's block" : tone === "stale" ? "a stale block" : KIND_LABEL[tone as Kind].toLowerCase()} at ${fmtInt(h - 1)} · ${p.hash}`;
   };
   for (const h of row.heights) {
     const l = lanes?.get(h);
@@ -527,7 +527,7 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
       if (b.height !== h - 1 || sides.has(b.hash)) continue;
       const tone = b.best ? "canonical" : "stale";
       add(b.hash, tone, b.miner ?? "unknown",
-        `${b.best ? "our best block" : "a stale block"} at ${fmtInt(h - 1)} · ${b.hash} · none of our feeds built on it`).unbuilt = true;
+        `${b.best ? "the active chain's block" : "a stale block"} at ${fmtInt(h - 1)} · ${b.hash} · none of our feeds built on it`).unbuilt = true;
     }
   }
   // before the timeline is in (or for another chain's row): the summary's own pools, on the episode's parent
@@ -535,7 +535,7 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
     const tone = e.kind === "stale" ? "stale" : e.kind === "invalid_coinbase" ? "canonical" : e.kind;
     for (const p of e.pools) {
       if (placed.has(p.pool)) continue;
-      const label = e.kind === "stale" ? e.facts.stale_block?.miner ?? "unknown" : e.kind === "invalid_coinbase" ? "our best block" : KIND_LABEL[e.kind];
+      const label = e.kind === "stale" ? e.facts.stale_block?.miner ?? "unknown" : e.kind === "invalid_coinbase" ? "the active chain's block" : KIND_LABEL[e.kind];
       add(e.parent, tone, label, `${KIND_LABEL[e.kind]} · ${e.parent}`).pools.push({
         pool: p.pool, to: null, invalid: e.invalid_coinbase?.pools.some(x => x.pool === p.pool) ?? false,
       });

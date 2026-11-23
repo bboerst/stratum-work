@@ -9,8 +9,8 @@
  *            of the smaller node's sets, both having at least SETS_MIN (5). Sets are counted per height, so the same
  *            set at two heights is two units (the backend's counts add up exactly).
  *   partner  each node links only to its strongest partner: the highest overlap, then the most shared sets, then
- *            the greater node key. Nodes on one stream overlap almost fully; a node alternating between two
- *            providers overlaps each only partly, so it joins one group instead of merging two.
+ *            the greater node key. Nodes on one template provider overlap almost fully; a node alternating between two
+ *            providers overlaps each only partly, so it joins one provider instead of merging two.
  *   group    the connected components of those links: one template provider each.
  *   feed     a feed's provider (Forks: providers per episode) is the group of its node with the most sets, when that
  *            node has at least SETS_MIN; otherwise unknown.

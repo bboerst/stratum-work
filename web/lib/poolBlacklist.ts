@@ -25,7 +25,7 @@ export function filterBlacklistedItems<T>(
 
 /**
  * POOL_BLACKLIST hides live streaming only (the stream, the realtime pre-fill, templates above the tip); every analysis
- * view keeps the pool at mined heights (docs/methodology.md, "Pools hidden from the live site"). Templates for a
+ * view keeps the pool at mined heights (docs/methodology.md, "Pools excluded from the live site"). Templates for a
  * height above the chain tip are the work being handed out right now, i.e. the realtime view under another URL, so
  * they are filtered there. An unknown tip filters too (fail closed).
  */

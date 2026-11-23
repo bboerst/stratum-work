@@ -1,7 +1,7 @@
 /**
- * The exclusion invariant (POOL_BLACKLIST): an excluded pool's realtime work (templates above our tip) is in no API
- * response, and the pool is named nowhere else except where the code documents why (its history: blocks it mined,
- * analysis at mined heights, Forks below the tip). Every route under app/api is found on disk, so a new route fails
+ * The exclusion invariant (POOL_BLACKLIST hides live streaming only): an excluded pool's live work (the stream, the
+ * realtime pre-fill, templates above our tip) is in no API response; every analysis route keeps it at mined heights,
+ * each such path allowed with its reason. Every route under app/api is found on disk, so a new route fails
  * this suite until it has a case here. Each case is called twice against one seeded, migrated database (as a user in
  * the stratum_web role):
  *   - with no blacklist: the excluded name must appear, so the seed reaches that route (a known-case gate);
@@ -105,10 +105,13 @@ const HISTORY: Allowed = {
     + 'above the tip are filtered (filterBlacklistedAboveTip)',
 };
 
+const LIVE_ONLY = 'POOL_BLACKLIST hides live work only: a mined height (at or below our tip) keeps every pool, for '
+  + 'analysis (filterBlacklistedAboveTip); the next height (H + 1) is checked by its own case';
+const REFERENCE = 'pool definitions (names, coinbase tags) are reference data, not live work';
 const FORKS_HISTORY = 'POOL_BLACKLIST is realtime-only: an excluded pool\'s work at or below our tip is history, '
   + 'shown in Forks (getEpisodes, getDrill, getForkLanes); above the tip it is left out (aboveTip)';
-const PROVIDERS_HISTORY = 'template providers are counted per finished height: history, so Forks groups an excluded '
-  + 'feed\'s tile with its provider (left out only while the tip is unknown)';
+const PROVIDERS_HISTORY = 'template providers are counted per finished height: history, so an excluded feed is counted '
+  + 'like any other (the template providers page; Forks groups its tile with its provider, left out while the tip is unknown)';
 const FORKS_SUMMARY: Allowed[] = [
   { path: '$.episodes[*].pools[*].pool', why: FORKS_HISTORY },
   { path: '$.episodes[*].invalid_coinbase.pools[*].pool', why: FORKS_HISTORY },
@@ -148,7 +151,7 @@ function cases(): Record<string, Case[]> {
         { path: '$.items[*].analysis.flags[*].details.offenders[*].pool_name', why: BLOCK_FINDING.why },
       ] },
     ],
-    'block-pool-first-seen': [{ qs: `height=${H}` }],
+    'block-pool-first-seen': [{ qs: `height=${H}`, allow: [{ path: '$[*].poolName', why: LIVE_ONLY }] }, { qs: `height=${H + 1}` }],
     'blocks': [
       { qs: 'n=20', allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
       { qs: `height=${H - 1}&n=6`, allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
@@ -173,8 +176,8 @@ function cases(): Record<string, Case[]> {
         { path: '$.lanes[*].pool', why: FORKS_HISTORY }] },
       { qs: `height=${H + 1}`, aboveTip: (b: { lanes: { pool: string }[] }) => b.lanes.filter(l => l.pool === EXCLUDED) },
     ],
-    'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
-    'pools': [{}],
+    'mining-notify': [{ qs: `height=${H}`, allow: [{ path: '$[*].pool_name', why: LIVE_ONLY }] }, { qs: `height=${H + 1}` }],
+    'pools': [{ allow: [{ path: '$[*].name', why: REFERENCE }, { path: '$[*].tag', why: REFERENCE }] }],
     'realtime-prefill': [{}],
     'runtime-config': [{ noPoolData: 'configuration only (stream endpoint, flags)' }],
     'stale-blocks': [{ qs: 'n=20', allow: [
@@ -185,7 +188,8 @@ function cases(): Record<string, Case[]> {
     'stream': [{ allow: [
       { path: '$[*].data.mining_pool.name', why: 'a block event names the pool that mined it, like /api/blocks' },
     ] }],
-    'template-providers': [{ qs: 'range=all' }],
+    'template-providers': [{ qs: 'range=all', allow: ['columns', 'pies'].flatMap(k => ['pools', 'payers', 'feeds'].map(f => (
+      { path: `$.${k}[*].groups[*].${f}[*]`, why: PROVIDERS_HISTORY }))) }],
     'tx': [{ qs: `txids=${TXID}`, noPoolData: 'mempool transactions: no pool fields' }],
     'tx/[txid]': [{ params: { txid: TXID }, noPoolData: 'mempool transactions: no pool fields' }],
     'unknown-parents': [{ qs: 'range=all', allow: [STALE_MINER, ...FORKS_SUMMARY], aboveTip: excludedOn(UA) }],

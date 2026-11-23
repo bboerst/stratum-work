@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { enableHistoricalData } from '@/lib/db/blocks';
+import { enableHistoricalData, getHighestBlock } from '@/lib/db/blocks';
 import { getFirstSeenByPool, getPoolNamesAtHeight } from '@/lib/db/mining-notify';
-import { filterBlacklistedItems } from '@/lib/poolBlacklist';
+import { filterBlacklistedAboveTip } from '@/lib/poolBlacklist';
 import { markFirstSeenReliability } from '@/utils/poolTiming';
 
 export async function GET(request: Request) {
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const firstSeen = await getFirstSeenByPool(height);
+    const [firstSeen, tip] = await Promise.all([getFirstSeenByPool(height), getHighestBlock().then(b => b?.height ?? null)]);
 
     if (firstSeen) {
       // A pool's first-seen at this height is only trustworthy if we also collected a template from it at the
@@ -31,7 +31,8 @@ export async function GET(request: Request) {
       const poolsAtPreviousHeight = await getPoolNamesAtHeight(height - 1);
 
       const data = markFirstSeenReliability(
-        filterBlacklistedItems(firstSeen, d => d.poolName),
+        // POOL_BLACKLIST hides live work only: kept at a mined height (analysis), filtered above the tip
+        filterBlacklistedAboveTip(firstSeen, height, tip, d => d.poolName),
         poolsAtPreviousHeight,
       );
       return NextResponse.json(data);

@@ -152,6 +152,17 @@ A template is treated as a duplicate only when it matches exactly, field for fie
 deleted: every hidden template is kept and classified with the reason it was hidden, and a pool's "first seen" time is
 the earliest arrival over all its exact copies. The rules are in `db/migrations/20261116200001_one_stream_per_pool.sql`.
 
+## Pools hidden from the live site
+
+A pool can be hidden from the live site (`POOL_BLACKLIST`): its live work is not served. That is the realtime stream,
+the realtime pre-fill, and every template above our tip (the work being handed out right now), on any route. Its
+history is: at heights at or below our tip, every analysis view includes it like any other pool (the height page and
+its templates, first seen, Forks, template providers, the blocks it mined, stale blocks). The boundary is per template
+height against our best-chain tip (`filterBlacklistedAboveTip`, `web/lib/poolBlacklist.ts`); while the tip is unknown,
+the pool is left out of every height (fail closed). The web's Postgres tests check it over every API route
+(`pgExclusionInvariant.test.ts`): no live work of a hidden pool in any response, and every place its history appears
+listed with its reason.
+
 ## Blocks
 
 A block's seen time (`blocks.seen_at`) is when our Bitcoin node announced it to the backend, taken the moment the ZMQ
@@ -368,15 +379,12 @@ fewer than 5 sets in the epoch, or none, has an unknown provider and isn't count
 heights gives no count, never another epoch's: older episodes have none until the history is counted. Like the
 groups themselves, a shared provider says the pools received the same work, not that they share an owner.
 
-**Pools hidden from the live site** (`POOL_BLACKLIST`). Hiding a pool is about its live work: its templates above our
-tip, which are what it is handing out right now. Forks is about what already happened, so a hidden pool's work at or
-below our tip is shown like any other pool's: its tiles, its lanes on the timeline, its templates in a row's evidence,
-its offenders in a finding, its template provider. Its templates above our tip are left out of every Forks read (the
-next height's, while a race at the tip is still open; the boundary is the same as the height page's). Two cases fail
-closed: while our tip is unknown, a hidden pool is left out of every height, and it is always left out of another
-chain's work, whose heights aren't Bitcoin's. The tip used is the one the summary was read at (at most five minutes
-old): never ahead of ours, so it can only leave out more. The [template providers](#template-providers) page itself
-still leaves hidden pools out.
+**Pools hidden from the live site** follow the [site-wide rule](#pools-hidden-from-the-live-site): a hidden pool's
+work at or below our tip is shown like any other pool's (its tiles, its lanes, its templates in a row's evidence, its
+offenders in a finding, its template provider), and its templates above our tip are left out of every Forks read (the
+next height's, while a race at the tip is still open). Forks fails closed in one more case: a hidden pool is always
+left out of another chain's work, whose heights aren't Bitcoin's. The tip used is the one the summary was read at (at
+most five minutes old): never ahead of ours, so it can only leave out more.
 
 ## Template providers
 
@@ -427,10 +435,8 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **Per epoch.** Each block counts with its own epoch's groups. A new epoch whose first heights aren't counted yet
   uses the last counted epoch's groups. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
   and all blocks from the first counted epoch, exact by height.
-- **Excluded pools** (`POOL_BLACKLIST`) are dropped before grouping: their own feeds, and every node whose templates
-  pay or name an excluded pool, on any feed. For their feeds the result is the same as if they had never been
-  collected, and no node is named after an excluded pool: its blocks, like those of a pool only they pay, are "not on
-  our feeds".
+- **Pools hidden from the live site** are counted like any other ([the rule](#pools-hidden-from-the-live-site)): the
+  counts are per height once its receive window has closed, so they are history.
 
 **What it does not claim:**
 

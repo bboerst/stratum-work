@@ -60,6 +60,7 @@ const templates = () => [template('PoolA'), template('PoolB')];
 describe('served templates carry masked extranonce1', () => {
   it('/api/mining-notify', async () => {
     vi.doMock('../db/mining-notify', () => ({ getMiningNotifyByHeight: vi.fn(async () => templates()) }));
+    vi.doMock('../db/blocks', () => ({ enableHistoricalData: true, getHighestBlock: vi.fn(async () => ({ height: 100000 })) }));
     const { GET } = await import('../../app/api/mining-notify/route');
     const text = await (await GET(new NextRequest('http://test/api/mining-notify?height=100001'))).text();
     expectMasked(text, JSON.parse(text));

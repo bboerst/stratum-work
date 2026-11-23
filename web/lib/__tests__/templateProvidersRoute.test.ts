@@ -59,11 +59,11 @@ describe('/api/template-providers', () => {
     expect((await other.get()).status).toBe(500);
   });
 
-  it('passes the excluded feeds and the own-creator prefixes', async () => {
+  it('counts every pool (POOL_BLACKLIST hides live work only) and passes the own-creator prefixes', async () => {
     const { get, read } = await load();
     const { status, body } = await get();
     expect(status).toBe(200);
-    expect(read).toHaveBeenCalledWith(['feed-x']);
+    expect(read).toHaveBeenCalledWith([]);
     // the first epoch's block names an own creator: the pool's, not miner-built
     expect(body.columns[0].groups.map((g: { kind: string }) => g.kind)).toEqual(['producer']);
   });

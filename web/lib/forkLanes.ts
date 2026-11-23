@@ -7,7 +7,7 @@
  * by that finding's rule (backend/analytics/invalid_coinbase_no_merkle.py): empty, and its coinbase pays more than the
  * subsidy, reassembled with the stored extranonce2 length or the one other length that parses.
  */
-import { getLaneEnds, getLaneFacts, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
+import { getFirstWork, getLaneEnds, getLaneFacts, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
 import { getDrillBlocks } from './db/unknown-parents';
 import { knownBlockHashes } from './db/postgres';
 import { classifyPrevHashes, unknownParentKinds, type PrevHashStatus } from './forkStatus';
@@ -119,10 +119,20 @@ export async function getForkLanes(
   }
   const rows = await getLaneTemplates(height, facts.t_from, facts.t_to, excludePools, [...subsidies.keys()]);
   const { hashes, lastUs, ...runs } = buildRuns(rows, subsidies);
-  const [endRows, known] = await Promise.all([
+  const blocks = await blocksRead;
+  const unseen = (b: (typeof blocks)[number]) => !(b.seen && !b.stale_only);
+  const [endRows, known, workRows] = await Promise.all([
     getLaneEnds(height, [...lastUs.keys()], [...lastUs.values()], span.toMs),
     facts.active ? knownBlockHashes(hashes) : Promise.resolve(null),
+    // the next height's work on this height's blocks (the block that ended the race), where no arrival was recorded
+    getFirstWork(height + 1, blocks.filter(b => b.height === height && unseen(b)).map(b => b.block_hash), runs.from_ms, span.toMs, excludePools),
   ]);
+  // first work on a block at height - 1: the earliest run on it
+  const work = new Map(workRows.map(r => [r.hash, Number(r.at_us) / 1000]));
+  hashes.forEach((hash, i) => {
+    const at = Math.min(...runs.lanes.flatMap(l => l.runs.filter(r => r[1] === i).map(r => r[0])));
+    if (Number.isFinite(at)) work.set(hash, runs.from_ms + at);
+  });
   const ends = new Map(endRows.map(r => [r.pool, Number(r.end_us) / 1000 - runs.from_ms]));
   for (const lane of runs.lanes) lane.end = ends.get(lane.pool) ?? lane.end;
 
@@ -130,8 +140,6 @@ export async function getForkLanes(
   const hexBits = (bits: string | null) => (bits === null ? null : Number(bits).toString(16).padStart(8, '0'));
   const kinds = unknownParentKinds(status, rows.map(r => ({ prev_hash: r.parent, nbits: Number(r.nbits) })), height,
     hexBits(facts.bits_prev), hexBits(facts.bits_at));
-  const blocks = await blocksRead;
-
   return {
     height,
     active: facts.active,
@@ -140,7 +148,7 @@ export async function getForkLanes(
     blocks: blocks.map(b => ({
       hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
       seen_ms: b.seen && !b.stale_only ? Number(b.arrival_ms) : null, stale_only: b.stale_only,
-      header_ms: b.header_ms == null ? null : Number(b.header_ms),
+      work_ms: unseen(b) ? work.get(b.block_hash) ?? null : null,
     })),
   };
 }

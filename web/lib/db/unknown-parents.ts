@@ -418,7 +418,6 @@ export interface DrillBlockRow {
                                         // poll first recorded it (on a new block or a timer), not our node's arrival
   best: boolean;
   miner: string | null;                 // the block's identified pool
-  header_ms: string | null;             // the block's header time (set by its miner)
 }
 
 export interface DrillQuery {
@@ -486,12 +485,11 @@ export async function getDrillBlocks(height: number): Promise<DrillBlockRow[]> {
             (extract(epoch FROM coalesce(b.seen_at, b.block_time)) * 1000)::bigint AS arrival_ms,
             b.seen_at IS NOT NULL AS seen, false AS stale_only,
             EXISTS (SELECT 1 FROM blocks_best bb WHERE bb.block_hash = b.block_hash) AS best,
-            nullif(b.mining_pool->>'name', '') AS miner,
-            (extract(epoch FROM b.block_time) * 1000)::bigint AS header_ms
+            nullif(b.mining_pool->>'name', '') AS miner
        FROM blocks b WHERE b.height BETWEEN $1::int - 1 AND $1::int
      UNION ALL
      SELECT encode(s.block_hash, 'hex'), s.height, (extract(epoch FROM s.first_seen) * 1000)::bigint, s.first_seen IS NOT NULL, true, false,
-            nullif(s.mining_pool->>'name', ''), (extract(epoch FROM s.block_time) * 1000)::bigint
+            nullif(s.mining_pool->>'name', '')
        FROM stale_blocks s
       WHERE s.height BETWEEN $1::int - 1 AND $1::int AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.block_hash = s.block_hash)
       ORDER BY 2, 3`,

@@ -135,6 +135,23 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     expect(r.blocks.find(b => b.hash === B1)).toMatchObject({ best: true, seen_ms: T0 * 1000, miner: `miner-${H - 1}` });
   });
 
+  it('gives a block with no recorded arrival the time our feeds first built on it', async () => {
+    // the stale block only the records know: its first run, at height - 1
+    const r = await read([hidden]);
+    const first = Math.min(...r.lanes.flatMap(l => l.runs.filter(x => r.parents[x[1]].hash === S1).map(x => x[0])));
+    expect(r.blocks.find(b => b.hash === S1)!.work_ms).toBe(r.from_ms + first);
+    expect(r.blocks.find(b => b.hash === B1)!.work_ms).toBeNull();          // arrival recorded
+    // the block at the height, its arrival unrecorded: the first next-height template on it
+    await admin.query(`UPDATE blocks SET seen_at = NULL WHERE block_hash = decode($1, 'hex')`, [B0]);
+    try {
+      const u = await read([hidden]);
+      const ends = u.lanes.map(l => u.from_ms + l.end);
+      expect(u.blocks.find(b => b.hash === B0)!.work_ms).toBe(Math.min(...ends.filter(e => e > u.from_ms + 60_000)));
+    } finally {
+      await admin.query(`UPDATE blocks SET seen_at = block_time WHERE block_hash = decode($1, 'hex')`, [B0]);
+    }
+  });
+
   it('leaves the excluded pool out entirely; without exclusion it is there', async () => {
     const shut = await read([hidden]);
     expect(JSON.stringify(shut)).not.toContain(hidden);

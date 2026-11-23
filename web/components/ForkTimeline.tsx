@@ -170,9 +170,9 @@ const fmtHeight = (h: number) => h.toLocaleString("en-US");
 
 function markerTitle(m: BlockMarker): string {
   const at = new Date(m.seenMs).toISOString().slice(11, 23);
-  const when = m.header ? "header time" : m.staleOnly ? "first recorded" : "reached us";
+  const when = m.firstWork ? "first built on by our feeds" : m.staleOnly ? "first recorded" : "reached us";
   return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${when} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}${
-    m.header ? " (set by its miner; when it reached our node wasn't recorded)" : ""}`;
+    m.firstWork ? " (when it reached our node wasn't recorded)" : ""}`;
 }
 
 /** A marker label's alignment: centred on its line, but kept inside the plot near either end (about 26 px of room). */
@@ -245,9 +245,9 @@ export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashS
     parsed.forEach((p) => lastByPool.set(p.poolName, p.timeNs));
     const poolEnds = [...lastByPool].map(([pool, last]) => endOf(pool, last)).filter((e): e is number => e !== null);
     const dataMaxTime = Math.max(parsed[parsed.length - 1].timeNs, ...poolEnds);
-    // each block at its arrival where recorded, else its header time (lib/forkTimelineAxis.ts markerBlocks)
+    // each block at its arrival where recorded, else when our feeds first built on it (lib/forkTimelineAxis.ts markerBlocks)
     const seenBlocks = markerBlocks(blocks);
-    const { minNs: minTime, maxNs: maxTime } = axisDomain(parsed[0].timeNs, dataMaxTime, seenBlocks.filter((b) => !b.header));  // a header time doesn't widen the axis
+    const { minNs: minTime, maxNs: maxTime } = axisDomain(parsed[0].timeNs, dataMaxTime, seenBlocks);
     const duration = maxTime - minTime;
 
     // Assign colors by frequency
@@ -329,6 +329,11 @@ export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashS
     });
 
     // Build time zones for compression
+    // a block's line is an event too: a quiet stretch is never compressed over it
+    for (const b of seenBlocks) {
+      const t = b.seen_ms! * 1_000_000;
+      if (t >= minTime && t <= maxTime) transitionTimes.push(t);
+    }
     const timeZones = buildTimeZones(transitionTimes, minTime, maxTime);
     const compressed = timeZones !== null;
 
@@ -625,9 +630,9 @@ export default function ForkTimeline({
         )}
         {markers.length > 0 && (
           <span className="text-[9px] text-muted-foreground/60">
-            {markers.some((m) => !m.header) && "│ when a block reached our node"}
-            {markers.some((m) => !m.header) && markers.some((m) => m.header) && " · "}
-            {markers.some((m) => m.header) && "┆ a block's header time (its miner's clock)"}
+            {markers.some((m) => !m.firstWork) && "│ when a block reached our node"}
+            {markers.some((m) => !m.firstWork) && markers.some((m) => m.firstWork) && " · "}
+            {markers.some((m) => m.firstWork) && "┆ when our feeds first built on a block (its arrival wasn't recorded)"}
             {markers.some((m) => !m.best) ? <> · <span className="text-[#1550a4] dark:text-blue-400">stale</span></> : null}
           </span>
         )}
@@ -693,7 +698,7 @@ export default function ForkTimeline({
             {markers.filter((m) => m.edge === null).map((m) => (
               <div
                 key={m.hash}
-                className={`absolute inset-y-0 w-0 border-l ${m.header ? "border-dashed" : ""} ${m.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
+                className={`absolute inset-y-0 w-0 border-l ${m.firstWork ? "border-dashed" : ""} ${m.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
                 style={{ left: `${m.pct}%` }}
               />
             ))}
@@ -801,7 +806,7 @@ export function MiniForkTimeline(props: ModelInput) {
       {lines.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10" style={{ bottom: "1.25rem" }}>
           {lines.map((b) => (
-            <div key={b.hash} className={`absolute inset-y-0 w-0 border-l ${b.header ? "border-dashed" : ""} ${b.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
+            <div key={b.hash} className={`absolute inset-y-0 w-0 border-l ${b.firstWork ? "border-dashed" : ""} ${b.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
               style={{ left: `${b.pct}%` }} />
           ))}
         </div>

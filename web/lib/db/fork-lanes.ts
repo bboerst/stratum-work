@@ -99,3 +99,27 @@ export async function getLaneEnds(
   );
   return rows;
 }
+
+/**
+ * When our feeds first built on each of these blocks at `height` (excluded pools left out): the first template whose
+ * parent it is, µs. Where our node's arrival of a block wasn't recorded (before about 976,000), this is the line the
+ * fork chart draws for it: measured from our feeds, unlike the header time its miner set (often seconds to minutes off).
+ */
+export async function getFirstWork(
+  height: number, hashes: string[], fromMs: number, spanToMs: number, excludePools: string[],
+): Promise<{ hash: string; at_us: string }[]> {
+  if (hashes.length === 0) return [];
+  const { rows } = await getPgPool().query<{ hash: string; at_us: string }>(
+    `WITH w AS (SELECT greatest(t_to, to_timestamp($4::double precision / 1000) + interval '2 hours') AS t_to
+                  FROM height_window($1::int, $1::int))
+     SELECT encode(stratum_prev_hash_to_block_hash(t.prev_hash), 'hex') AS hash,
+            (extract(epoch FROM min(t.received_at)) * 1000000)::bigint AS at_us
+       FROM templates t JOIN sources s ON s.id = t.source_id, w
+      WHERE t.height = $1::int AND t.received_at >= to_timestamp($3::double precision / 1000) AND t.received_at <= w.t_to
+        AND stratum_prev_hash_to_block_hash(t.prev_hash) = ANY (SELECT decode(h, 'hex') FROM unnest($2::text[]) h)
+        AND s.name <> ALL ($5::text[])
+      GROUP BY 1`,
+    [height, hashes, fromMs, spanToMs, excludePools],
+  );
+  return rows;
+}

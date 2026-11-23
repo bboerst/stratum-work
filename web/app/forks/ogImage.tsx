@@ -11,7 +11,7 @@ import { KIND_TITLE, SELECTION_ORDER, SITE_NAME, fmtInt, type ShareKind } from "
  * The Forks link-preview card (opengraph-image / twitter-image of /forks, /forks/<height> and /forks/<height>/<kind>),
  * drawn like the page's episode diagram (components/Forks.tsx WhyUnknown) in its dark theme and monospace font: the
  * header (kind, height, parent), our chain's blocks with their miners, the parent below in the kind's colour, and the
- * pools that built on it (lib/forksCard.ts). Names follow the page's rules (POOL_BLACKLIST pools left out). It reads the
+ * pools that built on it (lib/forksCard.ts). Names follow the page's rules (a POOL_BLACKLIST pool only at or below our tip). It reads the
  * cached summary and the cached blocks at the height, so a card costs one render; browsers and crawlers may keep it
  * for CACHE_S.
  */

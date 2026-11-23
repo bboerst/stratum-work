@@ -6,7 +6,7 @@
  * cached, the table-or-live choice (the live read only for the default range while the backend's table is empty), the
  * range's cutoff as a block count, the episode assembly (draftEpisodes / finishEpisodes), stale parents' episodes
  * (kind 'stale' from the recorded fact; their read: one bounded branch per stale block), and the invalid-coinbase
- * findings (a badge on the episodes at that height, else a row of its own; excluded pools left out).
+ * findings (a badge on the episodes at that height, else a row of its own; an excluded pool kept, a finding on a best block is history).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrillRows, EpisodeFactsSql, EpisodePoolSql, InvalidCoinbaseFlagSql, ParentVersionsSql } from '../db/unknown-parents';
@@ -124,7 +124,7 @@ describe('GET /api/forks', () => {
       pairs: [{ epoch: E, feed_a: 'P', pool_a: 1, feed_b: 'Q', pool_b: 1, shared: 40 }],
     });
     const body = await (await get(route)).json();
-    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);   // just the episodes' epochs
+    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], []);   // just the episodes' epochs; excluded pools are history there
     expect(body.episodes[0]).toMatchObject({ providers: 2, provider_groups: [['P', 'Q'], ['R']] });
   });
 
@@ -166,7 +166,7 @@ describe('GET /api/forks', () => {
     const res = await get(route, '?view=providers');
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
     expect(await res.json()).toEqual({ epochs: { [E]: [['P', 'Q'], ['R']] } });
-    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], ['Hidden']);
+    expect(getEpochGroupInputs).toHaveBeenCalledWith([E], []);   // counted per finished height: history
     await get(route, '?view=providers');
     expect(getEpochGroupInputs).toHaveBeenCalledTimes(1);
   });
@@ -207,7 +207,7 @@ describe('GET /api/forks', () => {
     getEpisodeFacts.mockImplementationOnce(async q => q.map((_, i) => i === 0
       ? facts({ i: 1, in_stale: true, stale_height: 900_000, stale_header_source: 'node', stale_miner: 'M' }) : facts({ i: 2 })));
     const body = await (await get(route)).json();
-    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith(['Hidden'], '6e');
+    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith([], '6e');   // every pool; the realtime rule is applied after
     expect(body.episodes.map((e: { parent: string; kind: string }) => [e.parent, e.kind])).toEqual([[P2, 'stale'], [P1, 'bitcoin_block']]);
     expect(body.episodes[0]).toMatchObject({ auxpow_templates: null, auxpow_share: null, templates: 2,
       facts: { in_stale_blocks: true, stale_block: { height: 900_000, header_source: 'node', miner: 'M' }, pow_ok: true } });
@@ -222,13 +222,14 @@ describe('GET /api/forks', () => {
     expect((await res.json()).episodes[0].facts.stale_block).toEqual({ height: 900_000, header_source: 'node', miner: 'HIDDEN', prev: null });
   });
 
-  it('badges the episodes at a finding\'s height (per pool, excluded pools left out)', async () => {
+  it('badges the episodes at a finding\'s height (per pool; an excluded pool too: a best block\'s finding is history)', async () => {
     const { route, getInvalidCoinbaseFlags } = await loadRoute({ blacklist: 'Hidden' });
     getInvalidCoinbaseFlags.mockResolvedValueOnce([flag()]);
     const body = await (await get(route)).json();
     expect(body.episodes).toHaveLength(1);
     expect(body.episodes[0].invalid_coinbase).toEqual({ height: 900_001, pools: [
       { pool: 'P', templates: 2, total_sats: 329_000_000, subsidy_sats: 312_500_000 },
+      { pool: 'Hidden', templates: 1, total_sats: 330_000_000, subsidy_sats: 312_500_000 },
       { pool: 'Q', templates: 1, total_sats: 320_000_000, subsidy_sats: 312_500_000 },
     ] });
   });
@@ -238,19 +239,22 @@ describe('GET /api/forks', () => {
     getInvalidCoinbaseFlags.mockResolvedValue([
       flag({ height: 900_005 }),
       flag({ height: 900_006, parent: 'ef'.repeat(32), offenders: [{ pool_name: 'Hidden', total_sats: 1, subsidy_sats: 0 }] }),
+      flag({ height: 900_007, parent: 'ed'.repeat(32), offenders: [] }),   // no offenders left: dropped
       flag({ height: TIP - 12_096, parent: 'ee'.repeat(32) }),     // below the range
     ]);
     const body = await (await get(route)).json();
-    expect(body.episodes).toHaveLength(2);
+    expect(body.episodes).toHaveLength(3);                          // 900,006's only offender is excluded: history, kept
+    expect(body.episodes.find((e: { parent: string }) => e.parent === 'ef'.repeat(32)).pools).toEqual([{ pool: 'Hidden', connections: [], templates: 1 }]);
     const row = body.episodes.find((e: { kind: string }) => e.kind === 'invalid_coinbase');
-    expect(row).toMatchObject({ parent: BEST, height: 900_005, first_ms: 800, last_ms: 9000, duration_ms: 8200, templates: 3,
-      pools: [{ pool: 'P', connections: [], templates: 2 }, { pool: 'Q', connections: [], templates: 1 }],
+    expect(row).toMatchObject({ parent: BEST, height: 900_005, first_ms: 800, last_ms: 9000, duration_ms: 8200, templates: 4,
+      pools: [{ pool: 'P', connections: [], templates: 2 }, { pool: 'Hidden', connections: [], templates: 1 },
+        { pool: 'Q', connections: [], templates: 1 }],
       facts: { tip_at_first: 900_004, tip_offset: 0 }, invalid_coinbase: { height: 900_005 } });
     expect(body.episodes.find((e: { kind: string }) => e.kind !== 'invalid_coinbase').invalid_coinbase).toBeNull();
     // its drill-in labels our best block as the best chain, not "this parent"
     expect((await get(route, `?parent=${BEST}`)).status).toBe(200);
-    expect(getDrillRows.mock.calls[0][0]).toMatchObject({ parent: '', height: 900_005, pools: ['P', 'Q'] });
-    expect((await (await get(route, '?range=all')).json()).episodes).toHaveLength(3);   // all history: the old one too
+    expect(getDrillRows.mock.calls[0][0]).toMatchObject({ parent: '', height: 900_005, pools: ['P', 'Hidden', 'Q'] });
+    expect((await (await get(route, '?range=all')).json()).episodes).toHaveLength(4);   // all history: the old one too
   });
 
   it('does not badge another chain\'s episode passing through the height, or one away from our tip', async () => {
@@ -307,7 +311,7 @@ describe('GET /api/forks', () => {
     expect(text).not.toContain('f00dface');
     const body = JSON.parse(text);
     expect(getDrillRows).toHaveBeenCalledWith(
-      { parent: P1, height: 900_001, pools: ['P'], from_ms: 1000 - 300_000, to_ms: 5000 + 300_000 }, ['Hidden']);
+      { parent: P1, height: 900_001, pools: ['P'], from_ms: 1000 - 300_000, to_ms: 5000 + 300_000 }, { pools: ['Hidden'], tip: TIP });
     expect(body).toMatchObject({ from_ms: 1000 - 300_000, to_ms: 305_000, truncated: false, episode: { parent: P1 },
       blocks: [{ hash: 'ab'.repeat(32), height: 900_000, arrival_ms: 900, best: true, miner: 'P' }] });
     expect(body.templates[0]).toMatchObject({ id: '1-1000123-j1', pool_name: 'P', parent: 'this', connections: ['a', 'b'],
@@ -316,11 +320,40 @@ describe('GET /api/forks', () => {
     expect(getDrillRows).toHaveBeenCalledTimes(1);
   });
 
-  it('passes POOL_BLACKLIST to the summary reads', async () => {
-    const { route, getEpisodePoolRows, getStaleEpisodePoolRows } = await loadRoute({ blacklist: 'Hidden, Other' });
-    await get(route);
-    expect(getEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '6e');
-    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith(['Hidden', 'Other'], '6e');
+  it('keeps an excluded pool\'s work at or below our tip (history), and leaves out any above it', async () => {
+    const { route, getEpisodePoolRows, getStaleEpisodePoolRows, getEpisodeFacts } = await loadRoute({ blacklist: 'Hidden, Other' });
+    getEpisodeFacts.mockImplementationOnce(async q => q.map((_, i) => facts({ i: i + 1 })));
+    const P3 = '00'.repeat(10) + '56'.repeat(22);
+    getEpisodePoolRows.mockResolvedValueOnce([
+      poolRow(), poolRow({ pool: 'Hidden', first_ms: '900' }),                                  // at 900,001: history
+      poolRow({ parent: P3, heights: { [TIP + 1]: 3 }, first_ms: '6000', last_ms: '7000' }),  // above the tip
+      poolRow({ parent: P3, pool: 'Other', heights: { [TIP]: 1, [TIP + 1]: 2 }, first_ms: '6000', last_ms: '7000' }),
+    ]);
+    const body = await (await get(route)).json();
+    expect(getEpisodePoolRows).toHaveBeenCalledWith([], '6e');
+    expect(getStaleEpisodePoolRows).toHaveBeenCalledWith([], '6e');
+    const pools = (parent: string) => body.episodes.find((e: { parent: string }) => e.parent === parent).pools.map((p: { pool: string }) => p.pool);
+    expect(pools(P1)).toEqual(['Hidden', 'P']);
+    expect(pools(P3)).toEqual(['P']);                                 // one of Other's heights is above the tip
+  });
+
+  it('leaves the excluded pools out of every height while our tip is unknown (fail closed)', async () => {
+    const { route, getEpisodePoolRows, getBestTipHeight } = await loadRoute({ blacklist: 'Hidden' });
+    getBestTipHeight.mockResolvedValue(null);
+    getEpisodePoolRows.mockResolvedValueOnce([poolRow(), poolRow({ pool: 'Hidden', first_ms: '900' })]);
+    const body = await (await get(route)).json();
+    expect(body.episodes[0].pools.map((p: { pool: string }) => p.pool)).toEqual(['P']);
+  });
+
+  it('leaves an excluded pool out of another chain\'s episode (its heights aren\'t ours), and out of its drill-in', async () => {
+    const { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows } = await loadRoute({ blacklist: 'Hidden' });
+    getEpisodePoolRows.mockResolvedValueOnce([poolRow(), poolRow({ pool: 'Hidden', first_ms: '900' })]);
+    // far below our tip with other nbits: another chain, both times it is drafted
+    getEpisodeFacts.mockImplementation(async q => q.map(() => facts({ bits_prev: String(0x1d00ffff), bits_at: String(0x1d00ffff), tip: 899_000 })));
+    const body = await (await get(route)).json();
+    expect(body.episodes[0]).toMatchObject({ kind: 'other_chain', templates: 3, first_ms: 1000, pools: [{ pool: 'P' }] });
+    await get(route, `?parent=${P1}`);
+    expect(getDrillRows.mock.calls[0][1]).toEqual({ pools: ['Hidden'], tip: null });
   });
 
   it('reads the range asked for, with its heights, cached per range; rejects others', async () => {

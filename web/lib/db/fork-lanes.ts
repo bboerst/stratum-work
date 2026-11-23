@@ -5,7 +5,8 @@
  * templates the finding is about.
  *
  * Bounded by the height's receive window, widened to the episodes shown at that height (a feed can stay on a losing
- * parent for hours). POOL_BLACKLIST pools are excluded in SQL, as from every other read of /api/forks.
+ * parent for hours). The pools passed as excluded are left out in SQL: POOL_BLACKLIST pools at a height above our tip
+ * (getForkLanes decides per height).
  */
 import { getPgPool } from './pg';
 
@@ -101,7 +102,7 @@ export async function getLaneEnds(
 }
 
 /**
- * When our feeds first built on each of these blocks at `height` (excluded pools left out): the first template whose
+ * When our feeds first built on each of these blocks at `height` (the pools passed as excluded left out): the first template whose
  * parent it is, µs. Where our node's arrival of a block wasn't recorded (before about 976,000), this is the line the
  * fork chart draws for it: measured from our feeds, unlike the header time its miner set (often seconds to minutes off).
  */

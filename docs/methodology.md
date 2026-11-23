@@ -350,7 +350,8 @@ labelled by the parent it built on) is behind a toggle there.
 with no transactions to pay fees from (`invalid_coinbase_no_merkle` in `blocks.analysis`, one entry per template).
 Each episode at that height that was at our tip (within one block of it, and not another chain's) carries it as a
 badge: the pools and what they paid against the subsidy. A finding at a height where nothing forked is a row of its
-own (kind `invalid_coinbase`), so no finding is lost. Pools hidden from the site are left out of the badge too.
+own (kind `invalid_coinbase`), so no finding is lost. A pool hidden from the live site is in the badge too: a finding
+on a block of our best chain is history.
 The page's "Invalid" filter takes all invalid work, work that could never make a valid block: invalid parents and
 invalid coinbases. On a row's timeline a template is marked invalid only where the finding names its pool at that
 height, by the finding's own rule: empty, and its coinbase pays more than the subsidy, reassembled with the stored
@@ -365,6 +366,16 @@ on identical transaction sets in that epoch. A pool's provider is that of its no
 fewer than 5 sets in the epoch, or none, has an unknown provider and isn't counted as one. An epoch with no counted
 heights gives no count, never another epoch's: older episodes have none until the history is counted. Like the
 groups themselves, a shared provider says the pools received the same work, not that they share an owner.
+
+**Pools hidden from the live site** (`POOL_BLACKLIST`). Hiding a pool is about its live work: its templates above our
+tip, which are what it is handing out right now. Forks is about what already happened, so a hidden pool's work at or
+below our tip is shown like any other pool's: its tiles, its lanes on the timeline, its templates in a row's evidence,
+its offenders in a finding, its template provider. Its templates above our tip are left out of every Forks read (the
+next height's, while a race at the tip is still open; the boundary is the same as the height page's). Two cases fail
+closed: while our tip is unknown, a hidden pool is left out of every height, and it is always left out of another
+chain's work, whose heights aren't Bitcoin's. The tip used is the one the summary was read at (at most five minutes
+old): never ahead of ours, so it can only leave out more. The [template providers](#template-providers) page itself
+still leaves hidden pools out.
 
 ## Template providers
 

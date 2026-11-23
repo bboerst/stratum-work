@@ -28,12 +28,13 @@
  * order the de-duplicated reads rank them in (templates_copies' source_rank), over all of the pool's sources, so a
  * letter names the same connection in every episode. Site and replica names are never returned.
  *
- * POOL_BLACKLIST pools are excluded in SQL everywhere (callers pass the names): they add no templates, pools or
- * connections, and an episode only they built on doesn't exist here. All SQL is parameterized. Times are ms (summary)
+ * Reads that take excluded pools leave them out in SQL (callers pass the names, or a RealtimeExclusion: only their
+ * templates above our tip). The Forks summary reads every pool and applies the realtime rule itself (getEpisodes). All SQL is parameterized. Times are ms (summary)
  * or µs (template rows) since the epoch.
  */
 import { getPgPool } from './pg';
 import type { TemplateRow } from './pg-mapping';
+import type { RealtimeExclusion } from '../poolBlacklist';
 
 export const UNKNOWN_PARENTS_DAYS = 90;            // the live fallback's window (wall-clock: it reads templates by time)
 export const EPOCH_BLOCKS = 2016;                  // a difficulty epoch
@@ -442,16 +443,18 @@ const US = (col: string) => `(extract(epoch FROM ${col}) * 1000000)::bigint`;
  * (a block we know that isn't on the best chain) or 'other' (another unknown parent). Plus every block we know at
  * h - 1 and h, with its arrival. Bounded: source ids as values (columnstore segments), height and time ranges, a row cap.
  */
-export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promise<DrillRows> {
+export async function getDrillRows(q: DrillQuery, ex: RealtimeExclusion): Promise<DrillRows> {
   const pool = getPgPool();
-  const pools = q.pools.filter(p => !excludePools.includes(p));
+  // an excluded pool (ex.pools) keeps its templates at or below our tip (history); above it, or with no tip, none
+  const pools = ex.tip === null ? q.pools.filter(p => !ex.pools.includes(p)) : q.pools;
   const ids = pools.length === 0 ? [] : (await pool.query<{ id: number }>(
-    `SELECT id FROM sources WHERE name = ANY ($1::text[]) AND name <> ALL ($2::text[])`, [pools, excludePools])).rows.map(r => r.id);
+    `SELECT id FROM sources WHERE name = ANY ($1::text[])`, [pools])).rows.map(r => r.id);
   const ms = (p: string) => `(timestamptz 'epoch' + ${p}::bigint * interval '1 millisecond')`;
   const templates = ids.length === 0 ? [] : (await pool.query<DrillTemplateRow>(
     `WITH ${dedup(`SELECT t.*, s.name AS pool, s.conn FROM templates t JOIN src s ON s.id = t.source_id
                     WHERE t.source_id = ANY ($2::int[]) AND t.height BETWEEN $3::int - 1 AND $3::int + 1
-                      AND t.received_at >= ${ms('$4')} AND t.received_at <= ${ms('$5')}`)}
+                      AND t.received_at >= ${ms('$4')} AND t.received_at <= ${ms('$5')}
+                      AND (s.name <> ALL ($9::text[]) OR t.height <= $8::int)`)}
      SELECT d.source_id, d.pool AS source_name, ${US('d.received_at')} AS received_us, d.height, d.job_id, d.prev_hash,
             d.coinbase1, d.coinbase2, d.merkle_branches, d.version, d.nbits, d.ntime, d.clean_jobs, d.extranonce1,
             d.extranonce2_length, d.latency_ms, d.latency_method::text AS latency_method, d.copies::int AS copies,
@@ -468,7 +471,7 @@ export async function getDrillRows(q: DrillQuery, excludePools: string[]): Promi
            FROM (SELECT DISTINCT prev_hash FROM d) x
        ) l ON l.prev_hash = d.prev_hash
       ORDER BY d.received_at, d.pool, d.job_id LIMIT $7`,
-    [excludePools, ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1])).rows;
+    [[], ids, q.height, q.from_ms, q.to_ms, q.parent, DRILL_MAX_TEMPLATES + 1, ex.tip, ex.pools])).rows;   // $1: src keeps every pool
   const blocks = await getDrillBlocks(q.height);
   return { templates: templates.slice(0, DRILL_MAX_TEMPLATES), truncated: templates.length > DRILL_MAX_TEMPLATES, blocks };
 }

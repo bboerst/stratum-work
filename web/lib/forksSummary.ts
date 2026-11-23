@@ -4,13 +4,14 @@ import {
   RANGE_BLOCKS, getBestTipHeight, getDrillBlocks, getParentVersions, type DrillBlockRow, type UnknownParentsRange,
 } from "./db/unknown-parents";
 import { getEpisodes, type Episode } from "./unknownParents";
-import { blacklistedPoolNames } from "./poolBlacklist";
+import { excludedAt, realtimeExclusion, type RealtimeExclusion } from "./poolBlacklist";
 import { followsDeployment, inMandatoryWindow } from "./softForks";
 
 /**
  * The Forks summary per range, shared by /api/forks and the Forks pages (short links, link previews, the preview
  * image): computed once per SUMMARY_MS per process and range, and served stale while a refresh runs. POOL_BLACKLIST
- * pools are left out of every read. Work on a soft fork's own chain (lib/softForks.ts: BIP-110's split) isn't a race
+ * is realtime-only: an excluded pool's work at or below our tip is history and is shown; above it (or with no tip), and
+ * on another chain, it is left out (getEpisodes). Work on a soft fork's own chain (lib/softForks.ts: BIP-110's split) isn't a race
  * on Bitcoin's chain: it isn't shown, and is counted in the response.
  */
 export const SUMMARY_MS = 5 * 60_000;
@@ -47,9 +48,11 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
   const range = key.replace(/-lite$/, '') as UnknownParentsRange;
   const entry: SummaryEntry = {
     at: now, settled: null, fallback,
-    promise: Promise.all([
-      getEpisodes(blacklistedPoolNames(), range, { providers: !key.endsWith('-lite') }).then(withoutSoftForkChains), getBestTipHeight(),
-    ]).then(([{ episodes: all, hidden: soft_fork_chains }, tip_height]) => {
+    // the tip first: it is the boundary of the excluded pools' history (lib/poolBlacklist.ts)
+    promise: getBestTipHeight().then(async tip_height => {
+      const ex = realtimeExclusion(tip_height);
+      const { episodes: all, hidden: soft_fork_chains } = await withoutSoftForkChains(
+        await getEpisodes(ex, range, { providers: !key.endsWith('-lite') }), ex);
       // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
       // (collection started mid-height): not shown, and counted in the response.
       const episodes = all.filter(e => e.facts.tip_at_first !== null);
@@ -75,11 +78,11 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
  * our best block there not signalling, every template on the parent signalling), and how many were left out. Only
  * episodes inside a window are read again (a few heights).
  */
-export async function withoutSoftForkChains(episodes: Episode[]): Promise<{ episodes: Episode[]; hidden: number }> {
+export async function withoutSoftForkChains(episodes: Episode[], ex: RealtimeExclusion): Promise<{ episodes: Episode[]; hidden: number }> {
   const candidates = episodes.filter(e => inMandatoryWindow(e.height));
   if (candidates.length === 0) return { episodes, hidden: 0 };
   const rows = await getParentVersions(candidates.map(e => ({ parent: e.parent, height: e.height, first_ms: e.first_ms, last_ms: e.last_ms })),
-    blacklistedPoolNames());
+    excludedAt(ex, Math.max(...candidates.map(e => e.height))));
   const hide = new Set<Episode>();
   for (const r of rows) {
     const e = candidates[r.i - 1];

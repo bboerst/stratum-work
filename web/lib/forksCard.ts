@@ -7,9 +7,8 @@ import { fmtDuration, fmtInt } from "./forksPath";
  * parent below them, and beside it the pools that built on it. Pure, so the text is tested
  * (lib/__tests__/forksCard.test.ts).
  *
- * Names follow the page's rules: the pools are the episode's (POOL_BLACKLIST pools already left out of the summary); a
- * best-chain block's miner as recorded; a stale block's miner is null when it's an excluded pool (finishEpisodes,
- * getDrillBlocks).
+ * Names follow the page's rules: the pools are the episode's (a POOL_BLACKLIST pool only where the summary keeps it:
+ * its work at or below our tip); every block's miner as recorded (finishEpisodes, getDrillBlocks).
  */
 
 export interface CardBlock { block_hash: string; height: number; best: boolean; miner: string | null }

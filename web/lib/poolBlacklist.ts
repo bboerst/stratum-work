@@ -38,3 +38,25 @@ export function filterBlacklistedAboveTip<T>(
   if (typeof tip === 'number' && Number.isFinite(tip) && height <= tip) return items;
   return filterBlacklistedItems(items, getPoolName);
 }
+
+/**
+ * filterBlacklistedAboveTip's rule for reads that filter in SQL (the Forks reads): POOL_BLACKLIST pools are left out
+ * of the templates at heights above `tip` (all of them when the tip is unknown); at or below it, their work is history
+ * and stays.
+ */
+export interface RealtimeExclusion {
+  pools: string[];
+  tip: number | null;            // our best-chain tip; null: unknown (fail closed)
+}
+
+export function realtimeExclusion(tip: number | null | undefined): RealtimeExclusion {
+  return { pools: blacklistedPoolNames(), tip: typeof tip === 'number' && Number.isFinite(tip) ? tip : null };
+}
+
+/** The pools to leave out of a read of templates at `height`. */
+export function excludedAt(ex: RealtimeExclusion, height: number): string[] {
+  return ex.tip !== null && height <= ex.tip ? [] : ex.pools;
+}
+
+/** The pools to leave out of every height (another chain's work: its heights aren't Bitcoin's, so no tip applies). */
+export const excludedEverywhere = (ex: RealtimeExclusion): RealtimeExclusion => ({ pools: ex.pools, tip: null });

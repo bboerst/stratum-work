@@ -176,7 +176,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     await insert(`${multi}/a`, 10, H, 'm1', X_A, { ntime: 1_790_000_100 });
     await insert(`${multi}/b`, 10.5, H, 'n1', X_A, { ntime: 1_790_000_100 });   // exact copy of m1: counted once
     await insert(`${multi}/b`, 40, H, 'n2', X_A);                                 // only on connection b
-    await insert(hidden, 1, H, 'x1', X_A);        // blacklisted, and first: a leak would show in counts, chips and first_ms
+    await insert(hidden, 1, H, 'x1', X_A);        // blacklisted, at our tip's height: history, shown (and first)
     // Bitcoin work around it (drill-in labels): on B1 (best), on S1 (stale), then on B0 (best) at H + 1
     await insert(single, 2, H, 'w1', B1);
     await insert(`${multi}/a`, 30, H, 'w2', S1);
@@ -195,11 +195,12 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     // B: the all-ff parent at H + 1, T0 + 300 .. T0 + 320
     await insert(single, 300, H + 1, 'b1', X_B);
     await insert(single, 320, H + 1, 'b2', X_B);
+    await insert(hidden, 310, H + 1, 'x4', X_B);  // blacklisted, above our tip: realtime work, never shown
     // C: another chain, far below our tip, other nbits
     await insert(`${multi}/a`, 1000, HC, 'c1', X_C, { nbits: OTHER_NBITS });
     await insert(`${multi}/a`, 1003, HC, 'c2', X_C, { nbits: OTHER_NBITS });
     await insert(`${multi}/a`, 1004, HC + 1, 'c3', X_C, { nbits: OTHER_NBITS }); // a second height, outvoted
-    // only the blacklisted pool: no episode at all
+    // only the blacklisted pool, on another chain (its heights aren't ours, so no tip applies): no episode at all
     await insert(hidden, 2000, HC, 'x2', X_H, { nbits: OTHER_NBITS });
     // D: 200 days ago (120 days before T0): between the cutoffs
     await insert(single, -120 * DAY, HD, 'd1', X_D, { nbits: OTHER_NBITS });
@@ -310,10 +311,11 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     const eps = mine(body.episodes).filter(e => e.parent !== X_E);
     expect(eps.map(e => e.parent)).toEqual([X_A, X_B, X_C]);               // oldest first; X_H (blacklisted only) absent
     const [a, b, c] = eps;
-    expect(a).toMatchObject({
-      height: H, templates: 4, auxpow_templates: 1, first_ms: (T0 + 5) * 1000, last_ms: (T0 + 65) * 1000,
-      duration_ms: 60_000,
-      pools: [{ pool: single, connections: ['a'], templates: 2 }, { pool: multi, connections: ['a', 'b'], templates: 2 }],
+    expect(a).toMatchObject({                                              // the blacklisted pool's history counts
+      height: H, templates: 5, auxpow_templates: 1, first_ms: (T0 + 1) * 1000, last_ms: (T0 + 65) * 1000,
+      duration_ms: 64_000,
+      pools: [{ pool: hidden, connections: ['a'], templates: 1 }, { pool: single, connections: ['a'], templates: 2 },
+        { pool: multi, connections: ['a', 'b'], templates: 2 }],
     });
     expect(b).toMatchObject({ height: H + 1, templates: 2, pools: [{ pool: single, connections: ['a'], templates: 2 }] });
     expect(c).toMatchObject({ height: HC, templates: 3, pools: [{ pool: multi, connections: ['a'], templates: 3 }] });
@@ -337,30 +339,50 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     });
   });
 
-  it('leaves the blacklisted pool out: counts, chips, episodes, and never returns site names', async () => {
+  it('shows the blacklisted pool\'s history; leaves out its work above our tip and on another chain; no site names', async () => {
     const { text, body } = await get();
-    expect(text).not.toContain(hidden);
     expect(text).not.toContain(SITE);
-    expect(body.episodes.some((e: Ep) => e.parent === X_H)).toBe(false);
+    const pools = (parent: string) => (body.episodes as Ep[]).find(e => e.parent === parent)!.pools.map(p => p.pool);
+    expect(pools(X_A)).toContain(hidden);                                   // at H, our tip: history
+    expect(pools(X_B)).toEqual([single]);                                   // its x4 at H + 1, above the tip
+    expect(body.episodes.some((e: Ep) => e.parent === X_H)).toBe(false);    // another chain: fail closed
     expect((await get(`?parent=${X_H}`)).status).toBe(404);
     const drill = await get(`?parent=${X_A}`);
-    expect(drill.text).not.toContain(hidden);
+    const ids = drill.body.templates.map((t: { id: string }) => t.id.split('-').pop());
+    expect(ids).toEqual(expect.arrayContaining(['x1', 'x3']));             // at H
+    expect(ids).not.toContain('x4');                                        // at H + 1, inside the drill-in's minutes
     expect(drill.text).not.toContain(SITE);
     expect(drill.text).not.toContain(EN1[hidden]);
+  });
+
+  it('leaves the blacklisted pool out everywhere while our tip is unknown (fail closed)', async () => {
+    const up = await import('../unknownParents');
+    const eps = await up.getEpisodes({ pools: [hidden], tip: null }, 'all');
+    expect(eps.flatMap(e => e.pools.map(p => p.pool))).not.toContain(hidden);
+    // the drill-in of the episode with its work (as at tip H): filtered per template by the tip it is given
+    const xa = (await up.getEpisodes({ pools: [hidden], tip: H }, 'all')).find(e => e.parent === X_A)!;
+    expect(xa.pools.map(p => p.pool)).toContain(hidden);
+    const drill = await up.getDrill(xa, { pools: [hidden], tip: null });
+    expect(drill.templates.map(t => t.pool_name)).not.toContain(hidden);
+    // and with the tip one below: x1 and x3 (at H) are above it
+    const below = await up.getDrill(xa, { pools: [hidden], tip: H - 1 });
+    expect(below.templates.map(t => t.pool_name)).not.toContain(hidden);
+    expect((await up.getDrill(xa, { pools: [hidden], tip: H })).templates.map(t => t.pool_name)).toContain(hidden);
   });
 
   it('drills into an episode: its pools at H - 1 .. H + 1 around its minutes, labelled by parent, with the blocks', async () => {
     const { status, body } = await get(`?parent=${X_A.toUpperCase()}`);
     expect(status).toBe(200);
     expect(body.episode.parent).toBe(X_A);
-    expect(body.from_ms).toBe((T0 + 5) * 1000 - 300_000);
+    expect(body.from_ms).toBe((T0 + 1) * 1000 - 300_000);                // the blacklisted pool's x1 (history) is first
     expect(body.to_ms).toBe((T0 + 65) * 1000 + 300_000);
     expect(body.truncated).toBe(false);
     const got = body.templates.map((t: { id: string; parent: string; connections: string[]; copies: number }) =>
       [t.id.split('-').pop(), t.parent, t.connections.join(''), t.copies]);
-    expect(got).toEqual([
-      ['w1', 'best', 'a', 1], ['w4', 'best', 'a', 1], ['a1', 'this', 'a', 1], ['m1', 'this', 'ab', 2], ['w2', 'stale', 'a', 1],
-      ['n2', 'this', 'b', 1], ['a2', 'this', 'a', 1], ['w3', 'best', 'a', 1], ['b1', 'other', 'a', 1], ['b2', 'other', 'a', 1],
+    expect(got).toEqual([                     // the blacklisted pool's x1 and x3 at H (history), not its x4 at H + 1
+      ['x1', 'this', 'a', 1], ['w1', 'best', 'a', 1], ['w4', 'best', 'a', 1], ['a1', 'this', 'a', 1], ['m1', 'this', 'ab', 2],
+      ['w2', 'stale', 'a', 1], ['x3', 'stale', 'a', 1], ['n2', 'this', 'b', 1], ['a2', 'this', 'a', 1], ['w3', 'best', 'a', 1],
+      ['b1', 'other', 'a', 1], ['b2', 'other', 'a', 1],
     ]);
     expect(body.blocks).toEqual([
       { hash: B1, height: H - 1, arrival_ms: T0 * 1000, best: true, miner: 'Synthetic Pool' },
@@ -376,28 +398,28 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect(rows.map(b => [b.block_hash, b.seen, b.stale_only])).toEqual([[B1, true, false], [S1, true, true], [B0, true, false]]);
   });
 
-  it('serves the recorded stale block S1 as a stale episode: its pool inside the window, not the blacklisted one', async () => {
+  it('serves the recorded stale block S1 as a stale episode: its pools inside the window, the blacklisted one too (history)', async () => {
     for (const range of ['', '?range=26e', '?range=all']) {
       const { body, text } = await get(range);
       const s = (body.episodes as Ep[]).filter(e => e.parent === S1);
       expect(s, range).toHaveLength(1);
       expect(s[0]).toMatchObject({
-        kind: 'stale', height: H, heights: [H], templates: 1, auxpow_templates: null,
-        first_ms: (T0 + 30) * 1000, last_ms: (T0 + 30) * 1000,       // the late re-send (w5) is outside H's window
-        pools: [{ pool: multi, connections: ['a'], templates: 1 }],
+        kind: 'stale', height: H, heights: [H], templates: 2, auxpow_templates: null,
+        first_ms: (T0 + 30) * 1000, last_ms: (T0 + 31) * 1000,       // the late re-send (w5) is outside H's window
+        pools: [{ pool: multi, connections: ['a'], templates: 1 }, { pool: hidden, connections: ['a'], templates: 1 }],
       });
       expect(s[0].facts).toMatchObject({
         tip_at_first: H - 1, tip_offset: 0, in_stale_blocks: true, pow_ok: true, bitcoin_difficulty: true,
         stale_block: { height: H - 1, header_source: 'node', miner: 'Synthetic Miner' },
       });
-      expect(text).not.toContain(hidden);
+      expect(text).toContain(hidden);
     }
     // its drill-in: S1 is "this parent"
     const drill = await get(`?parent=${S1}`);
     expect(drill.status).toBe(200);
     const labels = Object.fromEntries(drill.body.templates.map((t: { id: string; parent: string }) => [t.id.split('-').pop(), t.parent]));
-    expect(labels).toMatchObject({ w2: 'this', m1: 'other', w4: 'best' });   // the episode's pool only
-    expect(drill.text).not.toContain(hidden);
+    expect(labels).toMatchObject({ w2: 'this', m1: 'other', w4: 'best', x3: 'this', x1: 'other' });   // the episode's pools only
+    expect(labels).not.toHaveProperty('x4');                                    // the blacklisted pool above our tip
     // a stale block reorged back in is our best block again: no episode
     await admin.query(`UPDATE stale_blocks SET reorged_in_at = now() WHERE block_hash = decode($1, 'hex')`, [S1]);
     expect((await db.getStaleEpisodePoolRows([hidden], 'all')).some(r => r.parent === S1)).toBe(false);
@@ -414,10 +436,9 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
       // the episodes as the route builds them (its summary is cached per range), and the drill-in: which pool mined a
       // block is history, which the blacklist doesn't filter
       const up = await import('../unknownParents');
-      const eps = await up.getEpisodes([hidden], 'all');
+      const eps = await up.getEpisodes({ pools: [hidden], tip: null }, 'all');   // even with its work left out
       const s1 = eps.find(e => e.parent === S1)!;
       expect(s1.facts.stale_block).toEqual({ height: H - 1, header_source: 'node', miner: hidden, prev: B2 });
-      // but none of its work is listed
       expect(eps.flatMap(e => e.pools.map(p => p.pool))).not.toContain(hidden);
     } finally {
       await admin.query(`UPDATE stale_blocks SET mining_pool = $2::jsonb WHERE block_hash = decode($1, 'hex')`,
@@ -427,7 +448,8 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
 
   it('badges the episodes at a finding\'s height, and makes one with no episode there a row of its own', async () => {
     const eps = (await get()).body.episodes as Ep[];
-    const badge = { height: H, pools: [{ pool: single, templates: 2, total_sats: 328_000_000, subsidy_sats: 312_500_000 }] };
+    const badge = { height: H, pools: [{ pool: single, templates: 2, total_sats: 328_000_000, subsidy_sats: 312_500_000 },
+      { pool: hidden, templates: 1, total_sats: 330_000_000, subsidy_sats: 312_500_000 }] };   // a finding on a best block: history
     expect(eps.find(e => e.parent === X_A)!.invalid_coinbase).toEqual(badge);
     expect(eps.find(e => e.parent === S1)!.invalid_coinbase).toEqual(badge);
     expect(eps.find(e => e.parent === X_B)!.invalid_coinbase).toBeNull();    // H + 1

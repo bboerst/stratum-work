@@ -90,6 +90,7 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     await insert(hidden, 8, H, 'x2', S1, { empty: true });
     await insert(one, 125, H + 1, 'n1', B0);                                     // `one` moves on to the next height
     await insert(one, 126, H + 1, 'n2', B0);
+    await insert(hidden, 130, H + 1, 'x3', B0);                                  // the excluded pool moves on too
   });
 
   afterAll(async () => {
@@ -100,9 +101,10 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     await admin?.end();
   });
 
-  const read = async (exclude: string[]) => {
+  // the excluded pool with an unknown tip (left out of every height) unless a test says otherwise
+  const read = async (exclude: string[], tip: number | null = null) => {
     lanes ??= await import('../forkLanes');
-    return lanes.getForkLanes(H, { fromMs: (T0 + 1) * 1000, toMs: (T0 + 60) * 1000 }, exclude);
+    return lanes.getForkLanes(H, { fromMs: (T0 + 1) * 1000, toMs: (T0 + 60) * 1000 }, { pools: exclude, tip });
   };
   const lane = (r: Awaited<ReturnType<typeof read>>, pool: string) => r.lanes.find(l => l.pool === pool)!;
   const parentOf = (r: Awaited<ReturnType<typeof read>>, i: number) => r.parents[i].hash;
@@ -152,10 +154,14 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     }
   });
 
-  it('leaves the excluded pool out entirely; without exclusion it is there', async () => {
-    const shut = await read([hidden]);
-    expect(JSON.stringify(shut)).not.toContain(hidden);
-    const open = await read([]);
-    expect(lane(open, hidden).runs.map(x => x[2])).toEqual([0, 1]);
+  it('leaves the excluded pool out of heights above our tip only (realtime); at or below it, it is history', async () => {
+    for (const tip of [null, H - 1]) expect(JSON.stringify(await read([hidden], tip)), `tip ${tip}`).not.toContain(hidden);
+    // tip H: its work at H shows, with its finding; when it moved on (at H + 1, above the tip) doesn't
+    const atTip = await read([hidden], H);
+    expect(lane(atTip, hidden).runs.map(x => x[2])).toEqual([0, 1]);
+    expect(lane(atTip, hidden).end).toBe(7000);                              // its own last template (T0 + 8)
+    const later = await read([hidden], H + 1);
+    expect(lane(later, hidden).end).toBe(129_000);                           // its first at H + 1 (T0 + 130)
+    expect(lane(await read([]), hidden).runs.map(x => x[2])).toEqual([0, 1]);
   });
 });

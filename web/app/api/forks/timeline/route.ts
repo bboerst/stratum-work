@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { enableHistoricalData } from "../../../../lib/db/blocks";
 import { getForkLanes, type ForkLanes } from "../../../../lib/forkLanes";
 import { getSummary } from "../../../../lib/forksSummary";
-import { blacklistedPoolNames } from "../../../../lib/poolBlacklist";
+import { realtimeExclusion } from "../../../../lib/poolBlacklist";
 import { isHeightFinal } from "../../../../lib/db/mining-notify";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,8 @@ export const dynamic = "force-dynamic";
  *       ForkLanes; 404 unless an episode in all history claims that height (other chains' episodes excepted: their
  *       heights aren't ours), so the route reads only the windows the Forks page shows.
  *
- * The read covers the height's receive window widened to its episodes. POOL_BLACKLIST pools are left out, as from
- * /api/forks. Kept per height for CACHE_MS once its receive window has closed, OPEN_MS before; at most CACHE_ENTRIES
+ * The read covers the height's receive window widened to its episodes. POOL_BLACKLIST is realtime-only, as in
+ * /api/forks: an excluded pool is shown at heights at or below our tip, and left out of any read above it. Kept per height for CACHE_MS once its receive window has closed, OPEN_MS before; at most CACHE_ENTRIES
  * heights (a few KB each); one read per height at a time however many viewers ask.
  */
 const CACHE_MS = 10 * 60_000;      // a height whose receive window has closed (nothing more can arrive)
@@ -33,7 +33,8 @@ export async function GET(request: Request) {
   if (!/^[1-9][0-9]{0,8}$/.test(raw)) return NextResponse.json({ error: "height must be a positive integer" }, { status: 400 });
   const height = Number(raw);
   try {
-    const episodes = ((await getSummary("all-lite")).episodes ?? [])
+    const summary = await getSummary("all-lite");
+    const episodes = (summary.episodes ?? [])
       .filter(e => e.kind !== "other_chain" && (e.heights?.length ? e.heights : [e.height]).includes(height));
     if (episodes.length === 0) return NextResponse.json({ error: "no fork at this height" }, { status: 404 });
     const span = { fromMs: Math.min(...episodes.map(e => e.first_ms)), toMs: Math.max(...episodes.map(e => e.last_ms)) };
@@ -41,7 +42,8 @@ export async function GET(request: Request) {
     const now = Date.now();
     let entry: Entry | undefined = cache.get(height);
     if (!entry || now - entry.at > entry.ttl) {
-      const promise = getForkLanes(height, span, blacklistedPoolNames());
+      // the summary's tip (never ahead of ours): an excluded pool's work above it stays out
+      const promise = getForkLanes(height, span, realtimeExclusion(summary.tip_height));
       promise.catch(() => {});           // handled below; read alongside isHeightFinal
       const final = await isHeightFinal(height).catch(() => false);
       entry = { at: now, ttl: final ? CACHE_MS : OPEN_MS, promise };

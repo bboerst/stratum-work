@@ -443,7 +443,7 @@ function chartProps(l: Lanes) {
   const ends = Object.fromEntries(l.lanes.map(lane => [lane.pool, Math.round((l.from_ms + lane.end) * 1_000_000)]));
   const status = Object.fromEntries(l.parents.filter(p => p.status).map(p => [p.hash, p.status!]));
   const kind = Object.fromEntries(l.parents.filter(p => p.kind).map(p => [p.hash, p.kind!]));
-  return { notifications, ends, canonicalBlockHash: l.active ?? undefined, prevHashStatus: status, prevHashKind: kind, blocks: l.blocks };
+  return { notifications, ends, canonicalBlockHash: l.active ?? undefined, prevHashStatus: status, prevHashKind: kind, blocks: l.blocks, height: l.height };
 }
 
 const SIDE_DOT: Record<string, string> = {
@@ -664,7 +664,7 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
                 {row.heights.length > 1 && <div className="mb-1 text-xs text-foreground/60">at {fmtInt(h)}</div>}
                 {c ? <ForkTimeline {...c} embedded />
                   : <p className="py-6 text-center text-xs text-foreground/60">{lanes ? "Timeline unavailable." : "Loading…"}</p>}
-                {c && back && <p className="mt-1 text-[11px] text-foreground/60">{fmtInt(back.back)} of {fmtInt(back.of)} pools went back to block {fmtInt(h - 2)}</p>}
+                {c && back && <p className="mt-1 text-[11px] text-foreground/60">{fmtInt(back.back)} of {fmtInt(back.of)} pools went back to building on block {fmtInt(h - 2)}</p>}
               </div>
             );
           }) : row.heights.map(h => <HeightForkTimeline key={h} height={h} kindHint={{ [primary.parent]: primary.kind as ParentKind }} />)}

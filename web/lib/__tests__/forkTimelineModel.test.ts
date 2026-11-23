@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forkTimelineModel, formatRelativeTime } from '../../components/ForkTimeline';
+import { blockHeightLabel, forkTimelineModel, formatRelativeTime } from '../../components/ForkTimeline';
 import { reverseHex } from '../../utils/formatters';
 
 const S = 1_000_000_000;
@@ -78,5 +78,18 @@ describe('forkTimelineModel (the Forks rows and the height page)', () => {
   it('labels times in seconds up to two minutes', () => {
     expect([formatRelativeTime(72 * S), formatRelativeTime(77 * S), formatRelativeTime(626 * S), formatRelativeTime(30903 * S)])
       .toEqual(['72s', '77s', '10.4m', '8.6h']);
+  });
+});
+
+describe('blockHeightLabel', () => {
+  it('names the block a run builds on: height - 1, or height - 2 for the block before', () => {
+    expect(blockHeightLabel(1000, 'unknown', 'bitcoin_block')).toBe('building on block 999 · ');
+    expect(blockHeightLabel(1000, 'canonical', undefined)).toBe('building on block 999 · ');
+    expect(blockHeightLabel(1000, 'previous', undefined)).toBe('building on block 998 · ');
+  });
+  it("says nothing without a height, or for another chain's parent", () => {
+    expect(blockHeightLabel(null, 'canonical', undefined)).toBe('');
+    expect(blockHeightLabel(1000, 'unknown', 'other_chain')).toBe('');
+    expect(blockHeightLabel(1000, 'unknown', 'undetermined')).toBe('');
   });
 });

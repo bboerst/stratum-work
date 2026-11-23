@@ -48,6 +48,11 @@ interface ForkTimelineProps {
   ends?: Record<string, number> | null;
   /** Inside a Forks row: no heading, sort or legend (the row has them), no total. */
   embedded?: boolean;
+  /**
+   * The templates' height, when known: tooltips and the legend then name the height of the block each run builds on
+   * (height - 1; the block before, height - 2). Not for another chain's parents, whose height isn't Bitcoin's.
+   */
+  height?: number | null;
 }
 
 const PREV_HASH_COLORS = [
@@ -108,6 +113,16 @@ const STATUS_LABEL: Record<LaneStatus, string> = {
   unknown: "unknown",
   previous: "the block before",
 };
+
+/**
+ * "building on block N · " for a run's parent, from the templates' height: the block before is at height - 2, every
+ * other Bitcoin parent at height - 1. Empty without a height, or for another chain's parent (its height isn't ours).
+ */
+export function blockHeightLabel(height: number | null | undefined, status: LaneStatus | null, kind: ParentKind | undefined): string {
+  if (height === null || height === undefined || kind === "other_chain" || kind === "undetermined") return "";
+  const at = status === "previous" ? height - 2 : height - 1;
+  return `building on block ${at.toLocaleString("en-US")} · `;
+}
 
 /** The tooltip label: the status, or for an unknown parent its inferred kind. */
 function labelOf(status: LaneStatus | null, kind: ParentKind | undefined): string | null {
@@ -217,10 +232,10 @@ function splitSegmentAtGaps(
   return result;
 }
 
-type ModelInput = Pick<ForkTimelineProps, "notifications" | "canonicalBlockHash" | "prevHashStatus" | "prevHashKind" | "blocks" | "kindHint" | "ends">;
+type ModelInput = Pick<ForkTimelineProps, "notifications" | "canonicalBlockHash" | "prevHashStatus" | "prevHashKind" | "blocks" | "kindHint" | "ends" | "height">;
 
 /** The chart's model (rows, segments, axis, colours): shared by the chart and its miniature, so both agree exactly. */
-export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends }: ModelInput) {
+export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends, height }: ModelInput) {
   {
     // Convert big-endian block_hash to raw stratum format for comparison
     const canonicalRaw = canonicalBlockHash
@@ -390,7 +405,7 @@ export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashS
             invalid: seg.invalid === true,
             // invalid work (always empty) keeps its full rose bar
             empty: seg.empty === true && !seg.invalid,
-            tooltip: `${raw.poolName}${staleLabel}${seg.invalid ? " · invalid work" : ""}${seg.empty ? " · empty template" : ""}\n${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
+            tooltip: `${raw.poolName}${staleLabel}${seg.invalid ? " · invalid work" : ""}${seg.empty ? " · empty template" : ""}\n${blockHeightLabel(height, status, kindOf(seg.prevHash))}${formatPrevBlockHash(seg.prevHash)}\n${relStart} → ${relEnd}`,
           });
         }
       }
@@ -529,12 +544,12 @@ export type ForkTimelineModel = NonNullable<ReturnType<typeof forkTimelineModel>
 
 export default function ForkTimeline({
   notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, invalidCoinbasePools, kindHint, title = "Fork",
-  ends, embedded = false,
+  ends, embedded = false, height = null,
 }: ForkTimelineProps) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const computed = useMemo(
-    () => forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends }),
-    [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends],
+    () => forkTimelineModel({ notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends, height }),
+    [notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends, height],
   );
 
   const [sortMode, setSortMode] = useState<"grouped" | "time">("grouped");
@@ -647,7 +662,7 @@ export default function ForkTimeline({
               )}
               {status === "previous" && (
                 <span className="text-[9px] font-semibold text-muted-foreground shrink-0">
-                  The block before
+                  {height ? `Block ${(height - 2).toLocaleString("en-US")}, the block before` : "The block before"}
                 </span>
               )}
               <span className="text-[10px] opacity-75 font-mono break-all">
@@ -812,7 +827,7 @@ export default function ForkTimeline({
           {hasPrevious && (
             <span className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
               <span className="inline-block h-2.5 w-3 rounded-xs" style={{ backgroundColor: PREVIOUS_HASH_COLOR, opacity: 0.82 }} aria-hidden />
-              work on the block before (height − 2)
+              {height ? `building on block ${(height - 2).toLocaleString("en-US")}, the block before` : "building on the block before"}
             </span>
           )}
         </div>

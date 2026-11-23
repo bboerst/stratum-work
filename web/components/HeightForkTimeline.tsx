@@ -85,6 +85,7 @@ export default function HeightForkTimeline({ height, title, invalidCoinbasePools
       invalidCoinbasePools={invalidCoinbasePools}
       kindHint={kindHint}
       title={title}
+      height={height}
     />
   );
 }

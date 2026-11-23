@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPrevHashes, unknownParentKinds } from '../forkStatus';
+import { classifyPrevHashes, unknownParentKinds, wentBack } from '../forkStatus';
 import { prevHashStatusOf } from '../../components/ForkTimeline';
 import { reverseHex } from '../../utils/formatters';
 
@@ -75,5 +75,22 @@ describe('unknownParentKinds', () => {
   it('null without a status or without unknown parents', () => {
     expect(unknownParentKinds(null, [t(C, BITS)], 900_001, BITS, BITS)).toBeNull();
     expect(unknownParentKinds({ [A]: 'canonical', [B]: 'stale' }, [t(A, BITS)], 900_001, BITS, BITS)).toBeNull();
+  });
+});
+
+describe('wentBack (the Forks row\'s fact line)', () => {
+  // parents: 0 our best block, 1 an unknown parent, 2 the block before
+  const parents = [{ status: 'canonical' as const }, { status: 'unknown' as const }, { status: 'previous' as const }];
+  it('counts the pools that built on another parent, and those of them that then went back to the block before', () => {
+    expect(wentBack({ parents, lanes: [
+      { runs: [[0, 1, 0, 1], [20, 2, 0, 0], [60, 0, 0, 0]] },   // went back
+      { runs: [[0, 1, 0, 1], [60, 0, 0, 0]] },                  // stayed
+      { runs: [[0, 0, 0, 0]] },                                 // only on our best block: not counted
+      { runs: [[0, 0, 0, 0], [5, 2, 0, 0], [9, 1, 0, 0]] },     // went back before building on another parent: not a return from it
+    ] })).toEqual({ back: 1, of: 3 });
+  });
+  it('is null when none went back, or without our best block to judge by', () => {
+    expect(wentBack({ parents, lanes: [{ runs: [[0, 1, 0, 0]] }] })).toBeNull();
+    expect(wentBack({ parents: [{ status: null }, { status: 'previous' }], lanes: [{ runs: [[0, 0, 0, 0], [1, 1, 0, 0]] }] })).toBeNull();
   });
 });

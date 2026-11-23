@@ -1,27 +1,32 @@
 /**
- * One height's fork timeline as runs, for the Forks page (/api/forks/timeline): per pool, each change of parent, or
- * of whether its work is invalid, with the time it happened. The browser gets runs only, never templates, so a list of
+ * One height's fork timeline as runs, for the Forks page (/api/forks/timeline): per pool, each change of parent, of
+ * whether its work is invalid, or of whether its template is empty (no transactions), with the time it happened. A
+ * pool that went back to the block before (our best block at height - 2: work at height - 1) gets a run on it, with
+ * the status `previous`, so its run on the parent it left ends there instead of at its next template here. The browser gets runs only, never templates, so a list of
  * races costs a few KB per row (the height page's /api/analysis-data is megabytes per height).
  *
  * A template is marked invalid only where the backend's invalid-coinbase finding names its pool at that height, and
  * by that finding's rule (backend/analytics/invalid_coinbase_no_merkle.py): empty, and its coinbase pays more than the
  * subsidy, reassembled with the stored extranonce2 length or the one other length that parses.
  */
-import { getFirstWork, getLaneEnds, getLaneFacts, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
+import { getFirstWork, getLaneEnds, getLaneFacts, getLaneReturns, getLaneTemplates, type LaneTemplateSql } from './db/fork-lanes';
 import { getDrillBlocks } from './db/unknown-parents';
 import { excludedAt, type RealtimeExclusion } from './poolBlacklist';
 import { knownBlockHashes } from './db/postgres';
-import { classifyPrevHashes, unknownParentKinds, type PrevHashStatus } from './forkStatus';
+import { classifyPrevHashes, unknownParentKinds, type LaneStatus } from './forkStatus';
 import { parseCoinbase } from '../utils/coinbaseParser';
 import type { ArrivalBlock } from './forkTimelineAxis';
 import type { ParentKind } from './parentKind';
 
-/** [ms after from_ms, index into parents, 1 when the work is invalid (a finding)] */
-export type LaneRun = [at: number, parent: number, invalid: 0 | 1];
+/** [ms after from_ms, index into parents, 1 when the work is invalid (a finding), 1 when the template is empty] */
+export type LaneRun = [at: number, parent: number, invalid: 0 | 1, empty: 0 | 1];
+
+/** A pool going back to the block before (lib/db/fork-lanes.ts getLaneReturns): the first template of the return. */
+export interface LaneReturn { pool: string; at_us: string; empty: boolean }
 
 export interface LaneParent {
   hash: string;                  // display order
-  status: PrevHashStatus | null; // null: no best block at height - 1 to compare with
+  status: LaneStatus | null;     // null: no best block at height - 1 to compare with; 'previous': the block before
   kind: ParentKind | null;       // of an unknown parent, inferred
 }
 
@@ -69,9 +74,15 @@ export function isInvalidWork(t: LaneTemplateSql, subsidies: ReadonlyMap<string,
   return paid !== null && paid > subsidy;
 }
 
-/** The templates (by time) as runs: a run starts where a pool's parent or invalidity changes. No tolerances. */
+/**
+ * The templates (by time) as runs: a run starts where a pool's parent, invalidity or emptiness changes. No tolerances.
+ * `returns` (by time): where pools went back to `before`, the block at height - 2; a return starts a run on it, which
+ * the pool's next template here ends. A return before the pool's first template here isn't one, and is dropped.
+ * `lastUs` (for the lanes' ends) and `last_ms` are the templates' only.
+ */
 export function buildRuns(
   rows: readonly LaneTemplateSql[], subsidies: ReadonlyMap<string, number>,
+  returns: readonly LaneReturn[] = [], before: string | null = null,
 ): Pick<ForkLanes, 'from_ms' | 'last_ms' | 'lanes'> & { hashes: string[]; lastUs: Map<string, string> } {
   const hashes: string[] = [];
   const index = new Map<string, number>();
@@ -79,20 +90,37 @@ export function buildRuns(
   const lastUs = new Map<string, string>();
   if (rows.length === 0) return { from_ms: 0, last_ms: 0, lanes: [], hashes, lastUs };
   const firstUs = Number(rows[0].at_us);
-  for (const t of rows) {
-    let parent = index.get(t.parent);
+  const indexOf = (hash: string) => {
+    let parent = index.get(hash);
     if (parent === undefined) {
       parent = hashes.length;
-      hashes.push(t.parent);
-      index.set(t.parent, parent);
+      hashes.push(hash);
+      index.set(hash, parent);
     }
-    const invalid = isInvalidWork(t, subsidies) ? 1 : 0;
-    const runs = lanes.get(t.pool) ?? [];
+    return parent;
+  };
+  const add = (pool: string, atUs: number, parent: number, invalid: 0 | 1, empty: 0 | 1) => {
+    const runs = lanes.get(pool)!;
     const last = runs.at(-1);
-    if (!last || last[1] !== parent || last[2] !== invalid) runs.push([(Number(t.at_us) - firstUs) / 1000, parent, invalid]);
-    lanes.set(t.pool, runs);
+    if (!last || last[1] !== parent || last[2] !== invalid || last[3] !== empty) runs.push([(atUs - firstUs) / 1000, parent, invalid, empty]);
+  };
+  let r = 0;
+  const backs = before === null ? [] : returns;
+  const flushReturns = (untilUs: number) => {
+    for (; r < backs.length && Number(backs[r].at_us) < untilUs; r++) {
+      const b = backs[r];
+      if (lanes.has(b.pool)) add(b.pool, Number(b.at_us), indexOf(before!), 0, b.empty ? 1 : 0);
+    }
+  };
+  for (const t of rows) {
+    const at = Number(t.at_us);
+    flushReturns(at);
+    const parent = indexOf(t.parent);
+    if (!lanes.has(t.pool)) lanes.set(t.pool, []);
+    add(t.pool, at, parent, isInvalidWork(t, subsidies) ? 1 : 0, t.empty ? 1 : 0);
     lastUs.set(t.pool, String(t.at_us));
   }
+  flushReturns(Infinity);
   return {
     from_ms: firstUs / 1000,
     last_ms: (Number(rows[rows.length - 1].at_us) - firstUs) / 1000,
@@ -123,8 +151,12 @@ export async function getForkLanes(
   for (const o of facts.offenders ?? []) {
     if (o.pool_name && typeof o.subsidy_sats === 'number' && !excludePools.includes(o.pool_name)) subsidies.set(o.pool_name, o.subsidy_sats);
   }
-  const rows = await getLaneTemplates(height, facts.t_from, facts.t_to, excludePools, [...subsidies.keys()]);
-  const { hashes, lastUs, ...runs } = buildRuns(rows, subsidies);
+  // where pools went back to the block before: only with a stored best block at height - 2 (none: no read)
+  const [rows, returns] = await Promise.all([
+    getLaneTemplates(height, facts.t_from, facts.t_to, excludePools, [...subsidies.keys()]),
+    facts.before ? getLaneReturns(height, facts.before, facts.t_from, facts.t_to, excludePools) : Promise.resolve([]),
+  ]);
+  const { hashes, lastUs, ...runs } = buildRuns(rows, subsidies, returns, facts.before);
   const blocks = await blocksRead;
   const unseen = (b: (typeof blocks)[number]) => !(b.seen && !b.stale_only);
   const [endRows, known, workRows] = await Promise.all([
@@ -136,6 +168,7 @@ export async function getForkLanes(
   // first work on a block at height - 1: the earliest run on it
   const work = new Map(workRows.map(r => [r.hash, Number(r.at_us) / 1000]));
   hashes.forEach((hash, i) => {
+    if (hash === facts.before) return;   // the block at height - 2: no marker here
     const at = Math.min(...runs.lanes.flatMap(l => l.runs.filter(r => r[1] === i).map(r => r[0])));
     if (Number.isFinite(at)) work.set(hash, runs.from_ms + at);
   });
@@ -150,7 +183,10 @@ export async function getForkLanes(
     height,
     active: facts.active,
     ...runs,
-    parents: hashes.map(hash => ({ hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null })),
+    // the block before is known and not our best at height - 1, so classifyPrevHashes would call it stale
+    parents: hashes.map(hash => (hash === facts.before
+      ? { hash, status: 'previous' as const, kind: null }
+      : { hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null })),
     blocks: blocks.map(b => ({
       hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
       seen_ms: b.seen && !b.stale_only ? Number(b.arrival_ms) : null, stale_only: b.stale_only,

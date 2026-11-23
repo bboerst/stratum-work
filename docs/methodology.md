@@ -307,9 +307,10 @@ The rules, in order:
 1. **Another chain**: the difficulty isn't Bitcoin's, or it is unknown and the height is more than one block from our
    tip. This comes before the proof-of-work check on purpose: another chain's block at a lower difficulty fails
    Bitcoin's target, and would otherwise look like an invalid Bitcoin parent.
-2. **Unrecorded stale block** ("Race · unrecorded"): Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
-   target. Work at Bitcoin's target can't be faked, so this is a real block our node never recorded: a block that
-   lost a race (many pools for a few minutes) or a pool's own block that lost (one pool). It can also be a block mined
+2. **Unrecorded block**: Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
+   target. Work at Bitcoin's target can't be faked, so this is a block hash with Bitcoin-level work that our node
+   never recorded. Nothing more is shown: neither a rival block nor whether it was valid. It may have lost a race, or
+   never reached the network. It can also be a block mined
    seconds before the page was computed, before we stored it: the page is recomputed every 5 minutes, so such an
    episode stays listed until then. Once its header is imported from the public stale-blocks dataset (see
    [Blocks](#blocks)) the parent is a recorded stale block and the episode's kind becomes `stale`.
@@ -338,14 +339,31 @@ the height for a block at height − 1 and at the next height for a block at the
 sets it, and it can be minutes off (at 971,187 it was 89 s after our feeds were already building on the block). The
 compressed axis never folds over a block's line.
 The row reads it thin: one stream per pool (the de-duplicated templates), as runs, each starting where a pool's
-parent changes or its work turns invalid or valid. The read covers the height's time window widened to the row's
-episodes, since a feed can stay on a losing parent for hours. Each pool's last run ends when that pool first worked
-on the next height, or at its own last template when we saw none there: silence isn't drawn as work. These ends,
-like the switches, are what the chart's compressed time axis keeps in view. Each block of the race is listed with the
-pools whose first work at that height was on it, and an arrow on a pool that also built on another block; a block no
-pool started on is still listed, with the pools that built on it for a while, and so is one none of our feeds sent a
-template on, marked as such (often the winner, mined on first by its own pool, whose feed we may not collect). Pools that share a template provider in
-the row's epoch (the rule of the template providers page) are grouped together.
+parent changes, its work turns invalid or valid, or its templates turn empty or full. An **empty template** (no
+merkle branches: the coinbase only) is drawn as a thin bar; it is a fact about the template, not about the block it
+builds on, so it says nothing about why the pool sent it (invalid work, always empty, keeps its full rose bar). The
+read covers the height's time window widened to the row's episodes, since a feed can stay on a losing parent for
+hours. Each pool's last run ends when that pool first worked on the next height, or at its own last template when we
+saw none there: silence isn't drawn as work. These ends, like the switches, are what the chart's compressed time axis
+keeps in view. Each block of the race is listed with the pools whose first work at that height was on it, and an
+arrow on a pool that also built on another block; a block no pool started on is still listed, with the pools that
+built on it for a while, and so is one none of our feeds sent a template on, marked as such (often the winner, mined
+on first by its own pool, whose feed we may not collect). Pools that share a template provider in the row's epoch
+(the rule of the template providers page) are grouped together.
+
+**Going back to the block before.** A pool's run on a parent at the height normally lasts until its next template
+at the height, so a pool that builds on a block at height − 1 and then returns to work at height − 1 itself, on the
+block before (our best block at height − 2), would look as if it stayed. The row also reads, for each pool, the
+templates at height − 1 on that block that one of its connections sent right after a template of its own at the
+height: a fact per connection, from the raw templates, since the de-duplicated stream takes each template's first
+copy across connections and a connection still sending its last height − 1 jobs while another has moved on would
+look like a return. One connection per pool, the one the de-duplicated stream ranks first, so the return is drawn on
+the same stream as the rest of the lane; it is a neutral grey run, not hatched (it isn't a parent at the height),
+and lasts until the pool's next template at the height. The read stays between that connection's first and last
+template at the height, inside the row's window, at most 5,000 rows, so a stuck feed re-sending an old job after it
+moved on isn't read. Without a stored best block at height − 2 there is no such read. The row then says how many of
+the pools that built on a parent other than our best block went back to the block before. The block before is our
+best block at height − 2, not read from the parent's header (we have none for a block we never recorded).
 
 **A soft fork's chain isn't shown.** A deployment with a mandatory-signalling window (`web/lib/softForks.ts`; BIP-110:
 version bit 4, blocks 961,632 to 963,647) makes a node that enforces it reject every block in the window that doesn't

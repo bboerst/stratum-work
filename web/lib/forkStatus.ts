@@ -13,6 +13,12 @@ import { parentKind, parentPowOk, type ParentKind } from './parentKind';
 
 export type PrevHashStatus = 'canonical' | 'stale' | 'unknown';
 
+/**
+ * The Forks timeline's parents also include `previous`: our best block at height - 2, which a pool went back to (work
+ * at height - 1). Never a parent at the height, so never judged canonical, stale or unknown, and not hatched.
+ */
+export type LaneStatus = PrevHashStatus | 'previous';
+
 export function classifyPrevHashes(
   hashes: Iterable<string>,
   canonical: string | null | undefined,
@@ -67,4 +73,25 @@ export function unknownParentKinds(
     });
   }
   return out;
+}
+
+/**
+ * The Forks timeline's fact line: of the pools that built on a parent other than our best block at the height, how
+ * many then went back to the block before (a `previous` run after their first run on such a parent). Null without our
+ * best block among the parents to judge by, or when none went back. Runs: [at, parent index, ...].
+ */
+export function wentBack(l: {
+  parents: readonly { status: LaneStatus | null }[];
+  lanes: readonly { runs: readonly (readonly number[])[] }[];
+}): { back: number; of: number } | null {
+  if (!l.parents.some(p => p.status === 'canonical')) return null;
+  const status = (r: readonly number[]) => l.parents[r[1]]?.status ?? null;
+  let back = 0, of = 0;
+  for (const lane of l.lanes) {
+    const first = lane.runs.findIndex(r => status(r) !== 'canonical' && status(r) !== 'previous');
+    if (first < 0) continue;
+    of++;
+    if (lane.runs.slice(first + 1).some(r => status(r) === 'previous')) back++;
+  }
+  return back > 0 ? { back, of } : null;
 }

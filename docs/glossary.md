@@ -51,7 +51,7 @@ These follow Bitcoin Core's words.
 | **episode** | A stretch of templates that departs from the normal state, worked out at read time from stored facts. Every episode has exactly one **kind**. | derived; not stored |
 | **fork** | An episode in which feeds build on a parent other than the active chain's block. Its kinds, with the closest status Bitcoin Core's `getchaintips` would give the parent: | Forks page |
 | · **race** | the parent is a stale block we recorded: two valid blocks at one height (Core: *valid-fork*, or *headers-only* when we hold only its header). | `stale_blocks` |
-| · **race, unrecorded** | the parent is a valid Bitcoin block we never stored, shown by its proof of work at Bitcoin's difficulty (our node never saw it, so Core lists nothing). | inferred |
+| · **unrecorded block** | the parent is a block hash with proof of work at Bitcoin's difficulty that our node never recorded (so Core lists nothing). Neither a rival block nor validity is shown: it may have lost a race, or never reached the network. | inferred |
 | · **other chain** | the parent belongs to another chain mined on the same endpoint. | inferred |
 | · **invalid parent** | the parent can't be a valid Bitcoin block (closest: *invalid*). | inferred |
 | **invalid coinbase** | An episode, not a fork: templates whose coinbase pays more than the block can (an empty template paying more than the subsidy). | finding |

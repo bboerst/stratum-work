@@ -42,7 +42,7 @@ describe('parseForksPath', () => {
 });
 
 describe('selection at one height', () => {
-  it('orders invalid coinbase > invalid parent > race > race·unrecorded > other chain > undetermined', () => {
+  it('orders invalid coinbase > invalid parent > race > unrecorded block > other chain > undetermined', () => {
     expect(SELECTION_ORDER).toEqual(['invalid_coinbase', 'invalid_parent', 'stale', 'bitcoin_block', 'other_chain', 'undetermined']);
     const eps = [ep('undetermined', 7), ep('other_chain', 7), ep('bitcoin_block', 7), ep('stale', 7), ep('invalid_parent', 7), ep('stale', 8)];
     expect(rankAtHeight(eps, 7).map(e => e.kind)).toEqual(['invalid_parent', 'stale', 'bitcoin_block', 'other_chain', 'undetermined']);
@@ -115,7 +115,7 @@ describe('link-preview text', () => {
     const e = ep('stale', 976175, { pools: Array.from({ length: 7 }, (_, i) => ({ pool: `P${i}` })), templates: 1234, duration_ms: 72_000 });
     expect(episodeTitle(e)).toBe('Race at 976,175 · 7 pools · stratum.work');
     expect(episodeDescription(e)).toBe('Height 976,175: 7 pools built on a stale block we recorded for 72s (1,234 templates).');
-    expect(episodeTitle(ep('bitcoin_block', 5))).toBe('Race · unrecorded at 5 · 1 pool · stratum.work');
+    expect(episodeTitle(ep('bitcoin_block', 5))).toBe('Unrecorded block at 5 · 1 pool · stratum.work');
     expect(episodeDescription(ep('other_chain', 5, { duration_ms: 600_000, templates: 1 })))
       .toBe("Height 5: 1 pool built on another chain's block for 10m (1 template).");
     expect(episodeDescription(ep('invalid_coinbase', 5, { templates: 3 })))

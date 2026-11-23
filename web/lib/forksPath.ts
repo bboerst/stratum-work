@@ -9,7 +9,7 @@
  * No range in the link: the episode is looked up in the smallest range that has it (6e, then 26e, then all). The
  * range of an episode can't be worked out from its height (ranges filter by when templates arrived, and another
  * chain's heights are nowhere near ours), so it's read from the summaries. A kind that isn't at the height (a kind
- * can change: an unrecorded race whose block we record later) falls back to the height's most notable episode, so an
+ * can change: an unrecorded block we record later) falls back to the height's most notable episode, so an
  * old link still opens the episode it was shared for, or the one that replaced it.
  */
 
@@ -40,7 +40,7 @@ const SLUG_KIND = new Map(Object.entries(KIND_SLUG).map(([k, s]) => [s, k as Sha
 
 /**
  * Which episode a height alone opens: invalid work first (an invalid coinbase, then an invalid parent: work that could
- * never make a valid block), then a race, a race whose block we never recorded, another chain, undetermined. Within a
+ * never make a valid block), then a race, a block with Bitcoin's proof of work we never recorded, another chain, undetermined. Within a
  * kind: more pools, then more templates, then the earlier, then the lower parent hash (deterministic).
  */
 export const SELECTION_ORDER: readonly ShareKind[] =
@@ -49,7 +49,7 @@ export const SELECTION_ORDER: readonly ShareKind[] =
 /** The glossary's names for the kinds, for titles and link previews. */
 export const KIND_TITLE: Record<ShareKind, string> = {
   stale: 'Race',
-  bitcoin_block: 'Race · unrecorded',
+  bitcoin_block: 'Unrecorded block',
   other_chain: 'Other chain',
   invalid_parent: 'Invalid parent',
   invalid_coinbase: 'Invalid coinbase',
@@ -184,7 +184,7 @@ export function episodeTitle(e: ShareEpisode): string {
 
 const BUILT_ON: Record<ShareKind, string> = {
   stale: 'a stale block we recorded',
-  bitcoin_block: 'a valid Bitcoin block we never recorded',
+  bitcoin_block: "a block with Bitcoin's proof of work that our node never recorded",
   other_chain: "another chain's block",
   invalid_parent: "a parent that can't be a valid Bitcoin block",
   invalid_coinbase: '',

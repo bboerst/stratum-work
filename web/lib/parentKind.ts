@@ -17,8 +17,9 @@
  *     the bits at h: the template's target is the new period's). Unknown when no Bitcoin block is stored there.
  *  2. Not Bitcoin's difficulty -> 'other_chain'. Also when it's unknown and the height isn't within 1 of our tip: the
  *     parent is above our chain, or below anything we store, with nothing that ties it to Bitcoin.
- *  3. Otherwise (Bitcoin's difficulty, or unknown difficulty right at our tip): pow_ok -> 'bitcoin_block' (a real block
- *     we never recorded: work at Bitcoin's target can't be faked), else 'invalid_parent' (not a valid block at all).
+ *  3. Otherwise (Bitcoin's difficulty, or unknown difficulty right at our tip): pow_ok -> 'bitcoin_block' (an unrecorded
+ *     block: a hash with work at Bitcoin's target, which can't be faked, that our node never recorded; whether it lost a
+ *     race or never reached the network isn't known), else 'invalid_parent' (not a valid block at all).
  *  4. No tip and no Bitcoin bits (an empty blocks table): 'undetermined'.
  * The nbits check comes before the PoW check on purpose: another chain's block at a lower difficulty fails Bitcoin's
  * target, and would otherwise read as an invalid Bitcoin parent.

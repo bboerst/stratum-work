@@ -5,7 +5,8 @@
  * templates the finding is about.
  *
  * Bounded by the height's receive window, widened to the episodes shown at that height (a feed can stay on a losing
- * parent for hours). The pools passed as excluded are left out in SQL: POOL_BLACKLIST pools at a height above our tip
+ * parent for hours). getLaneReturns adds where a pool went back to the block before (height - 2), per
+ * connection on raw templates. The pools passed as excluded are left out in SQL: POOL_BLACKLIST pools at a height above our tip
  * (getForkLanes decides per height).
  */
 import { getPgPool } from './pg';
@@ -26,6 +27,7 @@ export interface LaneFactsSql {
   t_from: string;
   t_to: string;
   active: string | null;         // our best block at height - 1
+  before: string | null;         // our best block at height - 2: the block before the race's blocks
   bits_prev: string | null;
   bits_at: string | null;
   offenders: { pool_name?: string; subsidy_sats?: number | null }[] | null;
@@ -38,6 +40,7 @@ export async function getLaneFacts(height: number, spanFromMs: number, spanToMs:
     `SELECT least(w.t_from, to_timestamp($2::double precision / 1000) - interval '1 second')::text AS t_from,
             greatest(w.t_to, to_timestamp($3::double precision / 1000) + interval '1 second')::text AS t_to,
             ${best('$1::int - 1', "encode(b.block_hash, 'hex')")} AS active,
+            ${best('$1::int - 2', "encode(b.block_hash, 'hex')")} AS before,
             ${best('$1::int - 1', 'b.bits')}::text AS bits_prev,
             ${best('$1::int', 'b.bits')}::text AS bits_at,
             (SELECT f->'details'->'offenders'
@@ -73,6 +76,54 @@ export async function getLaneTemplates(
       WHERE j.pool <> ALL ($4::text[])
       ORDER BY j.first_seen, j.source_id, j.job_id`,
     params,
+  );
+  return rows;
+}
+
+/**
+ * Where a pool went back to the block before (`before`: our best block at height - 2): the templates at height - 1 on
+ * that block that one of its connections sent right after a template of its own at this height. Only the rows that
+ * start such a return, so the payload stays a few rows; the return lasts until the pool's next template here.
+ *
+ * Per connection, on raw templates (not templates_dedup, which joins connections and takes the first copy across
+ * sites): another connection still sending its last height - 1 jobs when this one already moved isn't a return. One
+ * connection per pool, the one templates_dedup ranks first among those with templates at this height (by site,
+ * replica), so the return is on the same stream as the pool's lane. Bounded by the read's window (passed as values, so
+ * TimescaleDB skips chunks) and by that connection's first and last template at this height: a stuck feed's re-send of
+ * an old job after it moved on isn't read. At most RETURNS_LIMIT rows.
+ */
+export const RETURNS_LIMIT = 5000;
+export async function getLaneReturns(
+  height: number, before: string, from: string, to: string, excludePools: string[],
+): Promise<{ pool: string; at_us: string; empty: boolean }[]> {
+  const { rows } = await getPgPool().query<{ pool: string; at_us: string; empty: boolean }>(
+    `WITH here AS (
+       SELECT t.source_id, min(t.received_at) AS first_at, max(t.received_at) AS last_at
+         FROM templates t
+        WHERE t.height = $1::int AND t.received_at >= $3::timestamptz AND t.received_at <= $4::timestamptz
+        GROUP BY t.source_id),
+     prim AS (
+       SELECT DISTINCT ON (s.name) s.name AS pool, h.source_id, h.first_at, h.last_at
+         FROM here h
+         JOIN (SELECT id, name, dense_rank() OVER (PARTITION BY name ORDER BY site COLLATE "C", replica COLLATE "C") AS source_rank
+                 FROM sources) s ON s.id = h.source_id
+        WHERE s.name <> ALL ($5::text[])
+        ORDER BY s.name, s.source_rank),
+     seq AS (
+       SELECT p.pool, t.received_at, t.job_id, t.height, t.merkle_branches,
+              lag(t.height) OVER (PARTITION BY p.pool ORDER BY t.received_at, t.job_id) AS prev_height
+         FROM prim p JOIN templates t ON t.source_id = p.source_id
+        WHERE t.height BETWEEN $1::int - 1 AND $1::int
+          AND t.received_at >= $3::timestamptz AND t.received_at <= $4::timestamptz
+          AND t.received_at >= p.first_at AND t.received_at <= p.last_at
+          AND (t.height = $1::int OR t.prev_hash = stratum_prev_hash_to_block_hash(decode($2, 'hex'))))
+     SELECT pool, (extract(epoch FROM received_at) * 1000000)::bigint AS at_us,
+            coalesce(octet_length(merkle_branches), 0) = 0 AS empty
+       FROM seq
+      WHERE height = $1::int - 1 AND prev_height = $1::int
+      ORDER BY received_at, pool
+      LIMIT ${RETURNS_LIMIT}`,
+    [height, before, from, to, excludePools],
   );
   return rows;
 }

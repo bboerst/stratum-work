@@ -6,6 +6,10 @@
  *  - pool `one` sends an empty template paying more than the subsidy, which the finding on B0 (height H) names: one
  *    invalid run, then valid work again. Another empty template of its, paying exactly the subsidy, isn't invalid.
  *  - each lane ends when its pool first worked on the next height; a pool with none there ends at its own last template.
+ *  - pool `three` sends one empty template on an unknown parent U, then goes back to the block before (B2, work at
+ *    H - 1) and later builds on B1. Its first connection (a) is the one read; a's H - 1 job just before its own first
+ *    template at H, and b's (lagging) H - 1 job after b's first at H, aren't returns; neither is a's re-send after its
+ *    last template at H.
  *  - the excluded pool is left out of everything.
  * Skipped unless a test database is configured:
  *
@@ -19,13 +23,13 @@ const enabled = !!env.PG_TEST_HOST;
 
 describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', () => {
   const run = Math.floor(Date.now() / 1000) % 40_000;
-  const one = `lane1-${run}`, two = `lane2-${run}`, hidden = `lanex-${run}`;
+  const one = `lane1-${run}`, two = `lane2-${run}`, three = `lane3-${run}`, hidden = `lanex-${run}`;
   const H = 7_500_000 + run * 20;
   const T0 = Math.floor(Date.now() / 1000) - 40 * 86_400;
   const BITS = 0x207fffff;
   const r3 = run.toString(16).padStart(6, '0');
   const blk = (k: string) => '0000' + r3 + k.repeat(26) + '00';
-  const [B2, B1, B0, S1] = [blk('c2'), blk('c1'), blk('c0'), blk('5c')];
+  const [B2, B1, B0, S1, U] = [blk('c2'), blk('c1'), blk('c0'), blk('5c'), blk('e1')];
   const SITE = `zz-lanes-${run}`;
   // a coinbase with a 4-byte extranonce2 paying `sats` to OP_TRUE
   const CB1 = '01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0c0340420f';
@@ -56,11 +60,11 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     });
     admin = new Client({ connectionString: env.PG_TEST_ADMIN_DSN });
     await admin.connect();
-    for (const [pool, replica] of [[one, 'a'], [two, 'a'], [two, 'b'], [hidden, 'a']]) {
+    for (const [pool, replica] of [[one, 'a'], [two, 'a'], [two, 'b'], [three, 'a'], [three, 'b'], [hidden, 'a']]) {
       const r = await admin.query(
         `INSERT INTO sources (name, site, replica) VALUES ($1, $2, $3)
          ON CONFLICT (name, site, replica) DO UPDATE SET name = EXCLUDED.name RETURNING id`, [pool, SITE, replica]);
-      sid[pool === two ? `${pool}/${replica}` : pool] = r.rows[0].id;
+      sid[pool === two || pool === three ? `${pool}/${replica}` : pool] = r.rows[0].id;
     }
     await block(B2, H - 2, -600);
     await block(B1, H - 1, 0);
@@ -86,6 +90,14 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     await insert(`${two}/a`, 20, H, 't2', S1);
     await insert(`${two}/b`, 20.5, H, 'u2', B1);
     await insert(`${two}/a`, 60, H, 't3', B1);                                   // the pool moves to B1
+    await insert(`${three}/b`, 2.5, H, 'b1', U, { empty: true });
+    await insert(`${three}/b`, 2.8, H - 1, 'b0', B2);                             // b lags: after its own first at H
+    await insert(`${three}/a`, 2.9, H - 1, 'a0', B2);                             // before a's own first at H
+    await insert(`${three}/a`, 3, H, 'a1', U, { empty: true });
+    await insert(`${three}/a`, 6, H - 1, 'a2', B2);                               // a return
+    await insert(`${three}/a`, 7, H - 1, 'a3', B2);                               // ... continued
+    await insert(`${three}/a`, 30, H, 'a4', B1);
+    await insert(`${three}/a`, 40, H - 1, 'a5', B2);                              // a re-send after its last at H
     await insert(hidden, 5, H, 'x1', S1);
     await insert(hidden, 8, H, 'x2', S1, { empty: true });
     await insert(one, 125, H + 1, 'n1', B0);                                     // `one` moves on to the next height
@@ -117,8 +129,21 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
 
   it('marks exactly the templates the finding is about as invalid', async () => {
     const r = await read([hidden]);
-    expect(lane(r, one).runs).toEqual([[0, r.parents.findIndex(p => p.hash === B1), 0], [1000, r.parents.findIndex(p => p.hash === B1), 1],
-      [8000, r.parents.findIndex(p => p.hash === B1), 0]]);
+    const b1 = r.parents.findIndex(p => p.hash === B1);
+    // (the empty template at +10 s pays the subsidy: valid, but empty)
+    expect(lane(r, one).runs).toEqual([[0, b1, 0, 0], [1000, b1, 1, 1], [8000, b1, 0, 0], [9000, b1, 0, 1]]);
+  });
+
+  it('draws a return to the block before, read per connection on its first connection only', async () => {
+    const r = await read([hidden]);
+    const runs = lane(r, three).runs;
+    expect(runs.map(([, p]) => parentOf(r, p))).toEqual([U, B2, B1]);
+    expect(runs.map(x => x[3])).toEqual([1, 0, 0]);                          // the empty template on U
+    expect(runs[1][0]).toBe(5000);                                           // a's return at T0 + 6
+    expect(r.parents.find(p => p.hash === B2)).toEqual({ hash: B2, status: 'previous', kind: null });
+    expect(lane(r, three).end).toBe(29_000);                                 // its own last template at H, not the re-send
+    const { wentBack } = await import('../forkStatus');
+    expect(wentBack(r)).toEqual({ back: 1, of: 2 });                         // of `two` (on S1) and `three` (on U)
   });
 
   it('ends a lane when its pool first worked on the next height, else at its own last template', async () => {
@@ -131,7 +156,7 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
   it('judges the parents and names the blocks; a stale block only the records know has no arrival time', async () => {
     const r = await read([hidden]);
     expect(r.active).toBe(B1);
-    expect(Object.fromEntries(r.parents.map(p => [p.hash, p.status]))).toEqual({ [B1]: 'canonical', [S1]: 'stale' });
+    expect(Object.fromEntries(r.parents.map(p => [p.hash, p.status]))).toEqual({ [B1]: 'canonical', [S1]: 'stale', [U]: 'unknown', [B2]: 'previous' });
     const s = r.blocks.find(b => b.hash === S1)!;
     expect(s).toMatchObject({ best: false, stale_only: true, seen_ms: null, miner: 'stale-miner' });
     expect(r.blocks.find(b => b.hash === B1)).toMatchObject({ best: true, seen_ms: T0 * 1000, miner: `miner-${H - 1}` });

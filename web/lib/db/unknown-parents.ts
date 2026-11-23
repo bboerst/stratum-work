@@ -1,8 +1,9 @@
 /**
  * Unknown parents (the Forks page, /forks), read at read time from stored facts (docs/design/one-templates-table.md): templates
  * of the last UNKNOWN_PARENTS_DAYS days whose prev_hash is no block we know (bitcoin_parents: blocks and stale_blocks),
- * grouped by that parent into EPISODES. An unknown parent is another chain mined on the same connection, a Bitcoin
- * block we never recorded (a lost race, a pool's own block that lost), or not a valid block at all; which one is
+ * grouped by that parent into EPISODES. An unknown parent is another chain mined on the same connection, a block with
+ * Bitcoin's proof of work that our node never recorded (it may have lost a race, or never reached the network), or not
+ * a valid block at all; which one is
  * inferred from the facts returned here (lib/parentKind.ts), never stored.
  *
  * Work on a stale Bitcoin block we recorded isn't an unknown parent: the Forks page reads it from the backend's twin

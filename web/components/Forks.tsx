@@ -9,6 +9,7 @@ import type { ArrivalBlock } from "@/lib/forkTimelineAxis";
 import { reverseHex } from "@/utils/formatters";
 import type { ParentKind } from "@/lib/parentKind";
 import { pagePath } from "@/lib/forksPath";
+import { wentBack } from "@/lib/forkStatus";
 
 /**
  * Forks (/api/forks): templates built on a block other than our best one, as episodes (one per parent), in
@@ -124,7 +125,7 @@ const RANGE_LABEL: Record<Range, string> = { "6e": "12,096 blocks", "26e": "52,4
 const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "last 52,416 blocks", all: "all history" };
 const KIND_LABEL: Record<Kind, string> = {
   stale: "Race",
-  bitcoin_block: "Race · unrecorded",
+  bitcoin_block: "Unrecorded block",
   other_chain: "Other chain",
   invalid_parent: "Invalid parent",
   invalid_coinbase: "Invalid coinbase",
@@ -383,8 +384,9 @@ interface Lanes {
   active: string | null;
   from_ms: number;
   last_ms: number;
-  parents: { hash: string; status: "canonical" | "stale" | "unknown" | null; kind: ParentKind | null }[];
-  lanes: { pool: string; runs: [number, number, 0 | 1][]; end: number }[];
+  // 'previous': the block before (our best block at height - 2), where a pool went back to work at height - 1
+  parents: { hash: string; status: "canonical" | "stale" | "unknown" | "previous" | null; kind: ParentKind | null }[];
+  lanes: { pool: string; runs: [number, number, 0 | 1, 0 | 1][]; end: number }[];
   blocks: ArrivalBlock[];
 }
 
@@ -434,8 +436,9 @@ const nsHex = (ms: number) => Math.round(ms * 1_000_000).toString(16);
 
 /** The fork chart's inputs for one height's runs (the chart is shared with the height page). */
 function chartProps(l: Lanes) {
-  const notifications = l.lanes.flatMap(lane => lane.runs.map(([at, p, bad]) => ({
+  const notifications = l.lanes.flatMap(lane => lane.runs.map(([at, p, bad, empty]) => ({
     pool_name: lane.pool, timestamp: nsHex(l.from_ms + at), prev_hash: reverseHex(l.parents[p].hash), invalid: bad === 1,
+    empty: empty === 1,
   })));
   const ends = Object.fromEntries(l.lanes.map(lane => [lane.pool, Math.round((l.from_ms + lane.end) * 1_000_000)]));
   const status = Object.fromEntries(l.parents.filter(p => p.status).map(p => [p.hash, p.status!]));
@@ -501,8 +504,8 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
     const minerOf = (hash: string) => l.blocks.find(b => b.hash === hash)?.miner ?? null;
     for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
       const first = l.parents[lane.runs[0][1]];
-      // where it went: the last other block it built on (it may have come back)
-      const other = [...lane.runs].reverse().find(r => r[1] !== lane.runs[0][1]);
+      // where it went: the last other block it built on (it may have come back); the block before isn't a side
+      const other = [...lane.runs].reverse().find(r => r[1] !== lane.runs[0][1] && l.parents[r[1]].status !== "previous");
       if (h !== row.heights[0] && (first.status === "canonical" || placed.has(lane.pool))) continue;
       const tone = toneOf(first);
       add(first.hash, tone, labelOf(first, minerOf), titleOf(first, h)).pools.push({
@@ -654,11 +657,14 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
         <div className="mt-3">
           {timed ? row.heights.map(h => {
             const c = charts.get(h);
+            const l = lanes?.get(h);
+            const back = l ? wentBack(l) : null;
             return (
               <div key={h} className="mb-4">
                 {row.heights.length > 1 && <div className="mb-1 text-xs text-foreground/60">at {fmtInt(h)}</div>}
                 {c ? <ForkTimeline {...c} embedded />
                   : <p className="py-6 text-center text-xs text-foreground/60">{lanes ? "Timeline unavailable." : "Loading…"}</p>}
+                {c && back && <p className="mt-1 text-[11px] text-foreground/60">{fmtInt(back.back)} of {fmtInt(back.of)} pools went back to block {fmtInt(h - 2)}</p>}
               </div>
             );
           }) : row.heights.map(h => <HeightForkTimeline key={h} height={h} kindHint={{ [primary.parent]: primary.kind as ParentKind }} />)}

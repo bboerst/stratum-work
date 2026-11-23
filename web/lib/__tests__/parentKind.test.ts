@@ -70,7 +70,7 @@ describe('parentKind', () => {
   const BITS = 0x17034219;
   const base: ParentFacts = { height: 900_001, tip: 900_000, nbits: BITS, bitcoinBitsPrev: BITS, bitcoinBitsAt: BITS, powOk: true };
 
-  it('bitcoin_block: PoW at Bitcoin\'s target, Bitcoin\'s nbits, at the tip (a lost race)', () => {
+  it('bitcoin_block: PoW at Bitcoin\'s target, Bitcoin\'s nbits, at the tip (an unrecorded block)', () => {
     expect(parentKind(base)).toBe('bitcoin_block');
     expect(parentKind({ ...base, tip: 899_999 })).toBe('bitcoin_block');          // offset +1: one above our tip
     expect(parentKind({ ...base, tip: 900_001 })).toBe('bitcoin_block');          // offset -1

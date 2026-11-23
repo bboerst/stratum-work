@@ -6,6 +6,7 @@ import type { PrevHashStatus } from "@/lib/forkStatus";
 import type { ParentKind } from "@/lib/parentKind";
 import {
   axisDomain, buildTimeZones, mapTimeToVisual, placeBlockMarkers, type ArrivalBlock, type BlockMarker, type TimeZone,
+  markerBlocks,
 } from "@/lib/forkTimelineAxis";
 import { useElementWidth } from "@/visuals/framework/useElementWidth";
 
@@ -169,7 +170,9 @@ const fmtHeight = (h: number) => h.toLocaleString("en-US");
 
 function markerTitle(m: BlockMarker): string {
   const at = new Date(m.seenMs).toISOString().slice(11, 23);
-  return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${m.staleOnly ? "first recorded" : "reached us"} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}`;
+  const when = m.header ? "header time" : m.staleOnly ? "first recorded" : "reached us";
+  return `block ${fmtHeight(m.height)} · ${m.best ? "best chain" : "stale"} · ${when} ${at} UTC${m.miner ? ` · mined by ${m.miner}` : ""}${
+    m.header ? " (set by its miner; when it reached our node wasn't recorded)" : ""}`;
 }
 
 /** A marker label's alignment: centred on its line, but kept inside the plot near either end (about 26 px of room). */
@@ -242,9 +245,9 @@ export function forkTimelineModel({ notifications, canonicalBlockHash, prevHashS
     parsed.forEach((p) => lastByPool.set(p.poolName, p.timeNs));
     const poolEnds = [...lastByPool].map(([pool, last]) => endOf(pool, last)).filter((e): e is number => e !== null);
     const dataMaxTime = Math.max(parsed[parsed.length - 1].timeNs, ...poolEnds);
-    // a stale block's "first recorded" time (stale_only) isn't when it reached our node: no marker for it
-    const seenBlocks = (blocks ?? []).filter((b) => !b.stale_only);
-    const { minNs: minTime, maxNs: maxTime } = axisDomain(parsed[0].timeNs, dataMaxTime, seenBlocks);
+    // each block at its arrival where recorded, else its header time (lib/forkTimelineAxis.ts markerBlocks)
+    const seenBlocks = markerBlocks(blocks);
+    const { minNs: minTime, maxNs: maxTime } = axisDomain(parsed[0].timeNs, dataMaxTime, seenBlocks.filter((b) => !b.header));  // a header time doesn't widen the axis
     const duration = maxTime - minTime;
 
     // Assign colors by frequency
@@ -622,7 +625,10 @@ export default function ForkTimeline({
         )}
         {markers.length > 0 && (
           <span className="text-[9px] text-muted-foreground/60">
-            │ when a block reached our node{markers.some((m) => !m.best) ? <> · <span className="text-[#1550a4] dark:text-blue-400">│ stale</span></> : null}
+            {markers.some((m) => !m.header) && "│ when a block reached our node"}
+            {markers.some((m) => !m.header) && markers.some((m) => m.header) && " · "}
+            {markers.some((m) => m.header) && "┆ a block's header time (its miner's clock)"}
+            {markers.some((m) => !m.best) ? <> · <span className="text-[#1550a4] dark:text-blue-400">stale</span></> : null}
           </span>
         )}
       </div>
@@ -687,7 +693,7 @@ export default function ForkTimeline({
             {markers.filter((m) => m.edge === null).map((m) => (
               <div
                 key={m.hash}
-                className={`absolute inset-y-0 w-px ${m.best ? "bg-foreground/60" : "bg-[#1550a4] dark:bg-blue-400"}`}
+                className={`absolute inset-y-0 w-0 border-l ${m.header ? "border-dashed" : ""} ${m.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
                 style={{ left: `${m.pct}%` }}
               />
             ))}
@@ -774,7 +780,7 @@ export default function ForkTimeline({
 
 /**
  * The chart in miniature, for a closed Forks row: one 4 px line per pool, in the chart's own order, on its own axis,
- * with no names or markers (opening the row shows the chart itself). The axis ticks stay, so time still reads.
+ * with no names, and the blocks' lines unlabelled (opening the row shows the chart itself). The axis ticks stay, so time still reads.
  */
 export function MiniForkTimeline(props: ModelInput) {
   const { notifications, canonicalBlockHash, prevHashStatus, prevHashKind, blocks, kindHint, ends } = props;
@@ -788,8 +794,18 @@ export function MiniForkTimeline(props: ModelInput) {
     const prev = shown[shown.length - 1];
     if (!prev || t.pct - prev.pct >= 9) shown.push(t);
   }
+  // the blocks' lines, unlabelled (the open chart names them)
+  const lines = placeBlockMarkers(m.seenBlocks, m.timeZones, m.minTime, m.maxTime, 0).filter((b) => b.edge === null);
   return (
-    <div aria-hidden>
+    <div aria-hidden className="relative">
+      {lines.length > 0 && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10" style={{ bottom: "1.25rem" }}>
+          {lines.map((b) => (
+            <div key={b.hash} className={`absolute inset-y-0 w-0 border-l ${b.header ? "border-dashed" : ""} ${b.best ? "border-foreground/60" : "border-[#1550a4] dark:border-blue-400"}`}
+              style={{ left: `${b.pct}%` }} />
+          ))}
+        </div>
+      )}
       {m.poolTimelines.map((pool) => (
         <div key={pool.poolName} className="relative mb-0.5 h-1 overflow-hidden bg-muted/30">
           {pool.visualSegments.map((vs, i) => (

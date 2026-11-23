@@ -106,6 +106,24 @@ export interface ArrivalBlock {
   miner?: string | null;
   /** Known from the stale-block records only: seen_ms is when they first recorded it (polled), not our node's arrival. */
   stale_only?: boolean;
+  /** The block's header time, set by its miner: where its line goes when our node's arrival wasn't recorded. */
+  header_ms?: number | null;
+  /** Set by markerBlocks: seen_ms is the header time, not an arrival. */
+  header?: boolean;
+}
+
+/**
+ * The blocks to draw, each at one time: when it reached our node where that was recorded (seen_at, from about
+ * 976,000), else its header time, flagged as such (the miner's clock, not an arrival). A stale-only block's recorded
+ * time is a poll, not an arrival: it gets its header time too.
+ */
+export function markerBlocks(blocks: readonly ArrivalBlock[] | null | undefined): ArrivalBlock[] {
+  return (blocks ?? []).flatMap((b): ArrivalBlock[] => {
+    const seen = !b.stale_only && b.seen_ms != null && Number.isFinite(b.seen_ms);
+    if (seen) return [{ ...b, header: false }];
+    if (b.header_ms == null || !Number.isFinite(b.header_ms)) return [];
+    return [{ ...b, seen_ms: b.header_ms, stale_only: false, header: true }];
+  });
 }
 
 export interface BlockMarker {
@@ -114,6 +132,8 @@ export interface BlockMarker {
   best: boolean;
   miner: string | null;
   staleOnly: boolean;
+  /** seenMs is the block's header time (no arrival recorded). */
+  header: boolean;
   seenMs: number;
   /** Position on the axis, 0..100. An arrival outside the axis sits at its edge (edge says which). */
   pct: number;
@@ -169,7 +189,7 @@ export function placeBlockMarkers(
     const pct = edge === "before" ? 0 : edge === "after" ? 100
       : Math.min(100, Math.max(0, mapTimeToVisual(t, zones, minNs, duration)));
     const row: 0 | 1 = pct - lastPct < staggerPct ? (lastRow === 0 ? 1 : 0) : 0;
-    out.push({ hash: b.hash, height: b.height, best: b.best, miner: b.miner ?? null, staleOnly: b.stale_only === true, seenMs: b.seen_ms!, pct, edge, row });
+    out.push({ hash: b.hash, height: b.height, best: b.best, miner: b.miner ?? null, staleOnly: b.stale_only === true, header: b.header === true, seenMs: b.seen_ms!, pct, edge, row });
     lastPct = pct; lastRow = row;
   }
   return out;

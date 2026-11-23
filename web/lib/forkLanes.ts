@@ -140,6 +140,7 @@ export async function getForkLanes(
     blocks: blocks.map(b => ({
       hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
       seen_ms: b.seen && !b.stale_only ? Number(b.arrival_ms) : null, stale_only: b.stale_only,
+      header_ms: b.header_ms == null ? null : Number(b.header_ms),
     })),
   };
 }

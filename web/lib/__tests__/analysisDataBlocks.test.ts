@@ -16,7 +16,7 @@ afterEach(() => {
 describe('/api/analysis-data blocks (the fork timeline arrival markers)', () => {
   it('serves the blocks at h - 1 and h, seen_ms only when a seen time was recorded', async () => {
     const getDrillBlocks = vi.fn(async () => [
-      { block_hash: 'aa'.repeat(32), height: 99, arrival_ms: '1000', seen: true, stale_only: false, best: true, miner: 'PoolA' },
+      { block_hash: 'aa'.repeat(32), height: 99, arrival_ms: '1000', seen: true, stale_only: false, best: true, miner: 'PoolA', header_ms: '900' },
       { block_hash: 'bb'.repeat(32), height: 99, arrival_ms: '1200', seen: true, stale_only: true, best: false, miner: null },
       { block_hash: 'cc'.repeat(32), height: 100, arrival_ms: '5000', seen: false, stale_only: false, best: true, miner: null },
     ]);
@@ -28,9 +28,9 @@ describe('/api/analysis-data blocks (the fork timeline arrival markers)', () => 
     const body = await (await GET(new NextRequest('http://test/api/analysis-data?height=100'))).json();
     expect(getDrillBlocks).toHaveBeenCalledWith(100);
     expect(body.results[0].blocks).toEqual([
-      { hash: 'aa'.repeat(32), height: 99, best: true, miner: 'PoolA', seen_ms: 1000, stale_only: false },
-      { hash: 'bb'.repeat(32), height: 99, best: false, miner: null, seen_ms: 1200, stale_only: true },
-      { hash: 'cc'.repeat(32), height: 100, best: true, miner: null, seen_ms: null, stale_only: false },
+      { hash: 'aa'.repeat(32), height: 99, best: true, miner: 'PoolA', seen_ms: 1000, stale_only: false, header_ms: 900 },
+      { hash: 'bb'.repeat(32), height: 99, best: false, miner: null, seen_ms: 1200, stale_only: true, header_ms: null },
+      { hash: 'cc'.repeat(32), height: 100, best: true, miner: null, seen_ms: null, stale_only: false, header_ms: null },
     ]);
   });
 

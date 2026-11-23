@@ -32,11 +32,20 @@ describe('forkTimelineModel (the Forks rows and the height page)', () => {
     expect(m.compressed).toBe(true);
     expect(a.visualSegments.find(s => s.invalid)!.widthPct).toBeGreaterThan(20);
   });
-  it('gives a stale block known only from the stale-block records no arrival marker', () => {
+  it('puts a block at its header time, flagged, when no arrival was recorded (and a stale-only block\'s poll time is no arrival)', () => {
     const m = forkTimelineModel({ ...base, notifications: [n('A', 0, ACTIVE), n('B', 1, STALE)],
-      blocks: [{ hash: STALE, height: 100, seen_ms: 1_800_000_000_500, best: false, stale_only: true },
-               { hash: ACTIVE, height: 100, seen_ms: 1_800_000_000_000, best: true }] })!;
-    expect(m.seenBlocks.map(b => b.hash)).toEqual([ACTIVE]);
+      blocks: [{ hash: STALE, height: 100, seen_ms: 1_800_000_000_500, best: false, stale_only: true, header_ms: 1_799_999_999_000 },
+               { hash: ACTIVE, height: 100, seen_ms: 1_800_000_000_000, best: true, header_ms: 1_799_999_998_000 },
+               { hash: 'cc'.repeat(32), height: 101, seen_ms: null, best: true, header_ms: null }] })!;
+    expect(m.seenBlocks.map(b => [b.hash, b.seen_ms, b.header])).toEqual([
+      [STALE, 1_799_999_999_000, true], [ACTIVE, 1_800_000_000_000, false]]);
+  });
+  it('doesn\'t widen the axis to a header time', () => {
+    const notes = [n('A', 0, ACTIVE), n('B', 10, ACTIVE)];
+    const plain = forkTimelineModel({ ...base, notifications: notes })!;
+    const m = forkTimelineModel({ ...base, notifications: notes,
+      blocks: [{ hash: STALE, height: 100, seen_ms: null, best: false, header_ms: 1_800_000_000_000 - 60_000 }] })!;
+    expect([m.minTime, m.maxTime]).toEqual([plain.minTime, plain.maxTime]);
   });
   it('never repeats a tick label', () => {
     const m = forkTimelineModel({ ...base, notifications: [n('A', 0, ACTIVE), n('B', 1, STALE), n('B', 40, ACTIVE), n('A', 77, ACTIVE)] })!;

@@ -35,7 +35,7 @@ const flag = (o: Partial<InvalidCoinbaseFlagSql> = {}): InvalidCoinbaseFlagSql =
 });
 const drillRows = (): DrillRows => ({
   truncated: false,
-  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', seen: true, stale_only: false, best: true, miner: 'P' }],
+  blocks: [{ block_hash: 'ab'.repeat(32), height: 900_000, arrival_ms: '900', seen: true, stale_only: false, best: true, miner: 'P', header_ms: '850' }],
   templates: [{
     source_id: 1, source_name: 'P', received_us: '1000123', height: 900_001, job_id: 'j1',
     prev_hash: Buffer.from('11'.repeat(32), 'hex'), coinbase1: Buffer.from('01', 'hex'), coinbase2: Buffer.from('02', 'hex'),

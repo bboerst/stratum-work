@@ -460,13 +460,18 @@ const SIDE_TEXT: Record<string, string> = {
   undetermined: "text-gray-500",
 };
 
-interface Side { hash: string; tone: string; label: string; title: string; pools: { pool: string; to: string | null; invalid: boolean }[] }
+interface Side {
+  hash: string; tone: string; label: string; title: string;
+  pools: { pool: string; to: string | null; invalid: boolean; visit?: boolean }[];
+}
 
 /**
  * The row's blocks, each with the pools whose first work at that height was on it: the block that stayed first, then
  * the others in the order work on them first arrived. A pool that later moved has an arrow in the colour of where it
  * went; one with invalid work is rose. Pools the summary lists that the timeline doesn't show on a block (work at
- * another height of the row) join the side of the block they built on.
+ * another height of the row) join the side of the block they built on. A block at the height before that no pool
+ * started on still gets its side (it may be the one that stayed), listing the pools that built on it for a while,
+ * outlined.
  */
 /** A side that is a block at the height before (ours or a stale one): two of them make the row a race. */
 const isBlockSide = (s: Side) => s.tone === "canonical" || s.tone === "stale";
@@ -479,23 +484,39 @@ function sidesOf(row: RaceRow<Episode>, lanes: Map<number, Lanes | null> | null)
     return sides.get(hash)!;
   };
   const placed = new Set<string>();
+  const labelOf = (p: Lanes["parents"][number], minerOf: (hash: string) => string | null) => {
+    const tone = toneOf(p);
+    if (tone !== "canonical" && tone !== "stale") return KIND_LABEL[tone as Kind];
+    return minerOf(p.hash) ?? (tone === "stale" ? row.episodes.find(e => e.parent === p.hash)?.facts.stale_block?.miner ?? null : null) ?? "unknown";
+  };
+  const titleOf = (p: Lanes["parents"][number], h: number) => {
+    const tone = toneOf(p);
+    return `${tone === "canonical" ? "our best block" : tone === "stale" ? "a stale block" : KIND_LABEL[tone as Kind].toLowerCase()} at ${fmtInt(h - 1)} · ${p.hash}`;
+  };
   for (const h of row.heights) {
     const l = lanes?.get(h);
     if (!l) continue;
     const minerOf = (hash: string) => l.blocks.find(b => b.hash === hash)?.miner ?? null;
     for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
       const first = l.parents[lane.runs[0][1]];
-      const last = l.parents[lane.runs[lane.runs.length - 1][1]];
+      // where it went: the last other block it built on (it may have come back)
+      const other = [...lane.runs].reverse().find(r => r[1] !== lane.runs[0][1]);
       if (h !== row.heights[0] && (first.status === "canonical" || placed.has(lane.pool))) continue;
       const tone = toneOf(first);
-      const miner = minerOf(first.hash) ?? (tone === "stale" ? row.episodes.find(e => e.parent === first.hash)?.facts.stale_block?.miner ?? null : null);
-      const label = tone === "canonical" || tone === "stale" ? miner ?? "unknown" : KIND_LABEL[tone as Kind];
-      const title = `${tone === "canonical" ? "our best block" : tone === "stale" ? "a stale block" : KIND_LABEL[tone as Kind].toLowerCase()} at ${fmtInt(h - 1)} · ${first.hash}`;
-      add(first.hash, tone, label, title).pools.push({
-        pool: lane.pool, to: last.hash !== first.hash ? toneOf(last) : null, invalid: lane.runs.some(r => r[2] === 1),
+      add(first.hash, tone, labelOf(first, minerOf), titleOf(first, h)).pools.push({
+        pool: lane.pool, to: other ? toneOf(l.parents[other[1]]) : null, invalid: lane.runs.some(r => r[2] === 1),
       });
       placed.add(lane.pool);
     }
+    if (h !== row.heights[0]) continue;
+    // a block no pool started on: still a side of the race, with the pools that visited it
+    l.parents.forEach((par, i) => {
+      if (sides.has(par.hash) || (par.status !== "canonical" && par.status !== "stale")) return;
+      const side = add(par.hash, toneOf(par), labelOf(par, minerOf), titleOf(par, h));
+      for (const lane of [...l.lanes].sort((a, b) => a.pool.toLowerCase().localeCompare(b.pool.toLowerCase()))) {
+        if (lane.runs.some(r => r[1] === i)) side.pools.push({ pool: lane.pool, to: null, invalid: lane.runs.some(r => r[1] === i && r[2] === 1), visit: true });
+      }
+    });
   }
   // before the timeline is in (or for another chain's row): the summary's own pools, on the episode's parent
   for (const e of row.episodes) {
@@ -569,8 +590,8 @@ function RaceRowView({ row, open, highlighted, target, onToggle, onHover, range,
               </span>
               <span className="flex min-w-0 flex-wrap content-start items-start gap-0.5 self-start">
                 {s.pools.map(p => (
-                  <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}
-                    title={`${p.pool}${p.invalid ? " · invalid work" : ""}${p.to ? " · moved to another block" : ""}`}>
+                  <span key={p.pool} className={`rounded-sm px-1 text-[10px] leading-4 whitespace-nowrap ${p.visit ? `border border-dashed ${p.invalid ? "border-rose-500" : "border-foreground/40"} leading-[14px]` : p.invalid ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-foreground/10"}`}
+                    title={`${p.pool}${p.invalid ? " · invalid work" : ""}${p.visit ? " · built on it for a while, started on another block" : p.to ? " · also built on another block" : ""}`}>
                     {p.pool}{p.to && <span className={p.invalid ? "" : SIDE_TEXT[p.to]}> →</span>}
                   </span>
                 ))}

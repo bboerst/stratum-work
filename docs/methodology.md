@@ -455,10 +455,11 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 
 - **Sharing a provider.** Two nodes share a template provider when the sets both received are at least 80% of the
   smaller node's sets, and each has at least 5.
-- **Strongest partner.** Each node links only to the partner it overlaps most: the highest overlap, then the most shared
-  sets. Nodes on one provider overlap almost completely. A feed that alternates between two providers overlaps each
-  only partly, so it joins one of them and doesn't merge the two. The providers are the connected components of these
-  links.
+- **Providers.** The providers are the connected components of these links: every pair at or above the bar is a link.
+  Nodes on one provider overlap almost completely. A feed can't join two separate providers: 80% of its sets on each
+  would need most of its sets to be in both. Independent builders match on a few tenths of a percent of their sets, and
+  no independent pair has reached 5% in any epoch. A feed that alternates between two providers overlaps each only
+  partly and joins neither.
 - **Which blocks count for a provider.** A block counts for the provider of its pool's node with the most sets in
   that epoch (an unidentified block is "unidentified"). It is "not on our feeds" when none of our feeds pays its pool.
 - **Miner-built.** A block whose coinbase names a DATUM template creator is miner-built, a kind of its own, split by

@@ -1,6 +1,6 @@
 /**
  * Template providers (lib/templateProviders.ts) from synthetic counts: the 80% threshold and the 5-set minimum, the
- * strongest-partner rule (a node overlapping two providers joins one, never merging them), connected components, a
+ * links (every pair at or above the bar, so a provider is never split by which partner a node overlaps most), connected components, a
  * pool's blocks going to the group of its node with the most sets, miner-built blocks (a pool's own template creators
  * excepted), "not on our feeds" and "unidentified", pies exact by height with each block's own epoch's groups,
  * colours and legend, and the output against the home page loader's shape rules. Empty templates are never counted
@@ -32,16 +32,20 @@ describe('groupEpoch', () => {
     expect(groupsOf(groupEpoch(five, [pair(['feed-1', 1], ['feed-2', 2], 4)]))).toEqual([['feed-1|1', 'feed-2|2']]);
   });
 
-  it('links each node only to its strongest partner, so a bridge joins one provider without merging two', () => {
-    // providers A (a1, a2) and B (b1, b2); the bridge c overlaps a1 by 90% and b1 by 85% of its own sets
+  it('links every pair at or above the bar, so one provider isn\'t split by each node\'s closest partner', () => {
+    // one provider of four feeds, all at r = 1.0 (production, epoch 445): p1 and q1 overlap each other most, p2 and q2
+    // too, and p1 / p2 a little less; the four are one group
+    const nodes = [node('p1', 1, 100), node('q1', 2, 100), node('p2', 3, 100), node('q2', 4, 100)];
+    const pairs = [pair(['p1', 1], ['q1', 2], 100), pair(['p2', 3], ['q2', 4], 100), pair(['p1', 1], ['p2', 3], 99)];
+    expect(groupsOf(groupEpoch(nodes, pairs))).toEqual([['p1|1', 'p2|3', 'q1|2', 'q2|4']]);
+  });
+
+  it('a feed that alternates between two providers joins neither: each holds only part of its sets', () => {
+    // c gets half its sets from A and half from B: r 0.5 with each, below the bar
     const nodes = [node('a1', 1, 100), node('a2', 2, 100), node('b1', 3, 100), node('b2', 4, 100), node('c', 5, 20)];
     const pairs = [pair(['a1', 1], ['a2', 2], 100), pair(['b1', 3], ['b2', 4], 100),
-      pair(['a1', 1], ['c', 5], 18), pair(['b1', 3], ['c', 5], 17)];
-    expect(groupsOf(groupEpoch(nodes, pairs))).toEqual([['a1|1', 'a2|2', 'c|5'], ['b1|3', 'b2|4']]);
-    // the same bridge with a higher overlap towards B joins B instead
-    const toB = [pair(['a1', 1], ['a2', 2], 100), pair(['b1', 3], ['b2', 4], 100),
-      pair(['a1', 1], ['c', 5], 17), pair(['b1', 3], ['c', 5], 18)];
-    expect(groupsOf(groupEpoch(nodes, toB))).toEqual([['a1|1', 'a2|2'], ['b1|3', 'b2|4', 'c|5']]);
+      pair(['a1', 1], ['c', 5], 10), pair(['b1', 3], ['c', 5], 10)];
+    expect(groupsOf(groupEpoch(nodes, pairs))).toEqual([['a1|1', 'a2|2'], ['b1|3', 'b2|4'], ['c|5']]);
   });
 
   it('groups are connected components of those links', () => {

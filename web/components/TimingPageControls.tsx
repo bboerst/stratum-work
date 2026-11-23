@@ -132,7 +132,7 @@ export default function TimingPageControls({
             <div className="flex items-center justify-between">
               <span
                 className="text-xs font-medium"
-                title="Subtract each pool's measured network latency (RTT/2) so timestamps approximate when the pool sent the message"
+                title="Subtracts half of each connection's measured round trip (RTT/2). An estimate that assumes the path is equally fast both ways, not when the pool sent the work."
               >
                 Latency adjusted:
               </span>

@@ -5,8 +5,8 @@ db/migrations/20261120000002_template_sets.sql), from which the web derives temp
 Per height h, over the non-empty templates of h received inside h's window (template_height_windows) on the Bitcoin
 block at h - 1 we know (bitcoin_parents):
   node    = (feed, pool paid): sources.name, and the pool the template's coinbase pays or names, identified like a
-            block's (pool_identification.identify_pool_from_data: output addresses sorted by value against the pools'
-            addresses, else the scriptSig against their tags). The coinbase is reassembled with the extranonce2
+            block's (pool_identification.identify_pool_from_data: the first pool in list order that owns any of the
+            output addresses, else the scriptSig against their tags). The coinbase is reassembled with the extranonce2
             repair of analytics/invalid_coinbase_no_merkle.py; one that doesn't parse is unidentified (pool NULL).
   set     = the template's merkle branches, exact bytes (compared as their sha256, computed in the read so only 32
             bytes per template travel; a collision would need a sha256 collision).
@@ -128,7 +128,8 @@ def _analytics(name: str) -> Any:
 def coinbase_payer(coinbase1: str, extranonce1: str, extranonce2_length: int, coinbase2: str
                    ) -> Optional[Tuple[str, List[str]]]:
     """(scriptSig hex, output addresses by value, highest first) of a template's coinbase, as a block's are given to
-    the pool identification (bitcoin_utils.extract_coinbase_data), or None when the coinbase doesn't parse."""
+    the pool identification (bitcoin_utils.extract_coinbase_data), or None when the coinbase doesn't parse. The order
+    doesn't pick the pool: identify_by_address takes the first pool in list order that owns any of them."""
     tx, _ = _analytics("invalid_coinbase_no_merkle").reassemble_coinbase(coinbase1, extranonce1, extranonce2_length,
                                                                           coinbase2)
     if tx is None:

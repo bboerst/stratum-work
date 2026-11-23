@@ -118,6 +118,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
     barScalingReferenceTime = actualMaxObservedTime;
   }
 
+  const CLOCK_ERROR_TITLE = "Differences under about 11 ms (up to 36 ms) between machines aren't meaningful.";
   const midHeightTitle =
     'Our collector for this pool connected after this height started (no template from it at the previous height), ' +
     "so this is when we first saw its work, not when the pool first sent it.";
@@ -146,7 +147,7 @@ const HistoricalPoolTiming: React.FC<HistoricalPoolTimingProps> = ({ blockHeight
                     title={`${relativeTimeNs.toLocaleString()} ns after first`}
                   ></div>
                 </div>
-                <span className="text-xs text-gray-600 dark:text-gray-400 w-20 text-right">
+                <span className="text-xs text-gray-600 dark:text-gray-400 w-20 text-right" title={CLOCK_ERROR_TITLE}>
                   {relativeTimeNs === 0 ? 'First' : `+${(relativeTimeNs / 1_000_000_000).toFixed(3)}s`}
                 </span>
               </div>

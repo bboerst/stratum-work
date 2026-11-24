@@ -482,6 +482,11 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **The threshold is a choice.** It is 80% of the smaller node's sets, with at least 5 sets each. It is not a measured
   boundary. The counts behind every pair are stored, so another threshold can be applied to the same data. The rule
   says "these feeds received the same work", not why.
+- **The epoch window was tested, and it blurs a change of provider.** In a pre-registered test, grouping per 144 blocks
+  instead of per epoch credited 0.2% of blocks to a different provider, against a pass bar of 1%. Those blocks belong
+  to the few pools whose feeds move between providers within an epoch. The epoch credits such a pool's blocks to one
+  provider for the whole epoch, or to neither if it splits about evenly. Changing the 5-set minimum to anything from 2
+  to 20 changed no block.
 - **Timing isn't part of the rule.** Matching sets are counted whenever they arrived within the height.
 
 ## First transaction fee rate

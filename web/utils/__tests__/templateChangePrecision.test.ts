@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { createTemplateChangeTracker, TemplateChangeType as T, TemplateChangeResult } from '../templateChangeDetection';
+import { createTemplateChangeTracker, receiveTimeMs, TemplateChangeType as T, TemplateChangeResult } from '../templateChangeDetection';
 import { clearProcessedDataCache, processTemplateData } from '../templateDataProcessor';
 import { StratumV1Data } from '@/lib/types';
 
@@ -37,6 +37,8 @@ interface Spec {
   outputs: Output[];
   locktime: number;
   txVersion: number;
+  enIn?: 'scriptSig' | 'sequence' | 'output';
+  carrierTail?: string;
 }
 
 const p2wpkh = (id: number) => '0014' + le(id, 1).repeat(20);
@@ -65,7 +67,11 @@ function baseSpec(): Spec {
   };
 }
 
-/** Split into stratum parts: coinbase1 ends where the extranonce starts (inside the last scriptSig push). */
+/**
+ * Split into stratum parts: coinbase1 ends where the extranonce starts. `enIn` says where the pool put it: inside the
+ * last scriptSig push (most pools), across the end of the scriptSig into nSequence, or inside an OP_RETURN output
+ * (an extranonce carrier, appended as the last output, with `carrierTail` pool bytes after the extranonce).
+ */
 function build(spec: Spec, en1: string, en2Len: number): Pick<StratumV1Data, 'coinbase1' | 'coinbase2' | 'extranonce1' | 'extranonce2_length'> {
   let before = push(le(spec.height, 3));
   if (spec.auxRoot) before += push('fabe6d6d' + spec.auxRoot + le(spec.auxSize ?? 1, 4) + le(spec.auxNonce ?? 0, 4));
@@ -73,12 +79,31 @@ function build(spec: Spec, en1: string, en2Len: number): Pick<StratumV1Data, 'co
   before += push(ascii(spec.tag));
   if (spec.counter) before += push(spec.counter);
   const enLen = en1.length / 2 + en2Len;
-  before += enLen.toString(16).padStart(2, '0'); // push header of the extranonce
-  const after = spec.suffix ?? '';
-  const sigLen = before.length / 2 + enLen + after.length / 2;
-  const coinbase1 = le(spec.txVersion, 4) + '01' + '00'.repeat(32) + 'ffffffff' + varint(sigLen) + before;
-  const outs = spec.outputs.map(o => le(o.value, 8) + varint(o.script.length / 2) + o.script).join('');
-  const coinbase2 = after + le(spec.sequence, 4) + varint(spec.outputs.length) + outs + le(spec.locktime, 4);
+  const head = le(spec.txVersion, 4) + '01' + '00'.repeat(32) + 'ffffffff';
+  const outs = (list: Output[]) => list.map(o => le(o.value, 8) + varint(o.script.length / 2) + o.script).join('');
+  const where = spec.enIn ?? 'scriptSig';
+  if (where === 'scriptSig') {
+    before += enLen.toString(16).padStart(2, '0'); // push header of the extranonce
+    const after = spec.suffix ?? '';
+    const sigLen = before.length / 2 + enLen + after.length / 2;
+    const coinbase1 = head + varint(sigLen) + before;
+    const coinbase2 = after + le(spec.sequence, 4) + varint(spec.outputs.length) + outs(spec.outputs) + le(spec.locktime, 4);
+    return { coinbase1, coinbase2, extranonce1: en1, extranonce2_length: en2Len };
+  }
+  if (where === 'sequence') {
+    // The last 4 extranonce bytes are nSequence.
+    before += (enLen - 4).toString(16).padStart(2, '0');
+    const sigLen = before.length / 2 + enLen - 4;
+    const coinbase1 = head + varint(sigLen) + before;
+    const coinbase2 = varint(spec.outputs.length) + outs(spec.outputs) + le(spec.locktime, 4);
+    return { coinbase1, coinbase2, extranonce1: en1, extranonce2_length: en2Len };
+  }
+  const tail = spec.carrierTail ?? 'deadbeef';
+  const sig = before + (spec.suffix ?? '');
+  const carrierLen = 2 + enLen + tail.length / 2; // OP_RETURN, push header, extranonce, tail
+  const coinbase1 = head + varint(sig.length / 2) + sig + le(spec.sequence, 4) + varint(spec.outputs.length + 1)
+    + outs(spec.outputs) + le(0, 8) + varint(carrierLen) + '6a' + (enLen + tail.length / 2).toString(16).padStart(2, '0');
+  const coinbase2 = tail + le(spec.locktime, 4);
   return { coinbase1, coinbase2, extranonce1: en1, extranonce2_length: en2Len };
 }
 
@@ -127,7 +152,7 @@ describe('builder sanity', () => {
     expect(p.coinbase.scriptSigTags).toBe('/TestPool/');
     expect(p.coinbase.scriptSigTime).toBe(1_750_000_000);
     expect(p.coinbase.scriptSigData).toContain('0102');
-    expect(p.auxPowHash).toBe('33'.repeat(32));
+    expect(p.coinbase.auxpow?.root).toBe('33'.repeat(32));
     expect(p.coinbase.outputValues).toEqual([312_500_000, 0, 0]);
     expect([...p.opReturnProtocols.keys()]).toEqual(['WitnessCommitment', 'RSK Block']);
   });
@@ -243,6 +268,113 @@ describe('the rest of the template', () => {
   });
 });
 
+describe('combinations and edge cases', () => {
+  test('two changes at once are both reported', () => {
+    const a = template(baseSpec());
+    const b0 = template(mutate(s => { s.counter = '0103'; }));
+    const b = { ...b0, coinbase1: b0.coinbase1.slice(0, 12) + '01' + b0.coinbase1.slice(14) }; // + a prevout byte
+    expect(diff(a, b).changeTypes.sort()).toEqual([T.OTHER, T.SCRIPTSIG_DATA].sort());
+    const c = template(mutate(s => { s.tag = '/Other/'; s.counter = '0109'; s.locktime = 3; }));
+    expect(diff(a, c).changeTypes.sort()).toEqual([T.COINBASE_ASCII, T.SCRIPTSIG_DATA, T.TX_LOCKTIME].sort());
+  });
+
+  test('clean_jobs: true after true is flagged; going back to false with the same content is not a change', () => {
+    const a = template(baseSpec(), { clean_jobs: true });
+    expect(diff(a, template(baseSpec(), { clean_jobs: true })).changeTypes).toEqual([T.CLEAN_JOBS]);
+    expect(diff(a, template(baseSpec(), { clean_jobs: false })).changeTypes).toEqual([]);
+  });
+
+  test('clean_jobs is read the way the collector stores it (Python truthiness)', () => {
+    const a = template(baseSpec());
+    for (const v of [1, '1', 'true'] as unknown[]) {
+      expect(diff(a, template(baseSpec(), { clean_jobs: v as boolean })).changeTypes).toEqual([T.CLEAN_JOBS]);
+    }
+    expect(diff(a, template(baseSpec(), { clean_jobs: 0 as unknown as boolean })).changeTypes).toEqual([]);
+  });
+
+  test('upper-case hex from the live stream equals the same template read back from history', () => {
+    const history = template(baseSpec());
+    const stream = template(baseSpec(), {
+      prev_hash: history.prev_hash.toUpperCase(), merkle_branches: history.merkle_branches.map(b => b.toUpperCase()),
+      version: history.version.toUpperCase(), nbits: history.nbits!.toUpperCase(), ntime: history.ntime!.toUpperCase(),
+      coinbase1: history.coinbase1.toUpperCase(), coinbase2: history.coinbase2.toUpperCase(),
+    });
+    expect(diff(history, stream).changeTypes).toEqual([]);
+  });
+
+  test('extranonce across the end of the scriptSig into nSequence: only a new session shows', () => {
+    const spec = () => mutate(s => { s.enIn = 'sequence'; });
+    const a = template(spec());
+    expect(processTemplateData(a).coinbase.parsed).toBe(true);
+    expect(diff(a, template(spec())).changeTypes).toEqual([]);
+    expect(diff(a, template(spec(), {}, 'ffffffff')).changeTypes).toEqual([T.SESSION]);
+    expect(diff(a, template(mutate(s => { s.enIn = 'sequence'; s.counter = '0109'; }))).changeTypes).toEqual([T.SCRIPTSIG_DATA]);
+  });
+
+  test('extranonce in an OP_RETURN output (a carrier): a new session is R only; the pool bytes after it are compared', () => {
+    const spec = (tail = 'deadbeef') => mutate(s => { s.enIn = 'output'; s.carrierTail = tail; });
+    const a = template(spec());
+    expect(processTemplateData(a).coinbase.parsed).toBe(true);
+    expect([...processTemplateData(a).opReturnProtocols.keys()]).toContain('Extranonce carrier');
+    expect(diff(a, template(spec(), {}, 'ffffffff')).changeTypes).toEqual([T.SESSION]);
+    expect(diff(a, template(spec('deadbeee'))).changeTypes).toEqual([T.OP_RETURN_OTHER]);
+  });
+
+  test('a coinbase that parses on one side only: O, never invented field values', () => {
+    const a = template(baseSpec());
+    const b = { ...template(baseSpec()), coinbase2: a.coinbase2.slice(0, -2) }; // truncated locktime
+    const r = diff(a, b);
+    expect(r.changeTypes).toEqual([T.OTHER]);
+  });
+
+  test('two OP_RETURN outputs swapping places -> U', () => {
+    const x = { value: 0, script: opReturn('0102') };
+    const ocb = { value: 0, script: opReturn(ascii('OCB1') + '00'.repeat(16)) };
+    const a = template(mutate(s => { s.outputs.push(x, ocb); }));
+    const b = template(mutate(s => { s.outputs.push(ocb, x); }));
+    expect(diff(a, b).changeTypes).toEqual([T.COINBASE_OUTPUTS]);
+  });
+
+  test('a pushed time that leaves the ±2 h window around nTime: the bytes are the same, so only nTime shows', () => {
+    const a = template(baseSpec());
+    const ntime = (1_750_000_000 + 7201).toString(16).padStart(8, '0');
+    expect(diff(a, template(baseSpec(), { ntime })).changeTypes).toEqual([T.NTIME]);
+  });
+
+  test('a scriptSig that is not a clean sequence of pushes is still compared byte for byte', () => {
+    const raw = (x: string) => mutate(s => { s.counter = undefined; s.tag = '/T/'; s.suffix = x; });
+    const r = diff(template(raw('ff00ff')), template(raw('ff01ff')));
+    expect(r.changeTypes.length).toBeGreaterThan(0);
+    expect(diff(template(raw('ff00ff')), template(raw('ff00ff'))).changeTypes).toEqual([]);
+  });
+});
+
+describe('ordering and gaps', () => {
+  test('a history read orders by the row\'s own receive time, not the first-seen time of a copy', () => {
+    const tracker = createTemplateChangeTracker();
+    const a = template(mutate(s => { s.counter = '0101'; }));
+    const b = template(mutate(s => { s.counter = '0102'; }));
+    // b's copy on another connection arrived before a: its first-seen `timestamp` sorts first, its own receive time doesn't.
+    const aHist = { ...a, received_timestamp: a.timestamp };
+    const bHist = { ...b, received_timestamp: b.timestamp, timestamp: (BigInt('0x' + a.timestamp) - BigInt(1000)).toString(16) };
+    const fed = [bHist, aHist].sort((x, y) => receiveTimeMs(x) - receiveTimeMs(y));
+    expect(fed[0]).toBe(aHist);
+    tracker.process(fed[0]);
+    expect(tracker.process(fed[1]).changeTypes).toEqual([T.SCRIPTSIG_DATA]);
+  });
+
+  test('a template after a gap is not compared, and becomes the baseline', () => {
+    const tracker = createTemplateChangeTracker();
+    tracker.process(template(baseSpec()));
+    const afterGap = tracker.process(template(mutate(s => { s.counter = '0109'; })), { gapBefore: true });
+    expect(afterGap.status).toBe('gap');
+    expect(afterGap.changeTypes).toEqual([]);
+    const next = tracker.process(template(mutate(s => { s.counter = '0109'; })));
+    expect(next.status).toBe('compared');
+    expect(next.changeTypes).toEqual([]);
+  });
+});
+
 // --- property test ------------------------------------------------------------------------------------------------
 
 /** Deterministic PRNG (mulberry32), so a failure reproduces. */
@@ -273,8 +405,11 @@ describe('property: a change is reported if and only if the content differs', ()
       return hex.slice(0, i) + b + hex.slice(i + 2);
     };
 
+    const upper = (t: StratumV1Data) => ({ ...t, prev_hash: t.prev_hash.toUpperCase(), coinbase1: t.coinbase1.toUpperCase(),
+      merkle_branches: t.merkle_branches.map(b => b.toUpperCase()) });
     const mutations: ((t: StratumV1Data) => StratumV1Data)[] = [
       t => t, // no change
+      upper, // no change either: the same content in another case
       t => ({ ...t, coinbase1: flip(t.coinbase1) }),
       t => ({ ...t, coinbase2: flip(t.coinbase2) }),
       t => ({ ...t, merkle_branches: [flip(t.merkle_branches[0])] }),
@@ -285,9 +420,12 @@ describe('property: a change is reported if and only if the content differs', ()
       t => ({ ...t, extranonce1: flip(t.extranonce1) }),
       t => ({ ...t, clean_jobs: true }),
       t => ({ ...t, height: t.height + pick([-1, 1]) }),
+      t => ({ ...t, coinbase1: flip(t.coinbase1), coinbase2: flip(t.coinbase2) }), // two at once
+      t => ({ ...t, merkle_branches: [flip(t.merkle_branches[0])], coinbase2: flip(t.coinbase2) }),
     ];
 
     let reported = 0;
+    let unchanged = 0;
     for (let i = 0; i < 2000; i++) {
       clearProcessedDataCache();
       const spec = baseSpec();
@@ -296,17 +434,26 @@ describe('property: a change is reported if and only if the content differs', ()
       if (rand() < 0.3) spec.counter = undefined;
       if (rand() < 0.3) spec.suffix = hexByte();
       if (rand() < 0.3) spec.outputs.push({ value: 0, script: opReturn(hexByte() + hexByte() + hexByte()) });
-      const a = template(spec);
+      spec.enIn = pick(['scriptSig', 'scriptSig', 'sequence', 'output'] as const);
+      if (spec.enIn !== 'scriptSig') spec.suffix = '';
+      // The predecessor sometimes sets clean_jobs: true -> false with the same content is the one allowed silence.
+      const a = template(spec, { clean_jobs: rand() < 0.2 });
       const m = pick(mutations);
       const b = { ...m(a), job_id: 'next', timestamp: (BigInt('0x' + a.timestamp) + BigInt(1000)).toString(16) };
       const r = diff(a, b);
-      const changed = content(a) !== content(b);
+      const normal = (t: StratumV1Data) => ({ ...t, clean_jobs: false, prev_hash: t.prev_hash.toLowerCase(),
+        coinbase1: t.coinbase1.toLowerCase(), coinbase2: t.coinbase2.toLowerCase(), merkle_branches: t.merkle_branches.map(x => x.toLowerCase()) });
+      // Content as stored; clean_jobs counts as a change only when the new template sets it.
+      const changed = content(normal(a)) !== content(normal(b)) || b.clean_jobs === true;
       if (changed !== r.changeTypes.length > 0) {
         throw new Error(`mutation ${i}: content ${changed ? 'differs' : 'equal'}, reported ${JSON.stringify(r.changeTypes)}\n` +
           `a=${JSON.stringify(a)}\nb=${JSON.stringify(b)}`);
       }
       if (changed) reported++;
+      else unchanged++;
     }
-    expect(reported).toBeGreaterThan(1500); // the no-change mutation is about 1 in 11
+    // Both sides of the "if and only if" are exercised: 2 of the 13 mutations change nothing.
+    expect(reported).toBeGreaterThan(1500);
+    expect(unchanged).toBeGreaterThan(150);
   });
 });

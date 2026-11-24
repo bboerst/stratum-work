@@ -16,6 +16,8 @@ export interface BufferedTemplate {
   /** Collector receive time, ms since the epoch (from the hex-nanosecond `timestamp`). */
   timeMs: number;
   data: StratumV1Data;
+  /** Templates from this pool were missed just before this one (markGap): change detection doesn't compare it. */
+  gapBefore?: boolean;
 }
 
 export interface TemplateBufferLimits {
@@ -51,7 +53,7 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
 }
 
 /**
- * De-duplication key: pool + receive time in µs + the template's content (ntime, coinbase1, coinbase2).
+ * De-duplication key: pool + own receive time in µs + the template's content (ntime, coinbase1, coinbase2).
  *
  * It's the same for a template whether it came from the stream or the API (the API's id, `<source>-<µs>-<job_id>`,
  * isn't in the stream). Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
@@ -60,9 +62,11 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
  * stream keeps the pool's casing.
  */
 export function templateKey(
-  t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'ntime' | 'coinbase1' | 'coinbase2'>>,
+  t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'received_timestamp' | 'ntime' | 'coinbase1' | 'coinbase2'>>,
 ): string | null {
-  const us = timestampMicros(t.timestamp);
+  // The row's own receive time: a history read's `timestamp` can be the first-seen time over other connections' copies,
+  // while the live stream sends the shown connection's own, so keying on `timestamp` would buffer one template twice.
+  const us = timestampMicros(t.received_timestamp ?? t.timestamp);
   if (us === null || !t.pool_name) return null;
   const content = [t.ntime, t.coinbase1, t.coinbase2].map(v => (v ?? '').toLowerCase()).join('|');
   return `${t.pool_name}|${us.toString()}|${content}`;
@@ -79,6 +83,10 @@ export class TemplateBuffer {
   private tip: number | null = null;
   private maxTemplateHeight: number | null = null;
   private snapshot: BufferedTemplate[] | null = null;
+  /** Pools whose next live template follows a gap, and the seq at which a gap for every pool was marked. */
+  private readonly gapPools = new Set<string>();
+  private gapAllSeq: number | null = null;
+  private readonly lastSeqByPool = new Map<string, number>();
 
   /** Bumped on every change. */
   version = 0;
@@ -157,7 +165,16 @@ export class TemplateBuffer {
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
       if (newest === undefined || timeMs > newest) newestByPool.set(data.pool_name, timeMs);
 
-      this.byKey.set(key, { key, seq: this.nextSeq++, timeMs, data });
+      // A gap applies to the pool's next template in receive order (not to an older one arriving late, e.g. the
+      // pre-fill), and only when the pool had a template before it.
+      const isNewest = newest === undefined || timeMs >= newest;
+      const lastSeq = this.lastSeqByPool.get(data.pool_name);
+      const gapBefore = isNewest && lastSeq !== undefined
+        && (this.gapPools.has(data.pool_name) || (this.gapAllSeq !== null && lastSeq < this.gapAllSeq));
+      if (isNewest) this.gapPools.delete(data.pool_name);
+      const seq = this.nextSeq++;
+      this.lastSeqByPool.set(data.pool_name, seq);
+      this.byKey.set(key, gapBefore ? { key, seq, timeMs, data, gapBefore } : { key, seq, timeMs, data });
       if (this.maxTemplateHeight === null || data.height > this.maxTemplateHeight) {
         this.maxTemplateHeight = data.height;
       }
@@ -170,6 +187,15 @@ export class TemplateBuffer {
     return added;
   }
 
+  /**
+   * Templates were missed (a throttled burst for `poolName`, or a pause or dropped stream for every pool): the next
+   * template of the pool (or of each pool) is marked `gapBefore`.
+   */
+  markGap(poolName?: string): void {
+    if (poolName === undefined) this.gapAllSeq = this.nextSeq;
+    else this.gapPools.add(poolName);
+  }
+
   /** All entries, oldest first (receive time, then insertion order). The array is cached until the next change. */
   entries(): BufferedTemplate[] {
     if (!this.snapshot) this.snapshot = Array.from(this.byKey.values()).sort(compareEntries);
@@ -178,6 +204,9 @@ export class TemplateBuffer {
 
   clear(): void {
     this.byKey.clear();
+    this.gapPools.clear();
+    this.gapAllSeq = null;
+    this.lastSeqByPool.clear();
     this.maxTemplateHeight = null;
     this.epoch++;
     this.changed();

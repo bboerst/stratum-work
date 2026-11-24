@@ -88,7 +88,7 @@ export interface OpReturnData {
 }
 
 // Legacy `details` from the new decode, so existing consumers keep working.
-function toOpReturnData(d: OpReturnDecoded): OpReturnData {
+export function toOpReturnData(d: OpReturnDecoded): OpReturnData {
   const field = (label: string) => d.fields.find((f) => f.label === label)?.value;
   const details: NonNullable<OpReturnData["details"]> = {};
   switch (d.id) {

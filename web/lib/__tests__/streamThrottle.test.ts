@@ -35,7 +35,20 @@ describe("PoolStreamThrottle", () => {
     for (let i = 0; i < 1000; i++) out.push(...t.offer("F", tpl("F", `g${i}`), now + 4000 + i));
     for (let ms = 200; ms <= 1000; ms += 200) out.push(...t.tick(now + 5000 + ms));
     expect(jobs(out).length).toBeLessThanOrEqual(20 + 5 * 2);
-    expect(markers(out).length).toBeLessThanOrEqual(2);
+    expect(markers(out).length).toBeLessThanOrEqual(5); // at most one per tick that forwards a held template
+  });
+
+  it("sends the marker before a held template that follows skipped ones (change detection's gap signal)", () => {
+    const t = new PoolStreamThrottle({ ratePerSecond: 5, burst: 2 });
+    const out: string[] = [];
+    for (let i = 0; i < 50; i++) out.push(...t.offer("F", tpl("F", `f${i}`), 1000 + i));
+    for (let ms = 200; ms <= 3000; ms += 100) out.push(...t.tick(1000 + ms));
+    // After the first skip, every forwarded template comes right after a marker.
+    const firstHeld = out.findIndex(m => m.includes('"type":"burst"'));
+    expect(firstHeld).toBeGreaterThan(-1);
+    for (let i = firstHeld; i < out.length; i++) {
+      if (!out[i].includes('"type":"burst"')) expect(out[i - 1]).toContain('"type":"burst"');
+    }
   });
 
   it("throttles each pool on its own", () => {

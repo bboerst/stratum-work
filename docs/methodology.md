@@ -167,26 +167,47 @@ can come from either; `site_first_seen` keeps each site's own. The rules are in 
 
 ## What changed between templates
 
-The timing chart labels each template with what changed since the pool's previous template (**derived**). Templates
-are compared in receive order, per pool, never in latency-adjusted order: adjusting each copy by its own latency
-estimate could swap two templates the pool sent in sequence.
+The timing chart labels each template with what changed since the pool's previous template. It is a judgement made
+when the data is read, from the **observed** bytes: two templates are compared field by field.
 
-The comparison covers every field of the template. The coinbase is compared field by field from its byte map (the
-parser behind the template details): the scriptSig's height, merge-mining commitment, text tag, pushed time and other
-pushed data separately; every output's value and script; every OP_RETURN, including ones whose protocol isn't known
-(a protocol that appears twice is compared copy by copy). A coinbase change that none of these explains, for example
-in a coinbase that doesn't parse, is still reported, as "other". The extranonce bytes are left out: they belong to our
-connection and the miner, not the template. A new `extranonce1` is reported separately as a new connection session (a
-reconnect, or the stream switching to another connection), since a comparison across two sessions can show changes the
-pool didn't make to the work. `clean_jobs` is false on most templates (1–8% of each pool's templates set it, measured
-over 4 hours); every template that sets it is marked, including two in a row.
+What is compared:
 
-Two consecutive templates show no change only when their content is identical. Some changes happen on almost every
-template and are left off the bars (still listed on hover): nTime, output values, the witness commitment, the text
-tag, and the scriptSig's pushed time and other data (most pools write a fresh nonce or clock value into every job).
-A pool's first template after the chart starts has nothing to compare with; where its predecessor is still in the
-buffer, it is compared with that.
-The rules are in `web/utils/templateChangeDetection.ts`, tested in `templateChangePrecision.test.ts`.
+- **Every `mining.notify` field** except the job id. Fields are first normalised the way the collector stores them (hex
+  case, `clean_jobs` truthiness), so a live template compares equal to the same template read back from history.
+- **The coinbase, field by field,** from its byte map (the parser behind the template details):
+  - the transaction's version, sequence, locktime and witness;
+  - the scriptSig's merge-mining commitment, text tag, pushed time, other pushed data and push layout;
+  - every output's value and script;
+  - every OP_RETURN, including ones whose protocol isn't known. A protocol that appears twice is compared copy by copy,
+    and a change of order is a change of output structure.
+- **Not the scriptSig's classification.** If the scriptSig's bytes are equal, nothing in it is reported, even if the
+  parser files a byte differently in the next template (for example a pushed time that leaves the window around nTime).
+- **A coinbase that doesn't parse,** on either side, is compared as a whole and reported only as "other coinbase
+  change". No field value is guessed.
+- **Not the extranonce bytes.** They belong to our connection and the miner, not to the template. A new `extranonce1` is
+  reported on its own, as a new connection session (a reconnect, or the stream switching to another connection),
+  because a comparison across two sessions can show differences between connections rather than changes to the work.
+
+Templates are compared in each pool's own receive order (for history reads, the shown connection's receive time, not
+the first-seen time of a copy). Latency-adjusted time is not used: adjusting each copy by its own latency estimate
+could swap two templates the pool sent in sequence.
+
+`clean_jobs` is false on most templates: 1–8% of each pool's templates set it, over 4 hours of production data. Every
+template that sets it is marked, including two in a row. Going back to false is not a change.
+
+When a template shows no change:
+
+- **Not compared:** a pool's first template since the chart started, a template after templates were missed (the live
+  stream skipped part of a burst, the page was paused, the stream reconnected), and a template received out of order.
+  These templates are not compared; hover one to see which case it is.
+- **Compared:** only when the content is identical, or when `clean_jobs` went back to false.
+
+Over 2 hours of production templates (27,132 consecutive pairs), every pair whose content differed reported a change,
+and no identical pair did. Some changes happen on almost every template and are left off the bars (hover for them):
+nTime, output values, the witness commitment, the text tag, and the scriptSig's pushed time and other data. Most pools
+write a fresh nonce or clock value into every job.
+
+The rules are in `web/utils/templateChangeDetection.ts`, tested in `web/utils/__tests__/templateChangePrecision.test.ts`.
 
 ## Pools excluded from the live site
 

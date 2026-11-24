@@ -8,6 +8,11 @@
 export interface StratumV1Data {
   pool_name: string;
   timestamp: string;
+  /**
+   * History reads: the shown connection's own receive time (hex ns), when `timestamp` is the first-seen time over the
+   * template's copies on other connections. Absent on the live stream, whose `timestamp` is already its own.
+   */
+  received_timestamp?: string;
   job_id: string;
   height: number;
   prev_hash: string;    // raw previous block hash (hex)

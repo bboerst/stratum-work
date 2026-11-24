@@ -108,6 +108,8 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     }
   }, [buffer]);
 
+  const handleStreamGap = useCallback((poolName?: string) => buffer.markGap(poolName), [buffer]);
+
   const handleStreamFlush = useCallback(() => {
     if (buffer.version !== publishedVersionRef.current) publishBuffer();
   }, [buffer, publishBuffer]);
@@ -183,6 +185,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     onMessage: handleStreamMessage,
     coalesceMs: BUFFER_NOTIFY_MS,
     onFlush: handleStreamFlush,
+    onGap: handleStreamGap,
   });
   const { data, isConnected, clearData, filterByType, latestMessagesByPool, burstsByPool } = dataStream;
 

@@ -1,5 +1,5 @@
 import { StratumV1Data } from '@/lib/types';
-import { processTemplateData, ProcessedTemplateData, templateContentKey, clearProcessedDataCache as clearProcessorCache } from './templateDataProcessor';
+import { processTemplateData, ProcessedTemplateData, CoinbaseContent, OpReturnEntry, templateContentKey, clearProcessedDataCache as clearProcessorCache } from './templateDataProcessor';
 
 export enum TemplateChangeType {
   // Core template fields
@@ -67,11 +67,13 @@ export const HIDDEN_CHANGE_TYPES: ReadonlySet<TemplateChangeType> = new Set([
 /**
  * How a result came about:
  * - `first`: the pool's first template since the last reset; nothing to compare with (not the same as "identical").
+ * - `gap`: templates from the pool weren't received just before this one (the stream throttled a burst, the page was
+ *   paused, the stream reconnected), so it isn't compared: the diff wouldn't be with its predecessor.
  * - `compared`: compared with the pool's previous template; `changeTypes` empty means identical content.
  * - `outOfOrder`: received before the pool's latest template, so it isn't compared (a diff against the newer
  *   template would run backwards) and doesn't replace the baseline.
  */
-export type ChangeStatus = 'first' | 'compared' | 'outOfOrder';
+export type ChangeStatus = 'first' | 'gap' | 'compared' | 'outOfOrder';
 
 export interface TemplateChangeResult {
   status: ChangeStatus;
@@ -84,7 +86,7 @@ export interface TemplateChangeResult {
 
     // Core template fields
     merkleBranches?: { old: string[]; new: string[] };
-    cleanJobs?: { old: boolean | string; new: boolean | string };
+    cleanJobs?: { old: boolean; new: boolean };
     prevHash?: { old: string; new: string };
     height?: { old: number; new: number };
     version?: { old: string; new: string };
@@ -99,7 +101,7 @@ export interface TemplateChangeResult {
     witnessNonce?: { old?: string | null; new?: string | null };
     coinbaseAscii?: { old: string; new: string };
     coinbaseOutputValue?: { old: number; new: number; oldValues?: number[]; newValues?: number[] };
-    coinbaseOutputs?: { old: any[]; new: any[] };
+    coinbaseOutputs?: { old: string[]; new: string[] }; // each output's script (hex, extranonce bytes as "..")
     auxPowMerkleSize?: { old?: number | null; new?: number | null };
     auxPowNonce?: { old?: number | null; new?: number | null };
 
@@ -109,8 +111,8 @@ export interface TemplateChangeResult {
 
     // Individual OP_RETURN protocol changes
     opReturnProtocols?: {
-      old: Map<string, any>;
-      new: Map<string, any>;
+      old: Map<string, OpReturnEntry>;
+      new: Map<string, OpReturnEntry>;
       changed: string[]; // List of protocol names that changed
     };
 
@@ -127,60 +129,14 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
   return a.every((val, index) => val === b[index]);
 }
 
-// Deep comparison for objects
-function objectsEqual(a: any, b: any): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (typeof a !== 'object' || typeof b !== 'object') return false;
-
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-
-  if (keysA.length !== keysB.length) return false;
-
-  for (const key of keysA) {
-    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
-    if (!objectsEqual(a[key], b[key])) return false;
+// Output structure: the number of outputs, which are OP_RETURN (and of which protocol, by position), and every other
+// output's script (payout addresses and other scripts). OP_RETURN contents are compared per protocol, values as Q.
+function outputStructureEqual(a: CoinbaseContent, b: CoinbaseContent): boolean {
+  if (a.outputScripts.length !== b.outputScripts.length) return false;
+  for (let i = 0; i < a.outputScripts.length; i++) {
+    if (a.outputProtocols[i] !== b.outputProtocols[i]) return false;
+    if (a.outputProtocols[i] === null && a.outputScripts[i] !== b.outputScripts[i]) return false;
   }
-
-  return true;
-}
-
-const isOpReturnScript = (hex: string) => hex.startsWith('6a');
-
-// Output structure: the number of outputs, which ones are OP_RETURN, and every non-OP_RETURN script (payout
-// addresses and other scripts). OP_RETURN contents are compared per protocol, values separately (Q).
-function coinbaseOutputsStructurallyEqual(a: ProcessedTemplate, b: ProcessedTemplate): boolean {
-  if (a.coinbase.parsed && b.coinbase.parsed) {
-    const sa = a.coinbase.outputScripts, sb = b.coinbase.outputScripts;
-    if (sa.length !== sb.length) return false;
-    for (let i = 0; i < sa.length; i++) {
-      const opA = isOpReturnScript(sa[i]), opB = isOpReturnScript(sb[i]);
-      if (opA !== opB) return false;
-      if (!opA && sa[i] !== sb[i]) return false;
-    }
-    return true;
-  }
-  // Unparsed coinbase: the decoded outputs are all there is.
-  const oa = a.coinbaseOutputs, ob = b.coinbaseOutputs;
-  if (oa.length !== ob.length) return false;
-  for (let i = 0; i < oa.length; i++) {
-    if (oa[i].type !== ob[i].type) return false;
-    if (oa[i].type !== 'nulldata' && oa[i].hex !== ob[i].hex) return false;
-  }
-  return true;
-}
-
-// Compare Maps for OP_RETURN protocols
-function mapsEqual(a: Map<string, any>, b: Map<string, any>): boolean {
-  if (a.size !== b.size) return false;
-
-  for (const [key, value] of a) {
-    if (!b.has(key) || !objectsEqual(value, b.get(key))) {
-      return false;
-    }
-  }
-
   return true;
 }
 
@@ -218,22 +174,17 @@ function getProtocolChangeType(key: string): TemplateChangeType {
   }
 }
 
-// Types that account for a change in the coinbase bytes (for the OTHER backstop).
-const COINBASE_TYPES: ReadonlySet<TemplateChangeType> = new Set(
-  Object.values(TemplateChangeType).filter(t =>
-    t !== TemplateChangeType.MERKLE_BRANCHES && t !== TemplateChangeType.CLEAN_JOBS && t !== TemplateChangeType.PREV_HASH &&
-    t !== TemplateChangeType.VERSION && t !== TemplateChangeType.NBITS && t !== TemplateChangeType.NTIME &&
-    t !== TemplateChangeType.OTHER
-  ) as TemplateChangeType[]
-);
-
-const isCleanJobs = (v: boolean | string | undefined) => v === true || (typeof v === 'string' && v.toLowerCase() === 'true');
-
 /**
- * The comparison is exhaustive: every field of the template is compared, and a change in the coinbase bytes that no
- * specific type explains is reported as OTHER, so two consecutive templates produce zero change types only when their
- * content is identical (extranonce bytes aside, which are per connection and per share). Display-level filtering of
- * noisy fields happens in getChangeTypeDisplay (HIDDEN_CHANGE_TYPES).
+ * The comparison is exhaustive. Every mining.notify field is compared (job id and receive time aside), after
+ * normalising them the way the collector stores them. The coinbase is compared field by field, from coinbaseParser's
+ * byte map. A coinbase that doesn't parse on either side is compared as a whole and reported as OTHER.
+ *
+ * So two consecutive templates produce zero change types only when their content is identical. There are two
+ * exceptions:
+ *  - the extranonce bytes, which belong to the connection and the miner (a new extranonce1 is reported as SESSION);
+ *  - clean_jobs going back to false, its default.
+ *
+ * Display-level filtering of noisy fields happens in getChangeTypeDisplay (HIDDEN_CHANGE_TYPES).
  */
 export function compareTemplates(
   lastTemplate: ProcessedTemplate,
@@ -242,122 +193,54 @@ export function compareTemplates(
   const changeTypes: TemplateChangeType[] = [];
   const changeDetails: TemplateChangeResult['changeDetails'] = {};
   const a = lastTemplate.coinbase, b = currentTemplate.coinbase;
-  const bothParsed = a.parsed && b.parsed;
+  const fired = (t: TemplateChangeType) => changeTypes.includes(t);
 
   const push = (type: TemplateChangeType) => {
     if (!changeTypes.includes(type)) changeTypes.push(type);
   };
 
-  // AuxPOW hash (separate from OP_RETURN protocols)
-  if ((lastTemplate.auxPowHash || currentTemplate.auxPowHash) &&
-      lastTemplate.auxPowHash !== currentTemplate.auxPowHash) {
-    push(TemplateChangeType.AUXPOW_HASH);
-    changeDetails.auxPowHash = {
-      old: lastTemplate.auxPowHash,
-      new: currentTemplate.auxPowHash
-    };
-  }
+  // --- mining.notify fields ---
 
-  // Individual OP_RETURN protocol changes
-  if (!mapsEqual(lastTemplate.opReturnProtocols, currentTemplate.opReturnProtocols)) {
-    const oldProtocols = lastTemplate.opReturnProtocols;
-    const newProtocols = currentTemplate.opReturnProtocols;
-    const changedProtocols: string[] = [];
-
-    // Check for changed/removed protocols
-    for (const [protocol, oldData] of oldProtocols) {
-      const newData = newProtocols.get(protocol);
-      if (!newData || !objectsEqual(oldData, newData)) {
-        changedProtocols.push(protocol);
-        push(getProtocolChangeType(protocol));
-      }
-    }
-
-    // Check for new protocols
-    for (const [protocol] of newProtocols) {
-      if (!oldProtocols.has(protocol)) {
-        changedProtocols.push(protocol);
-        push(getProtocolChangeType(protocol));
-      }
-    }
-
-    if (changedProtocols.length > 0) {
-      changeDetails.opReturnProtocols = {
-        old: oldProtocols,
-        new: newProtocols,
-        changed: changedProtocols
-      };
-    }
-  }
-
-  // Merkle branches
   if (!arraysEqual(lastTemplate.merkleBranches, currentTemplate.merkleBranches)) {
     push(TemplateChangeType.MERKLE_BRANCHES);
-    changeDetails.merkleBranches = {
-      old: lastTemplate.merkleBranches,
-      new: currentTemplate.merkleBranches
-    };
+    changeDetails.merkleBranches = { old: lastTemplate.merkleBranches, new: currentTemplate.merkleBranches };
   }
 
   // clean_jobs is a per-message flag ("drop earlier jobs"), false on most templates: flag every message that sets it,
   // including two in a row (e.g. two new blocks with no update between them).
-  if (isCleanJobs(currentTemplate.cleanJobs)) {
+  if (currentTemplate.cleanJobs) {
     push(TemplateChangeType.CLEAN_JOBS);
-    changeDetails.cleanJobs = {
-      old: lastTemplate.cleanJobs,
-      new: currentTemplate.cleanJobs
-    };
+    changeDetails.cleanJobs = { old: lastTemplate.cleanJobs, new: currentTemplate.cleanJobs };
   }
 
-  // Core stratum fields
   if (lastTemplate.prevHash !== currentTemplate.prevHash) {
     push(TemplateChangeType.PREV_HASH);
-    changeDetails.prevHash = {
-      old: lastTemplate.prevHash,
-      new: currentTemplate.prevHash
-    };
+    changeDetails.prevHash = { old: lastTemplate.prevHash, new: currentTemplate.prevHash };
   }
 
   if (lastTemplate.height !== currentTemplate.height) {
     push(TemplateChangeType.HEIGHT);
-    changeDetails.height = {
-      old: lastTemplate.height,
-      new: currentTemplate.height
-    };
+    changeDetails.height = { old: lastTemplate.height, new: currentTemplate.height };
   }
 
   if (lastTemplate.version !== currentTemplate.version) {
     push(TemplateChangeType.VERSION);
-    changeDetails.version = {
-      old: lastTemplate.version,
-      new: currentTemplate.version
-    };
+    changeDetails.version = { old: lastTemplate.version, new: currentTemplate.version };
   }
 
-  if ((lastTemplate.nbits || currentTemplate.nbits) &&
-      lastTemplate.nbits !== currentTemplate.nbits) {
+  if (lastTemplate.nbits !== currentTemplate.nbits) {
     push(TemplateChangeType.NBITS);
-    changeDetails.nbits = {
-      old: lastTemplate.nbits,
-      new: currentTemplate.nbits
-    };
+    changeDetails.nbits = { old: lastTemplate.nbits, new: currentTemplate.nbits };
   }
 
-  if ((lastTemplate.ntime || currentTemplate.ntime) &&
-      lastTemplate.ntime !== currentTemplate.ntime) {
+  if (lastTemplate.ntime !== currentTemplate.ntime) {
     push(TemplateChangeType.NTIME);
-    changeDetails.ntime = {
-      old: lastTemplate.ntime,
-      new: currentTemplate.ntime
-    };
+    changeDetails.ntime = { old: lastTemplate.ntime, new: currentTemplate.ntime };
   }
 
   if (lastTemplate.extranonce2Length !== currentTemplate.extranonce2Length) {
     push(TemplateChangeType.EXTRANONCE2_LENGTH);
-    changeDetails.extranonce2Length = {
-      old: lastTemplate.extranonce2Length,
-      new: currentTemplate.extranonce2Length
-    };
+    changeDetails.extranonce2Length = { old: lastTemplate.extranonce2Length, new: currentTemplate.extranonce2Length };
   }
 
   // Our connection: a new extranonce1 means a new session (or another connection's stream).
@@ -365,116 +248,111 @@ export function compareTemplates(
     push(TemplateChangeType.SESSION);
   }
 
-  // Transaction fields
-  if (lastTemplate.txVersion !== currentTemplate.txVersion) {
+  // --- the coinbase ---
+
+  if (!(a.parsed && b.parsed)) {
+    // No byte map on at least one side: compare the pool's bytes as a whole, and don't guess which field changed.
+    if (a.coinbase1 !== b.coinbase1 || a.coinbase2 !== b.coinbase2) {
+      push(TemplateChangeType.OTHER);
+      changeDetails.otherChanges = [{
+        field: 'coinbase (not parsed)',
+        old: a.parsed ? 'parsed' : 'unparsed',
+        new: b.parsed ? 'parsed' : 'unparsed',
+      }];
+    }
+    return { changeTypes, changeDetails };
+  }
+
+  if (a.version !== b.version) {
     push(TemplateChangeType.TX_VERSION);
-    changeDetails.txVersion = {
-      old: lastTemplate.txVersion,
-      new: currentTemplate.txVersion
-    };
+    changeDetails.txVersion = { old: a.version ?? undefined, new: b.version ?? undefined };
   }
-
-  if (lastTemplate.txLocktime !== currentTemplate.txLocktime) {
+  if (a.locktime !== b.locktime) {
     push(TemplateChangeType.TX_LOCKTIME);
-    changeDetails.txLocktime = {
-      old: lastTemplate.txLocktime,
-      new: currentTemplate.txLocktime
-    };
+    changeDetails.txLocktime = { old: a.locktime ?? undefined, new: b.locktime ?? undefined };
   }
-
-  if (lastTemplate.inputSequence !== currentTemplate.inputSequence) {
+  if (a.sequence !== b.sequence) {
     push(TemplateChangeType.INPUT_SEQUENCE);
-    changeDetails.inputSequence = {
-      old: lastTemplate.inputSequence,
-      new: currentTemplate.inputSequence
-    };
+    changeDetails.inputSequence = { old: a.sequence ?? undefined, new: b.sequence ?? undefined };
   }
-
-  if (lastTemplate.witnessCommitmentNonce !== currentTemplate.witnessCommitmentNonce) {
+  if (a.witness !== b.witness) {
     push(TemplateChangeType.WITNESS_NONCE);
-    changeDetails.witnessNonce = {
-      old: lastTemplate.witnessCommitmentNonce,
-      new: currentTemplate.witnessCommitmentNonce
-    };
+    changeDetails.witnessNonce = { old: a.witness || null, new: b.witness || null };
+  }
+  if (a.prevout !== b.prevout) {
+    // Always null in a valid coinbase; no type of its own.
+    push(TemplateChangeType.OTHER);
+    changeDetails.otherChanges = [{ field: 'coinbase prevout', old: a.prevout, new: b.prevout }];
   }
 
-  // scriptSig, from coinbaseParser's byte map: the text tag in full, a pushed time, the pool's other pushed bytes.
-  const tagsChanged = bothParsed ? a.scriptSigTags !== b.scriptSigTags
-    : lastTemplate.coinbaseScriptASCII !== currentTemplate.coinbaseScriptASCII;
-  if (tagsChanged) {
-    push(TemplateChangeType.COINBASE_ASCII);
-    changeDetails.coinbaseAscii = {
-      old: lastTemplate.coinbaseScriptASCII,
-      new: currentTemplate.coinbaseScriptASCII
-    };
-  }
-
-  if (bothParsed && a.scriptSigTime !== b.scriptSigTime) {
-    push(TemplateChangeType.SCRIPTSIG_TIME);
-    changeDetails.scriptSigTime = { old: a.scriptSigTime, new: b.scriptSigTime };
-  }
-
-  if (bothParsed && a.scriptSigData !== b.scriptSigData) {
-    push(TemplateChangeType.SCRIPTSIG_DATA);
-    changeDetails.scriptSigData = { old: a.scriptSigData, new: b.scriptSigData };
-  }
-
-  // Output values: any output's value, not only the total (a payout moving between outputs keeps the total).
-  const valuesChanged = bothParsed ? !arraysEqual(a.outputValues, b.outputValues)
-    : lastTemplate.coinbaseOutputValue !== currentTemplate.coinbaseOutputValue;
-  if (valuesChanged) {
-    push(TemplateChangeType.COINBASE_OUTPUT_VALUE);
-    changeDetails.coinbaseOutputValue = {
-      old: lastTemplate.coinbaseOutputValue,
-      new: currentTemplate.coinbaseOutputValue,
-      ...(bothParsed ? { oldValues: a.outputValues, newValues: b.outputValues } : {}),
-    };
-  }
-
-  if (!coinbaseOutputsStructurallyEqual(lastTemplate, currentTemplate)) {
-    push(TemplateChangeType.COINBASE_OUTPUTS);
-    changeDetails.coinbaseOutputs = {
-      old: lastTemplate.coinbaseOutputs,
-      new: currentTemplate.coinbaseOutputs
-    };
-  }
-
-  // AuxPOW fields
-  if (lastTemplate.auxPowMerkleSize !== currentTemplate.auxPowMerkleSize) {
-    push(TemplateChangeType.AUXPOW_MERKLE_SIZE);
-    changeDetails.auxPowMerkleSize = {
-      old: lastTemplate.auxPowMerkleSize,
-      new: currentTemplate.auxPowMerkleSize
-    };
-  }
-
-  if (lastTemplate.auxPowNonce !== currentTemplate.auxPowNonce) {
-    push(TemplateChangeType.AUXPOW_NONCE);
-    changeDetails.auxPowNonce = {
-      old: lastTemplate.auxPowNonce,
-      new: currentTemplate.auxPowNonce
-    };
-  }
-
-  // The rest of the scriptSig (push headers, the height push, the AuxPoW bytes): a change there that none of the
-  // scriptSig types explains (a longer tag or extranonce moves its push header too) is a change in the push layout.
-  if (bothParsed && a.scriptSigStructure !== b.scriptSigStructure) {
+  // scriptSig. Nothing is reported when the pool's bytes are the same, so a byte that the parser files differently
+  // in the next template (a pushed time moving out of the ±2 h window, binary that happens to look like text) can't
+  // show as a change.
+  if (a.scriptSigPool !== b.scriptSigPool) {
+    const ar = a.auxpow, br = b.auxpow;
+    if ((ar?.root ?? null) !== (br?.root ?? null)) {
+      push(TemplateChangeType.AUXPOW_HASH);
+      changeDetails.auxPowHash = { old: ar?.root, new: br?.root };
+    }
+    if ((ar?.merkleSize ?? null) !== (br?.merkleSize ?? null)) {
+      push(TemplateChangeType.AUXPOW_MERKLE_SIZE);
+      changeDetails.auxPowMerkleSize = { old: ar?.merkleSize, new: br?.merkleSize };
+    }
+    if ((ar?.nonce ?? null) !== (br?.nonce ?? null)) {
+      push(TemplateChangeType.AUXPOW_NONCE);
+      changeDetails.auxPowNonce = { old: ar?.nonce, new: br?.nonce };
+    }
+    if (a.scriptSigTags !== b.scriptSigTags) {
+      push(TemplateChangeType.COINBASE_ASCII);
+      changeDetails.coinbaseAscii = { old: a.scriptSigTags, new: b.scriptSigTags };
+    }
+    if (a.scriptSigTime !== null && b.scriptSigTime !== null && a.scriptSigTime !== b.scriptSigTime) {
+      push(TemplateChangeType.SCRIPTSIG_TIME);
+      changeDetails.scriptSigTime = { old: a.scriptSigTime, new: b.scriptSigTime };
+    }
+    if (a.scriptSigData !== b.scriptSigData || (a.scriptSigTime === null) !== (b.scriptSigTime === null)) {
+      push(TemplateChangeType.SCRIPTSIG_DATA);
+      changeDetails.scriptSigData = { old: a.scriptSigData, new: b.scriptSigData };
+    }
+    // Only push headers or the height push changed: the push layout (unless a longer extranonce or height moved it).
     const explained = [TemplateChangeType.HEIGHT, TemplateChangeType.AUXPOW_HASH, TemplateChangeType.AUXPOW_MERKLE_SIZE,
       TemplateChangeType.AUXPOW_NONCE, TemplateChangeType.COINBASE_ASCII, TemplateChangeType.SCRIPTSIG_TIME,
-      TemplateChangeType.SCRIPTSIG_DATA, TemplateChangeType.EXTRANONCE2_LENGTH, TemplateChangeType.SESSION,
-    ].some(t => changeTypes.includes(t));
+      TemplateChangeType.SCRIPTSIG_DATA, TemplateChangeType.EXTRANONCE2_LENGTH, TemplateChangeType.SESSION].some(fired);
     if (!explained) {
       push(TemplateChangeType.SCRIPTSIG_DATA);
-      changeDetails.scriptSigData = { old: a.scriptSigStructure, new: b.scriptSigStructure };
+      changeDetails.scriptSigData = { old: a.scriptSigPool, new: b.scriptSigPool };
     }
   }
 
-  // Backstop: the coinbase bytes (extranonce aside) changed, but nothing above says how.
-  const coinbaseBytesChanged = a.coinbase1 !== b.coinbase1 || a.coinbase2 !== b.coinbase2
-    || a.extranonce1.length !== b.extranonce1.length;
-  if (coinbaseBytesChanged && !changeTypes.some(t => COINBASE_TYPES.has(t))) {
-    push(TemplateChangeType.OTHER);
-    changeDetails.otherChanges = [{ field: 'coinbase', old: 'unparsed difference', new: 'unparsed difference' }];
+  // Outputs: every value (a payout moving between outputs keeps the total), the structure, every OP_RETURN.
+  if (!arraysEqual(a.outputValues, b.outputValues)) {
+    push(TemplateChangeType.COINBASE_OUTPUT_VALUE);
+    const sum = (v: number[]) => v.reduce((x, y) => x + y, 0);
+    changeDetails.coinbaseOutputValue = {
+      old: sum(a.outputValues), new: sum(b.outputValues), oldValues: a.outputValues, newValues: b.outputValues,
+    };
+  }
+
+  if (!outputStructureEqual(a, b)) {
+    push(TemplateChangeType.COINBASE_OUTPUTS);
+    changeDetails.coinbaseOutputs = { old: a.outputScripts, new: b.outputScripts };
+  }
+
+  const oldProtocols = lastTemplate.opReturnProtocols;
+  const newProtocols = currentTemplate.opReturnProtocols;
+  const changedProtocols: string[] = [];
+  for (const [key, oldEntry] of oldProtocols) {
+    if (newProtocols.get(key)?.cmp !== oldEntry.cmp) changedProtocols.push(key);
+  }
+  for (const key of newProtocols.keys()) {
+    if (!oldProtocols.has(key)) changedProtocols.push(key);
+  }
+  for (const key of changedProtocols) {
+    // The extranonce carrier's own bytes are masked: a change there is the pool's, but not a commitment.
+    push(key.startsWith('Extranonce carrier') ? TemplateChangeType.OP_RETURN_OTHER : getProtocolChangeType(key));
+  }
+  if (changedProtocols.length > 0) {
+    changeDetails.opReturnProtocols = { old: oldProtocols, new: newProtocols, changed: changedProtocols };
   }
 
   return { changeTypes, changeDetails };
@@ -513,6 +391,20 @@ export function parseMessageTimestampMs(ts: string | number | undefined): number
   return isNaN(asNumber) ? NaN : asNumber;
 }
 
+/**
+ * A template's own receive time in ms, for ordering: `received_timestamp` when a history read provides it (its
+ * `timestamp` is then the first-seen time over the template's copies on other connections, which can reorder two
+ * templates of the shown connection), else `timestamp` (the live stream's own receive time).
+ */
+export function receiveTimeMs(data: Pick<StratumV1Data, 'timestamp' | 'received_timestamp'>): number {
+  return parseMessageTimestampMs(data.received_timestamp ?? data.timestamp);
+}
+
+/** Compare by receive time, for sorting one pool's templates before feeding the tracker. */
+export function byReceiveTime(a: StratumV1Data, b: StratumV1Data): number {
+  return receiveTimeMs(a) - receiveTimeMs(b);
+}
+
 interface PoolBaseline {
   template: ProcessedTemplate;
   timestampMs: number;
@@ -523,12 +415,13 @@ const MAX_RESULTS_PER_POOL = 500;
 
 /**
  * Change detection is stateful: each message is compared with the previous message from the same pool, in receive
- * order. Callers feed each pool's messages sorted by receive time (`timestamp`, not the latency-adjusted time: that is
- * for drawing, and adjusting by each copy's own latency estimate could reorder them).
+ * order. Callers feed each pool's messages sorted with byReceiveTime (not the latency-adjusted time: that is for
+ * drawing, and adjusting each copy by its own latency estimate could reorder them).
  *
  * One baseline per pool, the newest message seen. A message older than the baseline isn't compared (status
- * `outOfOrder`) and never replaces it. Results are cached by full message content, so feeding the same message again
- * returns the same result instead of comparing it with itself.
+ * `outOfOrder`) and never replaces it. A message after a gap (`gapBefore`) isn't compared and becomes the baseline.
+ * Results are cached by full message content, so feeding the same message again returns the same result instead of
+ * comparing it with itself.
  */
 export class TemplateChangeTracker {
   private baselineByPool = new Map<string, PoolBaseline>();
@@ -553,7 +446,7 @@ export class TemplateChangeTracker {
     return result;
   }
 
-  process(data: StratumV1Data): TemplateChangeResult {
+  process(data: StratumV1Data, opts: { gapBefore?: boolean } = {}): TemplateChangeResult {
     const pool = data.pool_name;
     const rawKey = templateContentKey(data);
 
@@ -563,20 +456,22 @@ export class TemplateChangeTracker {
     }
 
     const currentTemplate = processTemplateData(data);
-    const currentTimestampMs = parseMessageTimestampMs(data.timestamp);
+    const currentTimestampMs = receiveTimeMs(data);
     const baseline = this.baselineByPool.get(pool);
+    const empty = { hasChanges: false, changeTypes: [], changeDetails: {} };
 
-    // First template for this pool: establish the baseline.
-    if (!baseline) {
+    // First template for this pool, or the first after a gap: nothing to compare with; it becomes the baseline.
+    if (!baseline || opts.gapBefore) {
+      if (baseline && !isNaN(currentTimestampMs) && currentTimestampMs < baseline.timestampMs) {
+        return this.cacheResult(pool, rawKey, { status: 'outOfOrder', ...empty, outOfOrder: true });
+      }
       this.baselineByPool.set(pool, { template: currentTemplate, timestampMs: currentTimestampMs });
-      return this.cacheResult(pool, rawKey, { status: 'first', hasChanges: false, changeTypes: [], changeDetails: {} });
+      return this.cacheResult(pool, rawKey, { status: baseline ? 'gap' : 'first', ...empty });
     }
 
     const bothTimestampsValid = !isNaN(currentTimestampMs) && !isNaN(baseline.timestampMs);
     if (bothTimestampsValid && currentTimestampMs < baseline.timestampMs) {
-      return this.cacheResult(pool, rawKey, {
-        status: 'outOfOrder', hasChanges: false, changeTypes: [], changeDetails: {}, outOfOrder: true,
-      });
+      return this.cacheResult(pool, rawKey, { status: 'outOfOrder', ...empty, outOfOrder: true });
     }
 
     // In order (a lower height too: a pool going back to an older tip is a change like any other).
@@ -621,7 +516,7 @@ export function getChangeTypeDescription(changeType: TemplateChangeType): string
     case TemplateChangeType.MERKLE_BRANCHES:
       return 'Transaction merkle branches changed';
     case TemplateChangeType.CLEAN_JOBS:
-      return 'Clean jobs flag changed';
+      return 'Clean jobs flag set';
     case TemplateChangeType.PREV_HASH:
       return 'Previous block hash changed';
     case TemplateChangeType.HEIGHT:

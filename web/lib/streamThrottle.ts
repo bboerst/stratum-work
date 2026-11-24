@@ -84,7 +84,10 @@ export class PoolStreamThrottle {
         s.tokens -= 1;
         const latest = s.pending;
         s.pending = null;
-        if (s.unreported > 0 && now - s.lastMarker >= this.opts.markerIntervalMs) out.push(this.marker(pool, s, now));
+        // Templates were skipped before this one: the marker always goes first, so the browser knows this template
+        // doesn't follow the last one it got (change detection doesn't compare across the gap). At most one marker
+        // per forwarded template, so still bounded by the rate.
+        if (s.unreported > 0) out.push(this.marker(pool, s, now));
         out.push(latest);
       } else if (s.pending === null && s.unreported > 0 && now - s.lastMarker >= this.opts.markerIntervalMs) {
         out.push(this.marker(pool, s, now)); // the burst is over: report what's left

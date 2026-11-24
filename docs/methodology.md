@@ -167,9 +167,10 @@ can come from either; `site_first_seen` keeps each site's own. The rules are in 
 ## Pools excluded from the live site
 
 A pool can be excluded from the live site (`POOL_BLACKLIST`): its live work is not served. That is the realtime stream,
-the realtime pre-fill, and every template above our tip (the work being handed out right now), on any route. Its
-history is: at heights at or below our tip, every analysis view includes it like any other pool (the height page and
-its templates, first seen, Forks, template providers, the blocks it mined, stale blocks). The boundary is per template
+the realtime pre-fill, every template above our tip (the work being handed out right now) on any route, and the
+height page's template table at any height (each template in full, as the realtime table shows them). Its history is:
+at heights at or below our tip, every analysis view includes it like any other pool (the height page's first seen and
+fork timeline, Forks, template providers, the blocks it mined, stale blocks). The boundary is per template
 height against our tip (`filterBlacklistedAboveTip`, `web/lib/poolBlacklist.ts`); while the tip is unknown,
 the pool is left out of every height (fail closed). The web's Postgres tests check it over every API route
 (`pgExclusionInvariant.test.ts`): no live work of an excluded pool in any response, and every place its history appears

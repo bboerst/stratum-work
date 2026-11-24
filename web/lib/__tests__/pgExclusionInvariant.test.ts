@@ -176,7 +176,8 @@ function cases(): Record<string, Case[]> {
         { path: '$.lanes[*].pool', why: FORKS_HISTORY }] },
       { qs: `height=${H + 1}`, aboveTip: (b: { lanes: { pool: string }[] }) => b.lanes.filter(l => l.pool === EXCLUDED) },
     ],
-    'mining-notify': [{ qs: `height=${H}`, allow: [{ path: '$[*].pool_name', why: LIVE_ONLY }] }, { qs: `height=${H + 1}` }],
+    // the height page's template table: full templates, so the excluded pool is left out at every height (#301)
+    'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
     'pools': [{ allow: [{ path: '$[*].name', why: REFERENCE }, { path: '$[*].tag', why: REFERENCE }] }],
     'realtime-prefill': [{}],
     'runtime-config': [{ noPoolData: 'configuration only (stream endpoint, flags)' }],

@@ -7,6 +7,10 @@ export interface SortedRow {
   pool_name: string;
   timestamp: string; // ISO string format from collector
   raw_timestamp: string;    // unadjusted receipt timestamp from the collector
+  received_timestamp?: string; // history reads: the shown connection's own receive time (StratumV1Data)
+  source_id?: number;       // history reads: the connection that received it
+  site?: string;            // live stream: the connection that received it
+  replica?: string;
   lat_ms?: number;          // stored short key: one-way latency estimate
   lat_m?: string;
   job_id: string;

@@ -13,6 +13,7 @@ import {
   TemplateChangeTracker,
   getChangeTypeDisplay,
   byReceiveTime,
+  receiveTimeMs,
   HIDDEN_CHANGE_TYPES,
   TemplateChangeResult,
   TemplateChangeType,
@@ -186,7 +187,8 @@ function diffWindow(oldHex: string, newHex: string, width = 24): [string, string
 /** What a result without change types means, for the tooltip (they all draw the same gray bar). */
 function statusNote(info: TemplateChangeResult): string | null {
   if (info.status === 'first') return 'First template seen: nothing to compare with';
-  if (info.status === 'gap') return 'Templates were skipped before this one (throttled or paused): not compared';
+  if (info.status === 'gap') return 'Templates were missed before this one (throttled, paused, reconnected or page load): not compared';
+  if (info.status === 'otherConnection') return 'From another of our connections than the previous template: not compared';
   if (info.status === 'outOfOrder') return 'Received out of order: not compared';
   if (info.changeTypes.length === 0) return 'Identical to the previous template';
   if (info.changeTypes.every(t => HIDDEN_CHANGE_TYPES.has(t))) return 'Only changes not drawn on the bar (listed below)';
@@ -1567,7 +1569,7 @@ function RealtimeChartBase({
       batch = chartWindow(bufferedTemplates, Date.now() - windowS * 1000);
       // Give each pool's first plotted template its predecessor, so its bar gets change colors instead of gray
       // (the primers are compared against, not plotted).
-      for (const entry of changeTrackerPrimers(bufferedTemplates, batch)) {
+      for (const entry of changeTrackerPrimers(bufferedTemplates, batch, e => receiveTimeMs(e.data))) {
         changeTrackerRef.current.process(entry.data);
       }
     } else {

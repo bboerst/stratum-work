@@ -254,36 +254,47 @@ describe('other-chain templates (collectors don\'t tag them)', () => {
 
 describe('gaps (change detection must not compare across missed templates)', () => {
   const gapOf = (b: TemplateBuffer, job: string) => b.entries().find(e => e.data.job_id === job)?.gapBefore === true;
+  const live = (b: TemplateBuffer, t: StratumV1Data[]) => b.add(t, undefined, { live: true });
 
-  it('marks only the next template of a throttled pool', () => {
+  it('marks only the next live template of a throttled pool', () => {
     const b = new TemplateBuffer();
-    b.add([tpl('A', 100, 0), tpl('B', 100, 1)]);
+    live(b, [tpl('A', 100, 0), tpl('B', 100, 1)]);
     b.markGap('A');
-    b.add([tpl('A', 100, 10), tpl('B', 100, 11), tpl('A', 100, 20)]);
+    live(b, [tpl('A', 100, 10), tpl('B', 100, 11), tpl('A', 100, 20)]);
     expect(gapOf(b, 'A-10')).toBe(true);
     expect(gapOf(b, 'B-11')).toBe(false);
     expect(gapOf(b, 'A-20')).toBe(false);
   });
 
-  it('marks the next template of every pool after a pause or reconnect, and not a pool seen for the first time', () => {
+  it('marks the next live template of every pool after a pause or reconnect, not a pool seen for the first time', () => {
     const b = new TemplateBuffer();
-    b.add([tpl('A', 100, 0), tpl('B', 100, 1)]);
+    live(b, [tpl('A', 100, 0), tpl('B', 100, 1)]);
     b.markGap();
-    b.add([tpl('A', 100, 10), tpl('C', 100, 12)]);
-    b.add([tpl('B', 100, 15), tpl('A', 100, 20)]);
+    live(b, [tpl('A', 100, 10), tpl('C', 100, 12)]);
+    live(b, [tpl('B', 100, 15), tpl('A', 100, 20)]);
     expect(gapOf(b, 'A-10')).toBe(true);
     expect(gapOf(b, 'B-15')).toBe(true);
     expect(gapOf(b, 'C-12')).toBe(false);
     expect(gapOf(b, 'A-20')).toBe(false);
   });
 
-  it('does not mark an older template arriving late (the pre-fill)', () => {
+  it('the first live template after the pre-fill follows a gap (the two do not meet exactly)', () => {
     const b = new TemplateBuffer();
-    b.add([tpl('A', 100, 10)]);
-    b.markGap('A');
-    b.add([tpl('A', 100, 5)]);
+    b.add([tpl('A', 100, 0), tpl('A', 100, 5)]); // pre-fill
+    live(b, [tpl('A', 100, 10), tpl('A', 100, 20)]);
     expect(gapOf(b, 'A-5')).toBe(false);
-    b.add([tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-10')).toBe(true);
+    expect(gapOf(b, 'A-20')).toBe(false);
+  });
+
+  it('a pre-fill landing late neither takes nor cancels a gap', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 10)]);
+    b.markGap(); // paused / stream error
+    b.add([tpl('A', 100, 5), tpl('A', 100, 8)]); // older rows from the pre-fill
+    expect(gapOf(b, 'A-5')).toBe(false);
+    expect(gapOf(b, 'A-8')).toBe(false);
+    live(b, [tpl('A', 100, 20)]);
     expect(gapOf(b, 'A-20')).toBe(true);
   });
 
@@ -291,7 +302,7 @@ describe('gaps (change detection must not compare across missed templates)', () 
     const b = new TemplateBuffer();
     // History: shown with the first-seen time of a copy on another connection (earlier), plus its own receive time.
     b.add([tpl('A', 100, 10, { timestamp: hexNsFromPostgres(8), received_timestamp: hexNsFromPostgres(10) })]);
-    b.add([tpl('A', 100, 10)]); // the live stream: its own receive time
+    live(b, [tpl('A', 100, 10)]); // the live stream: its own receive time
     expect(b.size).toBe(1);
   });
 });

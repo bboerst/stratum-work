@@ -19,6 +19,9 @@ export interface ProcessedTemplateData {
   merkleBranches: string[];
   extranonce2Length: number;
 
+  /** Which of our connections received it (`site/replica` on the stream, `source_id` on history), or null. */
+  connection: string | null;
+
   /** OP_RETURN outputs, keyed by protocol name (" #2", " #3"... for repeats). Empty when the coinbase doesn't parse. */
   opReturnProtocols: Map<string, OpReturnEntry>;
 
@@ -31,6 +34,8 @@ export interface CoinbaseContent {
   parsed: boolean;
   version: number | null;
   sequence: number | null;
+  /** nSequence as hex with extranonce bytes as "..": some pools let the extranonce run into it. */
+  sequenceMasked: string;
   locktime: number | null;
   /** The input's prevout (always null in a valid coinbase; compared because nothing else covers it). */
   prevout: string;
@@ -87,7 +92,7 @@ function keyed<T>(items: { protocol: string; entry: T }[]): Map<string, T> {
 }
 
 const EMPTY_COINBASE: Omit<CoinbaseContent, 'extranonce1' | 'coinbase1' | 'coinbase2'> = {
-  parsed: false, version: null, sequence: null, locktime: null, prevout: '', witness: '', scriptSigPool: '', scriptSigTags: '',
+  parsed: false, version: null, sequence: null, sequenceMasked: '', locktime: null, prevout: '', witness: '', scriptSigPool: '', scriptSigTags: '',
   scriptSigTime: null, scriptSigData: '', auxpow: null, outputValues: [], outputScripts: [], outputProtocols: [],
 };
 
@@ -130,6 +135,7 @@ export function coinbaseContent(
 
   const prevoutField = parsed.fields.find(f => f.kind === 'prevout');
   const witnessField = parsed.fields.find(f => f.kind === 'witness');
+  const sequenceField = parsed.fields.find(f => f.kind === 'sequence');
   const aux = parsed.scriptSig.auxpow;
 
   const outputProtocols: (string | null)[] = [];
@@ -158,6 +164,7 @@ export function coinbaseContent(
       parsed: true,
       version: parsed.version ?? null,
       sequence: parsed.sequence ?? null,
+      sequenceMasked: sequenceField ? masked(sequenceField) : '',
       locktime: parsed.locktime ?? null,
       prevout: prevoutField ? hexOf(prevoutField) : '',
       witness: witnessField ? hexOf(witnessField) : '',
@@ -198,7 +205,7 @@ export function cleanJobsFlag(v: unknown): boolean {
 /** Every mining.notify field plus the pool and receive time: two messages with the same key are the same message. */
 export function templateContentKey(data: StratumV1Data): string {
   return JSON.stringify([
-    data.pool_name, data.timestamp, data.received_timestamp, data.job_id, data.height, data.prev_hash, data.version, data.nbits, data.ntime,
+    data.pool_name, data.timestamp, data.received_timestamp, data.source_id, data.site, data.replica, data.job_id, data.height, data.prev_hash, data.version, data.nbits, data.ntime,
     data.clean_jobs, data.merkle_branches, data.coinbase1, data.extranonce1, data.extranonce2_length, data.coinbase2,
   ]);
 }
@@ -224,6 +231,8 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
     cleanJobs: cleanJobsFlag(data.clean_jobs),
     merkleBranches: (data.merkle_branches ?? []).map(lowerHex),
     extranonce2Length: Number(data.extranonce2_length),
+    connection: typeof data.site === 'string' && typeof data.replica === 'string' ? `${data.site}/${data.replica}`
+      : typeof data.source_id === 'number' ? `source ${data.source_id}` : null,
     opReturnProtocols: opReturns,
     coinbase,
   };

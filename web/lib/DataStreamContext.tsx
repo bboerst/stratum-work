@@ -102,7 +102,7 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
   // snapshot is published in the stream's next flush (handleStreamFlush), in the same render as the stream state.
   const handleStreamMessage = useCallback((item: StreamData) => {
     if (item.type === StreamDataType.STRATUM_V1) {
-      buffer.add([item.data]);
+      buffer.add([item.data], undefined, { live: true });
     } else if (item.type === StreamDataType.BLOCK) {
       buffer.setTip(item.data?.height);
     }

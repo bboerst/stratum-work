@@ -45,26 +45,23 @@ export function staleBefore(nowMs: number, windowMs: number): number {
 export function changeTrackerPrimers<T extends { seq: number; timeMs: number; data: { pool_name?: string | null } }>(
   all: T[],
   plotted: T[],
+  /** The order change detection uses (each template's own receive time); defaults to `timeMs`. */
+  orderMs: (entry: T) => number = entry => entry.timeMs,
 ): T[] {
+  const before = (x: T, y: T) => orderMs(x) < orderMs(y) || (orderMs(x) === orderMs(y) && x.seq < y.seq);
   const firstPlotted = new Map<string, T>();
   for (const entry of plotted) {
     const pool = entry.data.pool_name ?? '';
     const current = firstPlotted.get(pool);
-    if (!current || entry.timeMs < current.timeMs || (entry.timeMs === current.timeMs && entry.seq < current.seq)) {
-      firstPlotted.set(pool, entry);
-    }
+    if (!current || before(entry, current)) firstPlotted.set(pool, entry);
   }
   const primer = new Map<string, T>();
   for (const entry of all) {
     const pool = entry.data.pool_name ?? '';
     const first = firstPlotted.get(pool);
-    if (!first || entry === first) continue;
-    const before = entry.timeMs < first.timeMs || (entry.timeMs === first.timeMs && entry.seq < first.seq);
-    if (!before) continue;
+    if (!first || entry === first || !before(entry, first)) continue;
     const best = primer.get(pool);
-    if (!best || entry.timeMs > best.timeMs || (entry.timeMs === best.timeMs && entry.seq > best.seq)) {
-      primer.set(pool, entry);
-    }
+    if (!best || before(best, entry)) primer.set(pool, entry);
   }
-  return [...primer.values()].sort((a, b) => a.timeMs - b.timeMs || a.seq - b.seq);
+  return [...primer.values()].sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0));
 }

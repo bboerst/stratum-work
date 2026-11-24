@@ -69,6 +69,7 @@ describe('templateRowToMiningNotify', () => {
       prev_hash: '90b62fac1e09306615f1d97dbea75b7ad1d6ab17000111df0000000000000000',
       timestamp: '18e750a5ee035e00',
       received_timestamp: '18e750a5ee035e00',
+      source_id: 3,
       nbits: '1701e5ac',
       ntime: '6af5c36b',
       clean_jobs: true,
@@ -79,7 +80,7 @@ describe('templateRowToMiningNotify', () => {
     });
     // Stable key order
     expect(Object.keys(doc)).toEqual(['id', 'height', 'pool_name', 'coinbase1', 'coinbase2',
-      'merkle_branches', 'version', 'prev_hash', 'timestamp', 'received_timestamp', 'nbits', 'ntime', 'clean_jobs', 'extranonce1',
+      'merkle_branches', 'version', 'prev_hash', 'timestamp', 'received_timestamp', 'source_id', 'nbits', 'ntime', 'clean_jobs', 'extranonce1',
       'extranonce2_length', 'lat_ms', 'lat_m']);
   });
 

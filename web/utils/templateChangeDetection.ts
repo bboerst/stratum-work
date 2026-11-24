@@ -28,7 +28,7 @@ export enum TemplateChangeType {
   SCRIPTSIG_DATA = 'S',          // pushed binary data: counters, nonces, ids, or the push layout itself
   SCRIPTSIG_TIME = 'Y',          // a pushed Unix time (the pool's clock)
 
-  // Our connection, not the template: extranonce1 changed (a reconnect, or the stream switched to another connection)
+  // Our connection, not the template: extranonce1 changed (a reconnect; another connection isn't compared at all)
   SESSION = 'R',
 
   // Individual OP_RETURN protocol changes (struck-through letters representing protocol names)
@@ -68,12 +68,16 @@ export const HIDDEN_CHANGE_TYPES: ReadonlySet<TemplateChangeType> = new Set([
  * How a result came about:
  * - `first`: the pool's first template since the last reset; nothing to compare with (not the same as "identical").
  * - `gap`: templates from the pool weren't received just before this one (the stream throttled a burst, the page was
- *   paused, the stream reconnected), so it isn't compared: the diff wouldn't be with its predecessor.
+ *   paused, the stream reconnected, or the live stream started after the history pre-fill), so it isn't compared: the
+ *   diff wouldn't be with its predecessor.
+ * - `otherConnection`: received on another of our connections than the pool's previous template (the stream or a
+ *   history read switched connection, e.g. during a reconnect). Some pools give each connection its own jobs, so a
+ *   diff would show differences between connections, not changes to the work. Not compared.
  * - `compared`: compared with the pool's previous template; `changeTypes` empty means identical content.
  * - `outOfOrder`: received before the pool's latest template, so it isn't compared (a diff against the newer
  *   template would run backwards) and doesn't replace the baseline.
  */
-export type ChangeStatus = 'first' | 'gap' | 'compared' | 'outOfOrder';
+export type ChangeStatus = 'first' | 'gap' | 'otherConnection' | 'compared' | 'outOfOrder';
 
 export interface TemplateChangeResult {
   status: ChangeStatus;
@@ -243,7 +247,7 @@ export function compareTemplates(
     changeDetails.extranonce2Length = { old: lastTemplate.extranonce2Length, new: currentTemplate.extranonce2Length };
   }
 
-  // Our connection: a new extranonce1 means a new session (or another connection's stream).
+  // Our connection: a new extranonce1 on the same connection means a new session (a reconnect).
   if (a.extranonce1 !== b.extranonce1) {
     push(TemplateChangeType.SESSION);
   }
@@ -271,7 +275,7 @@ export function compareTemplates(
     push(TemplateChangeType.TX_LOCKTIME);
     changeDetails.txLocktime = { old: a.locktime ?? undefined, new: b.locktime ?? undefined };
   }
-  if (a.sequence !== b.sequence) {
+  if (a.sequenceMasked !== b.sequenceMasked) {
     push(TemplateChangeType.INPUT_SEQUENCE);
     changeDetails.inputSequence = { old: a.sequence ?? undefined, new: b.sequence ?? undefined };
   }
@@ -472,6 +476,11 @@ export class TemplateChangeTracker {
     const bothTimestampsValid = !isNaN(currentTimestampMs) && !isNaN(baseline.timestampMs);
     if (bothTimestampsValid && currentTimestampMs < baseline.timestampMs) {
       return this.cacheResult(pool, rawKey, { status: 'outOfOrder', ...empty, outOfOrder: true });
+    }
+
+    if (baseline.template.connection && currentTemplate.connection && baseline.template.connection !== currentTemplate.connection) {
+      this.baselineByPool.set(pool, { template: currentTemplate, timestampMs: currentTimestampMs });
+      return this.cacheResult(pool, rawKey, { status: 'otherConnection', ...empty });
     }
 
     // In order (a lower height too: a pool going back to an older tip is a change like any other).

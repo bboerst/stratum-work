@@ -83,10 +83,14 @@ export class TemplateBuffer {
   private tip: number | null = null;
   private maxTemplateHeight: number | null = null;
   private snapshot: BufferedTemplate[] | null = null;
-  /** Pools whose next live template follows a gap, and the seq at which a gap for every pool was marked. */
+  /**
+   * Gaps (markGap): pools whose next live template follows a gap; a counter bumped by a gap for every pool, and the
+   * value each pool's last live template saw. A pool's first live template after the pre-fill follows a gap too (the
+   * pre-fill and the stream don't meet exactly), which the counter's initial mismatch gives.
+   */
   private readonly gapPools = new Set<string>();
-  private gapAllSeq: number | null = null;
-  private readonly lastSeqByPool = new Map<string, number>();
+  private gapAllEpoch = 0;
+  private readonly liveEpochByPool = new Map<string, number>();
 
   /** Bumped on every change. */
   version = 0;
@@ -134,12 +138,13 @@ export class TemplateBuffer {
   }
 
   /**
-   * Merge templates (the history pre-fill or the live stream). Returns how many new entries were added. A template
+   * Merge templates (the history pre-fill, or the live stream with `live`). Returns how many new entries were added. A template
    * already buffered is not added again. Non-Bitcoin templates and pools rejected by `isAllowed` are skipped.
    */
   add(
     templates: StratumV1Data[],
     isAllowed: (poolName: string) => boolean = () => true,
+    { live = false }: { live?: boolean } = {},
   ): number {
     let added = 0;
     let outOfOrder = false;
@@ -165,15 +170,16 @@ export class TemplateBuffer {
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
       if (newest === undefined || timeMs > newest) newestByPool.set(data.pool_name, timeMs);
 
-      // A gap applies to the pool's next template in receive order (not to an older one arriving late, e.g. the
-      // pre-fill), and only when the pool had a template before it.
-      const isNewest = newest === undefined || timeMs >= newest;
-      const lastSeq = this.lastSeqByPool.get(data.pool_name);
-      const gapBefore = isNewest && lastSeq !== undefined
-        && (this.gapPools.has(data.pool_name) || (this.gapAllSeq !== null && lastSeq < this.gapAllSeq));
-      if (isNewest) this.gapPools.delete(data.pool_name);
+      // A gap applies to the pool's next live template in receive order (not to an older one arriving late, nor to
+      // the pre-fill), and only when the pool had a template before it.
+      let gapBefore = false;
+      if (live && (newest === undefined || timeMs >= newest)) {
+        gapBefore = newest !== undefined
+          && (this.gapPools.has(data.pool_name) || this.liveEpochByPool.get(data.pool_name) !== this.gapAllEpoch);
+        this.gapPools.delete(data.pool_name);
+        this.liveEpochByPool.set(data.pool_name, this.gapAllEpoch);
+      }
       const seq = this.nextSeq++;
-      this.lastSeqByPool.set(data.pool_name, seq);
       this.byKey.set(key, gapBefore ? { key, seq, timeMs, data, gapBefore } : { key, seq, timeMs, data });
       if (this.maxTemplateHeight === null || data.height > this.maxTemplateHeight) {
         this.maxTemplateHeight = data.height;
@@ -192,7 +198,7 @@ export class TemplateBuffer {
    * template of the pool (or of each pool) is marked `gapBefore`.
    */
   markGap(poolName?: string): void {
-    if (poolName === undefined) this.gapAllSeq = this.nextSeq;
+    if (poolName === undefined) this.gapAllEpoch++;
     else this.gapPools.add(poolName);
   }
 
@@ -205,8 +211,7 @@ export class TemplateBuffer {
   clear(): void {
     this.byKey.clear();
     this.gapPools.clear();
-    this.gapAllSeq = null;
-    this.lastSeqByPool.clear();
+    this.liveEpochByPool.clear();
     this.maxTemplateHeight = null;
     this.epoch++;
     this.changed();

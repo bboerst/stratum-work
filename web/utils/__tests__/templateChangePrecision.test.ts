@@ -350,6 +350,22 @@ describe('combinations and edge cases', () => {
 });
 
 describe('ordering and gaps', () => {
+  test('another of our connections than the previous template: not compared; a reconnect on the same one: R', () => {
+    const tracker = createTemplateChangeTracker();
+    tracker.process(template(baseSpec(), { site: 's1', replica: 'a' }));
+    const other = tracker.process(template(mutate(s => { s.counter = '0109'; }), { site: 's1', replica: 'b' }, 'ffffffff'));
+    expect(other.status).toBe('otherConnection');
+    expect(other.changeTypes).toEqual([]);
+    const reconnect = tracker.process(template(mutate(s => { s.counter = '0109'; }), { site: 's1', replica: 'b' }, 'eeeeeeee'));
+    expect(reconnect.changeTypes).toEqual([T.SESSION]);
+  });
+
+  test('extranonce1 bytes inside nSequence: a new session is R only, not a sequence change', () => {
+    const spec = () => mutate(s => { s.enIn = 'sequence'; });
+    const a = template(spec(), {}, 'a1b2c3d4', 2); // the last 4 extranonce bytes: 2 of extranonce1, 2 of extranonce2
+    expect(diff(a, template(spec(), {}, 'a1b2ffff', 2)).changeTypes).toEqual([T.SESSION]);
+  });
+
   test('a history read orders by the row\'s own receive time, not the first-seen time of a copy', () => {
     const tracker = createTemplateChangeTracker();
     const a = template(mutate(s => { s.counter = '0101'; }));
@@ -439,7 +455,8 @@ describe('property: a change is reported if and only if the content differs', ()
       // The predecessor sometimes sets clean_jobs: true -> false with the same content is the one allowed silence.
       const a = template(spec, { clean_jobs: rand() < 0.2 });
       const m = pick(mutations);
-      const b = { ...m(a), job_id: 'next', timestamp: (BigInt('0x' + a.timestamp) + BigInt(1000)).toString(16) };
+      // clean_jobs is set on b only by its own mutation, so a true predecessor exercises true -> false.
+      const b = { ...m({ ...a, clean_jobs: false }), job_id: 'next', timestamp: (BigInt('0x' + a.timestamp) + BigInt(1000)).toString(16) };
       const r = diff(a, b);
       const normal = (t: StratumV1Data) => ({ ...t, clean_jobs: false, prev_hash: t.prev_hash.toLowerCase(),
         coinbase1: t.coinbase1.toLowerCase(), coinbase2: t.coinbase2.toLowerCase(), merkle_branches: t.merkle_branches.map(x => x.toLowerCase()) });
@@ -452,7 +469,7 @@ describe('property: a change is reported if and only if the content differs', ()
       if (changed) reported++;
       else unchanged++;
     }
-    // Both sides of the "if and only if" are exercised: 2 of the 13 mutations change nothing.
+    // Both sides of the "if and only if" are exercised: 2 of the 14 mutations change nothing.
     expect(reported).toBeGreaterThan(1500);
     expect(unchanged).toBeGreaterThan(150);
   });

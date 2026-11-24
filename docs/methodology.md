@@ -185,8 +185,7 @@ What is compared:
 - **A coinbase that doesn't parse,** on either side, is compared as a whole and reported only as "other coinbase
   change". No field value is guessed.
 - **Not the extranonce bytes.** They belong to our connection and the miner, not to the template. A new `extranonce1` is
-  reported on its own, as a new connection session (a reconnect, or the stream switching to another connection),
-  because a comparison across two sessions can show differences between connections rather than changes to the work.
+  reported on its own, as a new connection session (a reconnect).
 
 Templates are compared in each pool's own receive order (for history reads, the shown connection's receive time, not
 the first-seen time of a copy). Latency-adjusted time is not used: adjusting each copy by its own latency estimate
@@ -197,9 +196,13 @@ template that sets it is marked, including two in a row. Going back to false is 
 
 When a template shows no change:
 
-- **Not compared:** a pool's first template since the chart started, a template after templates were missed (the live
-  stream skipped part of a burst, the page was paused, the stream reconnected), and a template received out of order.
-  These templates are not compared; hover one to see which case it is.
+- **Not compared:** these templates are not compared; hover one to see which case it is.
+  - a pool's first template since the chart started;
+  - a template after templates were missed: the live stream skipped part of a burst, the page was paused, the stream
+    reconnected, or it is the first live template after the history loaded at page load, which may not meet exactly;
+  - a template from another of our connections than the pool's previous one: some pools give each connection its own
+    jobs, so the difference would be between connections;
+  - a template received out of order.
 - **Compared:** only when the content is identical, or when `clean_jobs` went back to false.
 
 Over 2 hours of production templates (27,132 consecutive pairs), every pair whose content differed reported a change,

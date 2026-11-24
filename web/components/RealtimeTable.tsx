@@ -1,5 +1,6 @@
 "use client";
 
+import { sortedRowToStratum } from "@/utils/sortedRowToStratum";
 import React, { useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Table, TableBody } from "@/components/ui/table";
@@ -79,34 +80,7 @@ export default function RealtimeTable({
     if (filterBlockHeight && filterBlockHeight > 0) {
       if (filteredData && filteredData.length > 0) {
         // Map SortedRow[] back to StratumV1Data[] for the context
-        const historicalStratumData: StratumV1Data[] = filteredData.map(row => ({
-          pool_name: row.pool_name,
-          timestamp: row.raw_timestamp ?? row.timestamp,
-          lat_ms: row.lat_ms,
-          lat_m: row.lat_m,
-          job_id: row.job_id,
-          height: row.height,
-          prev_hash: row.prev_hash,
-          version: row.version,
-          coinbase1: row.coinbase1,
-          coinbase2: row.coinbase2,
-          merkle_branches: row.merkle_branches,
-          nbits: row.nbits || '', // Ensure nbits is a string, handle potential undefined
-          ntime: row.ntime || '', // Ensure ntime is a string, handle potential undefined
-          clean_jobs: row.clean_jobs,
-          extranonce1: row.extranonce1,
-          extranonce2_length: row.extranonce2_length,
-          // Map coinbase_outputs carefully, handling potential undefined address
-          coinbase_outputs: row.coinbase_outputs
-            .filter(output => output.address !== undefined) // Filter out outputs without an address
-            .map(output => ({
-              address: output.address!, // Use non-null assertion as we filtered undefined
-              value: output.value,
-            })),
-          first_transaction: row.first_transaction, // Assuming this exists on SortedRow
-          fee_rate: row.fee_rate, // Assuming this exists on SortedRow
-          merkle_branch_colors: row.merkle_branch_colors // Assuming this exists on SortedRow
-        }));
+        const historicalStratumData: StratumV1Data[] = filteredData.map(sortedRowToStratum);
         
         // Store the mapped data in the historical data context
         setHistoricalData(historicalStratumData);

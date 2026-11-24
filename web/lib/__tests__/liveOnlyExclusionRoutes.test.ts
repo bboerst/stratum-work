@@ -1,5 +1,5 @@
 /**
- * POOL_BLACKLIST hides live work only: these analysis routes keep an excluded pool at a mined height (at or below our
+ * POOL_BLACKLIST hides live work (and the height page's full-template table): these analysis routes keep an excluded pool at a mined height (at or below our
  * tip) and leave it out above the tip, or everywhere while the tip is unknown (fail closed). Mocked reads; the real
  * database version is pgExclusionInvariant.test.ts.
  */
@@ -36,16 +36,21 @@ afterEach(() => {
 const pools = (rows: { pool_name?: string; poolName?: string; name?: string }[]) => rows.map(r => r.pool_name ?? r.poolName ?? r.name);
 
 describe('POOL_BLACKLIST is live-only', () => {
-  for (const [route, key] of [['mining-notify', 'pool_name'], ['block-pool-first-seen', 'poolName']] as const) {
-    it(`/api/${route}: keeps the pool at or below our tip, leaves it out above it or with no tip (${key})`, async () => {
-      const get = await load(route, TIP);
-      expect(pools((await get(`?height=${TIP}`)).body)).toEqual(['P', 'Hidden']);
-      expect(pools((await get(`?height=${TIP - 500}`)).body)).toEqual(['P', 'Hidden']);
-      expect(pools((await get(`?height=${TIP + 1}`)).body)).toEqual(['P']);
-      const blind = await load(route, null);
-      expect(pools((await blind(`?height=${TIP - 500}`)).body)).toEqual(['P']);
-    });
-  }
+  it('/api/block-pool-first-seen: keeps the pool at or below our tip, leaves it out above it or with no tip', async () => {
+    const get = await load('block-pool-first-seen', TIP);
+    expect(pools((await get(`?height=${TIP}`)).body)).toEqual(['P', 'Hidden']);
+    expect(pools((await get(`?height=${TIP - 500}`)).body)).toEqual(['P', 'Hidden']);
+    expect(pools((await get(`?height=${TIP + 1}`)).body)).toEqual(['P']);
+    const blind = await load('block-pool-first-seen', null);
+    expect(pools((await blind(`?height=${TIP - 500}`)).body)).toEqual(['P']);
+  });
+
+  // The height page's template table shows every template in full, like the realtime table: the pool is left out at
+  // every height, mined or not (#301)
+  it('/api/mining-notify: leaves the pool out at every height', async () => {
+    const get = await load('mining-notify', TIP);
+    for (const h of [TIP - 500, TIP, TIP + 1]) expect(pools((await get(`?height=${h}`)).body)).toEqual(['P']);
+  });
 
   it('/api/pools: every pool definition (reference data, not live work)', async () => {
     const get = await load('pools', TIP);

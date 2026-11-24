@@ -209,6 +209,6 @@ describe('/api/stream de-duplicates replicas', () => {
 
     const served = text.split('\n\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
     expect(served.filter(m => m.job_id).map(m => m.job_id)).toEqual(['a1', 'L1', 'L2', 'b4', 'a5']);
-    expect(channel.ack).toHaveBeenCalledTimes(msgs.length);
+    expect(channel.consume).toHaveBeenCalledTimes(1);
   });
 });

@@ -29,9 +29,10 @@ export interface RabbitMQConnection {
 }
 
 /**
- * Create a connection and channel to RabbitMQ with retry logic.
+ * Create a connection and channel to RabbitMQ with retry logic. `onClose` runs when the connection or the channel
+ * closes, for whatever reason (including a close the caller asked for).
  */
-export async function createRabbitmqChannel(): Promise<RabbitMQConnection> {
+export async function createRabbitmqChannel(onClose?: () => void): Promise<RabbitMQConnection> {
   let lastError: Error | null = null;
   // Use a more generic type to avoid type errors
   let conn = null;
@@ -70,6 +71,7 @@ export async function createRabbitmqChannel(): Promise<RabbitMQConnection> {
   
   conn.on('close', () => {
     console.log('RabbitMQ connection closed');
+    onClose?.();
   });
   
   // Create channel with prefetch
@@ -83,6 +85,7 @@ export async function createRabbitmqChannel(): Promise<RabbitMQConnection> {
   
   channel.on('close', () => {
     console.log('RabbitMQ channel closed');
+    onClose?.();
   });
   
   // Assert all exchanges

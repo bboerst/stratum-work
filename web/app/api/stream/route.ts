@@ -1,26 +1,21 @@
 import { NextRequest } from 'next/server';
-import { maskStreamMessage } from '../../../lib/connectionMask';
-import { isPoolBlacklisted } from '../../../lib/poolBlacklist';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
 import { StreamTemplateDedup } from '../../../lib/streamDedup';
-import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from '../../../lib/rabbitmq';
-import type { Channel, ConsumeMessage, Replies } from 'amqplib';
+import { streamHub, type HubMessage } from '../../../lib/streamHub';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+// The live stream. Every viewer in this process shares one RabbitMQ consumer (lib/streamHub.ts), which masks, parses
+// and drops excluded pools once; each viewer keeps its own per-pool dedup and throttle here.
 export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
-  let isControllerClosed = false;
-  let cleanupInitiated = false;
-  let lastError: Error | null = null;
+  let closed = false;
+  // Ends this viewer's stream: set in start(), also run by cancel().
+  let end = () => { closed = true; };
 
   const stream = new ReadableStream({
     async start(controller) {
-      let rabbitConnection: RabbitMQConnection | undefined;
-      let channel: Channel | undefined;
-      let consumer: Replies.Consume | undefined;
-      let queueName = '';
       // Per-pool rate limit for templates (#105): a pool flooding templates can't freeze the browser. Normal traffic
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
@@ -29,168 +24,69 @@ export async function GET(request: NextRequest) {
       // source that sent something in the last 90 s is forwarded, and exact copies once. Templates without
       // site/replica (older collectors) are never filtered.
       const dedup = new StreamTemplateDedup();
+      let unsubscribe: (() => void) | undefined;
 
-      // Helper function to safely enqueue data to the controller
-      const safeEnqueue = (data: string) => {
-        if (isControllerClosed || cleanupInitiated) return false;
-        
+      const send = (data: string) => {
+        if (closed) return;
         try {
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-          return true;
         } catch (err) {
           console.error('Error enqueueing data:', err);
-          if (err instanceof Error) {
-            lastError = err;
-            // If the controller is closed, mark it as such and initiate cleanup
-            if (err.message.includes('Controller is already closed') || 
-                err.message.includes('Invalid state')) {
-              isControllerClosed = true;
-              cleanup();
-            }
-          }
-          return false;
+          close();
         }
       };
 
-      // Clean up function
-      const cleanup = async () => {
-        if (cleanupInitiated) return; // Prevent multiple cleanup attempts
-        cleanupInitiated = true;
+      const close = () => {
+        if (closed) return;
+        closed = true;
         if (throttleTimer) clearInterval(throttleTimer);
-
+        unsubscribe?.();
         try {
-          if (consumer?.consumerTag && channel) {
-            await channel.cancel(consumer.consumerTag).catch(() => {});
-          }
-          if (queueName && channel) {
-            await channel.deleteQueue(queueName).catch(() => {});
-          }
-          if (channel) {
-            await channel.close().catch(() => {});
-          }
-          if (rabbitConnection?.connection) {
-            await rabbitConnection.connection.close().catch(() => {});
-          }
-
-          // Only close the controller if it hasn't been closed yet
-          if (!isControllerClosed) {
-            isControllerClosed = true;
-            try {
-              controller.close();
-            } catch (err) {
-              // Ignore all controller-related errors during cleanup
-              if (!(err instanceof Error)) return;
-              lastError = err;
-            }
-          }
-        } catch (err) {
-          console.error('Error during cleanup:', err);
-          if (err instanceof Error) {
-            lastError = err;
-          }
+          controller.close();
+        } catch {
+          // already closed
         }
       };
+
+      const onMessage = (m: HubMessage) => {
+        const parsed = m.parsed;
+        // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
+        if (parsed && typeof parsed.pool_name === 'string' && parsed.type === undefined) {
+          // Before the throttle, so another collector's stream or copy doesn't use up the pool's rate.
+          if (!dedup.accept(parsed)) return;
+          for (const out of throttle.offer(parsed.pool_name, m.data, Date.now())) send(out);
+        } else {
+          send(m.data);
+        }
+      };
+
+      end = close;
+      request.signal.addEventListener('abort', close);
 
       try {
-        // Create a channel and declare an exclusive, auto-delete queue
-        rabbitConnection = await createRabbitmqChannel();
-        channel = rabbitConnection.channel;
-        
-        const qok = await channel.assertQueue('', { 
-          exclusive: true, 
-          autoDelete: true,
-          arguments: {
-            'x-expires': 60000 // Queue will be deleted after 60 seconds of inactivity
-          }
-        });
-        queueName = qok.queue;
-        
-        // Bind to all exchanges
-        for (const exchange of RABBITMQ_EXCHANGES) {
-          await channel.bindQueue(queueName, exchange, '');
-        }
-
-        // Consumer: on every message, send an SSE event to the client.
-        if (throttle.enabled) {
-          throttleTimer = setInterval(() => {
-            for (const out of throttle.tick(Date.now())) safeEnqueue(out);
-          }, 200);
-        }
-        consumer = await channel.consume(queueName, (msg: ConsumeMessage | null) => {
-          if (!msg || isControllerClosed || cleanupInitiated) {
-            return;
-          }
-
-          try {
-            // Mask per-connection identifiers (extranonce1, #105) before anything else, so the throttle's held
-            // templates are masked too. An unparseable message that mentions extranonce1 is dropped.
-            const data = maskStreamMessage(msg.content.toString());
-            if (data === null) {
-              channel?.ack(msg);
-              return;
-            }
-
-            let poolName: string | undefined;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.pool_name && isPoolBlacklisted(parsed.pool_name)) {
-                channel?.ack(msg);
-                return;
-              }
-              // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
-              if (typeof parsed.pool_name === 'string' && parsed.type === undefined) {
-                // Before the throttle, so another collector's stream or copy doesn't use up the pool's rate.
-                if (!dedup.accept(parsed)) {
-                  channel?.ack(msg);
-                  return;
-                }
-                poolName = parsed.pool_name;
-              }
-            } catch {
-              // JSON parse failed — forward message unfiltered (fail-open)
-            }
-
-            if (poolName !== undefined) {
-              for (const out of throttle.offer(poolName, data, Date.now())) safeEnqueue(out);
-            } else {
-              safeEnqueue(data);
-            }
-            channel?.ack(msg);
-          } catch (err) {
-            console.error('Error processing message:', err);
-            if (err instanceof Error) {
-              lastError = err;
-            }
-            // Always try to acknowledge the message to prevent it from being requeued
-            channel?.ack(msg);
-          }
-        });
-
-        // Clean up when client disconnects
-        request.signal.addEventListener('abort', () => {
-          console.log('Client disconnected, cleaning up...');
-          cleanup();
-        });
-
-        // Send an initial message to confirm connection
-        if (!safeEnqueue('{"type":"connection","status":"connected"}')) {
-          throw new Error('Failed to send initial connection message');
-        }
+        unsubscribe = await streamHub().subscribe({ onMessage, onEnd: close });
       } catch (err) {
         console.error('Error setting up stream:', err);
-        if (err instanceof Error) {
-          lastError = err;
-        }
-        cleanup();
+        close();
+        return;
       }
+      if (closed || request.signal.aborted) {
+        close();
+        unsubscribe();
+        return;
+      }
+      if (throttle.enabled) {
+        throttleTimer = setInterval(() => {
+          for (const out of throttle.tick(Date.now())) send(out);
+        }, 200);
+      }
+      // Confirms the connection; the viewer is subscribed by now.
+      send('{"type":"connection","status":"connected"}');
     },
     cancel() {
-      // This is called when the stream is cancelled (e.g., client disconnects)
-      isControllerClosed = true;
-      if (lastError) {
-        console.error('Stream cancelled due to error:', lastError);
-      }
-    }
+      // The client went away (also signalled by request.signal's abort).
+      end();
+    },
   });
 
   return new Response(stream, {
@@ -200,4 +96,4 @@ export async function GET(request: NextRequest) {
       'Connection': 'keep-alive',
     },
   });
-} 
+}

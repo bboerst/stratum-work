@@ -11,7 +11,7 @@
  *   group    the connected components of the edges: one template provider each. A node can't join two separate
  *            providers: at least 80% of its sets on each would need sets both providers received, so they share one.
  *   feed     a feed's provider (Forks: providers per episode) is the group of its node with the most sets, when that
- *            node has at least SETS_MIN; otherwise unknown.
+ *            node has at least SETS_MIN; otherwise unknown. A group lists only the feeds it is the provider of.
  * Blocks (our best chain, exact by height):
  *   miner    the coinbase names a DATUM template creator that isn't one of the pool's own (ownCreatorPrefixes):
  *            a miner-built template, its own kind, split by creator.
@@ -148,7 +148,6 @@ export function groupEpoch(nodes: readonly Omit<NodeRow, "epoch">[], pairs: read
     groups[gi].members.push(k);
   }
   for (const g of groups) {
-    g.feeds = [...new Set(g.members.map(m => info.get(m)!.feed))].sort();
     g.payers = [...new Set(g.members.map(m => info.get(m)!.pool).filter((p): p is number => p !== null))].sort((x, y) => x - y);
   }
   // a pool's blocks go to the group of its node with the most sets (then templates, then key); a feed's provider is
@@ -169,6 +168,10 @@ export function groupEpoch(nodes: readonly Omit<NodeRow, "epoch">[], pairs: read
     }
   }
   for (const [feed, b] of bestFeed) if (b.sets >= SETS_MIN) feedOf.set(feed, groupOf.get(b.key)!);
+  // a group's feeds: the feeds it is the provider of (feedOf), not every feed with some node in it, so a feed's small
+  // node paying another pool doesn't list the feed under that pool's provider
+  for (const [feed, gi] of feedOf) groups[gi].feeds.push(feed);
+  for (const g of groups) g.feeds.sort();
   return { groupOf, groups, ownerOf, feedOf };
 }
 

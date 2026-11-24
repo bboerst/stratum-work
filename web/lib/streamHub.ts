@@ -6,9 +6,11 @@
  * bound to every exchange, and fans each message out to its viewers in memory. RabbitMQ's cost follows the number of
  * web pods, not viewers.
  *
- * Work that is the same for every viewer happens once here: masking extranonce1 (#105), parsing, and dropping
- * excluded pools. Per-viewer state (the per-pool dedup and throttle) stays in the route, so each viewer sees exactly
- * what it saw with its own queue.
+ * Work that is the same for every viewer happens once here: masking extranonce1 (#105), parsing, dropping excluded
+ * pools, and the one-stream-per-pool decision (lib/streamDedup.ts). The dedup is shared so a viewer who connects later
+ * already knows which of a pool's connections is the active one, instead of showing another connection's templates
+ * first and switching (which the timing chart can't compare across). Per-viewer state (the throttle) stays in the
+ * route.
  *
  * Lifecycle:
  *   - The connection opens with the first viewer; concurrent first viewers share the one attempt.
@@ -19,6 +21,7 @@
 import type { Channel, ConsumeMessage } from 'amqplib';
 import { maskStreamMessage } from './connectionMask';
 import { isPoolBlacklisted } from './poolBlacklist';
+import { StreamTemplateDedup } from './streamDedup';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from './rabbitmq';
 
 export const LINGER_MS = 30_000;
@@ -27,6 +30,8 @@ export const LINGER_MS = 30_000;
 export interface HubMessage {
   data: string;
   parsed?: Record<string, unknown>;
+  /** A template another of the pool's connections is already streaming, or an exact copy: viewers skip it. */
+  skip?: boolean;
 }
 
 export interface Viewer {
@@ -63,6 +68,8 @@ export class StreamHub {
   private live: Live | null = null;
   private starting: Promise<Live> | null = null;
   private lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** One stream per pool, for every viewer (kept across reconnects: its state ages out by itself). */
+  private readonly dedup = new StreamTemplateDedup();
   /** Connections opened so far (tests, logs). */
   connects = 0;
 
@@ -137,6 +144,10 @@ export class StreamHub {
       return;
     }
     if (m === null) return;
+    // Only templates (published without a `type`); blocks and other events pass as before.
+    if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !this.dedup.accept(m.parsed)) {
+      m.skip = true;
+    }
     for (const v of this.viewers) {
       try {
         v.onMessage(m);

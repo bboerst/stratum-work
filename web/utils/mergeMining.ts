@@ -287,14 +287,15 @@ function decodeOmni(d: Uint8Array): Omit<OpReturnDecoded, "dataHex"> {
 }
 
 // "OCB1" + 16 bytes, seen in one pool's block coinbases on chain (2024 onwards). No spec is published, so only the
-// marker is known; the rest is shown as bytes and compared as a whole.
+// marker is known; the rest is shown as bytes and compared as a whole. In templates it follows the stratum extranonce
+// (pool-written) and changes on every job, consistent with per-job extranonce space for the pool's own miners.
 function decodeOcb1(d: Uint8Array): Omit<OpReturnDecoded, "dataHex"> {
   const base = { id: "ocb1" as const, protocol: "OCB1", confidence: "observed" as const };
   const fields: DecodedField[] = [
     {
       label: "Payload",
       value: toHex(d, 4),
-      hint: "The 4-byte \"OCB1\" marker is followed by these bytes. Their meaning isn't published.",
+      hint: "The 4-byte \"OCB1\" marker is followed by these bytes, which change on every job (likely extranonce space for the pool's own miners). Their layout isn't published.",
     },
   ];
   return { ...base, fields, commitment: toHex(d, 4), error: d.length !== 20 ? `${d.length} bytes, 20 seen so far` : undefined };

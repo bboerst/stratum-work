@@ -198,8 +198,9 @@ When a template shows no change:
 
 - **Not compared:** these templates are not compared; hover one to see which case it is.
   - a pool's first template since the chart started;
-  - a template after templates were missed: the live stream skipped part of a burst, the page was paused, the stream
-    reconnected, or it is the first live template after the history loaded at page load, which may not meet exactly;
+  - a template after templates were missed: the live stream skipped part of a burst, the page was paused, or the
+    stream reconnected. The first live template after the history loaded at page load counts as one too, unless the
+    history and the stream share a template for that pool, which proves nothing was missed between them;
   - a template from another of our connections than the pool's previous one: some pools give each connection its own
     jobs, so the difference would be between connections;
   - a template received out of order.
@@ -207,8 +208,9 @@ When a template shows no change:
 
 Over 2 hours of production templates (27,132 consecutive pairs), every pair whose content differed reported a change,
 and no identical pair did. Some changes happen on almost every template and are left off the bars (hover for them):
-nTime, output values, the witness commitment, the text tag, and the scriptSig's pushed time and other data. Most pools
-write a fresh nonce or clock value into every job.
+nTime, output values, the witness commitment, the text tag, the scriptSig's pushed time and other data, and the `OCB1`
+OP_RETURN. Most pools write a fresh nonce or clock value into every job; the `OCB1` output, which one pool writes after the
+extranonce, changes on every job too.
 
 The rules are in `web/utils/templateChangeDetection.ts`, tested in `web/utils/__tests__/templateChangePrecision.test.ts`.
 

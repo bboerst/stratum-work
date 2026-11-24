@@ -1,13 +1,13 @@
 import { NextRequest } from 'next/server';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
-import { StreamTemplateDedup } from '../../../lib/streamDedup';
 import { streamHub, type HubMessage } from '../../../lib/streamHub';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 // The live stream. Every viewer in this process shares one RabbitMQ consumer (lib/streamHub.ts), which masks, parses
-// and drops excluded pools once; each viewer keeps its own per-pool dedup and throttle here.
+// and drops excluded pools once, and decides one stream per pool (shared, so a new viewer starts on the active
+// connection); each viewer keeps its own throttle here.
 export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   let closed = false;
@@ -20,10 +20,6 @@ export async function GET(request: NextRequest) {
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
-      // Several collectors per pool: one stream per pool (lib/streamDedup.ts). Only the lowest-ranked (site, replica)
-      // source that sent something in the last 90 s is forwarded, and exact copies once. Templates without
-      // site/replica (older collectors) are never filtered.
-      const dedup = new StreamTemplateDedup();
       let unsubscribe: (() => void) | undefined;
 
       const send = (data: string) => {
@@ -52,8 +48,9 @@ export async function GET(request: NextRequest) {
         const parsed = m.parsed;
         // Only templates (both collectors publish them without a `type`); blocks and other events pass as before.
         if (parsed && typeof parsed.pool_name === 'string' && parsed.type === undefined) {
-          // Before the throttle, so another collector's stream or copy doesn't use up the pool's rate.
-          if (!dedup.accept(parsed)) return;
+          // Another collector's stream or a copy (decided once in the hub), before the throttle so it doesn't use up
+          // the pool's rate.
+          if (m.skip) return;
           for (const out of throttle.offer(parsed.pool_name, m.data, Date.now())) send(out);
         } else {
           send(m.data);

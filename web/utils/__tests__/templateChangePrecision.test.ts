@@ -360,6 +360,14 @@ describe('ordering and gaps', () => {
     expect(reconnect.changeTypes).toEqual([T.SESSION]);
   });
 
+  test('the pre-fill/stream seam: a history row and a live template name connections differently, so they are compared', () => {
+    const tracker = createTemplateChangeTracker();
+    tracker.process(template(baseSpec(), { source_id: 3 }));
+    const live = tracker.process(template(mutate(s => { s.counter = '0109'; }), { site: 's1', replica: 'a' }));
+    expect(live.status).toBe('compared');
+    expect(live.changeTypes).toEqual([T.SCRIPTSIG_DATA]);
+  });
+
   test('extranonce1 bytes inside nSequence: a new session is R only, not a sequence change', () => {
     const spec = () => mutate(s => { s.enIn = 'sequence'; });
     const a = template(spec(), {}, 'a1b2c3d4', 2); // the last 4 extranonce bytes: 2 of extranonce1, 2 of extranonce2

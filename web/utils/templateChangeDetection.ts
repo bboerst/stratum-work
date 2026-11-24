@@ -53,7 +53,7 @@ export enum TemplateChangeType {
 /**
  * Change types computed but not drawn on the timing chart's bars, because they change on almost every template. On
  * 2 hours of production templates (27,132 consecutive pairs), scriptSig data (S) changed on 81% of them: most pools
- * write a fresh nonce or clock value into every job. They still show in the tooltip.
+ * write a fresh nonce or clock value into every job (OCB1 likewise, in an OP_RETURN). They still show in the tooltip.
  */
 export const HIDDEN_CHANGE_TYPES: ReadonlySet<TemplateChangeType> = new Set([
   TemplateChangeType.NTIME,
@@ -62,6 +62,9 @@ export const HIDDEN_CHANGE_TYPES: ReadonlySet<TemplateChangeType> = new Set([
   TemplateChangeType.COINBASE_ASCII,
   TemplateChangeType.SCRIPTSIG_TIME,
   TemplateChangeType.SCRIPTSIG_DATA,
+  // OCB1 is written by the pool after the stratum extranonce and changes on every job: per-job extranonce space for the
+  // pool's own miners, not a commitment to another chain.
+  TemplateChangeType.OP_RETURN_OCB1,
 ]);
 
 /**
@@ -478,7 +481,11 @@ export class TemplateChangeTracker {
       return this.cacheResult(pool, rawKey, { status: 'outOfOrder', ...empty, outOfOrder: true });
     }
 
-    if (baseline.template.connection && currentTemplate.connection && baseline.template.connection !== currentTemplate.connection) {
+    // Connections are named the same way within the live stream (site/replica) and within a history read (source id);
+    // across the two (the pre-fill/stream seam) they can't be matched, and the seam is judged by the buffer's overlap.
+    const kind = (c: string) => c.split(' ')[0];
+    const was = baseline.template.connection, now = currentTemplate.connection;
+    if (was && now && kind(was) === kind(now) && was !== now) {
       this.baselineByPool.set(pool, { template: currentTemplate, timestampMs: currentTimestampMs });
       return this.cacheResult(pool, rawKey, { status: 'otherConnection', ...empty });
     }

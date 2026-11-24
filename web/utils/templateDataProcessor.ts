@@ -231,7 +231,7 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
     cleanJobs: cleanJobsFlag(data.clean_jobs),
     merkleBranches: (data.merkle_branches ?? []).map(lowerHex),
     extranonce2Length: Number(data.extranonce2_length),
-    connection: typeof data.site === 'string' && typeof data.replica === 'string' ? `${data.site}/${data.replica}`
+    connection: typeof data.site === 'string' && typeof data.replica === 'string' ? `stream ${data.site}/${data.replica}`
       : typeof data.source_id === 'number' ? `source ${data.source_id}` : null,
     opReturnProtocols: opReturns,
     coinbase,

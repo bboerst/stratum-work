@@ -10,6 +10,7 @@ const CONFIDENCE: Record<Confidence, string> = {
   spec: "Layout from the protocol's spec or reference code; matches templates seen in the wild.",
   marker: "Identified by its protocol marker; the payload isn't decoded.",
   heuristic: "A shape match without a distinctive marker: may be something else.",
+  observed: "A marker seen repeatedly in real coinbases, with no published spec; the payload isn't decoded.",
   structural: "Known from how the coinbase is built (the extranonce position), not from the bytes.",
 };
 

@@ -12,6 +12,8 @@ import { effectiveTimestamp } from "@/utils/latency";
 import {
   TemplateChangeTracker,
   getChangeTypeDisplay,
+  parseMessageTimestampMs,
+  HIDDEN_CHANGE_TYPES,
   TemplateChangeResult,
   TemplateChangeType,
 } from "@/utils/templateChangeDetection";
@@ -61,14 +63,6 @@ const stringToColor = (str: string): string => {
 
 // Neutral gray for segments with no visible changes
 const NO_CHANGE_COLOR = 'hsl(0, 0%, 35%)';
-
-// Change types that are filtered from display (mirrors hiddenChangeTypes in getChangeTypeDisplay)
-const HIDDEN_CHANGE_TYPES = new Set([
-  TemplateChangeType.NTIME,
-  TemplateChangeType.COINBASE_OUTPUT_VALUE,
-  TemplateChangeType.OP_RETURN_WITNESS,
-  TemplateChangeType.COINBASE_ASCII,
-]);
 
 // Extract a deterministic content string from the new values of visible changes.
 // Two pools with the same actual changes (e.g. same RSK hash + same merkle branches)
@@ -130,6 +124,13 @@ const extractChangeContentKey = (changeInfo: TemplateChangeResult): string => {
         break;
       case TemplateChangeType.AUXPOW_NONCE:
         parts.push(`J:${d.auxPowNonce?.new ?? ''}`);
+        break;
+      case TemplateChangeType.SCRIPTSIG_DATA:
+        parts.push(`S:${d.scriptSigData?.new ?? ''}`);
+        break;
+      case TemplateChangeType.SESSION:
+      case TemplateChangeType.OTHER:
+        parts.push(`${type}:`);
         break;
       default: {
         // OP_RETURN protocol changes — include protocol name and new data
@@ -999,10 +1000,8 @@ function RealtimeChartBase({
       });
       const changeInfoByRecord = new Map<StratumV1Data, TemplateChangeResult>();
       recordsByPool.forEach(records => {
-        records.sort((a, b) =>
-          parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
-          parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
-        );
+        // Receive order, not latency-adjusted time (that is for drawing; see TemplateChangeTracker).
+        records.sort((a, b) => parseMessageTimestampMs(a.timestamp) - parseMessageTimestampMs(b.timestamp));
         records.forEach(record => {
           changeInfoByRecord.set(record, tracker.process(record));
         });
@@ -1382,10 +1381,8 @@ function RealtimeChartBase({
     });
     const tracker = changeTrackerRef.current;
     itemsByPool.forEach(items => {
-      items.sort((a, b) =>
-        parseTimestamp(effectiveTimestamp(a, latencyAdjusted)) -
-        parseTimestamp(effectiveTimestamp(b, latencyAdjusted))
-      );
+      // Receive order, not latency-adjusted time (that is for drawing; see TemplateChangeTracker).
+      items.sort((a, b) => parseMessageTimestampMs(a.timestamp) - parseMessageTimestampMs(b.timestamp));
       items.forEach(item => {
         changeInfoByItem.set(item, tracker.process(item));
       });
@@ -1439,32 +1436,31 @@ function RealtimeChartBase({
     
     // Real-time data: Update the pool data history and filter by time window
     if (!isHistoricalBlock) {
-      // Store processed data in the pool history
+      // Store processed data in the pool history. A point is a duplicate only if it's the same message: same receive
+      // time and the same change result (the tracker returns the same result object for the same message), so two
+      // different templates received in the same microsecond are both kept.
+      const touched = new Set<ChartDataPoint[]>();
       processedData.forEach(point => {
-        const poolName = point.poolName;
-        if (!poolDataHistoryRef.current.has(poolName)) {
-          poolDataHistoryRef.current.set(poolName, []);
+        let history = poolDataHistoryRef.current.get(point.poolName);
+        if (!history) {
+          history = [];
+          poolDataHistoryRef.current.set(point.poolName, history);
         }
-        
-        const history = poolDataHistoryRef.current.get(poolName)!;
-        
-        // Create a more robust unique key to prevent infinite loops
-        const pointKey = `${point.poolName}-${point.timestamp}-${point.changeDisplay}`;
-        
-        // Check if we already have this exact point
-        const isDuplicate = history.some(existing => {
-          const existingKey = `${existing.poolName}-${existing.timestamp}-${existing.changeDisplay}`;
-          return existingKey === pointKey;
-        });
-        
+        let isDuplicate = false;
+        for (let i = history.length - 1; i >= 0 && history[i].timestamp >= point.timestamp; i--) {
+          if (history[i].timestamp === point.timestamp && history[i].changeInfo === point.changeInfo) {
+            isDuplicate = true;
+            break;
+          }
+        }
         if (!isDuplicate) {
           history.push(point);
+          touched.add(history);
         }
-        
-        // Keep oldest -> newest so newest renders last (on top) when points overlap.
-        history.sort((a, b) => a.timestamp - b.timestamp);
       });
-      
+      // Keep oldest -> newest so newest renders last (on top) when points overlap.
+      touched.forEach(history => history.sort((a, b) => a.timestamp - b.timestamp));
+
       // Collect points within the time window
       const resultPoints: ChartDataPoint[] = [];
       
@@ -1822,6 +1818,21 @@ function RealtimeChartBase({
                     <div className="text-green-300 whitespace-nowrap overflow-hidden">AuxPOW Nonce New: {hoveredPoint.changeInfo.changeDetails.auxPowNonce.new ?? 'N/A'}</div>
                   </div>
                 )}
+                {hoveredPoint.changeInfo.changeDetails.scriptSigData && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">ScriptSig Data Old: {hoveredPoint.changeInfo.changeDetails.scriptSigData.old.substring(0, 24) || 'none'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">ScriptSig Data New: {hoveredPoint.changeInfo.changeDetails.scriptSigData.new.substring(0, 24) || 'none'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeDetails.scriptSigTime && (
+                  <div className="mb-1">
+                    <div className="text-red-300 whitespace-nowrap overflow-hidden">ScriptSig Time Old: {hoveredPoint.changeInfo.changeDetails.scriptSigTime.old ?? 'N/A'}</div>
+                    <div className="text-green-300 whitespace-nowrap overflow-hidden">ScriptSig Time New: {hoveredPoint.changeInfo.changeDetails.scriptSigTime.new ?? 'N/A'}</div>
+                  </div>
+                )}
+                {hoveredPoint.changeInfo.changeTypes.includes(TemplateChangeType.SESSION) && (
+                  <div className="mb-1 text-yellow-300 whitespace-nowrap overflow-hidden">New connection session (extranonce1 changed)</div>
+                )}
                 {hoveredPoint.changeInfo?.changeDetails.opReturnProtocols && hoveredPoint.changeInfo.changeDetails.opReturnProtocols.changed.length > 0 && (
                   <div className="mb-1">
                     <div className="text-purple-300 font-semibold mb-1">OP_RETURN Protocol Changes:</div>
@@ -1838,7 +1849,7 @@ function RealtimeChartBase({
                           return data.dataHex.substring(0, 16) + '...';
                         }
                         
-                        if (!data.details) return 'N/A';
+                        if (!data.details) return data.dataHex ? data.dataHex.substring(0, 16) + '...' : 'N/A';
                         
                         switch (protocol) {
                           case 'RSK Block':

@@ -63,6 +63,15 @@ describe('groupEpoch', () => {
     expect(g.groups[0].feeds).toEqual(['feed-1']);
   });
 
+  it('a group lists only the feeds it is the provider of, not a feed\'s small node in it', () => {
+    // feed L mostly pays pool 2 (its own provider); 17 of its sets pay pool 1 and are pool 1's: that node joins A's group
+    const g = groupEpoch([node('A', 1, 100), node('L', 2, 100), node('L', 1, 17)], [pair(['A', 1], ['L', 1], 17)]);
+    expect(groupsOf(g)).toEqual([['A|1', 'L|1'], ['L|2']]);
+    expect(g.groups[g.groupOf.get(nodeKey('A', 1))!].feeds).toEqual(['A']);
+    expect(g.groups[g.groupOf.get(nodeKey('L', 2))!].feeds).toEqual(['L']);
+    expect(g.groups[g.groupOf.get(nodeKey('A', 1))!].payers).toEqual([1]);
+  });
+
   it('a pool\'s blocks go to its node with the most sets', () => {
     // pool 1 is paid on feed-1 (provider of its own) and, a little, on feed-2 (with pool 2)
     const g = groupEpoch([node('feed-1', 1, 50), node('feed-2', 1, 10), node('feed-2', 2, 40)],

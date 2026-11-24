@@ -461,6 +461,9 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
   would need most of its sets to be in both. Independent builders match on a few tenths of a percent of their sets, and
   no independent pair has reached 5% in any epoch. A feed that alternates between two providers overlaps each only
   partly and joins neither.
+- **Which feeds a provider lists.** A feed is listed under one provider: the provider of its node with the most sets
+  in that epoch, when that node has at least 5. A feed's smaller node can sit in another provider (a few of its
+  templates paying another pool, sharing that pool's transaction sets) without listing the feed there.
 - **Which blocks count for a provider.** A block counts for the provider of its pool's node with the most sets in
   that epoch (an unidentified block is "unidentified"). It is "not on our feeds" when none of our feeds pays its pool.
 - **Miner-built.** A block whose coinbase names a DATUM template creator is miner-built, a kind of its own, split by

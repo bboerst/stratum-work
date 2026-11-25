@@ -5,11 +5,11 @@
  * detection. Seeded, so a failure reproduces; the seed and case are in the message.
  */
 import { describe, expect, it } from 'vitest';
-import { coinbaseHex, MAX_COINBASE_BYTES, MAX_EXTRANONCE2_LENGTH, parseCoinbase, rangeHex } from '../coinbaseParser';
+import { coinbaseHex, heightFromCoinbase1, MAX_COINBASE_BYTES, MAX_EXTRANONCE2_LENGTH, parseCoinbase, rangeHex } from '../coinbaseParser';
 import { decodeMergeMining } from '../mergeMining';
 import { formatCoinbaseRaw } from '../formatters';
 import {
-  computeCoinbaseOutputs, computeCoinbaseOutputValue, computeCoinbaseScriptSigInfo, decodeCoinbaseScriptSigInfo,
+  computeCoinbaseOutputs, computeCoinbaseOutputValue,
   decodeOpReturnData, getCoinbaseTxDetails, getFormattedCoinbaseAsciiTag,
 } from '../bitcoinUtils';
 import { processTemplateData } from '../templateDataProcessor';
@@ -120,9 +120,8 @@ describe('decoders under hostile input (seeded fuzz)', () => {
       assertBounded(`${at} getFormattedCoinbaseAsciiTag`, () => getFormattedCoinbaseAsciiTag(cb1, en1, en2, cb2));
       assertBounded(`${at} computeCoinbaseOutputs`, () => computeCoinbaseOutputs(raw));
       assertBounded(`${at} computeCoinbaseOutputValue`, () => computeCoinbaseOutputValue(raw));
-      assertBounded(`${at} computeCoinbaseScriptSigInfo`, () => computeCoinbaseScriptSigInfo(raw));
       assertBounded(`${at} getCoinbaseTxDetails`, () => getCoinbaseTxDetails(raw));
-      assertBounded(`${at} decodeCoinbaseScriptSigInfo`, () => decodeCoinbaseScriptSigInfo(Buffer.from(cb1.slice(0, 400), 'hex')));
+      assertBounded(`${at} heightFromCoinbase1`, () => heightFromCoinbase1(cb1));
       assertBounded(`${at} decodeOpReturnData`, () => decodeOpReturnData(cb2.slice(0, 200 + Math.floor(r() * 200))));
     }
     // the mutations leave a real share of the cases parseable, so the decoders' deep paths ran too

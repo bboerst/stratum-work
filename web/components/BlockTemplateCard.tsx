@@ -10,9 +10,6 @@ import {
 import {
     computeCoinbaseOutputValue,
     computeCoinbaseOutputs,
-    getTransaction,
-    decodeCoinbaseScriptSigInfo,
-    CoinbaseScriptSigInfo,
     getCoinbaseTxDetails,
     CoinbaseTxDetails,
     getFormattedCoinbaseAsciiTag
@@ -24,6 +21,7 @@ import { getMerkleColor } from '@/utils/colorUtils';
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import ScriptSigMap from './ScriptSigMap';
+import { parseCoinbase } from '@/utils/coinbaseParser';
 import { decodeMergeMining, OpReturnDecoded } from '@/utils/mergeMining';
 import { AuxPowDetails, MergeMiningSummaryLine, OpReturnFields } from './MergeMiningDetails';
 
@@ -31,40 +29,15 @@ interface BlockTemplateCardProps {
   latestMessage?: StratumV1Data;
 }
 
-// Helper function to parse coinbase data, encapsulating the try/catch logic
-// This is NOT memoized here, memoization will happen where it's called if needed based on cbRaw
-const parseCoinbaseData = (cbRaw: string): { 
-  scriptSigInfo: CoinbaseScriptSigInfo | null, 
-  txDetails: CoinbaseTxDetails | null 
-} => {
-  let scriptSigInfo: CoinbaseScriptSigInfo | null = null;
-  let txDetails: CoinbaseTxDetails | null = null;
-  let scriptSigBuffer: Buffer | null = null;
-
+// The coinbase's transaction details (version, sequence, locktime, witness nonce); null if the coinbase doesn't parse.
+// Height and AuxPoW come from the one coinbase parser (utils/coinbaseParser.ts), below.
+const coinbaseTxDetails = (cbRaw: string): CoinbaseTxDetails | null => {
   try {
-    const tx = getTransaction(cbRaw);
-    if (tx.ins && tx.ins.length > 0) {
-      scriptSigBuffer = Buffer.from(tx.ins[0].script);
-      scriptSigInfo = decodeCoinbaseScriptSigInfo(scriptSigBuffer);
-    } else {
-      scriptSigInfo = { remainingScriptHex: '' }; // Handle case with no input script
-    }
-    // Get other tx details regardless of scriptSig parsing success
-    txDetails = getCoinbaseTxDetails(cbRaw); 
-    
-  } catch (txError) {
-    console.error("Error parsing coinbase tx info:", txError);
-    // Fallback for scriptSig if buffer was available but parsing failed
-    scriptSigInfo = { remainingScriptHex: scriptSigBuffer?.toString('hex') || '' }; 
-    // Attempt to get other details even if script parsing failed
-    try { 
-      txDetails = getCoinbaseTxDetails(cbRaw);
-    } catch (detailsError) {
-        console.error("Error getting other coinbase details:", detailsError);
-        txDetails = null; // Fallback for other details
-    }
+    return getCoinbaseTxDetails(cbRaw);
+  } catch (error) {
+    console.error("Error getting coinbase details:", error);
+    return null;
   }
-  return { scriptSigInfo, txDetails };
 };
 
 // Custom hook to manage flash effect
@@ -215,7 +188,10 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
             const cbRaw = formatCoinbaseRaw(displayMessage.coinbase1, displayMessage.extranonce1,
                 displayMessage.extranonce2_length, displayMessage.coinbase2);
 
-            const { scriptSigInfo, txDetails } = parseCoinbaseData(cbRaw);
+            const txDetails = coinbaseTxDetails(cbRaw);
+            const scriptSig = parseCoinbase(displayMessage.coinbase1, displayMessage.extranonce1 || "",
+                Number(displayMessage.extranonce2_length), displayMessage.coinbase2).scriptSig;
+            const aux = scriptSig?.auxpow;
             const coinbaseOutputValue = computeCoinbaseOutputValue(cbRaw);
             const coinbaseOutputs = computeCoinbaseOutputs(cbRaw);
             const asciiTag = getFormattedCoinbaseAsciiTag(
@@ -251,8 +227,8 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
                 coinbaseOutputValue: coinbaseOutputValue,
                 coinbase_outputs: coinbaseOutputs,
                 feeRateComputed: "N/A",
-                auxPowData: scriptSigInfo?.auxPowData || null,
-                coinbaseHeight: scriptSigInfo?.height || null,
+                auxPowData: aux ? { auxHashOrRoot: aux.root, merkleSize: aux.merkleSize, nonce: aux.nonce } : null,
+                coinbaseHeight: scriptSig?.height || null,
                 txVersion: txDetails?.txVersion,
                 inputSequence: txDetails?.inputSequence,
                 txLocktime: txDetails?.txLocktime,

@@ -123,7 +123,7 @@ export function toOpReturnData(d: OpReturnDecoded): OpReturnData {
   };
 }
 
-// Interface for decoded AuxPOW data 
+// AuxPoW as the template card shows it (from utils/coinbaseParser.ts parseCoinbase, the one coinbase parser)
 export interface AuxPowData {
   auxHashOrRoot: string; // aux merkle root (with one aux chain: its block hash), display order
   merkleSize?: number;   // Optional: Size of aux chain merkle tree (if found)
@@ -135,13 +135,6 @@ const coinbaseOutputsCache = new Map<string, CoinbaseOutputDetail[]>();
 
 // Cache for output script address decoding to prevent expensive fromOutputScript calls
 const outputScriptAddressCache = new Map<string, string | null>();
-
-// Interface for decoded Coinbase ScriptSig info
-export interface CoinbaseScriptSigInfo {
-  height?: number | null;
-  auxPowData?: AuxPowData | null;
-  remainingScriptHex: string; // Concatenated hex of parts not identified as height or AuxPOW
-}
 
 // Interface for other coinbase transaction details
 export interface CoinbaseTxDetails {
@@ -379,149 +372,6 @@ export function markRequestInFlight(txid: string): void {
 // Clear a request from in flight
 export function clearRequestInFlight(txid: string): void {
   delete inFlightRequests[txid];
-}
-
-// Helper function to decode AuxPOW data from coinbase scriptSig 
-const AUXPOW_MAGIC_BYTES = Buffer.from('fabe6d6d', 'hex');
-
-export function decodeAuxPowData(scriptSig: Buffer): AuxPowData | null {
-  const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES);
-  if (magicIndex === -1) {
-    return null; // Magic bytes not found
-  }
-
-  const dataStartIndex = magicIndex + AUXPOW_MAGIC_BYTES.length;
-  
-  // Check minimum length for the hash/root
-  const minLengthForHash = dataStartIndex + 32;
-  if (scriptSig.length < minLengthForHash) {
-    console.warn("AuxPOW: scriptSig too short for aux hash/root after magic bytes.");
-    return null;
-  }
-
-  let auxPowResult: Partial<AuxPowData> = {};
-
-  try {
-    // The 32-byte root as the coinbase holds it, which is already display order (see coinbaseParser AuxPow.root)
-    auxPowResult.auxHashOrRoot = scriptSig.slice(dataStartIndex, dataStartIndex + 32).toString('hex');
-
-    // Check if there's enough data for size and nonce (Dogecoin style)
-    const expectedFullLength = dataStartIndex + 32 + 4 + 4;
-    if (scriptSig.length >= expectedFullLength) {
-      // Attempt to read size and nonce
-      auxPowResult.merkleSize = scriptSig.readUInt32LE(dataStartIndex + 32);
-      auxPowResult.nonce = scriptSig.readUInt32LE(dataStartIndex + 32 + 4);
-    } // else -> Size and nonce are not present immediately after hash
-
-    return auxPowResult as AuxPowData;
-    
-  } catch (error) {
-    console.error("Error decoding AuxPOW data:", error);
-    // Return at least the hash if possible, even if size/nonce parsing failed unexpectedly after length check
-    if (auxPowResult.auxHashOrRoot) {
-       return { auxHashOrRoot: auxPowResult.auxHashOrRoot };
-    }
-    return null;
-  }
-}
-
-// New function to parse height and AuxPOW info from scriptSig
-export function decodeCoinbaseScriptSigInfo(scriptSig: Buffer): CoinbaseScriptSigInfo {
-  let height: number | null = null;
-  let auxPowData: AuxPowData | null = null;
-  let remainingParts: Buffer[] = [];
-  let currentIndex = 0;
-
-  // BIP34 height: the first scriptSig item is a minimal push of the height (little-endian CScriptNum), or OP_1..OP_16
-  // for heights 1-16. Decode the push at its actual length rather than a fixed 3 bytes (matches collector/coinbase.py).
-  // 3 bytes covers Bitcoin up to 8,388,607; other chains' templates can use other sizes.
-  try {
-    const op = scriptSig.length > 0 ? scriptSig[0] : -1;
-    if (op >= 1 && op <= 8 && scriptSig.length >= 1 + op) {
-        const push = scriptSig.subarray(1, 1 + op);
-        // readUIntLE supports up to 6 bytes; a set sign bit means a negative number, which is never a height
-        if (op <= 6 && (push[op - 1] & 0x80) === 0) {
-           height = push.readUIntLE(0, op);
-        } else {
-           remainingParts.push(scriptSig.subarray(0, 1 + op));
-        }
-        currentIndex = 1 + op; // Move past the height push data
-    } else if (op >= 0x51 && op <= 0x60) {
-        height = op - 0x50; // OP_1 .. OP_16
-        currentIndex = 1;
-    } else if (op >= 1 && op <= 75) {
-        // A push that isn't a height (too long, or truncated): keep it as remaining data
-        const pushLength = Math.min(op, scriptSig.length - 1);
-        remainingParts.push(scriptSig.subarray(0, 1 + pushLength));
-        currentIndex = 1 + pushLength;
-    } else {
-        // No initial push opcode or empty script, treat everything from start as potentially remaining
-        // This case is unlikely for valid coinbase scripts
-    }
-  } catch (e) {
-    console.warn("Could not parse height from coinbase scriptSig:", e);
-    // Reset index and treat beginning as remaining data if parsing failed
-    currentIndex = 0; 
-    remainingParts = []; // Clear parts in case partial push was added
-  }
-
-  // Try parsing AuxPOW data from the *entire* original script
-  auxPowData = decodeAuxPowData(scriptSig); 
-
-  // Determine remaining parts excluding height (if parsed) and AuxPOW (if found)
-  if (auxPowData) {
-    const magicIndex = scriptSig.indexOf(AUXPOW_MAGIC_BYTES);
-    if (magicIndex !== -1) {
-      const auxDataStart = magicIndex;
-      const auxDataEnd = magicIndex + AUXPOW_MAGIC_BYTES.length + 32 + (auxPowData.merkleSize !== undefined ? 8 : 0); // End includes root + optional size/nonce
-      
-      // Add segment before AuxPOW, respecting already processed height bytes
-      if (auxDataStart > currentIndex) {
-        remainingParts.push(scriptSig.slice(currentIndex, auxDataStart));
-      }
-      // Move index past AuxPOW data
-      currentIndex = Math.max(currentIndex, auxDataEnd); 
-    }
-  }
-  
-  // Add any remaining part after height/AuxPOW
-  if (currentIndex < scriptSig.length) {
-    remainingParts.push(scriptSig.slice(currentIndex));
-  }
-
-  // Concatenate remaining parts and convert to hex
-  const remainingScriptHex = Buffer.concat(remainingParts).toString('hex');
-
-  return {
-    height,
-    auxPowData,
-    remainingScriptHex
-  };
-}
-
-// Wrapper function to get coinbase scriptSig info from coinbaseRaw
-export function computeCoinbaseScriptSigInfo(coinbaseRaw: string): CoinbaseScriptSigInfo {
-  try {
-    const tx = getTransaction(coinbaseRaw);
-    if (!tx.ins || tx.ins.length === 0) {
-      return {
-        height: null,
-        auxPowData: null,
-        remainingScriptHex: ""
-      };
-    }
-    const scriptSigBuffer = Buffer.from(tx.ins[0].script);
-    return decodeCoinbaseScriptSigInfo(scriptSigBuffer);
-  } catch (error) {
-    if (!isCachedParseError(error)) {
-      console.error("Error in computeCoinbaseScriptSigInfo:", error);
-    }
-    return {
-      height: null,
-      auxPowData: null,
-      remainingScriptHex: ""
-    };
-  }
 }
 
 // Function to get other coinbase transaction details

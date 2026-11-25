@@ -36,7 +36,8 @@ jobs:
       # silently without PG_TEST_*, which is how they went unrun before this job.
       - name: Web Postgres tests (as the web role)
         run: |
-          docker run --rm --network t -v "$PWD/web:/web" -w /web \
+          # db/ read-only: pgBlockTemplateMatches seeds from db/test-block-template-matches.sql (one synthetic block)
+          docker run --rm --network t -v "$PWD/web:/web" -v "$PWD/db:/db:ro" -w /web \
             -e PG_TEST_HOST=pg -e PG_TEST_USER=web -e PG_TEST_PASSWORD=web \
             -e PG_TEST_ADMIN_DSN=postgresql://stratum:stratum@pg:5432/stratum \
             node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 \

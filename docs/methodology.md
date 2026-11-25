@@ -283,6 +283,13 @@ compares them with the stored templates at read time:
   stored path is unknown, and one whose path no stored template shares had its job never sent to our connections (or
   sent after the last one we stored).
 
+The height page's **Winning template** (`/api/block-template-matches`) shows this per block. **Verified** lists every
+connection that received a job with exactly the block's transaction set, with its first receive time (adjusted by
+that template's own latency estimate when "Latency adjusted" is on) and how its coinbase fits: *coinbase* (both
+brackets), *layout* (only the length between them) or *set only*. Next to it is the block's own identification,
+since a match doesn't say who mined it. Without a match, the page says so, and gives how many leading transactions
+the closest stored set shared. An empty block, or one without a stored path, is shown as such, never as a match.
+
 Stale blocks (blocks that lost a race, `stale_blocks`) are known two ways, and each row records which
 (`header_source`):
 

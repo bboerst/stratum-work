@@ -325,6 +325,7 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/mining-notify?height=H` | Templates at a height |
 | `GET /api/blocks?n=20[&before=H\|&after=H\|&height=H]` | Blocks, newest first, with pool and analysis |
 | `GET /api/block-pool-first-seen?height=H` | Each pool's first template time at a height, with a `reliable` flag |
+| `GET /api/block-template-matches?height=H` | Which stored templates each block at H was built from ([how](docs/methodology.md#blocks)): per block its identified pool, when it reached us, and a state (`verified`, `empty_block`, `no_match`, `unknown`); per verified match the pool, connection (`a`, `b`), first receive time (µs) with that copy's own latency estimate, template count and coinbase fit (`coinbase`, `layout`, `merkle`); without a match, the closest shared depth. No job ids |
 | `GET /api/analysis-data?height=H[,H2]` / `?interesting=true` | Templates with decoded fields plus block details / blocks with analytics findings; `first_transaction` is `"empty template"` for a template with no transactions besides the coinbase (formerly `"empty block"`) ([details](web/app/api/analysis-data/README.md)) |
 | `GET /api/pools` | Pool definitions |
 | `GET /api/stale-blocks?n=20` | Recent stale blocks with the pools that built on them |

@@ -15,6 +15,7 @@ import HistoricalChartWrapper from "@/components/HistoricalChartWrapper";
 import HistoricalPoolTiming from "@/components/HistoricalPoolTiming";
 import CollapsibleRow from "@/components/CollapsibleRow";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
+import BlockWinningTemplate from "@/components/BlockWinningTemplate";
 
 export default function HeightPage() {
   const params = useParams();
@@ -86,6 +87,13 @@ export default function HeightPage() {
             <div className="px-4">
               <CollapsibleRow title="Findings" defaultExpanded={true}>
                 <AnalyticsPanel height={blockHeight} />
+              </CollapsibleRow>
+            </div>
+          )}
+          {blockHeight !== null && blockHeight > 0 && (
+            <div className="px-4">
+              <CollapsibleRow title="Winning template" defaultExpanded={true}>
+                <BlockWinningTemplate height={blockHeight} />
               </CollapsibleRow>
             </div>
           )}

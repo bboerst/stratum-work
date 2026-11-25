@@ -288,6 +288,15 @@ class PostgresStore:
             (limit,)).fetchall())
         return [r[0] for r in rows]
 
+    def blocks_missing_coinbase_tx(self, limit: int) -> List[Tuple[str, str]]:
+        """(block hash, coinbase txid), both hex as RPC displays them, of blocks with a coinbase txid but no coinbase
+        bytes, newest first."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex'), encode(coinbase_txid, 'hex') FROM blocks"
+            " WHERE coinbase_txid IS NOT NULL AND coinbase_tx IS NULL ORDER BY height DESC LIMIT %s",
+            (limit,)).fetchall())
+        return [(r[0], bytes.fromhex(r[1])[::-1].hex()) for r in rows]
+
     _COINBASE_FILL = """
         UPDATE blocks SET
             merkle_branches = COALESCE(merkle_branches, %(merkle_branches)s),

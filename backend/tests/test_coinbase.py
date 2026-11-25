@@ -73,11 +73,14 @@ class CoinbaseTests(unittest.TestCase):
 
 
 class FakeStore:
-    def __init__(self, hashes):
-        self.hashes, self.filled = hashes, []
+    def __init__(self, hashes, missing_tx=()):
+        self.hashes, self.missing_tx, self.filled = hashes, list(missing_tx), []
 
     def blocks_missing_branches(self, limit):
         return self.hashes[:limit]
+
+    def blocks_missing_coinbase_tx(self, limit):
+        return self.missing_tx[:limit]
 
     def fill_block_coinbase(self, docs):
         self.filled += docs
@@ -107,6 +110,37 @@ class CoinbaseFillTests(unittest.TestCase):
         s = FakeStore(["bad"])
         stats = BlockCoinbaseFiller(lambda m, h, v: {"tx": ["11" * 32, "22" * 32], "merkleroot": "00" * 32}, s).run()
         self.assertEqual((stats["filled"], stats["failed"]), (0, 1))
+
+
+    def test_coinbase_bytes_pass_fills_newest_first_checks_the_txid_and_stops_at_the_first_pruned_block(self):
+        with_wit, stripped = synthetic_segwit_coinbase()
+        txid = dsha256(stripped)[::-1].hex()
+        legacy = bytes.fromhex("01000000") + stripped[4:]                     # same bytes: a non-segwit coinbase
+        other = bytes.fromhex("02000000") + stripped[4:]
+        raw = {"b1": with_wit.hex(), "b2": other.hex(), "b3": legacy.hex()}
+        todo = [("b1", txid), ("b2", txid), ("b3", dsha256(legacy)[::-1].hex()), ("bp", txid), ("old", txid)]
+        calls = []
+        def rpc(m, txid_, verbose, block_hash):
+            self.assertEqual((m, verbose), ("getrawtransaction", False))
+            calls.append(block_hash)
+            if block_hash in ("bp", "old"):
+                raise RuntimeError("Block not available")
+            return raw[block_hash]
+        s = FakeStore([], todo)
+        stats = BlockCoinbaseFiller(rpc, s, batch=2).run()
+        self.assertEqual((stats["tx_missing"], stats["tx_filled"], stats["tx_failed"], stats["tx_pruned_at"]), (5, 2, 1, 1))
+        self.assertNotIn("old", calls)                               # stopped at the first pruned one
+        # b1: witness stripped; b2's bytes don't hash to the stored txid, so nothing is stored for it
+        self.assertEqual(s.filled, [{"block_hash": "b1", "coinbase_tx": stripped.hex()},
+                                    {"block_hash": "b3", "coinbase_tx": legacy.hex()}])
+
+    def test_coinbase_bytes_pass_retries_other_rpc_errors_next_run(self):
+        def rpc(*a):
+            raise RuntimeError("No such transaction found in the provided block")
+        s = FakeStore([], [("b1", "aa" * 32), ("b2", "bb" * 32)])
+        stats = BlockCoinbaseFiller(rpc, s).run()
+        self.assertEqual((stats["tx_filled"], stats["tx_failed"], stats["tx_pruned_at"]), (0, 2, 0))
+        self.assertEqual(s.filled, [])
 
 
 if __name__ == "__main__":

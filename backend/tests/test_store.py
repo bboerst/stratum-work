@@ -102,6 +102,16 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         # the txid is stored in internal byte order (reversed from the display hex)
         self.assertEqual(rows[h], (br, "01" + "ef" * 31, "0100"))
         self.assertEqual(rows[h + 1], ("", "aa" * 32, None))          # an empty block: empty branches, no coinbase bytes
+        # d2 has a txid but no coinbase bytes: listed (txid as RPC displays it) until filled; d1 has its bytes
+        missing = dict(self.store.blocks_missing_coinbase_tx(100_000))
+        self.assertEqual(missing.get("d2" * 32), "aa" * 32)
+        self.assertNotIn("d1" * 32, missing)
+        self.store.fill_block_coinbase([{"block_hash": "d2" * 32, "coinbase_tx": "0200"}])
+        self.assertNotIn("d2" * 32, dict(self.store.blocks_missing_coinbase_tx(100_000)))
+        with self.psycopg.connect(self.admin) as c:
+            self.assertEqual(c.execute("SELECT encode(merkle_branches, 'hex'), encode(coinbase_txid, 'hex'), "
+                                       "encode(coinbase_tx, 'hex') FROM blocks WHERE height = %s", (h + 1,)).fetchone(),
+                             ("", "aa" * 32, "0200"))                 # only the bytes changed
 
     def test_header_columns_are_written_and_the_fill_only_touches_nulls(self):
         h = self.h + 20

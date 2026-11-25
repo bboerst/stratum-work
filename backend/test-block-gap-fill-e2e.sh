@@ -153,11 +153,21 @@ check "701: 5 transactions, 3 branches stored" sql_is "SELECT length(merkle_bran
 TX1=$(cli "$BB" getblock "$MINED" 1 | python3 -c 'import json,sys; print(bytes.fromhex(json.load(sys.stdin)["tx"][1])[::-1].hex())')
 check "701: branch 0 is the node's first transaction after the coinbase" bash -c "[ -n '$TX1' ] && [ \"\$(docker exec $PG psql -h localhost -U postgres -At -c \"SELECT encode(substring(merkle_branches FROM 1 FOR 32), 'hex') FROM blocks WHERE height = 701\")\" = '$TX1' ]"
 # The fill: clear 600 (B has its data) and 263 (pruned on B). Newest first: 600 is filled, then it stops at 263.
+# Pass 1 (getblock verbosity 1) restores the branches and txid, pass 2 (getrawtransaction) the coinbase bytes.
+# Pass 2 alone: 701 and 265 (pruned on B) keep their branches and txid and lose only the coinbase bytes.
+CB701=$(sql "SELECT encode(coinbase_tx, 'hex') FROM blocks WHERE height = 701")
+check "701 has its coinbase bytes before the test clears them" test -n "$CB701"
+sql "UPDATE blocks SET coinbase_tx = NULL WHERE height IN (265, 701)" >/dev/null
 sql "UPDATE blocks SET merkle_branches = NULL, coinbase_txid = NULL, coinbase_tx = NULL WHERE height IN (263, 600)" >/dev/null
-check "the coinbase fill restores 600's branches and txid (getblock verbosity 1, no coinbase bytes)" retry 30 \
-  sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of 600)' AND coinbase_tx IS NULL FROM blocks WHERE height = 600" t
+check "265 is still pruned on B" pruned_on_b 265
+check "the coinbase fill restores 600's branches, txid and coinbase bytes" retry 30 \
+  sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of 600)' AND sha256(sha256(coinbase_tx)) = coinbase_txid FROM blocks WHERE height = 600" t
+check "701's coinbase bytes come back from getrawtransaction, identical to what the block save stored" retry 30 \
+  sql_is "SELECT encode(coinbase_tx, 'hex') FROM blocks WHERE height = 701" "$CB701"
 check "263 (pruned on B) stays unknown, and the fill logged where it stopped" \
   bash -c "[ \"\$(docker exec $PG psql -h localhost -U postgres -At -c 'SELECT merkle_branches IS NULL FROM blocks WHERE height = 263')\" = t ] && docker logs $BE 2>&1 | grep -q 'stopped at a pruned block'"
+check "265 (pruned on B) keeps its txid and stays without coinbase bytes; pass 2 logged where it stopped" \
+  bash -c "[ \"\$(docker exec $PG psql -h localhost -U postgres -At -c 'SELECT coinbase_txid IS NOT NULL AND coinbase_tx IS NULL FROM blocks WHERE height = 265')\" = t ] && docker logs $BE 2>&1 | grep -q 'blocks without coinbase bytes.*stopped at a pruned block'"
 
 echo "== backend logs (gap fill)"
 docker logs "$BE" 2>&1 | grep -E "Gap fill" | head -30

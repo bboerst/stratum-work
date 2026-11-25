@@ -256,8 +256,9 @@ before these were recorded, from the node's block header. A header has no size o
 older blocks whose full data the node no longer keeps.
 
 To link a block to the work it was built from, the backend also stores the block's coinbase merkle path (the same
-shape as a template's `merkle_branches`), its coinbase txid and, for blocks it stores from now on, its coinbase
-transaction. All of these are self-checked against the node's data before they are stored: the path must hash the
+shape as a template's `merkle_branches`), its coinbase txid and its coinbase transaction. Blocks stored before these
+were recorded get them from the node while it still has their data (it prunes old blocks), so the oldest blocks have
+none of them, and some only the path and txid. All of these are self-checked against the node's data before they are stored: the path must hash the
 coinbase txid to the block's merkle root, and the coinbase must hash to its txid. `block_template_matches(h_from, h_to)`
 compares them with the stored templates at read time:
 

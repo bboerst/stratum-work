@@ -12,6 +12,9 @@ pull request that touches `web/` (`.github/workflows/perf.yml`).
   branches. No database, and no real data (this repository is public).
 - Replays the live stream from a local SSE server at a fixed rate (10 templates/s), with a new block halfway through:
   every pool sends new work at once, as on the real site.
+- Answers history (`/api/realtime-prefill`) as a database fed by the same collectors would: the same rows on every
+  read, and every template the stream has sent, a second after sending it. So a history re-read after a gap
+  (lib/gapBackfill.ts) finds what the page already has, as on the real site.
 - Per page, median of several runs:
 
 | Metric | Meaning |

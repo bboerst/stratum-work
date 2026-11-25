@@ -75,9 +75,23 @@ function parseArgs(argv: string[]): Options {
 
 // ── replayed stream ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/** SSE server replaying fixture templates at `rate`/s; halfway through, a new block: every pool sends new work. */
+/**
+ * SSE server replaying fixture templates at `rate`/s; halfway through, a new block: every pool sends new work.
+ *
+ * It also answers what history holds, as a database fed by the same collectors would: the fixture's templates up to
+ * the moment the stream connected, plus every template the stream has sent, a second after sending it. (History that
+ * never contains what the stream sent would keep every gap between the two open, and the page re-reading it.)
+ */
 function startReplay(fixture: Fixture, rate: number, blockAfterS: number) {
   const clients = new Set<http.ServerResponse>();
+  // One page is measured at a time: the open connection's start and what it has sent.
+  let connectedAt: number | null = null;
+  let sentLog: { at: number; t: ReturnType<Fixture["template"]> }[] = [];
+  const history = (nowS: number) => {
+    const base = fixture.prefill(Math.min(nowS, connectedAt ?? nowS));
+    const sent = sentLog.filter((e) => e.at <= nowS - 1).map((e) => e.t);
+    return { ...base, templates: [...base.templates, ...sent] };
+  };
   const server = http.createServer((req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -87,6 +101,12 @@ function startReplay(fixture: Fixture, rate: number, blockAfterS: number) {
     });
     res.write(`data: ${JSON.stringify({ type: "connection", status: "connected" })}\n\n`);
     const started = Date.now() / 1000;
+    connectedAt = started;
+    sentLog = [];
+    const send = (t: ReturnType<Fixture["template"]>) => {
+      sentLog.push({ at: Date.now() / 1000, t });
+      res.write(`data: ${JSON.stringify(t)}\n\n`);
+    };
     let sent = 0;
     let blockDone = false;
     const timer = setInterval(() => {
@@ -95,22 +115,24 @@ function startReplay(fixture: Fixture, rate: number, blockAfterS: number) {
       const height = fixture.tipAt(now) + 1 + (elapsed >= blockAfterS ? 1 : 0);
       if (elapsed >= blockAfterS && !blockDone) {
         blockDone = true;
-        for (let i = 0; i < fixture.opts.pools; i++) res.write(`data: ${JSON.stringify({ ...fixture.template(i, height, now), clean_jobs: true })}\n\n`);
+        for (let i = 0; i < fixture.opts.pools; i++) send({ ...fixture.template(i, height, now), clean_jobs: true });
       }
       const due = Math.floor(elapsed * rate);
-      for (; sent < due; sent++) res.write(`data: ${JSON.stringify(fixture.template(sent % fixture.opts.pools, height, now))}\n\n`);
+      for (; sent < due; sent++) send(fixture.template(sent % fixture.opts.pools, height, now));
     }, 50);
     clients.add(res);
     req.on("close", () => {
       clearInterval(timer);
       clients.delete(res);
+      connectedAt = null;
     });
   });
-  return new Promise<{ url: string; close: () => void }>((resolve) =>
+  return new Promise<{ url: string; close: () => void; history: (nowS: number) => ReturnType<typeof history> }>((resolve) =>
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
       resolve({
         url: `http://127.0.0.1:${port}/stream`,
+        history,
         close: () => {
           for (const c of clients) c.end();
           server.close();
@@ -156,7 +178,10 @@ interface Target {
   lookups: FeeLookups;
 }
 
-async function measure(browser: Browser, o: Options, t: Target, fixture: Fixture, streamUrl: string, path: string): Promise<PageMetrics> {
+async function measure(
+  browser: Browser, o: Options, t: Target, fixture: Fixture,
+  { url: streamUrl, history }: { url: string; history: (nowS: number) => ReturnType<Fixture["prefill"]> }, path: string,
+): Promise<PageMetrics> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await ctx.newPage();
   await page.addInitScript(INIT);
@@ -173,7 +198,7 @@ async function measure(browser: Browser, o: Options, t: Target, fixture: Fixture
         t.lookups.tx++;
         return json({ enabled: true, supported: true, txs: syntheticTxs(url.searchParams.get("txids") ?? "") });
       case "/api/realtime-prefill":
-        return json(fixture.prefill(nowS));
+        return json(history(nowS));
       case "/api/blocks":
         return json(fixture.blocks(nowS, Math.min(Number(url.searchParams.get("n") ?? 20), 50)));
       case "/api/analysis-data":
@@ -268,7 +293,7 @@ async function main() {
       const runs = { primary: [], compare: [] } as Record<Side, PageMetrics[]>;
       for (const side of sides) targets[side].lookups = { tx: 0, mempoolSpace: 0 };
       for (const step of steps.filter((s) => s.path === path)) {
-        runs[step.side].push(await measure(browser, o, targets[step.side], fixture, replay.url, path));
+        runs[step.side].push(await measure(browser, o, targets[step.side], fixture, replay, path));
       }
       for (const side of sides) {
         const { tx, mempoolSpace } = targets[side].lookups;

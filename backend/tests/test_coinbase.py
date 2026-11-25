@@ -73,40 +73,173 @@ class CoinbaseTests(unittest.TestCase):
 
 
 class FakeStore:
-    def __init__(self, hashes):
-        self.hashes, self.filled = hashes, []
+    def __init__(self, missing=(), missing_tx=()):
+        self.missing, self.missing_tx, self.filled, self.headers = list(missing), list(missing_tx), [], []
 
     def blocks_missing_branches(self, limit):
-        return self.hashes[:limit]
+        return self.missing[:limit]
+
+    def blocks_missing_coinbase_tx(self, limit):
+        return self.missing_tx[:limit]
 
     def fill_block_coinbase(self, docs):
-        self.filled += docs
+        self.filled += [dict(d) for d in docs]
+        return len(docs)
+
+    def fill_block_headers(self, docs):
+        self.headers += docs
         return len(docs)
 
 
+def coinbase_variant(i):
+    """A segwit coinbase (with witness) and its stripped form, distinct per i (the locktime)."""
+    with_wit, stripped = synthetic_segwit_coinbase()
+    locktime = i.to_bytes(4, "little")
+    return with_wit[:-4] + locktime, stripped[:-4] + locktime
+
+
+class FakeNode:
+    """getblock (verbosity 1), getrawtransaction <txid> false <hash>, getblockchaininfo; pruned blocks raise."""
+    def __init__(self, n, pruned=()):
+        self.blocks, self.pruned, self.calls = {}, set(pruned), []
+        for i in range(n):
+            with_wit, stripped = coinbase_variant(i)
+            txids = [dsha256(stripped)] + [dsha256(bytes([i, j])) for j in range(1, 5)]
+            h = f"{i:064x}"
+            self.blocks[h] = {"tx": [t[::-1].hex() for t in txids], "merkleroot": root_of(txids)[::-1].hex(),
+                              "size": 1000 + i, "weight": 4000 + i, "raw": with_wit.hex(), "stripped": stripped.hex()}
+
+    def rpc(self, method, *args):
+        self.calls.append((method, *args))
+        if method == "getblockchaininfo":
+            return {"pruneheight": 100, "blocks": 200}
+        h = args[0] if method == "getblock" else args[2]
+        if h in self.pruned:
+            raise RuntimeError("Block not available (pruned data)" if method == "getblock" else "Block not available")
+        b = self.blocks[h]
+        if method == "getblock":
+            return {k: v for k, v in b.items() if k not in ("raw", "stripped")}
+        assert args[0] == b["tx"][0] and args[1] is False
+        return b["raw"]
+
+
+class FakeFetcher:
+    """The gap filler's peer path: delivers the blocks in `deliverable` (un-prunes them on the node)."""
+    def __init__(self, node, deliverable=(), peers=(1, 2, 3)):
+        self.node, self.deliverable, self._peers, self.asked = node, set(deliverable), list(peers), []
+
+    def peers(self):
+        return list(self._peers)
+
+    def fetch_from_peers(self, height, block_hash, peers, store_step):
+        self.asked.append((height, block_hash, peers[0]))
+        if block_hash not in self.deliverable:
+            return False
+        self.node.pruned.discard(block_hash)
+        ok = store_step() == "ok"
+        self.node.pruned.add(block_hash)          # the node may prune it again at once
+        return ok
+
+
+def header_fields(block):
+    return {"size": block["size"], "weight": block["weight"]}
+
+
 class CoinbaseFillTests(unittest.TestCase):
-    def test_fills_newest_first_and_stops_at_the_first_pruned_block(self):
-        good = {}
-        for i in range(3):
-            txids = [dsha256(bytes([i, j])) for j in range(4)]
-            good[f"{i:064x}"] = {"tx": [t[::-1].hex() for t in txids], "merkleroot": root_of(txids)[::-1].hex()}
-        hashes = list(good) + ["pruned", "older"]
-        calls = []
-        def rpc(m, h, v):
-            calls.append(h)
-            if h in ("pruned", "older"):
-                raise RuntimeError("Block not available (pruned data)")
-            return good[h]
-        s = FakeStore(hashes)
-        stats = BlockCoinbaseFiller(rpc, s, batch=2).run()
-        self.assertEqual((stats["filled"], stats["failed"], stats["pruned_at"]), (3, 0, 1))
-        self.assertNotIn("older", calls)                             # stopped at the first pruned one
-        self.assertEqual([d["block_hash"] for d in s.filled], list(good))
+    def test_reads_everything_newest_first_and_stops_at_the_first_pruned_block(self):
+        node = FakeNode(5, pruned={f"{3:064x}", f"{4:064x}"})
+        todo = [(f"{i:064x}", 100 - i) for i in range(5)]
+        s = FakeStore(todo)
+        stats = BlockCoinbaseFiller(node.rpc, s, batch=2, header_fields=header_fields).run()
+        self.assertEqual((stats["filled"], stats["failed"], stats["pruned_at"], stats["from_peer"]), (3, 0, 1, 0))
+        self.assertNotIn(("getblock", f"{4:064x}", 1), node.calls)        # stopped at the first pruned one
+        self.assertEqual([d["block_hash"] for d in s.filled], [h for h, _ in todo[:3]])
+        for d in s.filled:
+            b = node.blocks[d["block_hash"]]
+            self.assertEqual(d["coinbase_txid"], b["tx"][0])
+            self.assertEqual(d["coinbase_tx"], b["stripped"])            # witness stripped
+            self.assertEqual(fold(bytes.fromhex(b["tx"][0])[::-1],
+                                  [bytes.fromhex(d["merkle_branches"])[k:k + 32] for k in range(0, 96, 32)])[::-1].hex(),
+                             b["merkleroot"])
+        self.assertEqual([h["size"] for h in s.headers], [1000, 1001, 1002])
 
     def test_a_block_failing_the_self_check_is_skipped(self):
-        s = FakeStore(["bad"])
-        stats = BlockCoinbaseFiller(lambda m, h, v: {"tx": ["11" * 32, "22" * 32], "merkleroot": "00" * 32}, s).run()
-        self.assertEqual((stats["filled"], stats["failed"]), (0, 1))
+        node = FakeNode(2)
+        node.blocks[f"{0:064x}"]["merkleroot"] = "00" * 32                 # branches don't fold to it
+        node.blocks[f"{1:064x}"]["raw"] = coinbase_variant(9)[0].hex()       # bytes don't hash to the txid
+        s = FakeStore([(f"{i:064x}", 10 - i) for i in range(2)])
+        stats = BlockCoinbaseFiller(node.rpc, s).run()
+        self.assertEqual((stats["filled"], stats["failed"]), (0, 2))
+        self.assertEqual(s.filled, [])
+
+    def test_coinbase_bytes_pass_fills_newest_first_checks_the_txid_and_stops_at_the_first_pruned_block(self):
+        node = FakeNode(5, pruned={f"{3:064x}", f"{4:064x}"})
+        node.blocks[f"{1:064x}"]["raw"] = coinbase_variant(9)[0].hex()       # doesn't hash to block 1's txid
+        todo = [(h, b["tx"][0], 9) for h, b in node.blocks.items()]
+        s = FakeStore([], todo)
+        stats = BlockCoinbaseFiller(node.rpc, s, batch=1).run()
+        self.assertEqual((stats["tx_missing"], stats["tx_filled"], stats["tx_failed"], stats["tx_pruned_at"]), (5, 2, 1, 1))
+        self.assertNotIn(f"{4:064x}", [c[3] for c in node.calls if c[0] == "getrawtransaction"])
+        self.assertEqual(s.filled, [{"block_hash": f"{i:064x}", "coinbase_tx": node.blocks[f"{i:064x}"]["stripped"]}
+                                    for i in (0, 2)])
+
+    def test_other_rpc_errors_are_retried_next_run(self):
+        def rpc(*a):
+            raise RuntimeError("No such transaction found in the provided block")
+        s = FakeStore([("b1", 2)], [("b1", "aa" * 32, 2), ("b2", "bb" * 32, 1)])
+        stats = BlockCoinbaseFiller(rpc, s).run()
+        self.assertEqual((stats["tx_filled"], stats["tx_failed"], stats["tx_pruned_at"]), (0, 2, 0))
+        self.assertEqual((stats["filled"], stats["failed"], stats["pruned_at"]), (0, 1, 0))
+        self.assertEqual(s.filled, [])
+
+    def test_peers_are_off_by_default(self):
+        node = FakeNode(2, pruned={f"{0:064x}", f"{1:064x}"})
+        f = FakeFetcher(node, deliverable=node.blocks)
+        stats = BlockCoinbaseFiller(node.rpc, FakeStore([(h, 0) for h in node.blocks]), fetcher=f).run()
+        self.assertEqual((stats["from_peer"], stats["pruned_at"]), (0, 1))
+        self.assertEqual(f.asked, [])
+
+    def test_pruned_blocks_come_from_peers_read_at_once_with_rotating_peers_and_a_budget(self):
+        hashes = [f"{i:064x}" for i in range(6)]
+        node = FakeNode(6, pruned=set(hashes[1:]))
+        f = FakeFetcher(node, deliverable=hashes)
+        s = FakeStore([(h, 100 - i) for i, h in enumerate(hashes)])
+        stats = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=3, header_fields=header_fields).run()
+        self.assertEqual((stats["filled"], stats["from_peer"], stats["pruned_at"]), (4, 3, 1))   # 0 locally, 1-3 from peers
+        self.assertEqual([a[2] for a in f.asked], [1, 2, 3])                                  # one peer after another
+        self.assertEqual([d["coinbase_tx"] for d in s.filled], [node.blocks[h]["stripped"] for h in hashes[:4]])
+        self.assertEqual(len(s.headers), 4)
+        self.assertIn(("getblockchaininfo",), node.calls)                                     # prune height logged
+
+    def test_peer_fetching_stops_after_failures_in_a_row_and_without_peers(self):
+        hashes = [f"{i:064x}" for i in range(6)]
+        node = FakeNode(6, pruned=set(hashes))
+        f = FakeFetcher(node, deliverable={hashes[0]})
+        stats = BlockCoinbaseFiller(node.rpc, FakeStore([(h, 9 - i) for i, h in enumerate(hashes)]), fetcher=f,
+                                    peer_max_blocks=100, peer_max_failures=2).run()
+        self.assertEqual((stats["from_peer"], stats["peer_failed"], stats["filled"]), (1, 2, 1))
+        self.assertEqual(len(f.asked), 3)
+        f2 = FakeFetcher(node, deliverable=hashes, peers=())
+        stats = BlockCoinbaseFiller(node.rpc, FakeStore([(hashes[0], 9)]), fetcher=f2, peer_max_blocks=5).run()
+        self.assertEqual((stats["from_peer"], stats["pruned_at"]), (0, 1))
+        self.assertEqual(f2.asked, [])
+
+    def test_peer_fetching_waits_until_the_coinbase_bytes_pass_is_caught_up(self):
+        node = FakeNode(3, pruned={f"{2:064x}"})
+        f = FakeFetcher(node, deliverable=node.blocks)
+        # two blocks still need their bytes and the budget is 1: pass 1 isn't caught up, so no peer downloads
+        s = FakeStore([(f"{2:064x}", 5)], [(h, node.blocks[h]["tx"][0], 9) for h in (f"{0:064x}", f"{1:064x}")])
+        stats = BlockCoinbaseFiller(node.rpc, s, max_blocks=1, fetcher=f, peer_max_blocks=5).run()
+        self.assertEqual((stats["tx_filled"], stats["from_peer"], stats["pruned_at"]), (1, 0, 1))
+        self.assertEqual(f.asked, [])
+
+    def test_a_pruned_block_missing_only_its_coinbase_bytes_comes_from_peers_too(self):
+        node = FakeNode(2, pruned={f"{1:064x}"})
+        f = FakeFetcher(node, deliverable=node.blocks)
+        s = FakeStore([], [(h, node.blocks[h]["tx"][0], 9 - i) for i, h in enumerate(node.blocks)])
+        stats = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=5).run()
+        self.assertEqual((stats["tx_filled"], stats["from_peer"], stats["tx_pruned_at"]), (2, 1, 0))
+        self.assertEqual([d["coinbase_tx"] for d in s.filled], [b["stripped"] for b in node.blocks.values()])
 
 
 if __name__ == "__main__":

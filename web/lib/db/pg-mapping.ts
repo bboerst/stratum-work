@@ -28,6 +28,9 @@ export interface MiningNotify {
   received_timestamp: string;
   /** The connection (source) that received this row (also part of `id`). */
   source_id: number;
+  /** That connection's site and replica, as the live stream names it (reads from templates_dedup). */
+  site?: string;
+  replica?: string;
   nbits: string;
   ntime: string;
   clean_jobs: boolean;
@@ -40,6 +43,8 @@ export interface MiningNotify {
 // node-postgres returns bytea as Buffer, bigint as a string, real as a number.
 export interface TemplateRow {
   source_id: number;
+  site?: string | null;
+  replica?: string | null;
   source_name: string;
   received_us: string;            // (extract(epoch FROM received_at) * 1e6)::bigint: this row's own receive time
   first_seen_us?: string;         // templates_dedup: first seen over the row and its copies from other replicas
@@ -146,6 +151,7 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     timestamp: timestampHexFromMicros(row.first_seen_us ?? row.received_us),
     received_timestamp: timestampHexFromMicros(row.received_us),
     source_id: row.source_id,
+    ...(typeof row.site === 'string' && typeof row.replica === 'string' ? { site: row.site, replica: row.replica } : {}),
     nbits: u32Hex(row.nbits),
     ntime: u32Hex(row.ntime),
     clean_jobs: row.clean_jobs,

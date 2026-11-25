@@ -71,7 +71,7 @@ describe('served templates carry masked extranonce1', () => {
       enableHistoricalData: true,
       getHighestBlock: vi.fn(async () => ({ height: 100000, timestamp: Math.floor((NOW_MS - 60_000) / 1000) })),
     }));
-    vi.doMock('../db/mining-notify', () => ({ fetchMiningNotifyByHeight: vi.fn(async () => templates()) }));
+    vi.doMock('../db/mining-notify', () => ({ fetchMiningNotifyAtHeights: vi.fn(async () => templates()) }));
     const { GET } = await import('../../app/api/realtime-prefill/route');
     const text = await (await GET()).text();
     expectMasked(text, JSON.parse(text).templates);

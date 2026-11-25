@@ -18,7 +18,7 @@ export interface ProcessedTemplateData {
   merkleBranches: string[];
   extranonce2Length: number;
 
-  /** Which of our connections received it (`site/replica` on the stream, `source_id` on history), or null. */
+  /** Which of our connections received it (`site/replica`, else `source_id`), or null. */
   connection: string | null;
 
   /** OP_RETURN outputs, keyed by protocol name (" #2", " #3"... for repeats). Empty when the coinbase doesn't parse. */
@@ -229,7 +229,9 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
     cleanJobs: cleanJobsFlag(data.clean_jobs),
     merkleBranches: (data.merkle_branches ?? []).map(lowerHex),
     extranonce2Length: Number(data.extranonce2_length),
-    connection: typeof data.site === 'string' && typeof data.replica === 'string' ? `stream ${data.site}/${data.replica}`
+    // site/replica name a connection the same way on the stream and on history reads; older history rows have only
+    // source_id (another kind of name, which change detection doesn't compare against site/replica).
+    connection: typeof data.site === 'string' && typeof data.replica === 'string' ? `conn ${data.site}/${data.replica}`
       : typeof data.source_id === 'number' ? `source ${data.source_id}` : null,
     opReturnProtocols: opReturns,
     coinbase,

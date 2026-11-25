@@ -65,7 +65,8 @@ const OWN_RECEIVED_US = '(extract(epoch FROM j.received_at) * 1000000)::bigint';
 // branch columns are the expensive ones to decompress, but both responses include them; R4 below reads only three
 // columns. source_name is the pool (sources.name, the same for every replica and site). received_us is the row's own
 // receive time (part of the template id), first_seen_us the time shown (earliest over it and its hidden copies).
-const DEDUP_COLUMNS = `j.source_id, j.pool AS source_name, ${OWN_RECEIVED_US} AS received_us,
+// site and replica name the row's connection as the live stream does, so change detection can tell connections apart.
+const DEDUP_COLUMNS = `j.source_id, j.site, j.replica, j.pool AS source_name, ${OWN_RECEIVED_US} AS received_us,
   ${FIRST_SEEN_US} AS first_seen_us, j.height, j.job_id, j.prev_hash, j.coinbase1, j.coinbase2, j.merkle_branches,
   j.version, j.nbits, j.ntime, j.clean_jobs, j.extranonce1, j.extranonce2_length`;
 
@@ -80,13 +81,21 @@ export async function isHeightFinal(height: number): Promise<boolean> {
  * copy's (first_seen_latency_*, migration 20261123000001): the shown time is that copy's receive time.
  */
 export async function templatesAtHeight(height: number): Promise<MiningNotify[]> {
-  const [from, to] = await heightWindow(height);
+  return templatesAtHeights(height, height);
+}
+
+/**
+ * R1 over heights [hFrom, hTo] in one statement, so the rows are one snapshot: a connection's rows are then every row
+ * it had written by that moment (the realtime pre-fill relies on this, lib/templateBuffer.ts).
+ */
+export async function templatesAtHeights(hFrom: number, hTo: number): Promise<MiningNotify[]> {
+  const [from, to] = await heightWindow(hFrom, hTo);
   const rows = await query<TemplateRow>(
     `SELECT ${DEDUP_COLUMNS}, j.first_seen_latency_ms,
             j.first_seen_latency_method::text AS first_seen_latency_method
-       FROM templates_dedup($1, $1, $2, $3) j
+       FROM templates_dedup($1, $2, $3, $4) j
       ORDER BY j.first_seen, j.source_id, j.job_id`,
-    [height, from, to],
+    [hFrom, hTo, from, to],
   );
   return rows.map(templateRowToMiningNotify);
 }

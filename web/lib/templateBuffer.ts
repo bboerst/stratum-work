@@ -15,13 +15,26 @@ export interface BufferedTemplate {
   seq: number;
   /** Collector receive time, ms since the epoch (from the hex-nanosecond `timestamp`). */
   timeMs: number;
+  /** This row's own receive time (`received_timestamp ?? timestamp`), ms: the order change detection compares in. */
+  recvMs: number;
   data: StratumV1Data;
-  /** Templates from this pool may have been missed just before this one: change detection doesn't compare it. */
+  /**
+   * Nothing proves this template and the pool's one before it (in `recvMs` order) were consecutive: templates may have
+   * been missed in between, so change detection doesn't compare them. Cleared when a later history read covers both.
+   */
   gapBefore?: boolean;
-  /** Came from the live stream (else from the history pre-fill). */
+  /** Came from the live stream (else from a history read). */
   live?: boolean;
-  /** markGap applied to it (gapBefore may also come from the pre-fill/stream seam). */
-  gapMarked?: boolean;
+  /**
+   * The continuous observations that saw this template: a live run (`l<n>.<m>`: the stream between two gaps) or one
+   * history response (`h<n>`). Two neighbours that share one are consecutive; see TemplateBuffer.
+   */
+  segs: string[];
+  /**
+   * A template of the pool between this one and the one before it is gone from the buffer (trimmed below the kept
+   * heights) or was never added (below them): no observation can prove the two consecutive any more.
+   */
+  cut?: boolean;
 }
 
 export interface TemplateBufferLimits {
@@ -80,6 +93,15 @@ function compareEntries(a: BufferedTemplate, b: BufferedTemplate): number {
   return a.timeMs - b.timeMs || a.seq - b.seq;
 }
 
+/** Receive order (the order change detection compares in): own receive time, then insertion order. */
+function compareReceived(a: BufferedTemplate, b: BufferedTemplate): number {
+  return a.recvMs - b.recvMs || a.seq - b.seq;
+}
+
+const shareSeg = (a: BufferedTemplate, b: BufferedTemplate) => a.segs.some(s => b.segs.includes(s));
+/** Whether `b` follows `a` (the pool's one before it) in one observation, with nothing of the pool left out between. */
+const linked = (a: BufferedTemplate, b: BufferedTemplate) => !b.cut && shareSeg(a, b);
+
 export class TemplateBuffer {
   private readonly limits: TemplateBufferLimits;
   private readonly byKey = new Map<string, BufferedTemplate>();
@@ -88,20 +110,20 @@ export class TemplateBuffer {
   private maxTemplateHeight: number | null = null;
   private snapshot: BufferedTemplate[] | null = null;
   /**
-   * Gaps (markGap): pools whose next live template follows a gap; a counter bumped by a gap for every pool, and the
-   * value each pool's last live template saw.
+   * Which neighbours change detection may compare. Two templates of a pool that are neighbours in receive order are
+   * consecutive only when one continuous observation saw both: one run of the live stream (a pool's stream between
+   * two gaps, markGap), or one history response (a fresh read of the pool's recent templates; the collector writes
+   * each connection's templates in receive order, so a read that has a template has every one before it). Anything
+   * else (the pre-fill/stream seam, a pause, a reconnect, a throttled burst) leaves `gapBefore` set until a later
+   * history read covers both sides.
    */
-  private readonly gapPools = new Set<string>();
-  private gapAllEpoch = 0;
-  private readonly liveEpochByPool = new Map<string, number>();
-  /**
-   * The pre-fill/stream seam: a pool's first live template follows its pre-fill rows, but templates sent between the
-   * pre-fill's read and the stream's start may be missing, unless the two overlap (a template arrived from both), which
-   * proves nothing was missed in between. Per pool: its first live entry, its oldest pre-fill time, and the overlap.
-   */
-  private readonly firstLive = new Map<string, BufferedTemplate>();
-  private readonly prefillMinMs = new Map<string, number>();
-  private readonly overlap = new Set<string>();
+  private liveRunAll = 0;
+  private readonly liveRunByPool = new Map<string, number>();
+  private responses = 0;
+  /** Each pool's entries in receive order. */
+  private readonly byPool = new Map<string, BufferedTemplate[]>();
+  /** Bumped whenever an entry gets `gapBefore`: a history read may now fill it in. */
+  gapVersion = 0;
 
   /** Bumped on every change. */
   version = 0;
@@ -141,6 +163,7 @@ export class TemplateBuffer {
       for (const [key, entry] of this.byKey) {
         if (entry.data.height > height + MAX_HEIGHTS_ABOVE_TIP) this.byKey.delete(key);
       }
+      this.dropRemovedFromPools();
       this.recomputeMaxHeight();
     }
     this.trim();
@@ -159,8 +182,14 @@ export class TemplateBuffer {
   ): number {
     let added = 0;
     let outOfOrder = false;
+    const firstSeq = this.nextSeq;
     const newestByPool = this.newestByPool();
-    const seamPools = new Set<string>();
+    // One history response is one observation; each live template belongs to its pool's current run.
+    const responseSeg = live ? null : `h${++this.responses}`;
+    const recompute = new Set<string>();
+    // Rows of this response below the kept heights are left out, so the response's other rows of that pool aren't one
+    // contiguous stretch across them: each such row splits the pool's rows into separate observations.
+    const skippedByPool = responseSeg === null ? null : this.belowFloorByPool(templates, isAllowed);
 
     for (const data of templates) {
       // Other chains' templates arrive untagged (collectors don't classify, docs/design/one-templates-table.md): the
@@ -170,84 +199,146 @@ export class TemplateBuffer {
       if (!Number.isInteger(data.height) || data.height <= 0) continue;
       if (this.tip !== null && data.height > this.tip + MAX_HEIGHTS_ABOVE_TIP) continue;
       const floor = this.heightFloor();
-      if (floor !== null && data.height < floor) continue;
+      if (floor !== null && data.height < floor) {
+        // A live template of an old height: the pool's next one must not be compared across it.
+        if (live && typeof data.pool_name === 'string') this.markGap(data.pool_name);
+        continue;
+      }
 
       const key = templateKey(data);
       if (key === null) continue;
+      const pool = data.pool_name;
+      const recvMs = Number(timestampMicros(data.received_timestamp ?? data.timestamp) ?? timestampMicros(data.timestamp)!) / 1000;
+      let seg: string;
+      if (responseSeg !== null) {
+        const skipped = skippedByPool!.get(pool);
+        seg = skipped ? `${responseSeg}.${skipped.filter(t => t < recvMs).length}` : responseSeg;
+      } else {
+        seg = `l${this.liveRunAll}.${this.liveRunByPool.get(pool) ?? 0}`;
+      }
 
       const existing = this.byKey.get(key);
       if (existing) {
-        // The same template from the pre-fill and the live stream: the two meet for this pool.
-        if (!!existing.live !== live && !this.overlap.has(data.pool_name)) {
-          this.overlap.add(data.pool_name);
-          seamPools.add(data.pool_name);
+        // Seen again (the pre-fill and the stream meet, or a later history read): this observation saw it too.
+        if (!existing.segs.includes(seg)) {
+          existing.segs.push(seg);
+          recompute.add(pool);
         }
         continue;
       }
 
       const timeMs = Number(timestampMicros(data.timestamp)!) / 1000;
-      const newest = newestByPool.get(data.pool_name);
+      const newest = newestByPool.get(pool);
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
-      if (newest === undefined || timeMs > newest) newestByPool.set(data.pool_name, timeMs);
+      if (newest === undefined || timeMs > newest) newestByPool.set(pool, timeMs);
 
-      // A gap applies to the pool's next live template in receive order (not to an older one arriving late, nor to
-      // the pre-fill), and only when the pool had a template before it.
-      let gapMarked = false;
-      if (live && (newest === undefined || timeMs >= newest)) {
-        const seenLive = this.liveEpochByPool.get(data.pool_name);
-        gapMarked = newest !== undefined
-          && (this.gapPools.has(data.pool_name) || (seenLive !== undefined && seenLive !== this.gapAllEpoch));
-        this.gapPools.delete(data.pool_name);
-        this.liveEpochByPool.set(data.pool_name, this.gapAllEpoch);
-      }
-      const seq = this.nextSeq++;
-      const entry: BufferedTemplate = { key, seq, timeMs, data };
+      const entry: BufferedTemplate = { key, seq: this.nextSeq++, timeMs, recvMs, data, segs: [seg] };
       if (live) entry.live = true;
-      if (gapMarked) entry.gapMarked = entry.gapBefore = true;
       this.byKey.set(key, entry);
-      if (live && !this.firstLive.has(data.pool_name)) {
-        this.firstLive.set(data.pool_name, entry);
-        seamPools.add(data.pool_name);
+
+      let list = this.byPool.get(pool);
+      if (!list) this.byPool.set(pool, (list = []));
+      if (list.length === 0 || compareReceived(list[list.length - 1], entry) < 0) {
+        // The usual case: the pool's newest. Only its own link to the one before it is new.
+        const prev = list[list.length - 1];
+        list.push(entry);
+        if (prev && !linked(prev, entry)) {
+          entry.gapBefore = true;
+          this.gapVersion++;
+        }
+      } else {
+        let i = list.length;
+        while (i > 0 && compareReceived(list[i - 1], entry) > 0) i--;
+        list.splice(i, 0, entry);
+        recompute.add(pool);
       }
-      if (!live) {
-        const min = this.prefillMinMs.get(data.pool_name);
-        if (min === undefined || timeMs < min) this.prefillMinMs.set(data.pool_name, timeMs);
-        seamPools.add(data.pool_name);
-      }
+
       if (this.maxTemplateHeight === null || data.height > this.maxTemplateHeight) {
         this.maxTemplateHeight = data.height;
       }
       added++;
     }
 
-    // An entry already handed out whose gap flag changes needs consumers to rebuild (like an out-of-order arrival).
-    for (const pool of seamPools) if (this.updateSeam(pool)) outOfOrder = true;
+    // A flag that changes on an entry already handed out needs consumers to rebuild (like an out-of-order arrival).
+    let relinked = false;
+    for (const pool of recompute) {
+      const r = this.relink(pool, firstSeq);
+      if (r === 'old') outOfOrder = true;
+      if (r !== 'none') relinked = true;
+    }
     if (added > 0) this.trim();
     if (outOfOrder) this.epoch++;
-    if (added > 0) this.changed();
+    if (added > 0 || relinked) this.changed();
     return added;
   }
 
-  /** Sets the seam gap on a pool's first live entry; true if a flag changed. */
-  private updateSeam(pool: string): boolean {
-    const e = this.firstLive.get(pool);
-    if (!e) return false;
-    const min = this.prefillMinMs.get(pool);
-    const seam = min !== undefined && min < e.timeMs && !this.overlap.has(pool);
-    const gap = !!e.gapMarked || seam;
-    if (!!e.gapBefore === gap) return false;
-    if (gap) e.gapBefore = true;
-    else delete e.gapBefore;
-    return true;
+  /**
+   * The receive times (ms) of a response's rows that will end up below the kept heights, by pool: below the floor
+   * after this response raises the current height (rows between the current floor and that one are added, then
+   * trimmed, and cut there by dropRemovedFromPools).
+   */
+  private belowFloorByPool(templates: StratumV1Data[], isAllowed: (poolName: string) => boolean): Map<string, number[]> {
+    let current = this.currentHeight;
+    for (const d of templates) {
+      if (!d || !Number.isInteger(d.height) || d.height <= 0 || !isAllowed(d.pool_name)) continue;
+      if (this.tip !== null && d.height > this.tip + MAX_HEIGHTS_ABOVE_TIP) continue;
+      if (current === null || d.height > current) current = d.height;
+    }
+    const out = new Map<string, number[]>();
+    if (current === null) return out;
+    const floor = current - this.limits.heights + 1;
+    for (const d of templates) {
+      if (!d || !Number.isInteger(d.height) || d.height <= 0 || d.height >= floor || !isAllowed(d.pool_name)) continue;
+      const us = timestampMicros(d.received_timestamp ?? d.timestamp);
+      if (us === null) continue;
+      let list = out.get(d.pool_name);
+      if (!list) out.set(d.pool_name, (list = []));
+      list.push(Number(us) / 1000);
+    }
+    return out;
+  }
+
+  /** Re-derives `gapBefore` for a pool's entries: whether it changed, and on an entry added before `firstSeq`. */
+  private relink(pool: string, firstSeq: number): 'none' | 'new' | 'old' {
+    const list = this.byPool.get(pool);
+    if (!list) return 'none';
+    let changed: 'none' | 'new' | 'old' = 'none';
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const gap = i > 0 && !linked(list[i - 1], e);
+      if (!!e.gapBefore === gap) continue;
+      if (gap) {
+        e.gapBefore = true;
+        this.gapVersion++;
+      } else {
+        delete e.gapBefore;
+      }
+      if (e.seq < firstSeq) changed = 'old';
+      else if (changed === 'none') changed = 'new';
+    }
+    return changed;
   }
 
   /**
-   * Templates were missed (a throttled burst for `poolName`, or a pause or dropped stream for every pool): the next
-   * template of the pool (or of each pool) is marked `gapBefore`.
+   * How many templates received within `windowMs` of the newest one still follow an unproven gap (the collectors'
+   * clock, not the viewer's).
+   */
+  pendingGaps(windowMs: number): number {
+    let newest = -Infinity;
+    for (const e of this.byKey.values()) if (e.recvMs > newest) newest = e.recvMs;
+    let n = 0;
+    for (const e of this.byKey.values()) if (e.gapBefore && e.recvMs >= newest - windowMs) n++;
+    return n;
+  }
+
+  /**
+   * Templates were missed (a throttled burst for `poolName`, or a pause or dropped stream for every pool): the live
+   * stream's next template of the pool (or of each pool) starts a new run, so it follows a gap until a history read
+   * covers it.
    */
   markGap(poolName?: string): void {
-    if (poolName === undefined) this.gapAllEpoch++;
-    else this.gapPools.add(poolName);
+    if (poolName === undefined) this.liveRunAll++;
+    else this.liveRunByPool.set(poolName, (this.liveRunByPool.get(poolName) ?? 0) + 1);
   }
 
   /** All entries, oldest first (receive time, then insertion order). The array is cached until the next change. */
@@ -258,11 +349,7 @@ export class TemplateBuffer {
 
   clear(): void {
     this.byKey.clear();
-    this.gapPools.clear();
-    this.liveEpochByPool.clear();
-    this.firstLive.clear();
-    this.prefillMinMs.clear();
-    this.overlap.clear();
+    this.byPool.clear();
     this.maxTemplateHeight = null;
     this.epoch++;
     this.changed();
@@ -292,7 +379,42 @@ export class TemplateBuffer {
       }
       removed = true;
     }
-    if (removed) this.recomputeMaxHeight();
+    if (removed) {
+      this.dropRemovedFromPools();
+      this.recomputeMaxHeight();
+    }
+  }
+
+  /**
+   * Drops entries no longer in byKey from the per-pool lists. The first entry kept after a dropped one (with one
+   * kept before it) is cut: what was between it and its new neighbour is gone, so the two aren't compared.
+   */
+  private dropRemovedFromPools(): void {
+    let reflagged = false;
+    for (const [pool, list] of this.byPool) {
+      const kept: BufferedTemplate[] = [];
+      let dropped = false;
+      for (const e of list) {
+        if (this.byKey.get(e.key) !== e) {
+          dropped = true;
+          continue;
+        }
+        if (dropped && kept.length > 0) {
+          e.cut = true;
+          if (!e.gapBefore) {
+            e.gapBefore = true;
+            this.gapVersion++;
+            reflagged = true;
+          }
+        }
+        dropped = false;
+        kept.push(e);
+      }
+      if (kept.length === 0) this.byPool.delete(pool);
+      else if (kept.length !== list.length) this.byPool.set(pool, kept);
+    }
+    // A flag changed on an entry already handed out: consumers rebuild.
+    if (reflagged) this.epoch++;
   }
 
   private recomputeMaxHeight(): void {

@@ -160,6 +160,93 @@ describe('StreamHub', () => {
     expect(broker.create).toHaveBeenCalledTimes(2);
   });
 
+  describe('replay', () => {
+    const tpl = (pool: string, ntime: string, replica = 'a') => msg({ pool_name: pool, height: 5, site: 's', replica,
+      prev_hash: 'aa', merkle_branches: [], version: '1', nbits: '1', ntime });
+    const ntimes = (ms: { parsed?: Record<string, unknown> }[]) => ms.map(m => `${m.parsed!.pool_name}:${m.parsed!.ntime}`);
+
+    it('gives a new viewer the recent templates in receive order, then every live one exactly once', async () => {
+      vi.useFakeTimers();
+      const { StreamHub, REPLAY_MS } = await import('../streamHub');
+      const hub = new StreamHub();
+      await hub.subscribe({ onMessage: () => {}, onEnd: () => {} });
+      const ch = broker.conns[0].channel;
+      ch.onMessage!(tpl('P', '01'));
+      ch.onMessage!(tpl('Q', '01'));
+      await vi.advanceTimersByTimeAsync(REPLAY_MS + 5_000);
+      ch.onMessage!(tpl('P', '02'));
+      ch.onMessage!(tpl('P', '03'));
+      ch.onMessage!(tpl('P', '03', 'b')); // a copy from another connection: skipped live, not replayed
+      ch.onMessage!(msg({ type: 'block', height: 5 })); // not a template: not replayed
+      const replayed: string[] = [];
+      const live: string[] = [];
+      let first = '';
+      await hub.subscribe({
+        onReplay: ms => { if (!first) first = 'replay'; replayed.push(...ntimes(ms)); },
+        onMessage: m => { if (!first) first = 'live'; if (m.parsed?.pool_name) live.push(`${m.parsed.pool_name}:${m.parsed.ntime}`); },
+        onEnd: () => {},
+      });
+      ch.onMessage!(tpl('P', '04'));
+      // P:01 is older than REPLAY_MS but P's newest before it: the anchor that history has. Q:01 likewise.
+      expect(replayed).toEqual(['P:01', 'Q:01', 'P:02', 'P:03']);
+      expect(first).toBe('replay');
+      expect(live).toEqual(['P:04']);
+    });
+
+    it('drops older anchors and caps each pool from the oldest end', async () => {
+      vi.useFakeTimers();
+      const { StreamHub, REPLAY_ANCHOR_MS, REPLAY_MAX_PER_POOL } = await import('../streamHub');
+      const hub = new StreamHub();
+      await hub.subscribe({ onMessage: () => {}, onEnd: () => {} });
+      const ch = broker.conns[0].channel;
+      ch.onMessage!(tpl('Old', '01'));
+      await vi.advanceTimersByTimeAsync(REPLAY_ANCHOR_MS + 1);
+      for (let i = 0; i < REPLAY_MAX_PER_POOL + 5; i++) ch.onMessage!(tpl('P', String(100 + i)));
+      let got: string[] = [];
+      await hub.subscribe({ onReplay: ms => { got = ntimes(ms); }, onMessage: () => {}, onEnd: () => {} });
+      expect(got.length).toBe(REPLAY_MAX_PER_POOL);
+      expect(got[0]).toBe('P:105');
+      expect(got.at(-1)).toBe(`P:${100 + REPLAY_MAX_PER_POOL + 4}`);
+    });
+
+    it('a new consumer starts with no replay: what the old one saw is not continuous with it', async () => {
+      vi.useFakeTimers();
+      const { StreamHub } = await import('../streamHub');
+      const hub = new StreamHub(1_000);
+      const unsub = await hub.subscribe({ onMessage: () => {}, onEnd: () => {} });
+      broker.conns[0].channel.onMessage!(tpl('P', '01'));
+      broker.conns[0].onClose!(); // lost
+      let got: string[] = ['unset'];
+      await hub.subscribe({ onReplay: ms => { got = ntimes(ms); }, onMessage: () => {}, onEnd: () => {} });
+      expect(got).toEqual([]);
+      broker.conns[1].channel.onMessage!(tpl('P', '02'));
+      unsub();
+      // Stopped after the linger period: cleared too.
+      const hub2 = new StreamHub(1_000);
+      const u2 = await hub2.subscribe({ onMessage: () => {}, onEnd: () => {} });
+      broker.conns[2].channel.onMessage!(tpl('P', '03'));
+      u2();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await hub2.subscribe({ onReplay: ms => { got = ntimes(ms); }, onMessage: () => {}, onEnd: () => {} });
+      expect(got).toEqual([]);
+    });
+  });
+
+  it('/api/stream: a new viewer gets the replay as its own message type', async () => {
+    const { GET } = await import('../../app/api/stream/route');
+    const a = new AbortController();
+    const r1 = (await GET(new NextRequest('http://test/api/stream', { signal: a.signal }))).body!.getReader();
+    await readUntil(r1, '', t => t.includes('"connected"'));
+    broker.conns[0].channel.onMessage!(msg({ pool_name: 'P', height: 5, ntime: '01' }));
+    const b = new AbortController();
+    const r2 = (await GET(new NextRequest('http://test/api/stream', { signal: b.signal }))).body!.getReader();
+    const text = await readUntil(r2, '', t => t.includes('"connected"') && t.includes('"replay"'));
+    const replay = text.split('\n').find(l => l.includes('"replay"'))!;
+    expect(JSON.parse(replay.slice('data: '.length))).toMatchObject({ type: 'replay', data: { pool_name: 'P', ntime: '01' } });
+    a.abort();
+    b.abort();
+  });
+
   it('/api/stream: two viewers on one connection; a lost connection ends both streams', async () => {
     const { GET } = await import('../../app/api/stream/route');
     const aborts = [new AbortController(), new AbortController()];

@@ -7,7 +7,8 @@ import { DEFAULT_STREAM_ENDPOINT } from "./streamEndpoint";
 import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";
 import { BufferedTemplate, TemplateBuffer } from "./templateBuffer";
-import { prefillTemplateBuffer } from "./prefill";
+import { PREFILL_WINDOW_MS, prefillTemplateBuffer } from "./prefill";
+import { GapBackfill } from "./gapBackfill";
 import { fetchWithRetry } from "./fetchRetry";
 import { configureTxApi } from "./txFeeRates";
 import type { TxApiConfig } from "./txApiConfig";
@@ -60,6 +61,7 @@ const TemplateBufferContext = createContext<TemplateBufferSnapshot | undefined>(
  */
 const BUFFER_NOTIFY_MS = 150;
 
+
 interface RuntimeConfig {
   streamEndpoint?: string;
   historicalDataEnabled?: boolean;
@@ -110,9 +112,31 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
 
   const handleStreamGap = useCallback((poolName?: string) => buffer.markGap(poolName), [buffer]);
 
+  // Re-read history after gaps (lib/gapBackfill.ts). Refs, so the stream callbacks stay stable.
+  const historicalRef = useRef(false);
+  const pausedRef = useRef(false);
+  const backfillRef = useRef<GapBackfill | null>(null);
+  useEffect(() => {
+    const backfill = new GapBackfill({
+      read: async () => {
+        await prefillTemplateBuffer(buffer, { historicalDataEnabled: true });
+        publishBuffer();
+      },
+      pending: () => buffer.pendingGaps(PREFILL_WINDOW_MS),
+      gapVersion: () => buffer.gapVersion,
+      canRun: () => !pausedRef.current && !document.hidden,
+    });
+    backfillRef.current = backfill;
+    return () => backfill.dispose();
+  }, [buffer, publishBuffer]);
+  const scheduleBackfill = useCallback(() => {
+    if (historicalRef.current) backfillRef.current?.notify();
+  }, []);
+
   const handleStreamFlush = useCallback(() => {
     if (buffer.version !== publishedVersionRef.current) publishBuffer();
-  }, [buffer, publishBuffer]);
+    scheduleBackfill();
+  }, [buffer, publishBuffer, scheduleBackfill]);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,11 +176,13 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     if (!historicalDataEnabled) return;
 
     let cancelled = false;
+    historicalRef.current = true;
     prefillTemplateBuffer(buffer, { historicalDataEnabled })
       .then(result => {
         if (cancelled) return;
         publishBuffer();
         setPrefillResult(result);
+        scheduleBackfill();
       })
       .catch(error => {
         console.error("Error pre-filling realtime data", error);
@@ -166,12 +192,15 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [historicalDataEnabled, buffer, publishBuffer]);
+  }, [historicalDataEnabled, buffer, publishBuffer, scheduleBackfill]);
 
   // Auto-resume (unpause) on page navigation
   useEffect(() => {
     setPaused(false);
   }, [pathname]); // Resets pause state whenever route changes
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
   
   // Track which data types to subscribe to
   const [dataTypes, setDataTypes] = useState<StreamDataType[]>(Object.values(StreamDataType));

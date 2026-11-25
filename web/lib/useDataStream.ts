@@ -48,6 +48,12 @@ interface UseDataStreamResult {
   burstsByPool: { [poolName: string]: PoolBurst };
 }
 
+/**
+ * Back on the page after this long without a message: the connection is reopened at once (a phone that switched apps
+ * can leave it silently dead, and the reconnect backoff may have grown to a minute while hidden).
+ */
+export const RESUME_STALE_MS = 20_000;
+
 /** A burst episode ends (for the indicator) when no marker came for this long. */
 export const BURST_EPISODE_GAP_MS = 30_000;
 
@@ -130,6 +136,8 @@ export function useDataStream({
   // Messages received since the last flush, and the pending flush
   const batchRef = useRef(new StreamBatch());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the last message (of any kind) arrived
+  const lastMessageAtRef = useRef(0); // set when the connection opens
   
   // Update refs when props change
   useEffect(() => {
@@ -191,6 +199,7 @@ export function useDataStream({
   
   // Process incoming message
   const processMessage = useCallback((event: MessageEvent) => {
+    lastMessageAtRef.current = Date.now();
     if (pausedRef.current) return;
     
     try {
@@ -201,7 +210,16 @@ export function useDataStream({
       let newData: StreamData | null = null;
       let stratumData: StratumV1Data | null = null;
       
-      if ('type' in parsedData && parsedData.type === 'burst') {
+      if ('type' in parsedData && parsedData.type === 'replay') {
+        // Templates the server's consumer received just before this connection (app/api/stream): for the template
+        // buffer only (onMessage), part of this connection's live run. Not added to the recent messages.
+        const t = parsedData.data as StratumV1Data | undefined;
+        if (t && typeof t === 'object' && typeof t.pool_name === 'string') {
+          onMessageRef.current?.({ type: StreamDataType.STRATUM_V1, id: `${t.pool_name}-${t.timestamp}`, timestamp: t.timestamp, data: t });
+          if (flushTimerRef.current === null) flushTimerRef.current = setTimeout(flush, Math.max(coalesceMsRef.current, 0));
+        }
+        return;
+      } else if ('type' in parsedData && parsedData.type === 'burst') {
         // The stream route throttled this pool's templates (#105): record it, don't add it to the data.
         if (typeof parsedData.pool_name === 'string' && typeof parsedData.suppressed === 'number') {
           if (parsedData.suppressed > 0) onGapRef.current?.(parsedData.pool_name);
@@ -266,7 +284,10 @@ export function useDataStream({
         });
       }
 
-      // Connect to the SSE endpoint
+      // Connect to the SSE endpoint. A new connection is a new live run (the template buffer's onGap), whatever led to
+      // it; its replay (app/api/stream) belongs to it.
+      onGapRef.current?.();
+      lastMessageAtRef.current = Date.now();
       evtSourceRef.current = new EventSource(url.toString());
       setIsConnected(true);
 
@@ -295,7 +316,23 @@ export function useDataStream({
 
     setupEventSource();
 
+    // Back on the page with a stream that has gone quiet: reopen it now, with the backoff reset. What was missed in
+    // between is a gap (onGap), which the template buffer fills from history.
+    const onVisible = () => {
+      if (document.hidden) return;
+      const stale = Date.now() - lastMessageAtRef.current > RESUME_STALE_MS;
+      if (evtSourceRef.current && !stale) return;
+      evtSourceRef.current?.close();
+      evtSourceRef.current = null;
+      onGapRef.current?.();
+      reconnectFrequencyRef.current = initialReconnectFrequency;
+      lastMessageAtRef.current = Date.now();
+      setupEventSource();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       if (evtSourceRef.current) {
         evtSourceRef.current.close();
         evtSourceRef.current = null;

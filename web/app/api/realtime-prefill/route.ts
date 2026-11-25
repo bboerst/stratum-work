@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 // Relative imports so the route can be unit-tested (lib/__tests__/realtimePrefillRoute.test.ts)
 import { enableHistoricalData, getHighestBlock } from "../../../lib/db/blocks";
-import { fetchMiningNotifyByHeight } from "../../../lib/db/mining-notify";
+import { fetchMiningNotifyAtHeights } from "../../../lib/db/mining-notify";
 import { maskTemplates } from "../../../lib/connectionMask";
 import { isPoolBlacklisted } from "../../../lib/poolBlacklist";
 import { prefillHeights, selectPrefillTemplates } from "../../../lib/prefill";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Recent templates for the realtime visuals (#130), in one request: the Bitcoin tip from `blocks` (never the max
- * template height, see CLAUDE.md "Data gotchas") and the templates at tip + 1 (and the tip while it's recent),
+ * template height, see CLAUDE.md "Data gotchas") and the templates at tip + 1 and the two heights before it,
  * trimmed by selectPrefillTemplates. Every visitor asks for the same thing, so the response is shared for a few
  * seconds: that bounds database reads to one pre-fill per CACHE_MS however many people open the page.
  */
@@ -32,8 +32,9 @@ async function buildPrefill(nowMs: number): Promise<PrefillResponse> {
   if (!highest) return { enabled: true, tip: null, heights: [], templates: [] };
 
   const tip = { height: Number(highest.height), timestamp: Number(highest.timestamp) };
-  const heights = prefillHeights(tip, nowMs);
-  const records = (await Promise.all(heights.map(h => fetchMiningNotifyByHeight(h)))).flat();
+  const heights = prefillHeights(tip);
+  // One statement over the heights: one snapshot (lib/templateBuffer.ts treats a read as a connection's every row).
+  const records = await fetchMiningNotifyAtHeights(Math.min(...heights), Math.max(...heights));
   const templates = selectPrefillTemplates(records, { nowMs, isBlacklisted: isPoolBlacklisted });
   // extranonce1 identifies the collector's connection: served masked (#105).
   return { enabled: true, tip, heights, templates: maskTemplates(templates) };

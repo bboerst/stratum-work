@@ -14,7 +14,8 @@
  *
  * Lifecycle:
  *   - The connection opens with the first viewer; concurrent first viewers share the one attempt.
- *   - When the last viewer leaves, it stays open for LINGER_MS (a page reload doesn't reconnect), then closes.
+ *   - When the last viewer leaves, it stays open for LINGER_MS (a page reload doesn't reconnect, and the next viewer
+ *     gets a replay), then closes.
  *   - If the connection, channel or consumer goes away, every viewer's stream is ended, so browsers reconnect
  *     (EventSource / useDataStream) and the next viewer opens a new connection.
  */
@@ -24,7 +25,21 @@ import { isPoolBlacklisted } from './poolBlacklist';
 import { StreamTemplateDedup } from './streamDedup';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from './rabbitmq';
 
-export const LINGER_MS = 30_000;
+export const LINGER_MS = 10 * 60_000;
+
+/**
+ * Replay (the timing chart's seam, lib/templateBuffer.ts): a new viewer first gets the templates this consumer accepted
+ * in the last REPLAY_MS, plus each pool's newest one before that, then the live stream from the same consumer. That
+ * stretch and the live templates after it are one continuous observation, and it reaches back past what the history
+ * read already has (a template is in it at most about 7 s after it arrived, measured), so the history and the stream
+ * overlap at page load and the first live templates are compared instead of shown as gaps. At most
+ * REPLAY_MAX_PER_POOL per pool, dropped from the oldest end (the stretch stays contiguous, it only reaches back less).
+ * The consumer only knows what it saw: the tail is cleared whenever it (re)starts or stops.
+ */
+export const REPLAY_MS = 20_000;
+/** The newest template before REPLAY_MS is replayed only if it is at most this old. */
+export const REPLAY_ANCHOR_MS = 120_000;
+export const REPLAY_MAX_PER_POOL = 20;
 
 /** A message as every viewer gets it: masked; `parsed` is its JSON (undefined if it isn't JSON: forwarded as is). */
 export interface HubMessage {
@@ -36,6 +51,8 @@ export interface HubMessage {
 
 export interface Viewer {
   onMessage(m: HubMessage): void;
+  /** The recent templates (Replay above), oldest first: called once, before any onMessage. */
+  onReplay?(ms: HubMessage[]): void;
   /** The shared connection is gone; the viewer's stream should end. */
   onEnd(): void;
 }
@@ -70,6 +87,9 @@ export class StreamHub {
   private lingerTimer: ReturnType<typeof setTimeout> | null = null;
   /** One stream per pool, for every viewer (kept across reconnects: its state ages out by itself). */
   private readonly dedup = new StreamTemplateDedup();
+  /** Per pool, the templates the current consumer accepted recently, oldest first (Replay above). */
+  private readonly tail = new Map<string, { at: number; seq: number; m: HubMessage }[]>();
+  private seq = 0;
   /** Connections opened so far (tests, logs). */
   connects = 0;
 
@@ -85,7 +105,16 @@ export class StreamHub {
   async subscribe(viewer: Viewer): Promise<() => void> {
     this.cancelLinger();
     await this.ensureLive();
+    // The snapshot and the add happen together, so the viewer gets every message exactly once: replayed or live.
+    const replay = this.replay(Date.now());
     this.viewers.add(viewer);
+    if (viewer.onReplay) {
+      try {
+        viewer.onReplay(replay);
+      } catch (err) {
+        console.error('Live stream: viewer replay error:', err);
+      }
+    }
     let done = false;
     return () => {
       if (done) return;
@@ -103,7 +132,34 @@ export class StreamHub {
     return this.starting;
   }
 
+  /** The recent templates of every pool, in the order the consumer received them. */
+  private replay(now: number): HubMessage[] {
+    const out: { at: number; seq: number; m: HubMessage }[] = [];
+    for (const [pool, list] of this.tail) {
+      this.prune(list, now);
+      if (list.length === 0) this.tail.delete(pool);
+      else out.push(...list);
+    }
+    return out.sort((a, b) => a.seq - b.seq).map(e => e.m);
+  }
+
+  /** Keeps the last REPLAY_MS, plus the newest entry before it if not older than REPLAY_ANCHOR_MS, capped. */
+  private prune(list: { at: number }[], now: number): void {
+    while (list.length > 1 && list[1].at < now - REPLAY_MS) list.shift();
+    if (list.length > 0 && list[0].at < now - REPLAY_ANCHOR_MS) list.shift();
+    while (list.length > REPLAY_MAX_PER_POOL) list.shift();
+  }
+
+  private remember(pool: string, m: HubMessage): void {
+    const now = Date.now();
+    let list = this.tail.get(pool);
+    if (!list) this.tail.set(pool, (list = []));
+    list.push({ at: now, seq: this.seq++, m });
+    this.prune(list, now);
+  }
+
   private async start(): Promise<Live> {
+    this.tail.clear();
     // The close callback can't see `live` before createRabbitmqChannel returns; it is set right after.
     const ref: { live?: Live } = {};
     const conn = await createRabbitmqChannel(() => { if (ref.live) this.lost(ref.live, 'connection closed'); });
@@ -148,6 +204,9 @@ export class StreamHub {
     if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !this.dedup.accept(m.parsed)) {
       m.skip = true;
     }
+    if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !m.skip) {
+      this.remember(m.parsed.pool_name, m);
+    }
     for (const v of this.viewers) {
       try {
         v.onMessage(m);
@@ -162,6 +221,7 @@ export class StreamHub {
     if (live.closing) return;
     live.closing = true;
     if (this.live === live) this.live = null;
+    this.tail.clear();
     console.error(`Live stream: shared RabbitMQ consumer lost (${why}); ending ${this.viewers.size} viewer stream(s)`);
     const ended = [...this.viewers];
     this.viewers.clear();
@@ -196,6 +256,7 @@ export class StreamHub {
     if (!live) return;
     live.closing = true;
     this.live = null;
+    this.tail.clear();
     if (live.consumerTag) await live.channel.cancel(live.consumerTag).catch(() => {});
     await live.channel.close().catch(() => {});
     await live.conn.connection.close().catch(() => {});

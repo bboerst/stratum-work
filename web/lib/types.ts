@@ -8,7 +8,7 @@
 export interface StratumV1Data {
   pool_name: string;
   timestamp: string;
-  job_id: string;
+  job_id?: string;  // never served (lib/connectionMask.ts stripJobIds)
   height: number;
   prev_hash: string;    // raw previous block hash (hex)
   version: string;      // version (e.g. "20000000")

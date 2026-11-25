@@ -28,6 +28,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { templateIdSuffix } from '../connectionMask';
 import { NextRequest } from 'next/server';
 import { Client } from 'pg';
 
@@ -123,8 +124,12 @@ const FORKS_DRILL: Allowed[] = [
   { path: '$.episode.provider_groups[*][*]', why: PROVIDERS_HISTORY },
   { path: '$.templates[*].pool_name', why: FORKS_HISTORY },
 ];
-const jobOf = (id: string) => id.split('-').pop()!;
-const aboveTipTemplates = (b: { templates: { id: string }[] }) => b.templates.filter(t => ABOVE_TIP_JOBS.includes(jobOf(t.id)));
+// served ids carry a keyed hash of the job id (lib/db/pg-mapping.ts), not the job id
+const isAboveTip = (id: string) => {
+  const [source, us, suffix] = id.split('-');
+  return ABOVE_TIP_JOBS.some(j => templateIdSuffix(source, us, j) === suffix);
+};
+const aboveTipTemplates = (b: { templates: { id: string }[] }) => b.templates.filter(t => isAboveTip(t.id));
 const excludedOn = (parent: string) => (b: { episodes: { parent: string; pools: { pool: string }[] }[] }) =>
   b.episodes.filter(e => e.parent === parent).flatMap(e => e.pools).filter(p => p.pool === EXCLUDED);
 

@@ -4,11 +4,13 @@
  * as bigint; re-encoding as lower-case hex gives back exactly what the pool sent, see the design doc section 3).
  *
  * IDs:
- *  - template `id` = `<source_id>-<received_at in µs since the epoch>-<job_id>`. That's the de-duplication key of
- *    `templates` (design doc section 2), so it's unique and stable for a given database.
+ *  - template `id` = `<source_id>-<received_at in µs since the epoch>-<keyed hash of the job id>`. The table's
+ *    de-duplication key (design doc section 2) without the raw job id, which the pool assigns per connection
+ *    (lib/connectionMask.ts): unique, and stable while EXTRANONCE1_MASK_KEY is.
  *  - block `id` = the block hash (the primary key of `blocks`).
  *  - pool `id` = the mempool/mining-pools id, as a string.
  */
+import { stripJobIds, templateIdSuffix } from '../connectionMask';
 import { formatMiningPool, type MiningPool } from './mining-pool';
 
 /** A template as the API returns it: stratum's hex strings, `timestamp` = receive time as hex nanoseconds. */
@@ -115,7 +117,7 @@ export function timestampHexFromMicros(us: string | number | bigint): string {
 }
 
 export function templateId(row: Pick<TemplateRow, 'source_id' | 'received_us' | 'job_id'>): string {
-  return `${row.source_id}-${row.received_us}-${row.job_id}`;
+  return `${row.source_id}-${row.received_us}-${templateIdSuffix(row.source_id, row.received_us, row.job_id)}`;
 }
 
 /**
@@ -185,7 +187,7 @@ export interface StaleSibling {
 export function blockRowToBlock(row: BlockRow): PgBlock {
   const block: PgBlock = {
     block_hash: hex(row.block_hash),
-    analysis: row.analysis ?? undefined,
+    analysis: row.analysis ? stripJobIds(row.analysis) : undefined,
     coinbase_script_sig: hex(row.coinbase_script_sig),
     height: row.height,
     // The backend stores a missing pool as {}; formatMiningPool would warn about it on every read.
@@ -210,7 +212,7 @@ export function blockRowToBlock(row: BlockRow): PgBlock {
 export function blockRowToInterestingItem(row: Pick<BlockRow, 'block_hash' | 'height' | 'analysis' | 'mining_pool'>) {
   const item: { block_hash: string; analysis?: Record<string, unknown>; height: number; mining_pool?: Record<string, unknown> } = {
     block_hash: hex(row.block_hash),
-    analysis: row.analysis ?? undefined,
+    analysis: row.analysis ? stripJobIds(row.analysis) : undefined,
     height: row.height,
   };
   if (row.mining_pool && !isEmptyObject(row.mining_pool)) item.mining_pool = row.mining_pool;

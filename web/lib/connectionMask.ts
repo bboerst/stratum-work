@@ -51,27 +51,34 @@ export function createMasker(key: Buffer | string): Masker {
   };
 }
 
+let processKeyValue: Buffer | string | null = null;
 let defaultMasker: Masker | null = null;
 
-/** The process-wide masker: EXTRANONCE1_MASK_KEY, or a random key per process (with one warning) when unset. */
-function processMasker(): Masker {
-  if (!defaultMasker) {
+/** The process-wide key: EXTRANONCE1_MASK_KEY, or a random key per process (with one warning) when unset. */
+function processKey(): Buffer | string {
+  if (processKeyValue === null) {
     const configured = process.env.EXTRANONCE1_MASK_KEY;
     if (configured && configured.trim() !== '') {
-      defaultMasker = createMasker(configured.trim());
+      processKeyValue = configured.trim();
     } else {
       console.warn(
-        'EXTRANONCE1_MASK_KEY is not set: extranonce1 is masked with a random per-process key, so pseudonyms change ' +
-          'on restart and differ between replicas. Set it (e.g. `openssl rand -hex 32`) for stable values.',
+        'EXTRANONCE1_MASK_KEY is not set: extranonce1 and template ids are masked with a random per-process key, so ' +
+          'they change on restart and differ between replicas. Set it (e.g. `openssl rand -hex 32`) for stable values.',
       );
-      defaultMasker = createMasker(randomBytes(32));
+      processKeyValue = randomBytes(32);
     }
   }
+  return processKeyValue;
+}
+
+function processMasker(): Masker {
+  if (!defaultMasker) defaultMasker = createMasker(processKey());
   return defaultMasker;
 }
 
 /** For tests: forget the process-wide key so the next call reads the environment again. */
 export function resetConnectionMaskForTests(): void {
+  processKeyValue = null;
   defaultMasker = null;
 }
 
@@ -97,12 +104,12 @@ export function maskTemplates<T>(templates: T[], masker: Masker = maskExtranonce
 }
 
 /**
- * A live-stream message (JSON text from RabbitMQ) with `extranonce1` masked. Messages without the field pass
- * unchanged (same text). A message that can't be parsed but mentions extranonce1 is dropped (null) rather than
+ * A live-stream message (JSON text from RabbitMQ) with `extranonce1` masked and job ids dropped (stripJobIds).
+ * Messages without either pass unchanged (same text). A message that can't be parsed but mentions extranonce1 is dropped (null) rather than
  * forwarded raw.
  */
 export function maskStreamMessage(data: string, masker: Masker = maskExtranonce1): string | null {
-  if (!data.includes('extranonce1')) return data;
+  if (!data.includes('extranonce1') && !data.includes('job_id')) return data;
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
@@ -110,9 +117,40 @@ export function maskStreamMessage(data: string, masker: Masker = maskExtranonce1
     return null;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  if (!Object.prototype.hasOwnProperty.call(parsed, 'extranonce1')) {
-    // Mentions the word somewhere else (e.g. inside the coinbase text): nothing at the top level to mask.
-    return data;
+  const stripped = stripJobIds(parsed);
+  const masked = Object.prototype.hasOwnProperty.call(stripped, 'extranonce1') ? maskTemplate(stripped, masker) : stripped;
+  // Mentions the words only elsewhere (e.g. inside the coinbase text): nothing to change, the same text.
+  return masked === parsed ? data : JSON.stringify(masked);
+}
+
+/**
+ * Job ids are assigned by the pool per connection, like extranonce1, so the raw values can identify the collector's
+ * session to the pool. The web never serves them: `job_id` and `sample_job_id` keys are dropped at any depth (stream
+ * messages, block analysis). Returns the same object when there is nothing to drop.
+ */
+export function stripJobIds<T>(value: T): T {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const out = value.map(v => { const s = stripJobIds(v); if (s !== v) changed = true; return s; });
+    return (changed ? out : value) as T;
   }
-  return JSON.stringify(maskTemplate(parsed, masker));
+  if (!value || typeof value !== 'object' || Buffer.isBuffer(value)) return value;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === 'job_id' || k === 'sample_job_id') { changed = true; continue; }
+    const s = stripJobIds(v);
+    if (s !== v) changed = true;
+    out[k] = s;
+  }
+  return (changed ? out : value) as T;
+}
+
+/**
+ * The last part of a served template id (`<source_id>-<µs>-<this>`): it tells apart templates of one source received
+ * in the same µs (one socket read), without the raw job id. Keyed (domain-separated from the extranonce1 pseudonyms)
+ * and over the receive time too, so equal job ids at other times don't give equal values.
+ */
+export function templateIdSuffix(sourceId: number | string, receivedUs: string | number, jobId: string, key: Buffer | string = processKey()): string {
+  return createHmac('sha256', key).update(`template-id\0${sourceId}\0${receivedUs}\0${jobId}`).digest('hex').slice(0, 12);
 }

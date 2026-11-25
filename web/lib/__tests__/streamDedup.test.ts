@@ -188,15 +188,15 @@ describe('/api/stream de-duplicates replicas', () => {
     let now = T;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const msgs: [number, Record<string, unknown>][] = [
-      [0, tpl({ job_id: 'a1' })],
-      [0, tpl({ job_id: 'b1', replica: 'b' })], // exact copy: dropped
-      [0, tpl({ job_id: 'b2', replica: 'b', ntime: '66000001' })], // near miss, a active: dropped
-      [0, tpl({ job_id: 'b3', replica: 'b', merkle_branches: [branches[1]] })], // b's own job, a active: dropped
-      [0, tpl({ job_id: 'L1', site: undefined, replica: undefined })], // no site/replica: kept
-      [0, tpl({ job_id: 'L2', site: undefined, replica: undefined })],
-      [100 * 1000, tpl({ job_id: 'b4', replica: 'b', ntime: '66000100' })], // a silent for 100 s: gap fill
-      [101 * 1000, tpl({ job_id: 'a5', ntime: '66000101' })], // a is back
-      [102 * 1000, tpl({ job_id: 'b6', replica: 'b', ntime: '66000102' })], // dropped again
+      [0, tpl({ label: 'a1' })],
+      [0, tpl({ label: 'b1', replica: 'b' })], // exact copy: dropped
+      [0, tpl({ label: 'b2', replica: 'b', ntime: '66000001' })], // near miss, a active: dropped
+      [0, tpl({ label: 'b3', replica: 'b', merkle_branches: [branches[1]] })], // b's own job, a active: dropped
+      [0, tpl({ label: 'L1', site: undefined, replica: undefined })], // no site/replica: kept
+      [0, tpl({ label: 'L2', site: undefined, replica: undefined })],
+      [100 * 1000, tpl({ label: 'b4', replica: 'b', ntime: '66000100' })], // a silent for 100 s: gap fill
+      [101 * 1000, tpl({ label: 'a5', ntime: '66000101' })], // a is back
+      [102 * 1000, tpl({ label: 'b6', replica: 'b', ntime: '66000102' })], // dropped again
       [102 * 1000, { type: 'block', height: 100001 }],
     ];
     for (const [dt, m] of msgs) {
@@ -208,7 +208,7 @@ describe('/api/stream de-duplicates replicas', () => {
     clock.mockRestore();
 
     const served = text.split('\n\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
-    expect(served.filter(m => m.job_id).map(m => m.job_id)).toEqual(['a1', 'L1', 'L2', 'b4', 'a5']);
+    expect(served.filter(m => m.label).map(m => m.label)).toEqual(['a1', 'L1', 'L2', 'b4', 'a5']);
     expect(channel.consume).toHaveBeenCalledTimes(1);
   });
 });

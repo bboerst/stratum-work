@@ -281,21 +281,21 @@ class PostgresStore:
         return self._run(run)
 
     # coinbase fill (coinbase_fill.py, #235): blocks stored before their merkle branches were recorded
-    def blocks_missing_branches(self, limit: int) -> List[str]:
-        """Hashes (hex, as stored) of blocks without merkle_branches, newest first."""
+    def blocks_missing_branches(self, limit: int) -> List[Tuple[str, int]]:
+        """(hash (hex, as stored), height) of blocks without merkle_branches, newest first."""
         rows = self._run(lambda c: c.execute(
-            "SELECT encode(block_hash, 'hex') FROM blocks WHERE merkle_branches IS NULL ORDER BY height DESC LIMIT %s",
+            "SELECT encode(block_hash, 'hex'), height FROM blocks WHERE merkle_branches IS NULL ORDER BY height DESC LIMIT %s",
             (limit,)).fetchall())
-        return [r[0] for r in rows]
+        return [(r[0], r[1]) for r in rows]
 
-    def blocks_missing_coinbase_tx(self, limit: int) -> List[Tuple[str, str]]:
-        """(block hash, coinbase txid), both hex as RPC displays them, of blocks with a coinbase txid but no coinbase
-        bytes, newest first."""
+    def blocks_missing_coinbase_tx(self, limit: int) -> List[Tuple[str, str, int]]:
+        """(block hash, coinbase txid, height), hashes hex as RPC displays them, of blocks with a coinbase txid but no
+        coinbase bytes, newest first."""
         rows = self._run(lambda c: c.execute(
-            "SELECT encode(block_hash, 'hex'), encode(coinbase_txid, 'hex') FROM blocks"
+            "SELECT encode(block_hash, 'hex'), encode(coinbase_txid, 'hex'), height FROM blocks"
             " WHERE coinbase_txid IS NOT NULL AND coinbase_tx IS NULL ORDER BY height DESC LIMIT %s",
             (limit,)).fetchall())
-        return [(r[0], bytes.fromhex(r[1])[::-1].hex()) for r in rows]
+        return [(r[0], bytes.fromhex(r[1])[::-1].hex(), r[2]) for r in rows]
 
     _COINBASE_FILL = """
         UPDATE blocks SET

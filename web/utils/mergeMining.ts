@@ -15,7 +15,7 @@
 //   OCB1                no published spec: the "OCB1" marker as seen on chain (20 bytes: marker + 16 undecoded bytes)
 //   AuxPoW              Bitcoin wiki "Merged mining specification" and Namecoin's CAuxPow::check / getExpectedIndex
 
-import { parseCoinbase, tokenizeScript, ByteRange, ParsedCoinbase, AuxPow } from "./coinbaseParser";
+import { coinbaseHex, parseCoinbase, tokenizeScript, ByteRange, ParsedCoinbase, AuxPow } from "./coinbaseParser";
 
 /** How an identification was established. */
 export type Confidence =
@@ -525,7 +525,8 @@ export function decodeMergeMining(
 
   const parsed = parseCoinbase(coinbase1, extranonce1 || "", Number(extranonce2Length), coinbase2);
   let result: MergeMiningDecode;
-  const tx = parsed.size > 0 ? hexToBytes(coinbase1 + (extranonce1 || "") + "00".repeat(Number(extranonce2Length)) + coinbase2) : null;
+  const hex = parsed.size > 0 ? coinbaseHex(coinbase1, extranonce1, extranonce2Length, coinbase2) : null;
+  const tx = hex === null ? null : hexToBytes(hex);
   if (!tx) {
     result = { parsed, outputs: [], auxpow: null, summary: EMPTY_SUMMARY };
   } else {

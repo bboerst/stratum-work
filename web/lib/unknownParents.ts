@@ -22,7 +22,7 @@ import {
 import { getEpochGroupInputs } from './db/template-providers';
 import { excludedAt, excludedEverywhere, type RealtimeExclusion } from './poolBlacklist';
 import { EPOCH_BLOCKS, feedProviders, groupEpochs, type EpochGroups } from './templateProviders';
-import { parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
+import { coinbaseHex, parseCoinbase, coinbaseTagText } from '../utils/coinbaseParser';
 import { addressFromScript } from '../utils/addressFromScript';
 import { decodeOpReturnScript } from '../utils/mergeMining';
 import { reverseHex } from '../utils/formatters';
@@ -69,7 +69,7 @@ const MAX_OUTPUTS_SHOWN = 20;
 export function toUnknownParentTemplate(row: DrillTemplateRow): UnknownParentTemplate {
   const t = maskTemplate(templateRowToMiningNotify(row));
   const parsed = parseCoinbase(t.coinbase1, t.extranonce1, t.extranonce2_length, t.coinbase2, { ntime: parseInt(t.ntime, 16) });
-  const bytes = Buffer.from(t.coinbase1 + t.extranonce1 + '00'.repeat(t.extranonce2_length) + t.coinbase2, 'hex');
+  const bytes = Buffer.from(coinbaseHex(t.coinbase1, t.extranonce1, t.extranonce2_length, t.coinbase2) ?? '', 'hex');
   const outputs = parsed.outputs.slice(0, MAX_OUTPUTS_SHOWN).map(o => {
     const script = bytes.subarray(o.script.start, o.script.end);
     const out: UnknownParentOutput = { value: o.value, script_hex: script.toString('hex') };

@@ -111,6 +111,13 @@ describe('templateRowToMiningNotify', () => {
     expect(doc.id).not.toContain('2687119');
   });
 
+  it('names the row\'s connection by site and replica, as the live stream does (change detection compares them)', () => {
+    const doc = templateRowToMiningNotify(templateRow({ site: 'site-x', replica: 'b' }));
+    expect([doc.site, doc.replica]).toEqual(['site-x', 'b']);
+    const old = templateRowToMiningNotify(templateRow({}));
+    expect('site' in old || 'replica' in old).toBe(false);
+  });
+
   it('with a first-seen time, takes the latency of the copy that set it, not the row\'s own', () => {
     const doc = templateRowToMiningNotify(templateRow({
       received_us: '1794491650123456', first_seen_us: '1794491650100000', latency_ms: 24.336, latency_method: 'tcp',

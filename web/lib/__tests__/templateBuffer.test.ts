@@ -278,7 +278,7 @@ describe('gaps (change detection must not compare across missed templates)', () 
     expect(gapOf(b, 'A-20')).toBe(false);
   });
 
-  it('the first live template after the pre-fill follows a gap unless the two overlap', () => {
+  it('the first live template after the pre-fill follows a gap unless the two share a template', () => {
     const b = new TemplateBuffer();
     b.add([tpl('A', 100, 0), tpl('A', 100, 5)]); // pre-fill
     live(b, [tpl('A', 100, 10), tpl('A', 100, 20)]);
@@ -288,7 +288,7 @@ describe('gaps (change detection must not compare across missed templates)', () 
 
     const c = new TemplateBuffer();
     c.add([tpl('A', 100, 0), tpl('A', 100, 5)]);
-    live(c, [tpl('A', 100, 5), tpl('A', 100, 10)]); // A-5 arrived from both: the pre-fill and the stream meet
+    live(c, [tpl('A', 100, 5), tpl('A', 100, 10)]); // A-5 arrived from both: the stream saw A-5 then A-10
     expect(gapOf(c, 'A-10')).toBe(false);
   });
 
@@ -303,17 +303,74 @@ describe('gaps (change detection must not compare across missed templates)', () 
 
     const c = new TemplateBuffer();
     live(c, [tpl('A', 100, 10), tpl('A', 100, 20)]);
-    c.add([tpl('A', 100, 5), tpl('A', 100, 10)]); // overlaps at A-10
+    c.add([tpl('A', 100, 5), tpl('A', 100, 10)]); // the read has A-5 and A-10: consecutive
     expect(gapOf(c, 'A-10')).toBe(false);
   });
 
-  it('a pre-fill landing late neither takes nor cancels a gap', () => {
+  it('a later history read that has both sides of the seam closes it, and the epoch bumps so the chart rebuilds', () => {
+    const b = new TemplateBuffer();
+    b.add([tpl('A', 100, 0), tpl('A', 100, 5)]);
+    live(b, [tpl('A', 100, 10), tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-10')).toBe(true);
+    const epoch = b.epoch;
+    b.add([tpl('A', 100, 0), tpl('A', 100, 5), tpl('A', 100, 10)]); // the database caught up to A-10
+    expect(gapOf(b, 'A-10')).toBe(false);
+    expect(b.epoch).toBe(epoch + 1);
+    expect(b.pendingGaps(BASE_MS - 1)).toBe(0);
+  });
+
+  it('a history read fills in the templates a reconnect missed', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 0)]);
+    b.markGap(); // stream dropped
+    live(b, [tpl('A', 100, 30)]);
+    expect(gapOf(b, 'A-30')).toBe(true);
+    expect(b.add([tpl('A', 100, 0), tpl('A', 100, 10), tpl('A', 100, 20), tpl('A', 100, 30)])).toBe(2);
+    expect(b.entries().map(e => [e.data.job_id, !!e.gapBefore])).toEqual([
+      ['A-0', false], ['A-10', false], ['A-20', false], ['A-30', false],
+    ]);
+  });
+
+  it('a read that does not reach back to the last template before the gap moves the gap to its oldest row', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 0)]);
+    b.markGap();
+    live(b, [tpl('A', 100, 30)]);
+    const gaps = b.gapVersion;
+    b.add([tpl('A', 100, 20), tpl('A', 100, 30)]); // A-0 is older than the read covers
+    expect(gapOf(b, 'A-20')).toBe(true); // A-0 -> A-20 unproven
+    expect(gapOf(b, 'A-30')).toBe(false); // A-20 -> A-30 is in the read
+    expect(b.gapVersion).toBeGreaterThan(gaps);
+  });
+
+  it('a read the database has not caught up for leaves the newest live template after the gap open', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 0)]);
+    b.markGap();
+    live(b, [tpl('A', 100, 30)]);
+    b.add([tpl('A', 100, 0), tpl('A', 100, 10)]); // A-30 not written yet
+    expect(gapOf(b, 'A-10')).toBe(false);
+    expect(gapOf(b, 'A-30')).toBe(true);
+    expect(b.pendingGaps(BASE_MS)).toBe(1);
+  });
+
+  it('links neighbours in receive order (own receive time), the order change detection compares in', () => {
+    const b = new TemplateBuffer();
+    // History row X: first seen at 8 on another connection, received on its own at 12. Live Y received at 10.
+    b.add([tpl('A', 100, 12, { job_id: 'X', timestamp: hexNsFromPostgres(8), received_timestamp: hexNsFromPostgres(12) })]);
+    live(b, [tpl('A', 100, 10, { job_id: 'Y' })]);
+    expect(gapOf(b, 'Y')).toBe(false); // first in receive order
+    expect(gapOf(b, 'X')).toBe(true); // Y (live) -> X (history): nothing saw both
+  });
+
+  it('a pre-fill landing late takes the gap onto the live template after it', () => {
     const b = new TemplateBuffer();
     live(b, [tpl('A', 100, 10)]);
     b.markGap(); // paused / stream error
     b.add([tpl('A', 100, 5), tpl('A', 100, 8)]); // older rows from the pre-fill
     expect(gapOf(b, 'A-5')).toBe(false);
     expect(gapOf(b, 'A-8')).toBe(false);
+    expect(gapOf(b, 'A-10')).toBe(true); // A-8 (read) -> A-10 (stream): nothing saw both
     live(b, [tpl('A', 100, 20)]);
     expect(gapOf(b, 'A-20')).toBe(true);
   });
@@ -324,5 +381,54 @@ describe('gaps (change detection must not compare across missed templates)', () 
     b.add([tpl('A', 100, 10, { timestamp: hexNsFromPostgres(8), received_timestamp: hexNsFromPostgres(10) })]);
     live(b, [tpl('A', 100, 10)]); // the live stream: its own receive time
     expect(b.size).toBe(1);
+  });
+});
+
+describe('gaps: property test against a known sequence', () => {
+  // A pool sends templates 0..N-1 on one connection. The page sees some of them live (with gaps it is told about:
+  // pauses, reconnects, throttling) and some history reads (everything from a cutoff up to what the database has
+  // written so far). Whatever happens, two neighbours not flagged gapBefore must be consecutive in what the pool sent.
+  function rng(seed: number) {
+    let x = seed >>> 0;
+    return () => ((x = (x * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  }
+
+  it('never leaves two non-consecutive templates comparable, and a full read proves everything', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = rng(seed);
+      const N = 40;
+      const sent = Array.from({ length: N }, (_, i) => tpl('A', 100, i * 10));
+      const b = new TemplateBuffer();
+      let streaming = r() < 0.5; // the stream may start before or after the pre-fill
+      let written = 0; // the database has sent[0..written)
+      for (let i = 0; i < N; i++) {
+        written = Math.max(written, Math.min(N, i - Math.floor(r() * 4))); // the database lags a few templates
+        const roll = r();
+        if (roll < 0.12) {
+          b.markGap(r() < 0.5 ? undefined : 'A'); // a gap the page knows about; this template is missed
+          streaming = true;
+          continue;
+        }
+        if (roll < 0.2) {
+          // A history read: from a cutoff (or the start) to what's written.
+          const from = r() < 0.3 ? 0 : Math.max(0, written - 1 - Math.floor(r() * 10));
+          b.add(sent.slice(from, written));
+        }
+        if (streaming) b.add([sent[i]], undefined, { live: true });
+        else if (r() < 0.3) streaming = true;
+      }
+      const byIndex = new Map(sent.map((t, i) => [t.job_id, i]));
+      const check = () => {
+        const list = b.entries().slice().sort((x, y) => x.recvMs - y.recvMs);
+        for (let k = 1; k < list.length; k++) {
+          if (list[k].gapBefore) continue;
+          expect(byIndex.get(list[k].data.job_id)! - byIndex.get(list[k - 1].data.job_id)!, `seed ${seed} at ${k}`).toBe(1);
+        }
+      };
+      check();
+      b.add(sent); // a read that has everything
+      check();
+      expect(b.pendingGaps(0), `seed ${seed}`).toBe(0);
+    }
   });
 });

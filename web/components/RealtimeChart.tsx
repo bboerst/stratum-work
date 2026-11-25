@@ -187,7 +187,7 @@ function diffWindow(oldHex: string, newHex: string, width = 24): [string, string
 /** What a result without change types means, for the tooltip (they all draw the same gray bar). */
 function statusNote(info: TemplateChangeResult): string | null {
   if (info.status === 'first') return 'First template seen: nothing to compare with';
-  if (info.status === 'gap') return 'Templates were missed before this one (throttled, paused, reconnected or page load): not compared';
+  if (info.status === 'gap') return 'Templates may have been missed before this one (page load, pause, reconnect or throttling) and no history read has covered it yet: not compared';
   if (info.status === 'otherConnection') return 'From another of our connections than the previous template: not compared';
   if (info.status === 'outOfOrder') return 'Received out of order: not compared';
   if (info.changeTypes.length === 0) return 'Identical to the previous template';

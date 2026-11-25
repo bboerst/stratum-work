@@ -48,6 +48,12 @@ interface UseDataStreamResult {
   burstsByPool: { [poolName: string]: PoolBurst };
 }
 
+/**
+ * Back on the page after this long without a message: the connection is reopened at once (a phone that switched apps
+ * can leave it silently dead, and the reconnect backoff may have grown to a minute while hidden).
+ */
+export const RESUME_STALE_MS = 20_000;
+
 /** A burst episode ends (for the indicator) when no marker came for this long. */
 export const BURST_EPISODE_GAP_MS = 30_000;
 
@@ -130,6 +136,8 @@ export function useDataStream({
   // Messages received since the last flush, and the pending flush
   const batchRef = useRef(new StreamBatch());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the last message (of any kind) arrived
+  const lastMessageAtRef = useRef(0); // set when the connection opens
   
   // Update refs when props change
   useEffect(() => {
@@ -191,6 +199,7 @@ export function useDataStream({
   
   // Process incoming message
   const processMessage = useCallback((event: MessageEvent) => {
+    lastMessageAtRef.current = Date.now();
     if (pausedRef.current) return;
     
     try {
@@ -267,6 +276,7 @@ export function useDataStream({
       }
 
       // Connect to the SSE endpoint
+      lastMessageAtRef.current = Date.now();
       evtSourceRef.current = new EventSource(url.toString());
       setIsConnected(true);
 
@@ -295,7 +305,23 @@ export function useDataStream({
 
     setupEventSource();
 
+    // Back on the page with a stream that has gone quiet: reopen it now, with the backoff reset. What was missed in
+    // between is a gap (onGap), which the template buffer fills from history.
+    const onVisible = () => {
+      if (document.hidden) return;
+      const stale = Date.now() - lastMessageAtRef.current > RESUME_STALE_MS;
+      if (evtSourceRef.current && !stale) return;
+      evtSourceRef.current?.close();
+      evtSourceRef.current = null;
+      onGapRef.current?.();
+      reconnectFrequencyRef.current = initialReconnectFrequency;
+      lastMessageAtRef.current = Date.now();
+      setupEventSource();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       if (evtSourceRef.current) {
         evtSourceRef.current.close();
         evtSourceRef.current = null;

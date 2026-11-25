@@ -210,7 +210,16 @@ export function useDataStream({
       let newData: StreamData | null = null;
       let stratumData: StratumV1Data | null = null;
       
-      if ('type' in parsedData && parsedData.type === 'burst') {
+      if ('type' in parsedData && parsedData.type === 'replay') {
+        // Templates the server's consumer received just before this connection (app/api/stream): for the template
+        // buffer only (onMessage), part of this connection's live run. Not added to the recent messages.
+        const t = parsedData.data as StratumV1Data | undefined;
+        if (t && typeof t === 'object' && typeof t.pool_name === 'string') {
+          onMessageRef.current?.({ type: StreamDataType.STRATUM_V1, id: `${t.pool_name}-${t.timestamp}`, timestamp: t.timestamp, data: t });
+          if (flushTimerRef.current === null) flushTimerRef.current = setTimeout(flush, Math.max(coalesceMsRef.current, 0));
+        }
+        return;
+      } else if ('type' in parsedData && parsedData.type === 'burst') {
         // The stream route throttled this pool's templates (#105): record it, don't add it to the data.
         if (typeof parsedData.pool_name === 'string' && typeof parsedData.suppressed === 'number') {
           if (parsedData.suppressed > 0) onGapRef.current?.(parsedData.pool_name);

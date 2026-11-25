@@ -202,9 +202,11 @@ When a template shows no change:
     of a burst, the page was paused or hidden, the stream reconnected, or it is the first live template after the
     history loaded at page load. Two neighbouring templates are compared only when one continuous observation saw
     both: one run of the live stream, or one history read (each collector writes a connection's templates in receive
-    order, so a read that has a template has every one before it). After a gap the page reads history again a few
-    times over the next 45 seconds, which fills in what was missed and proves the rest; a gap older than that read
-    covers stays unproven;
+    order, so a read that has a template has every one before it). A new stream connection starts with the
+    templates the server's consumer received in the last 20 seconds (plus each pool's one before), so at page load
+    the stream overlaps the history read, which is a few seconds behind. After a gap the page reads history again a
+    few times over the next 45 seconds, which fills in what was missed and proves the rest; a gap older than that
+    read covers stays unproven;
   - a template from another of our connections than the pool's previous one: some pools give each connection its own
     jobs, so the difference would be between connections;
   - a template received out of order.

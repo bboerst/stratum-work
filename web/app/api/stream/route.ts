@@ -64,7 +64,12 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener('abort', close);
 
       try {
-        unsubscribe = await streamHub().subscribe({ onMessage, onEnd: close });
+        // The recent templates first, as their own type: they feed the timing chart's buffer only (lib/useDataStream.ts),
+        // and older pages ignore types they don't know. Not throttled: the hub caps them per pool.
+        const onReplay = (ms: HubMessage[]) => {
+          for (const m of ms) send(`{"type":"replay","data":${m.data}}`);
+        };
+        unsubscribe = await streamHub().subscribe({ onMessage, onReplay, onEnd: close });
       } catch (err) {
         console.error('Error setting up stream:', err);
         close();

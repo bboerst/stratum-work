@@ -386,6 +386,30 @@ describe('gaps (change detection must not compare across missed templates)', () 
   });
 });
 
+describe('page load with the stream replay', () => {
+  // The stream's replay (lib/streamHub.ts) reaches back past what the history read has, so the two overlap.
+  const sent = Array.from({ length: 8 }, (_, i) => tpl('A', 100, i * 10));
+  for (const order of ['history first', 'replay first']) {
+    it(`no gap when the replay overlaps the history read (${order})`, () => {
+      const b = new TemplateBuffer();
+      const history = () => b.add(sent.slice(0, 5));
+      if (order === 'history first') history();
+      b.add(sent.slice(3, 7), undefined, { live: true }); // the replay
+      b.add([sent[7]], undefined, { live: true });
+      if (order === 'replay first') history();
+      expect(b.entries().filter(e => e.gapBefore)).toEqual([]);
+      expect(b.pendingGaps(Infinity)).toBe(0);
+    });
+  }
+
+  it('a replay that does not reach the history read leaves the gap for a re-read', () => {
+    const b = new TemplateBuffer();
+    b.add(sent.slice(0, 3));
+    b.add(sent.slice(4, 8), undefined, { live: true });
+    expect(b.pendingGaps(Infinity)).toBe(1);
+  });
+});
+
 describe('gaps: property test against a known sequence', () => {
   // A pool sends templates 0..N-1 on one connection. The page sees some of them live (with gaps it is told about:
   // pauses, reconnects, throttling) and some history reads (everything from a cutoff up to what the database has
@@ -403,18 +427,26 @@ describe('gaps: property test against a known sequence', () => {
       const b = new TemplateBuffer();
       let streaming = r() < 0.5; // the stream may start before or after the pre-fill
       let written = 0; // the database has sent[0..written)
+      let connecting = true; // the next live template is a new connection's first
       for (let i = 0; i < N; i++) {
         written = Math.max(written, Math.min(N, i - Math.floor(r() * 4))); // the database lags a few templates
         const roll = r();
         if (roll < 0.12) {
           b.markGap(r() < 0.5 ? undefined : 'A'); // a gap the page knows about; this template is missed
           streaming = true;
+          connecting = true;
           continue;
         }
         if (roll < 0.2) {
           // A history read: from a cutoff (or the start) to what's written.
           const from = r() < 0.3 ? 0 : Math.max(0, written - 1 - Math.floor(r() * 10));
           b.add(sent.slice(from, written));
+        }
+        if (streaming && connecting) {
+          // A new connection may start with the server's replay: the templates its consumer saw just before, a
+          // contiguous stretch ending right before this one (app/api/stream, lib/streamHub.ts).
+          connecting = false;
+          if (r() < 0.6) b.add(sent.slice(Math.max(0, i - 1 - Math.floor(r() * 6)), i), undefined, { live: true });
         }
         if (streaming) b.add([sent[i]], undefined, { live: true });
         else if (r() < 0.3) streaming = true;

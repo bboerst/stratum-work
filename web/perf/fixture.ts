@@ -129,6 +129,9 @@ export class Fixture {
     };
   }
 
+  /** History rows already generated, so repeated pre-fill reads return identical templates. */
+  private readonly history = new Map<string, Template>();
+
   /** The /api/realtime-prefill response: `heights` heights ending at the tip + 1, spread over 10-minute blocks. */
   prefill(nowS: number) {
     const tip = this.tipAt(nowS);
@@ -138,7 +141,12 @@ export class Fixture {
       for (let i = 0; i < this.opts.pools; i++) {
         for (let k = 0; k < this.opts.templatesPerHeight; k++) {
           const t = start + (k / this.opts.templatesPerHeight) * BLOCK_SECONDS + i * 0.05;
-          if (t <= nowS) templates.push(this.template(i, h, t));
+          if (t > nowS) continue;
+          // The same row every time, as a database returns it (template() draws fresh random bytes on each call).
+          const key = `${i}|${h}|${t}`;
+          let row = this.history.get(key);
+          if (!row) this.history.set(key, (row = this.template(i, h, t)));
+          templates.push(row);
         }
       }
     }

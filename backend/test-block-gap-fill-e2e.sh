@@ -64,7 +64,8 @@ cli "$BB" addnode "$BA:18444" onetry >/dev/null
 cli "$BA" generatetodescriptor 280 "raw(51)" >/dev/null
 check "B synced to 280" retry 60 at "$BB" 280
 # Started while the chain is short, so the backfill (MIN..tip, paced) is quick; the rest arrives over ZMQ.
-docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" \
+start_backend() {   # extra -e settings as arguments
+docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" "$@" \
   -e PG_HOST="$PG" -e PG_DATABASE=postgres -e PG_USER=backend -e PG_PASSWORD=backend -e PG_SSLMODE=disable \
   -e BITCOIN_RPC_HOST="$BB" -e BITCOIN_RPC_PORT=18443 -e BITCOIN_RPC_USER=test -e BITCOIN_RPC_PASSWORD=test \
   -e BITCOIN_ZMQ_BLOCK="tcp://$BB:28332" -e STALE_BLOCKS_ENABLED=false -e BLOCK_GAP_WINDOW=10 \
@@ -72,6 +73,8 @@ docker run -d --name "$BE" --network "$NET" -v "$PWD/backend:/src:ro" \
   -e RABBITMQ_HOST="$MQ" \
   -e POOL_LIST_URL=http://127.0.0.1:9/pools.json -e LOCAL_POOL_FILE=/nonexistent.json \
   "$IMAGE_PY" sh -c 'cp -r /src /app && cd /app && pip install -q --root-user-action=ignore -r requirements.txt 2>/dev/null && exec python -u main.py' >/dev/null
+}
+start_backend
 check "backend stored $MIN..280" retry 240 converged
 for _ in $(seq 6); do cli "$BA" generatetodescriptor 70 "raw(51)" >/dev/null; sleep 2; done
 check "B synced to 700" retry 60 at "$BB" 700
@@ -153,11 +156,33 @@ check "701: 5 transactions, 3 branches stored" sql_is "SELECT length(merkle_bran
 TX1=$(cli "$BB" getblock "$MINED" 1 | python3 -c 'import json,sys; print(bytes.fromhex(json.load(sys.stdin)["tx"][1])[::-1].hex())')
 check "701: branch 0 is the node's first transaction after the coinbase" bash -c "[ -n '$TX1' ] && [ \"\$(docker exec $PG psql -h localhost -U postgres -At -c \"SELECT encode(substring(merkle_branches FROM 1 FOR 32), 'hex') FROM blocks WHERE height = 701\")\" = '$TX1' ]"
 # The fill: clear 600 (B has its data) and 263 (pruned on B). Newest first: 600 is filled, then it stops at 263.
+# Pass 1 (getblock verbosity 1) restores the branches and txid, pass 2 (getrawtransaction) the coinbase bytes.
+# Pass 2 alone: 701 and 265 (pruned on B) keep their branches and txid and lose only the coinbase bytes.
+CB701=$(sql "SELECT encode(coinbase_tx, 'hex') FROM blocks WHERE height = 701")
+check "701 has its coinbase bytes before the test clears them" test -n "$CB701"
+sql "UPDATE blocks SET coinbase_tx = NULL WHERE height IN (265, 701)" >/dev/null
 sql "UPDATE blocks SET merkle_branches = NULL, coinbase_txid = NULL, coinbase_tx = NULL WHERE height IN (263, 600)" >/dev/null
-check "the coinbase fill restores 600's branches and txid (getblock verbosity 1, no coinbase bytes)" retry 30 \
-  sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of 600)' AND coinbase_tx IS NULL FROM blocks WHERE height = 600" t
+check "265 is still pruned on B" pruned_on_b 265
+check "the coinbase fill restores 600's branches, txid and coinbase bytes" retry 30 \
+  sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of 600)' AND sha256(sha256(coinbase_tx)) = coinbase_txid FROM blocks WHERE height = 600" t
+check "701's coinbase bytes come back from getrawtransaction, identical to what the block save stored" retry 30 \
+  sql_is "SELECT encode(coinbase_tx, 'hex') FROM blocks WHERE height = 701" "$CB701"
 check "263 (pruned on B) stays unknown, and the fill logged where it stopped" \
   bash -c "[ \"\$(docker exec $PG psql -h localhost -U postgres -At -c 'SELECT merkle_branches IS NULL FROM blocks WHERE height = 263')\" = t ] && docker logs $BE 2>&1 | grep -q 'stopped at a pruned block'"
+check "265 (pruned on B) keeps its txid and stays without coinbase bytes; pass 2 logged where it stopped" \
+  bash -c "[ \"\$(docker exec $PG psql -h localhost -U postgres -At -c 'SELECT coinbase_txid IS NOT NULL AND coinbase_tx IS NULL FROM blocks WHERE height = 265')\" = t ] && docker logs $BE 2>&1 | grep -q 'blocks without coinbase bytes.*stopped at a pruned block'"
+
+echo "== pruned blocks from peers (COINBASE_FILL_PEER_MAX_BLOCKS > 0): 263 has nothing, 265 lacks only its coinbase"
+sql "UPDATE blocks SET size = NULL, weight = NULL WHERE height = 263" >/dev/null
+docker rm -f "$BE" >/dev/null
+start_backend -e COINBASE_FILL_PEER_MAX_BLOCKS=5
+cbtx_ok() { sql_is "SELECT merkle_branches IS NOT NULL AND encode(coinbase_txid, 'hex') = '$(cbtxid_of $1)' AND sha256(sha256(coinbase_tx)) = coinbase_txid FROM blocks WHERE height = $1" t; }
+check "263: branches, txid and coinbase bytes, from a peer" retry 90 cbtx_ok 263
+check "265: coinbase bytes, from a peer" retry 30 cbtx_ok 265
+check "263: size and weight filled from the same read" sql_is "SELECT size IS NOT NULL AND weight IS NOT NULL FROM blocks WHERE height = 263" t
+check "logged: fetched from peers, with the node's prune height" \
+  bash -c "docker logs $BE 2>&1 | grep -q 'pruned blocks fetched from peers' && docker logs $BE 2>&1 | grep -q 'node prune height'"
+check "every block has its branches and coinbase bytes now" sql_is "SELECT count(*) FROM blocks WHERE merkle_branches IS NULL OR coinbase_tx IS NULL" 0
 
 echo "== backend logs (gap fill)"
 docker logs "$BE" 2>&1 | grep -E "Gap fill" | head -30

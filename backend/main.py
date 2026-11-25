@@ -83,9 +83,18 @@ BEST_CHAIN_HISTORY_CHUNK = 2000
 # 0 = off. Postgres only.
 HEADER_FILL_MAX_BLOCKS = int(os.getenv("HEADER_FILL_MAX_BLOCKS", "20000"))
 # Coinbase fill (coinbase_fill.py, #235): after each gap-fill run, up to COINBASE_FILL_MAX_BLOCKS stored blocks without
-# merkle branches get them (and the coinbase txid) from getblock verbosity 1, newest first, until the first block
-# the node has pruned. 0 = off. Postgres only.
+# merkle branches get them (and the coinbase txid) from getblock verbosity 1, then up to as many blocks with a coinbase
+# txid but no coinbase bytes get those from getrawtransaction (that one transaction); each pass newest first, until
+# the first block the node has pruned. 0 = off. Postgres only.
 COINBASE_FILL_MAX_BLOCKS = int(os.getenv("COINBASE_FILL_MAX_BLOCKS", "1000"))
+# Coinbase fill, pruned blocks: up to COINBASE_FILL_PEER_MAX_BLOCKS blocks per run that the node has pruned are
+# downloaded again from peers (getblockfrompeer, like the gap fill) and read at once, within
+# COINBASE_FILL_PEER_MAX_SECONDS per run, stopping after COINBASE_FILL_PEER_MAX_FAILURES blocks in a row no peer
+# delivered. Every downloaded block pushes the node's oldest block data out (it prunes to stay within -prune).
+# 0 = off (the default).
+COINBASE_FILL_PEER_MAX_BLOCKS = int(os.getenv("COINBASE_FILL_PEER_MAX_BLOCKS", "0"))
+COINBASE_FILL_PEER_MAX_SECONDS = float(os.getenv("COINBASE_FILL_PEER_MAX_SECONDS", "1800"))
+COINBASE_FILL_PEER_MAX_FAILURES = int(os.getenv("COINBASE_FILL_PEER_MAX_FAILURES", "3"))
 # Unknown-parents summary (unknown_parents.py): once after the startup sync over the last 7 days, then after each new
 # block over the last 2 hours, the per-(parent, pool) facts the web's /unknown-parents page reads are recomputed for
 # every parent of those templates that is no block we know. Its own thread and connection: new blocks never wait for
@@ -1037,7 +1046,11 @@ def sync_then_fill_gaps():
     coinbases = None
     if fill and COINBASE_FILL_MAX_BLOCKS > 0:
         from coinbase_fill import BlockCoinbaseFiller
-        coinbases = BlockCoinbaseFiller(rpc=node_rpc, store=store, max_blocks=COINBASE_FILL_MAX_BLOCKS)
+        coinbases = BlockCoinbaseFiller(rpc=node_rpc, store=store, max_blocks=COINBASE_FILL_MAX_BLOCKS,
+                                        header_fields=block_header_fields, fetcher=filler,
+                                        peer_max_blocks=COINBASE_FILL_PEER_MAX_BLOCKS,
+                                        peer_max_seconds=COINBASE_FILL_PEER_MAX_SECONDS,
+                                        peer_max_failures=COINBASE_FILL_PEER_MAX_FAILURES)
     next_fill = next_check = time.monotonic()
     while True:
         if fill and time.monotonic() >= next_fill:

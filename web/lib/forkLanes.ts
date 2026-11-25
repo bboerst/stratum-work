@@ -13,7 +13,7 @@ import { getFirstWork, getLaneEnds, getLaneFacts, getLaneReturns, getLaneTemplat
 import { getDrillBlocks } from './db/unknown-parents';
 import { excludedAt, type RealtimeExclusion } from './poolBlacklist';
 import { knownBlockHashes } from './db/postgres';
-import { classifyPrevHashes, unknownParentKinds, type LaneStatus } from './forkStatus';
+import { classifyPrevHashes, neverAppeared, unknownParentKinds, type LaneStatus } from './forkStatus';
 import { parseCoinbase } from '../utils/coinbaseParser';
 import type { ArrivalBlock } from './forkTimelineAxis';
 import type { ParentKind } from './parentKind';
@@ -179,14 +179,18 @@ export async function getForkLanes(
   const hexBits = (bits: string | null) => (bits === null ? null : Number(bits).toString(16).padStart(8, '0'));
   const kinds = unknownParentKinds(status, rows.map(r => ({ prev_hash: r.parent, nbits: Number(r.nbits) })), height,
     hexBits(facts.bits_prev), hexBits(facts.bits_at));
+  // the block before is known and not our best at height - 1, so classifyPrevHashes would call it stale
+  const parents: LaneParent[] = hashes.map(hash => (hash === facts.before
+    ? { hash, status: 'previous' as const, kind: null }
+    : { hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null }));
+  // an unrecorded block whose lanes show it never appeared (judged on the first kinds of all parents, then applied)
+  const never = new Set(parents.filter(p => neverAppeared({ parents, lanes: runs.lanes }, p.hash)).map(p => p.hash));
+  for (const p of parents) if (never.has(p.hash)) p.kind = 'never_appeared';
   return {
     height,
     active: facts.active,
     ...runs,
-    // the block before is known and not our best at height - 1, so classifyPrevHashes would call it stale
-    parents: hashes.map(hash => (hash === facts.before
-      ? { hash, status: 'previous' as const, kind: null }
-      : { hash, status: status?.[hash] ?? null, kind: kinds?.[hash] ?? null })),
+    parents,
     blocks: blocks.map(b => ({
       hash: b.block_hash, height: b.height, best: b.best, miner: b.miner ?? null,
       seen_ms: b.seen && !b.stale_only ? Number(b.arrival_ms) : null, stale_only: b.stale_only,

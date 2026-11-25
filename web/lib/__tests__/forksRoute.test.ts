@@ -47,6 +47,7 @@ const drillRows = (): DrillRows => ({
 async function loadRoute({ historical = true, blacklist = '' } = {}) {
   vi.resetModules();
   delete (globalThis as { __forksSummaries?: unknown }).__forksSummaries;   // the summary cache (lib/forksSummary.ts)
+  delete (globalThis as { __forksNeverAppeared?: unknown }).__forksNeverAppeared;   // its never-appeared judgements
   vi.stubEnv('POOL_BLACKLIST', blacklist);
   vi.stubEnv('EXTRANONCE1_MASK_KEY', 'route-key');
   const getEpisodePoolRows = vi.fn<(exclude: string[], range?: string) => Promise<EpisodePoolSql[]>>(async () => [poolRow()]);
@@ -58,6 +59,10 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   const getEpochGroupInputs = vi.fn<(epochs: number[], exclude: string[]) => Promise<EpochGroupInputs>>(
     async () => ({ nodes: [], pairs: [], counted: [] }));
   const getParentVersions = vi.fn<(q: unknown[], exclude: string[]) => Promise<ParentVersionsSql[]>>(async () => []);
+  // an unrecorded block's lanes (lib/forkLanes.ts): by default they leave its kind as it is
+  const getForkLanes = vi.fn<(height: number, span: unknown, ex: unknown) => Promise<{ parents: { hash: string; kind: string | null }[] }>>(
+    async () => ({ parents: [] }));
+  vi.doMock('../forkLanes', () => ({ getForkLanes }));
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({
@@ -66,7 +71,7 @@ async function loadRoute({ historical = true, blacklist = '' } = {}) {
   }));
   const route = await import('../../app/api/forks/route');
   return { route, getEpisodePoolRows, getEpisodeFacts, getDrillRows, getBestTipHeight, getStaleEpisodePoolRows, getInvalidCoinbaseFlags,
-    getEpochGroupInputs, getParentVersions };
+    getEpochGroupInputs, getParentVersions, getForkLanes };
 }
 
 const get = (route: { GET: (r: Request) => Promise<Response> }, qs = '') =>
@@ -78,6 +83,7 @@ afterEach(() => {
   vi.doUnmock('../db/blocks');
   vi.doUnmock('../db/unknown-parents');
   vi.doUnmock('../db/template-providers');
+  vi.doUnmock('../forkLanes');
 });
 
 describe('GET /api/forks', () => {
@@ -86,6 +92,23 @@ describe('GET /api/forks', () => {
     for (const qs of ['', `?parent=${P1}`]) expect(await (await get(route, qs)).json()).toEqual({ enabled: false, supported: false });
     expect(getEpisodePoolRows).not.toHaveBeenCalled();
     expect(getDrillRows).not.toHaveBeenCalled();
+  });
+
+  it('labels an unrecorded block "never appeared" when its lanes say so; reads lanes only for unrecorded blocks', async () => {
+    const { route, getForkLanes } = await loadRoute();
+    getForkLanes.mockResolvedValue({ parents: [{ hash: P1, kind: 'never_appeared' }] });
+    const body = await (await get(route)).json();
+    expect(body.episodes.map((e: { kind: string }) => e.kind)).toEqual(['never_appeared']);
+    expect(getForkLanes).toHaveBeenCalledTimes(1);
+    expect(getForkLanes.mock.calls[0][0]).toBe(900_001);
+    expect(getForkLanes.mock.calls[0][1]).toEqual({ fromMs: 1000, toMs: 5000 });
+  });
+
+  it('keeps the unrecorded-block kind when reading its lanes fails', async () => {
+    const { route, getForkLanes } = await loadRoute();
+    getForkLanes.mockRejectedValue(new Error('timeout'));
+    const body = await (await get(route)).json();
+    expect(body.episodes.map((e: { kind: string }) => e.kind)).toEqual(['bitcoin_block']);
   });
 
   it('serves episodes with facts and the inferred kind', async () => {

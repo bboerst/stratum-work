@@ -6,6 +6,7 @@ import {
 import { getEpisodes, type Episode } from "./unknownParents";
 import { excludedAt, realtimeExclusion, type RealtimeExclusion } from "./poolBlacklist";
 import { followsDeployment, inMandatoryWindow } from "./softForks";
+import { getForkLanes } from "./forkLanes";
 
 /**
  * The Forks summary per range, shared by /api/forks and the Forks pages (short links, link previews, the preview
@@ -55,7 +56,7 @@ function refreshSummary(key: SummaryKey, now: number, fallback: SummaryResponse 
         await getEpisodes(ex, range, { providers: !key.endsWith('-lite') }), ex);
       // Episodes that began before our first stored block have no Bitcoin position and no facts to judge them by
       // (collection started mid-height): not shown, and counted in the response.
-      const episodes = all.filter(e => e.facts.tip_at_first !== null);
+      const episodes = await withNeverAppeared(all.filter(e => e.facts.tip_at_first !== null), all, ex);
       const before_first_block = all.length - episodes.length;
       const blocks = RANGE_BLOCKS[range];
       const from_height = tip_height === null ? null : blocks !== null ? tip_height - blocks
@@ -90,6 +91,35 @@ export async function withoutSoftForkChains(episodes: Episode[], ex: RealtimeExc
     if (followsDeployment(e.height, r.best_hash === e.parent, bestVersion, r.versions.map(Number))) hide.add(e);
   }
   return { episodes: episodes.filter(e => !hide.has(e)), hidden: hide.size };
+}
+
+const NEVER_MS = 10 * 60_000;
+const neverStore = globalThis as { __forksNeverAppeared?: Map<string, { at: number; promise: Promise<boolean> }> };
+const neverCache = (neverStore.__forksNeverAppeared ??= new Map());
+
+/**
+ * Unrecorded blocks ('bitcoin_block') that their height's lanes show never appeared (lib/forkStatus.ts neverAppeared)
+ * get the kind 'never_appeared'. Only those episodes are read (a handful in all history): each one's height through
+ * getForkLanes, over the span of every episode at that height (as /api/forks/timeline reads it), cached per parent for
+ * NEVER_MS. A read that fails leaves the kind as it was (logged).
+ */
+export async function withNeverAppeared(episodes: Episode[], all: Episode[], ex: RealtimeExclusion): Promise<Episode[]> {
+  const now = Date.now();
+  const judged = await Promise.all(episodes.map(e => {
+    if (e.kind !== 'bitcoin_block') return Promise.resolve(false);
+    let entry = neverCache.get(e.parent);
+    if (!entry || now - entry.at > NEVER_MS) {
+      const at = all.filter(o => o.kind !== 'other_chain' && (o.heights?.length ? o.heights : [o.height]).includes(e.height));
+      const span = { fromMs: Math.min(...at.map(o => o.first_ms)), toMs: Math.max(...at.map(o => o.last_ms)) };
+      const promise = getForkLanes(e.height, span, ex)
+        .then(l => l.parents.some(p => p.hash === e.parent && p.kind === 'never_appeared'))
+        .catch(error => { console.error(`Forks: reading ${e.parent}'s lanes failed:`, error); neverCache.delete(e.parent); return false; });
+      entry = { at: now, promise };
+      neverCache.set(e.parent, entry);
+    }
+    return entry.promise;
+  }));
+  return episodes.map((e, i) => (judged[i] ? { ...e, kind: 'never_appeared' as const } : e));
 }
 
 /** The range's summary (callers check enableHistoricalData first: this reads the database). */

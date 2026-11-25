@@ -72,18 +72,21 @@ const PREVIOUS_HASH_COLOR = "hsl(var(--muted-foreground))"; // the block before 
 // recorded is in the stale family (a lighter blue), another chain's block violet, a parent that isn't a valid block rose.
 const KIND_COLOR: Record<ParentKind, string> = {
   bitcoin_block: "#38bdf8", // sky-400
+  never_appeared: "#14b8a6", // teal-500: its header went round, no node accepted the block
   other_chain: "#7c3aed", // violet-600
   invalid_parent: "#e11d48", // rose-600
   undetermined: UNKNOWN_HASH_COLOR,
 };
 const KIND_LABEL: Record<ParentKind, string> = {
   bitcoin_block: "Unrecorded block",
+  never_appeared: "Never appeared",
   other_chain: "Other chain",
   invalid_parent: "Invalid",
   undetermined: "Unknown",
 };
 const KIND_TEXT: Record<ParentKind, string> = {
   bitcoin_block: "text-red-400",
+  never_appeared: "text-teal-400",
   other_chain: "text-violet-400",
   invalid_parent: "text-rose-400",
   undetermined: "text-muted-foreground",

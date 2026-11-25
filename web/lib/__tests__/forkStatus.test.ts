@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPrevHashes, unknownParentKinds, wentBack } from '../forkStatus';
+import { classifyPrevHashes, neverAppeared, NEVER_APPEARED_HEAD_START_MS, unknownParentKinds, wentBack } from '../forkStatus';
 import { prevHashStatusOf } from '../../components/ForkTimeline';
 import { reverseHex } from '../../utils/formatters';
 
@@ -92,5 +92,46 @@ describe('wentBack (the Forks row\'s fact line)', () => {
   it('is null when none went back, or without our best block to judge by', () => {
     expect(wentBack({ parents, lanes: [{ runs: [[0, 1, 0, 0]] }] })).toBeNull();
     expect(wentBack({ parents: [{ status: null }, { status: 'previous' }], lanes: [{ runs: [[0, 0, 0, 0], [1, 1, 0, 0]] }] })).toBeNull();
+  });
+});
+
+describe('neverAppeared (an unrecorded block no node accepted)', () => {
+  // parents: 0 our best block, 1 the unrecorded block X, 2 the block before, 3 another chain's block
+  const parents = [
+    { hash: 'a', status: 'canonical' as const, kind: null },
+    { hash: 'x', status: 'unknown' as const, kind: 'bitcoin_block' as const },
+    { hash: 'p', status: 'previous' as const, kind: null },
+    { hash: 'o', status: 'unknown' as const, kind: 'other_chain' as const },
+  ];
+  const S = NEVER_APPEARED_HEAD_START_MS;
+  // the 946,213 shape: everyone on X empty; one pool goes back after 20 s, one stays; the real block comes later
+  const episode = [
+    { runs: [[0, 1, 0, 1], [20_000, 2, 0, 0], [S + 60_000, 0, 0, 0]] },
+    { runs: [[100, 1, 0, 1], [S + 60_000, 0, 0, 0]] },
+  ];
+  it('holds with real work, only empty templates, a head start on any rival and a pool that went back', () => {
+    expect(neverAppeared({ parents, lanes: episode }, 'x')).toBe(true);
+  });
+  it('fails when any template on it had transactions (a node accepted it)', () => {
+    const lanes = [episode[0], { runs: [[100, 1, 0, 1], [3_000, 1, 0, 0], [S + 60_000, 0, 0, 0]] }];
+    expect(neverAppeared({ parents, lanes }, 'x')).toBe(false);
+  });
+  it('fails when no pool went back to the block before', () => {
+    expect(neverAppeared({ parents, lanes: [{ runs: [[0, 1, 0, 1], [S + 60_000, 0, 0, 0]] }] }, 'x')).toBe(false);
+  });
+  it('fails when a rival block was worked on within the head start (leaving X can be moving to the rival)', () => {
+    const lanes = [...episode, { runs: [[S - 1, 0, 0, 0]] }];
+    expect(neverAppeared({ parents, lanes }, 'x')).toBe(false);
+    expect(neverAppeared({ parents, lanes: [...episode, { runs: [[S, 0, 0, 0]] }] }, 'x')).toBe(true);   // exactly S: holds
+  });
+  it('ignores another chain\'s parent as a rival, and only judges unrecorded blocks', () => {
+    expect(neverAppeared({ parents, lanes: [...episode, { runs: [[50, 3, 0, 0]] }] }, 'x')).toBe(true);
+    expect(neverAppeared({ parents, lanes: episode }, 'a')).toBe(false);
+    expect(neverAppeared({ parents, lanes: episode }, 'missing')).toBe(false);
+    const invalid = parents.map(p => (p.hash === 'x' ? { ...p, kind: 'invalid_parent' as const } : p));
+    expect(neverAppeared({ parents: invalid, lanes: episode }, 'x')).toBe(false);
+  });
+  it('fails when nobody built on it', () => {
+    expect(neverAppeared({ parents, lanes: [{ runs: [[0, 0, 0, 0]] }] }, 'x')).toBe(false);
   });
 });

@@ -95,3 +95,43 @@ export function wentBack(l: {
   }
   return back > 0 ? { back, of } : null;
 }
+
+/** How long the parent must have been built on before any rival block at the height (rule 2 of neverAppeared). */
+export const NEVER_APPEARED_HEAD_START_MS = 10_000;
+
+/**
+ * Whether an unrecorded block (kind 'bitcoin_block': a hash with proof of work at Bitcoin's difficulty) is one that
+ * never appeared: its header went round, but no pool's node ever accepted the block. INFERRED from the height's lanes
+ * (lib/forkLanes.ts), the rules of the never-appeared pre-registration read per pool:
+ *  2. no rival yet: the first work on it comes NEVER_APPEARED_HEAD_START_MS or more before the first work on any other
+ *     block at the height (our best block, a stale block, or another unrecorded block), so leaving it isn't moving to
+ *     a rival;
+ *  3. never had transactions: every template on it is empty (a node that accepted a block builds templates with
+ *     transactions on it within seconds);
+ *  4. went back: at least one pool later went back to the block before (work at height - 1 on our best block at
+ *     height - 2), which a node that accepted the block never does.
+ * Whether it was invalid or never sent can't be told: we never have the block.
+ */
+export function neverAppeared(l: {
+  parents: readonly { hash: string; status: LaneStatus | null; kind: ParentKind | null }[];
+  lanes: readonly { runs: readonly (readonly number[])[] }[];
+}, hash: string): boolean {
+  const x = l.parents.findIndex(p => p.hash === hash);
+  if (x < 0 || l.parents[x].kind !== 'bitcoin_block') return false;
+  const rival = (i: number) => {
+    const p = l.parents[i];
+    return i !== x && !!p && (p.status === 'canonical' || p.status === 'stale' || p.kind === 'bitcoin_block');
+  };
+  let firstX = Infinity, firstRival = Infinity, back = false;
+  for (const lane of l.lanes) {
+    const firstHere = lane.runs.findIndex(r => r[1] === x);
+    for (const r of lane.runs) {
+      if (r[1] === x) {
+        if (r[3] !== 1) return false;                                   // a template with transactions
+        firstX = Math.min(firstX, r[0]);
+      } else if (rival(r[1])) firstRival = Math.min(firstRival, r[0]);
+    }
+    if (firstHere >= 0 && lane.runs.slice(firstHere + 1).some(r => l.parents[r[1]]?.status === 'previous')) back = true;
+  }
+  return Number.isFinite(firstX) && back && firstRival - firstX >= NEVER_APPEARED_HEAD_START_MS;
+}

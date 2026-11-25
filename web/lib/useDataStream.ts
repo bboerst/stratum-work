@@ -284,7 +284,9 @@ export function useDataStream({
         });
       }
 
-      // Connect to the SSE endpoint
+      // Connect to the SSE endpoint. A new connection is a new live run (the template buffer's onGap), whatever led to
+      // it; its replay (app/api/stream) belongs to it.
+      onGapRef.current?.();
       lastMessageAtRef.current = Date.now();
       evtSourceRef.current = new EventSource(url.toString());
       setIsConnected(true);

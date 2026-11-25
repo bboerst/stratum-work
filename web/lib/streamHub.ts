@@ -146,7 +146,7 @@ export class StreamHub {
   /** Keeps the last REPLAY_MS, plus the newest entry before it if not older than REPLAY_ANCHOR_MS, capped. */
   private prune(list: { at: number }[], now: number): void {
     while (list.length > 1 && list[1].at < now - REPLAY_MS) list.shift();
-    if (list.length === 1 && list[0].at < now - REPLAY_ANCHOR_MS) list.shift();
+    if (list.length > 0 && list[0].at < now - REPLAY_ANCHOR_MS) list.shift();
     while (list.length > REPLAY_MAX_PER_POOL) list.shift();
   }
 

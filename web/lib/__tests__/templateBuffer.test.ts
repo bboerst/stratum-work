@@ -386,6 +386,42 @@ describe('gaps (change detection must not compare across missed templates)', () 
   });
 });
 
+describe('templates left out between two others', () => {
+  const gaps = (b: TemplateBuffer) => b.entries().filter(e => e.gapBefore).map(e => e.data.job_id);
+
+  it('a trimmed template between two kept ones leaves the later one a gap, permanently', () => {
+    const b = new TemplateBuffer();
+    b.setTip(99);
+    // X at 100, a stale Y at 98 (the oldest kept height), Z at 100: one live run.
+    for (const t of [tpl('A', 100, 0), tpl('A', 98, 10), tpl('A', 100, 20)]) b.add([t], undefined, { live: true });
+    expect(gaps(b)).toEqual([]);
+    const epoch = b.epoch;
+    b.setTip(100); // 98 drops out of the kept heights
+    expect(b.entries().map(e => e.data.job_id)).toEqual(['A-0', 'A-20']);
+    expect(gaps(b)).toEqual(['A-20']);
+    expect(b.epoch).toBeGreaterThan(epoch); // the flag changed on an entry already handed out
+    b.add([tpl('A', 100, 0), tpl('A', 100, 20)]); // a read with both can't prove it: Y was between
+    expect(gaps(b)).toEqual(['A-20']);
+  });
+
+  it('a live template below the kept heights starts a new run for its pool', () => {
+    const b = new TemplateBuffer();
+    b.setTip(100);
+    b.add([tpl('A', 101, 0)], undefined, { live: true });
+    b.add([tpl('A', 97, 10)], undefined, { live: true }); // below the kept heights: not added
+    b.add([tpl('A', 101, 20)], undefined, { live: true });
+    expect(b.entries().map(e => e.data.job_id)).toEqual(['A-0', 'A-20']);
+    expect(gaps(b)).toEqual(['A-20']);
+  });
+
+  it('a history row below the kept heights splits the response for its pool', () => {
+    const b = new TemplateBuffer();
+    b.setTip(100);
+    b.add([tpl('A', 101, 0), tpl('A', 97, 10), tpl('A', 101, 20), tpl('B', 101, 5), tpl('B', 101, 25)]);
+    expect(gaps(b)).toEqual(['A-20']);
+  });
+});
+
 describe('page load with the stream replay', () => {
   // The stream's replay (lib/streamHub.ts) reaches back past what the history read has, so the two overlap.
   const sent = Array.from({ length: 8 }, (_, i) => tpl('A', 100, i * 10));

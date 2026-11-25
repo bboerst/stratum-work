@@ -30,6 +30,11 @@ export interface BufferedTemplate {
    * history response (`h<n>`). Two neighbours that share one are consecutive; see TemplateBuffer.
    */
   segs: string[];
+  /**
+   * A template of the pool between this one and the one before it is gone from the buffer (trimmed below the kept
+   * heights) or was never added (below them): no observation can prove the two consecutive any more.
+   */
+  cut?: boolean;
 }
 
 export interface TemplateBufferLimits {
@@ -94,6 +99,8 @@ function compareReceived(a: BufferedTemplate, b: BufferedTemplate): number {
 }
 
 const shareSeg = (a: BufferedTemplate, b: BufferedTemplate) => a.segs.some(s => b.segs.includes(s));
+/** Whether `b` follows `a` (the pool's one before it) in one observation, with nothing of the pool left out between. */
+const linked = (a: BufferedTemplate, b: BufferedTemplate) => !b.cut && shareSeg(a, b);
 
 export class TemplateBuffer {
   private readonly limits: TemplateBufferLimits;
@@ -156,11 +163,7 @@ export class TemplateBuffer {
       for (const [key, entry] of this.byKey) {
         if (entry.data.height > height + MAX_HEIGHTS_ABOVE_TIP) this.byKey.delete(key);
       }
-      for (const [pool, list] of this.byPool) {
-        const kept = list.filter(e => this.byKey.get(e.key) === e);
-        if (kept.length === 0) this.byPool.delete(pool);
-        else this.byPool.set(pool, kept);
-      }
+      this.dropRemovedFromPools();
       this.recomputeMaxHeight();
     }
     this.trim();
@@ -184,6 +187,9 @@ export class TemplateBuffer {
     // One history response is one observation; each live template belongs to its pool's current run.
     const responseSeg = live ? null : `h${++this.responses}`;
     const recompute = new Set<string>();
+    // Rows of this response below the kept heights are left out, so the response's other rows of that pool aren't one
+    // contiguous stretch across them: each such row splits the pool's rows into separate observations.
+    const skippedByPool = responseSeg === null ? null : this.belowFloorByPool(templates, isAllowed);
 
     for (const data of templates) {
       // Other chains' templates arrive untagged (collectors don't classify, docs/design/one-templates-table.md): the
@@ -193,12 +199,23 @@ export class TemplateBuffer {
       if (!Number.isInteger(data.height) || data.height <= 0) continue;
       if (this.tip !== null && data.height > this.tip + MAX_HEIGHTS_ABOVE_TIP) continue;
       const floor = this.heightFloor();
-      if (floor !== null && data.height < floor) continue;
+      if (floor !== null && data.height < floor) {
+        // A live template of an old height: the pool's next one must not be compared across it.
+        if (live && typeof data.pool_name === 'string') this.markGap(data.pool_name);
+        continue;
+      }
 
       const key = templateKey(data);
       if (key === null) continue;
       const pool = data.pool_name;
-      const seg = responseSeg ?? `l${this.liveRunAll}.${this.liveRunByPool.get(pool) ?? 0}`;
+      const recvMs = Number(timestampMicros(data.received_timestamp ?? data.timestamp) ?? timestampMicros(data.timestamp)!) / 1000;
+      let seg: string;
+      if (responseSeg !== null) {
+        const skipped = skippedByPool!.get(pool);
+        seg = skipped ? `${responseSeg}.${skipped.filter(t => t < recvMs).length}` : responseSeg;
+      } else {
+        seg = `l${this.liveRunAll}.${this.liveRunByPool.get(pool) ?? 0}`;
+      }
 
       const existing = this.byKey.get(key);
       if (existing) {
@@ -211,7 +228,6 @@ export class TemplateBuffer {
       }
 
       const timeMs = Number(timestampMicros(data.timestamp)!) / 1000;
-      const recvMs = Number(timestampMicros(data.received_timestamp ?? data.timestamp) ?? timestampMicros(data.timestamp)!) / 1000;
       const newest = newestByPool.get(pool);
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
       if (newest === undefined || timeMs > newest) newestByPool.set(pool, timeMs);
@@ -226,7 +242,7 @@ export class TemplateBuffer {
         // The usual case: the pool's newest. Only its own link to the one before it is new.
         const prev = list[list.length - 1];
         list.push(entry);
-        if (prev && !shareSeg(prev, entry)) {
+        if (prev && !linked(prev, entry)) {
           entry.gapBefore = true;
           this.gapVersion++;
         }
@@ -256,6 +272,32 @@ export class TemplateBuffer {
     return added;
   }
 
+  /**
+   * The receive times (ms) of a response's rows that will end up below the kept heights, by pool: below the floor
+   * after this response raises the current height (rows between the current floor and that one are added, then
+   * trimmed, and cut there by dropRemovedFromPools).
+   */
+  private belowFloorByPool(templates: StratumV1Data[], isAllowed: (poolName: string) => boolean): Map<string, number[]> {
+    let current = this.currentHeight;
+    for (const d of templates) {
+      if (!d || !Number.isInteger(d.height) || d.height <= 0 || !isAllowed(d.pool_name)) continue;
+      if (this.tip !== null && d.height > this.tip + MAX_HEIGHTS_ABOVE_TIP) continue;
+      if (current === null || d.height > current) current = d.height;
+    }
+    const out = new Map<string, number[]>();
+    if (current === null) return out;
+    const floor = current - this.limits.heights + 1;
+    for (const d of templates) {
+      if (!d || !Number.isInteger(d.height) || d.height <= 0 || d.height >= floor || !isAllowed(d.pool_name)) continue;
+      const us = timestampMicros(d.received_timestamp ?? d.timestamp);
+      if (us === null) continue;
+      let list = out.get(d.pool_name);
+      if (!list) out.set(d.pool_name, (list = []));
+      list.push(Number(us) / 1000);
+    }
+    return out;
+  }
+
   /** Re-derives `gapBefore` for a pool's entries: whether it changed, and on an entry added before `firstSeq`. */
   private relink(pool: string, firstSeq: number): 'none' | 'new' | 'old' {
     const list = this.byPool.get(pool);
@@ -263,7 +305,7 @@ export class TemplateBuffer {
     let changed: 'none' | 'new' | 'old' = 'none';
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
-      const gap = i > 0 && !shareSeg(list[i - 1], e);
+      const gap = i > 0 && !linked(list[i - 1], e);
       if (!!e.gapBefore === gap) continue;
       if (gap) {
         e.gapBefore = true;
@@ -338,13 +380,41 @@ export class TemplateBuffer {
       removed = true;
     }
     if (removed) {
-      for (const [pool, list] of this.byPool) {
-        const kept = list.filter(e => this.byKey.get(e.key) === e);
-        if (kept.length === 0) this.byPool.delete(pool);
-        else if (kept.length !== list.length) this.byPool.set(pool, kept);
-      }
+      this.dropRemovedFromPools();
       this.recomputeMaxHeight();
     }
+  }
+
+  /**
+   * Drops entries no longer in byKey from the per-pool lists. The first entry kept after a dropped one (with one
+   * kept before it) is cut: what was between it and its new neighbour is gone, so the two aren't compared.
+   */
+  private dropRemovedFromPools(): void {
+    let reflagged = false;
+    for (const [pool, list] of this.byPool) {
+      const kept: BufferedTemplate[] = [];
+      let dropped = false;
+      for (const e of list) {
+        if (this.byKey.get(e.key) !== e) {
+          dropped = true;
+          continue;
+        }
+        if (dropped && kept.length > 0) {
+          e.cut = true;
+          if (!e.gapBefore) {
+            e.gapBefore = true;
+            this.gapVersion++;
+            reflagged = true;
+          }
+        }
+        dropped = false;
+        kept.push(e);
+      }
+      if (kept.length === 0) this.byPool.delete(pool);
+      else if (kept.length !== list.length) this.byPool.set(pool, kept);
+    }
+    // A flag changed on an entry already handed out: consumers rebuild.
+    if (reflagged) this.epoch++;
   }
 
   private recomputeMaxHeight(): void {

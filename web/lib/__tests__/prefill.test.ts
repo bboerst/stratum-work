@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { prefillHeights, prefillTemplateBuffer, selectPrefillTemplates, PREFILL_WINDOW_MS } from '../prefill';
-import { TemplateBuffer } from '../templateBuffer';
+import { DEFAULT_TEMPLATE_BUFFER_LIMITS, TemplateBuffer } from '../templateBuffer';
 import type { StratumV1Data } from '../types';
 
 const NOW_MS = 1_794_514_000_000;
@@ -9,9 +9,9 @@ const rec = (pool: string, agoMs: number, extra: Record<string, unknown> = {}) =
   ({ pool_name: pool, timestamp: usHex(NOW_MS - agoMs), height: 101, ...extra });
 
 describe('prefillHeights', () => {
-  it('reads tip + 1, and the tip too while it is younger than the chart window', () => {
-    expect(prefillHeights({ height: 100, timestamp: (NOW_MS - 60_000) / 1000 }, NOW_MS)).toEqual([101, 100]);
-    expect(prefillHeights({ height: 100, timestamp: (NOW_MS - PREFILL_WINDOW_MS - 1000) / 1000 }, NOW_MS)).toEqual([101]);
+  it('reads every height the template buffer keeps: tip + 1 and the two before it', () => {
+    expect(prefillHeights({ height: 100 })).toEqual([101, 100, 99]);
+    expect(prefillHeights({ height: 100 }).length).toBe(DEFAULT_TEMPLATE_BUFFER_LIMITS.heights);
   });
 });
 
@@ -26,6 +26,17 @@ describe('selectPrefillTemplates', () => {
     ], { nowMs: NOW_MS, isBlacklisted: none });
     expect(out.map(r => `${r.pool_name}-${(NOW_MS - Number(BigInt('0x' + r.timestamp) / BigInt(1_000_000))) / 1000}s`))
       .toEqual(['B-500s', 'A-400s', 'C-20s', 'A-10s', 'C-5s']);
+  });
+
+  it('cuts the window by each row\'s own receive time, so a connection\'s rows stay contiguous', () => {
+    // B was first seen early on another connection; on this one it came after A. Cut by first-seen time, A would be
+    // kept and B dropped: a hole in this connection's rows.
+    const own = (pool: string, firstAgo: number, ownAgo: number) =>
+      ({ ...rec(pool, firstAgo), received_timestamp: usHex(NOW_MS - ownAgo) });
+    const out = selectPrefillTemplates([
+      own('P', 10_000, 10_000), own('P', PREFILL_WINDOW_MS + 5_000, 9_000), own('P', 8_000, 8_000),
+    ], { nowMs: NOW_MS, isBlacklisted: none });
+    expect(out).toHaveLength(3);
   });
 
   it('drops blacklisted pools, exactly as the stream route does', () => {

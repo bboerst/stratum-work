@@ -76,6 +76,12 @@ export async function fetchMiningNotifyByHeight(height: number): Promise<MiningN
   return pg.templatesAtHeight(height);
 }
 
+/** R1 over heights [from, to], in one statement (one snapshot): the realtime pre-fill. Not cached. */
+export async function fetchMiningNotifyAtHeights(from: number, to: number): Promise<MiningNotify[]> {
+  if (!enableHistoricalData) return [];
+  return pg.templatesAtHeights(from, to);
+}
+
 /**
  * R2: every template at a height, whenever received. Used by the template details page (moved from
  * app/api/analysis-data/route.ts). Not cached.

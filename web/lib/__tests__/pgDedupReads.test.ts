@@ -118,6 +118,12 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     ]);
   });
 
+  it('R1 over a height range (the realtime pre-fill): the same rows as each height read alone', async () => {
+    const both = await pg.templatesAtHeights(h, h + 1);
+    const apart = [...await pg.templatesAtHeight(h), ...await pg.templatesAtHeight(h + 1)];
+    expect(both.map(jobId).sort()).toEqual(apart.map(jobId).sort());
+  });
+
   it('R2: every row at the height, whenever received, de-duplicated; R1 leaves out the late one', async () => {
     const got = await pg.allTemplatesAtHeight(h);
     expect(got.map(jobId)).toEqual(['a1', 'a2', 'a3', 'a4', 'b9', 'oa']);

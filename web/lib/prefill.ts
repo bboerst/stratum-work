@@ -12,14 +12,20 @@ export const PREFILL_WINDOW_MS = 300_000;
 
 export interface PrefillTemplate {
   pool_name?: string | null;
+  /** First seen: over this row and its copies on other connections (shown). */
   timestamp: string;
+  /** This row's own receive time (its connection's order); falls back to timestamp. */
+  received_timestamp?: string;
 }
 
-/** Heights to read: the one being mined (tip + 1), plus the tip itself while it's young enough to be on the chart. */
-export function prefillHeights(tip: { height: number; timestamp: number }, nowMs: number, windowMs = PREFILL_WINDOW_MS): number[] {
-  const heights = [tip.height + 1];
-  if (nowMs - tip.timestamp * 1000 < windowMs) heights.push(tip.height);
-  return heights;
+/**
+ * Heights to read: every height the browser's template buffer keeps (the one being mined, tip + 1, and the two before
+ * it; DEFAULT_TEMPLATE_BUFFER_LIMITS), newest first. A pool can still send work for an older height after a block (a
+ * slow pool, a race), and the buffer treats a read as having every row of a connection between its first and last: a
+ * height left out would be a hole it can't see.
+ */
+export function prefillHeights(tip: { height: number }): number[] {
+  return [tip.height + 1, tip.height, tip.height - 1];
 }
 
 /**
@@ -28,6 +34,8 @@ export function prefillHeights(tip: { height: number; timestamp: number }, nowMs
  *  - each pool's latest template before that (the table and Sankey show each pool's latest; the chart needs it as
  *    the start of the bar crossing its left edge).
  * Blacklisted pools are dropped, exactly as the stream route and /api/mining-notify do.
+ * The window is cut by each row's own receive time, so each connection's rows stay a contiguous stretch of what it
+ * received (first-seen time can be earlier on another connection, out of this connection's order).
  * Output is oldest first.
  */
 export function selectPrefillTemplates<T extends PrefillTemplate>(
@@ -42,7 +50,7 @@ export function selectPrefillTemplates<T extends PrefillTemplate>(
   const withTime: { rec: T; us: bigint }[] = [];
   for (const rec of records) {
     if (!rec.pool_name || isBlacklisted(rec.pool_name)) continue;
-    const us = timestampMicros(rec.timestamp);
+    const us = timestampMicros(rec.received_timestamp ?? rec.timestamp);
     if (us === null) continue;
     withTime.push({ rec, us });
   }

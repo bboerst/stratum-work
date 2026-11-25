@@ -20,6 +20,12 @@ interface UseDataStreamOptions {
   coalesceMs?: number;
   /** Called inside each flush, so state updates made there (e.g. publishing the template buffer) share its render. */
   onFlush?: () => void;
+  /**
+   * Templates were missed: from one pool (`poolName`: the stream route throttled a burst) or from every pool (no
+   * argument: the page was paused or the stream dropped). The next template after it isn't the one after the last
+   * received, so change detection mustn't compare them.
+   */
+  onGap?: (poolName?: string) => void;
 }
 
 /** The latest burst seen for a pool: the stream route showed only some of its templates live (#105). */
@@ -96,6 +102,7 @@ export function useDataStream({
   onMessage,
   coalesceMs = 0,
   onFlush,
+  onGap,
 }: UseDataStreamOptions = {}): UseDataStreamResult {
   const [data, setData] = useState<StreamData[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -118,6 +125,7 @@ export function useDataStream({
   const maxItemsRef = useRef(maxItems);
   const onMessageRef = useRef(onMessage);
   const onFlushRef = useRef(onFlush);
+  const onGapRef = useRef(onGap);
   const coalesceMsRef = useRef(coalesceMs);
   // Messages received since the last flush, and the pending flush
   const batchRef = useRef(new StreamBatch());
@@ -126,7 +134,13 @@ export function useDataStream({
   // Update refs when props change
   useEffect(() => {
     pausedRef.current = paused;
+    // Messages are dropped while paused (processMessage), so whatever arrives after the pause follows a gap.
+    if (paused) onGapRef.current?.();
   }, [paused]);
+
+  useEffect(() => {
+    onGapRef.current = onGap;
+  }, [onGap]);
   
   useEffect(() => {
     dataTypesRef.current = dataTypes;
@@ -190,6 +204,7 @@ export function useDataStream({
       if ('type' in parsedData && parsedData.type === 'burst') {
         // The stream route throttled this pool's templates (#105): record it, don't add it to the data.
         if (typeof parsedData.pool_name === 'string' && typeof parsedData.suppressed === 'number') {
+          if (parsedData.suppressed > 0) onGapRef.current?.(parsedData.pool_name);
           startTransition(() => setBurstsByPool(prev => applyBurstMarker(prev, parsedData, Date.now())));
         }
         return;
@@ -259,6 +274,7 @@ export function useDataStream({
 
       evtSourceRef.current.onerror = () => {
         setIsConnected(false);
+        onGapRef.current?.(); // messages sent until the reconnect are lost
         evtSourceRef.current?.close();
         evtSourceRef.current = null;
         

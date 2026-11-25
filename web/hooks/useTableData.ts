@@ -197,6 +197,10 @@ export function useTableData(
       const timingFields = {
         timestamp: effectiveTimestamp(row, latencyAdjusted),
         raw_timestamp: row.timestamp,
+        received_timestamp: row.received_timestamp,
+        source_id: row.source_id,
+        site: row.site,
+        replica: row.replica,
         lat_ms: row.lat_ms,
         lat_m: row.lat_m,
       };
@@ -351,6 +355,10 @@ export function useTableData(
       const timingFields = {
         timestamp: effectiveTimestamp(item, latencyAdjusted),
         raw_timestamp: item.timestamp,
+        received_timestamp: item.received_timestamp,
+        source_id: item.source_id,
+        site: item.site,
+        replica: item.replica,
         lat_ms: item.lat_ms,
         lat_m: item.lat_m,
       };

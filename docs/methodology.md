@@ -17,6 +17,7 @@ details are in the other files in [`docs/`](./).
 - [Latency adjustment](#latency-adjustment)
 - [Which templates belong to a height](#which-templates-belong-to-a-height)
 - [Several connections per pool](#several-connections-per-pool)
+- [What changed between templates](#what-changed-between-templates)
 - [Blocks](#blocks)
 - [Forks](#forks)
 - [Template providers](#template-providers)
@@ -163,6 +164,55 @@ seen takes the earliest. Nothing is deleted: every hidden template is kept and c
 hidden, and a pool's "first seen" time is the earliest arrival over all its exact copies: when the earliest of our
 connections got it, not when the pool sent it. Since 21 November 2026 our connections are at two sites, so first seen
 can come from either; `site_first_seen` keeps each site's own. The rules are in `db/migrations/20261116200001_one_stream_per_pool.sql`.
+
+## What changed between templates
+
+The timing chart labels each template with what changed since the pool's previous template. It is a judgement made
+when the data is read, from the **observed** bytes: two templates are compared field by field.
+
+What is compared:
+
+- **Every `mining.notify` field** except the job id. Fields are first normalised the way the collector stores them (hex
+  case, `clean_jobs` truthiness), so a live template compares equal to the same template read back from history.
+- **The coinbase, field by field,** from its byte map (the parser behind the template details):
+  - the transaction's version, sequence, locktime and witness;
+  - the scriptSig's merge-mining commitment, text tag, pushed time, other pushed data and push layout;
+  - every output's value and script;
+  - every OP_RETURN, including ones whose protocol isn't known. A protocol that appears twice is compared copy by copy,
+    and a change of order is a change of output structure.
+- **Not the scriptSig's classification.** If the scriptSig's bytes are equal, nothing in it is reported, even if the
+  parser files a byte differently in the next template (for example a pushed time that leaves the window around nTime).
+- **A coinbase that doesn't parse,** on either side, is compared as a whole and reported only as "other coinbase
+  change". No field value is guessed.
+- **Not the extranonce bytes.** They belong to our connection and the miner, not to the template. A new `extranonce1` is
+  reported on its own, as a new connection session (a reconnect).
+
+Templates are compared in each pool's own receive order (for history reads, the shown connection's receive time, not
+the first-seen time of a copy). Latency-adjusted time is not used: adjusting each copy by its own latency estimate
+could swap two templates the pool sent in sequence.
+
+`clean_jobs` is false on most templates: 1–8% of each pool's templates set it, over 4 hours of production data. Every
+template that sets it is marked, including two in a row. Going back to false is not a change.
+
+When a template shows no change:
+
+- **Not compared:** these templates are not compared; hover one to see which case it is.
+  - a pool's first template since the chart started;
+  - a template after templates were missed: the live stream skipped part of a burst, the page was paused, or the
+    stream reconnected. The first live template after the history loaded at page load counts as one too, unless the
+    history and the stream share a template for that pool, which proves nothing was missed between them;
+  - a template from another of our connections than the pool's previous one: some pools give each connection its own
+    jobs, so the difference would be between connections;
+  - a template received out of order.
+- **Compared:** only when the content is identical, or when `clean_jobs` went back to false.
+
+Over 2 hours of production templates (27,132 consecutive pairs), every pair whose content differed reported a change,
+and no identical pair did. Some changes happen on almost every template and are left off the bars (hover for them):
+nTime, output values, the witness commitment, the text tag, the scriptSig's pushed time and other data, and the `OCB1`
+OP_RETURN. Most pools write a fresh nonce or clock value into every job; the `OCB1` output, which one pool writes after the
+extranonce, changes on every job too.
+
+The rules are in `web/utils/templateChangeDetection.ts`, tested in `web/utils/__tests__/templateChangePrecision.test.ts`.
 
 ## Pools excluded from the live site
 

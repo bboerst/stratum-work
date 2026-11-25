@@ -96,6 +96,22 @@ describe('StreamHub', () => {
     expect(a.map(d => JSON.parse(d).pool_name)).toEqual(['P']);
   });
 
+  it('decides one stream per pool once, so a viewer who joins later starts on the active connection', async () => {
+    const { StreamHub } = await import('../streamHub');
+    const hub = new StreamHub();
+    const first: string[] = [];
+    await hub.subscribe({ onMessage: m => { if (!m.skip) first.push(m.data); }, onEnd: () => {} });
+    const ch = broker.conns[broker.conns.length - 1].channel;
+    const t = (replica: string, ntime: string) => msg({ pool_name: 'P', height: 5, site: 's', replica, prev_hash: 'aa',
+      merkle_branches: [], version: '1', nbits: '1', ntime });
+    ch.onMessage!(t('a', '01')); // the primary is active
+    const later: { replica: string; skip?: boolean }[] = [];
+    await hub.subscribe({ onMessage: m => later.push({ replica: String(m.parsed?.replica), skip: m.skip }), onEnd: () => {} });
+    ch.onMessage!(t('b', '02')); // a secondary: skipped for the new viewer too, not shown first
+    ch.onMessage!(t('a', '03'));
+    expect(later).toEqual([{ replica: 'b', skip: true }, { replica: 'a', skip: undefined }]);
+  });
+
   it('keeps the connection for the linger period after the last viewer, then closes it', async () => {
     vi.useFakeTimers();
     const { StreamHub } = await import('../streamHub');

@@ -48,10 +48,11 @@ describe('template change detection', () => {
     clearProcessedDataCache();
   });
 
-  test('first template for a pool: hasChanges=true, no changeTypes', () => {
+  test('first template for a pool: status first, no changeTypes', () => {
     const tracker = createTemplateChangeTracker();
     const result = tracker.process(makeData());
-    expect(result.hasChanges).toBe(true);
+    expect(result.status).toBe('first');
+    expect(result.hasChanges).toBe(false);
     expect(result.changeTypes).toHaveLength(0);
   });
 
@@ -79,14 +80,22 @@ describe('template change detection', () => {
     expect(result.changeDetails.height).toEqual({ old: 100, new: 101 });
   });
 
-  test('clean_jobs tracked only on the false -> true transition', () => {
+  test('clean_jobs flagged on every message that sets it, never when false', () => {
     const tracker = createTemplateChangeTracker();
     tracker.process(makeData({ clean_jobs: false }));
     const toTrue = tracker.process(makeData({ job_id: 'j2', timestamp: '2024-01-01T00:00:01.000', clean_jobs: true }));
     expect(toTrue.changeTypes).toContain(TemplateChangeType.CLEAN_JOBS);
 
-    const toFalse = tracker.process(makeData({ job_id: 'j3', timestamp: '2024-01-01T00:00:02.000', clean_jobs: false }));
+    // Two in a row (two new blocks with no update between them): both flagged.
+    const again = tracker.process(makeData({ job_id: 'j3', timestamp: '2024-01-01T00:00:02.000', height: 101, clean_jobs: true }));
+    expect(again.changeTypes).toContain(TemplateChangeType.CLEAN_JOBS);
+
+    const toFalse = tracker.process(makeData({ job_id: 'j4', timestamp: '2024-01-01T00:00:03.000', height: 101, clean_jobs: false }));
     expect(toFalse.changeTypes).not.toContain(TemplateChangeType.CLEAN_JOBS);
+
+    // The type allows a string.
+    const asString = tracker.process(makeData({ job_id: 'j5', timestamp: '2024-01-01T00:00:04.000', height: 101, clean_jobs: 'true' }));
+    expect(asString.changeTypes).toContain(TemplateChangeType.CLEAN_JOBS);
   });
 
   test('per-pool isolation', () => {
@@ -139,7 +148,8 @@ describe('template change detection', () => {
     const tracker = createTemplateChangeTracker();
     tracker.process(makeData());
     const result = tracker.process(makeData({ timestamp: '2024-01-01T00:00:01.000' }));
-    expect(result.hasChanges).toBe(true);
+    expect(result.status).toBe('compared');
+    expect(result.hasChanges).toBe(false);
     expect(result.changeTypes).toHaveLength(0);
   });
 
@@ -153,6 +163,8 @@ describe('template change detection', () => {
     // An older template arrives late (timestamp between job1 and job2).
     const late = tracker.process(makeData({ job_id: 'job1b', timestamp: '2024-01-01T00:00:01.000', version: '20000001' }));
     expect(late.outOfOrder).toBe(true);
+    expect(late.status).toBe('outOfOrder');
+    expect(late.changeTypes).toHaveLength(0); // never a backwards diff against the newer template
 
     // Baseline must still be job2, so the next in-order template compares
     // against job2, not against the late arrival (whose version differed).
@@ -162,15 +174,14 @@ describe('template change detection', () => {
     expect(next.changeTypes).not.toContain(TemplateChangeType.HEIGHT);
   });
 
-  test('baseline resets when height regresses (new chain tip / block switch)', () => {
+  test('a lower height is compared like any change (a pool going back to an older tip)', () => {
     const tracker = createTemplateChangeTracker();
-    tracker.process(makeData({ height: 100 }));
-    tracker.process(makeData({ job_id: 'job2', timestamp: '2024-01-01T00:00:01.000', height: 101 }));
-
-    // Height going backwards means a new block was found and we switched to a
-    // different height view; treat the next template as a fresh baseline.
-    const result = tracker.process(makeData({ job_id: 'job3', timestamp: '2024-01-01T00:00:02.000', height: 99 }));
-    expect(result.changeTypes).toHaveLength(0);
+    tracker.process(makeData({ height: 101, prev_hash: 'bb'.repeat(32) }));
+    const result = tracker.process(makeData({ job_id: 'job2', timestamp: '2024-01-01T00:00:01.000', height: 100, prev_hash: 'aa'.repeat(32) }));
+    expect(result.status).toBe('compared');
+    expect(result.changeTypes).toContain(TemplateChangeType.HEIGHT);
+    expect(result.changeTypes).toContain(TemplateChangeType.PREV_HASH);
+    expect(result.changeDetails.height).toEqual({ old: 101, new: 100 });
   });
 
   // BUG 4: result-cache eviction used to cause re-computation against the

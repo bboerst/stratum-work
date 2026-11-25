@@ -24,6 +24,10 @@ export interface MiningNotify {
   version: string;
   prev_hash: string;
   timestamp: string;
+  /** The row's own receive time (its connection's), same format; differs from `timestamp` when that is first seen. */
+  received_timestamp: string;
+  /** The connection (source) that received this row (also part of `id`). */
+  source_id: number;
   nbits: string;
   ntime: string;
   clean_jobs: boolean;
@@ -140,6 +144,8 @@ export function templateRowToMiningNotify(row: TemplateRow): MiningNotify {
     version: u32Hex(row.version),
     prev_hash: hex(row.prev_hash),
     timestamp: timestampHexFromMicros(row.first_seen_us ?? row.received_us),
+    received_timestamp: timestampHexFromMicros(row.received_us),
+    source_id: row.source_id,
     nbits: u32Hex(row.nbits),
     ntime: u32Hex(row.ntime),
     clean_jobs: row.clean_jobs,

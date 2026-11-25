@@ -251,3 +251,78 @@ describe('other-chain templates (collectors don\'t tag them)', () => {
     expect(buf.currentHeight).toBe(976_401);
   });
 });
+
+describe('gaps (change detection must not compare across missed templates)', () => {
+  const gapOf = (b: TemplateBuffer, job: string) => b.entries().find(e => e.data.job_id === job)?.gapBefore === true;
+  const live = (b: TemplateBuffer, t: StratumV1Data[]) => b.add(t, undefined, { live: true });
+
+  it('marks only the next live template of a throttled pool', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 0), tpl('B', 100, 1)]);
+    b.markGap('A');
+    live(b, [tpl('A', 100, 10), tpl('B', 100, 11), tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-10')).toBe(true);
+    expect(gapOf(b, 'B-11')).toBe(false);
+    expect(gapOf(b, 'A-20')).toBe(false);
+  });
+
+  it('marks the next live template of every pool after a pause or reconnect, not a pool seen for the first time', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 0), tpl('B', 100, 1)]);
+    b.markGap();
+    live(b, [tpl('A', 100, 10), tpl('C', 100, 12)]);
+    live(b, [tpl('B', 100, 15), tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-10')).toBe(true);
+    expect(gapOf(b, 'B-15')).toBe(true);
+    expect(gapOf(b, 'C-12')).toBe(false);
+    expect(gapOf(b, 'A-20')).toBe(false);
+  });
+
+  it('the first live template after the pre-fill follows a gap unless the two overlap', () => {
+    const b = new TemplateBuffer();
+    b.add([tpl('A', 100, 0), tpl('A', 100, 5)]); // pre-fill
+    live(b, [tpl('A', 100, 10), tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-5')).toBe(false);
+    expect(gapOf(b, 'A-10')).toBe(true); // nothing proves A-5 and A-10 were consecutive
+    expect(gapOf(b, 'A-20')).toBe(false);
+
+    const c = new TemplateBuffer();
+    c.add([tpl('A', 100, 0), tpl('A', 100, 5)]);
+    live(c, [tpl('A', 100, 5), tpl('A', 100, 10)]); // A-5 arrived from both: the pre-fill and the stream meet
+    expect(gapOf(c, 'A-10')).toBe(false);
+  });
+
+  it('a pre-fill landing after the first live templates: the seam is judged then (and the epoch bumps to rebuild)', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 10), tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-10')).toBe(false); // nothing before it yet
+    const epoch = b.epoch;
+    b.add([tpl('A', 100, 0), tpl('A', 100, 5)]);
+    expect(gapOf(b, 'A-10')).toBe(true);
+    expect(b.epoch).toBeGreaterThan(epoch);
+
+    const c = new TemplateBuffer();
+    live(c, [tpl('A', 100, 10), tpl('A', 100, 20)]);
+    c.add([tpl('A', 100, 5), tpl('A', 100, 10)]); // overlaps at A-10
+    expect(gapOf(c, 'A-10')).toBe(false);
+  });
+
+  it('a pre-fill landing late neither takes nor cancels a gap', () => {
+    const b = new TemplateBuffer();
+    live(b, [tpl('A', 100, 10)]);
+    b.markGap(); // paused / stream error
+    b.add([tpl('A', 100, 5), tpl('A', 100, 8)]); // older rows from the pre-fill
+    expect(gapOf(b, 'A-5')).toBe(false);
+    expect(gapOf(b, 'A-8')).toBe(false);
+    live(b, [tpl('A', 100, 20)]);
+    expect(gapOf(b, 'A-20')).toBe(true);
+  });
+
+  it('keys a history row on its own receive time, so the stream copy of the same template is not buffered twice', () => {
+    const b = new TemplateBuffer();
+    // History: shown with the first-seen time of a copy on another connection (earlier), plus its own receive time.
+    b.add([tpl('A', 100, 10, { timestamp: hexNsFromPostgres(8), received_timestamp: hexNsFromPostgres(10) })]);
+    live(b, [tpl('A', 100, 10)]); // the live stream: its own receive time
+    expect(b.size).toBe(1);
+  });
+});

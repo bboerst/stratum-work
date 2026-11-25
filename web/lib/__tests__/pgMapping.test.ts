@@ -68,6 +68,8 @@ describe('templateRowToMiningNotify', () => {
       version: '20000000',
       prev_hash: '90b62fac1e09306615f1d97dbea75b7ad1d6ab17000111df0000000000000000',
       timestamp: '18e750a5ee035e00',
+      received_timestamp: '18e750a5ee035e00',
+      source_id: 3,
       nbits: '1701e5ac',
       ntime: '6af5c36b',
       clean_jobs: true,
@@ -78,7 +80,7 @@ describe('templateRowToMiningNotify', () => {
     });
     // Stable key order
     expect(Object.keys(doc)).toEqual(['id', 'height', 'pool_name', 'coinbase1', 'coinbase2',
-      'merkle_branches', 'version', 'prev_hash', 'timestamp', 'nbits', 'ntime', 'clean_jobs', 'extranonce1',
+      'merkle_branches', 'version', 'prev_hash', 'timestamp', 'received_timestamp', 'source_id', 'nbits', 'ntime', 'clean_jobs', 'extranonce1',
       'extranonce2_length', 'lat_ms', 'lat_m']);
   });
 
@@ -104,6 +106,7 @@ describe('templateRowToMiningNotify', () => {
   it('shows the first-seen time when given (templates_dedup) but keeps the own receive time in the id', () => {
     const doc = templateRowToMiningNotify(templateRow({ received_us: '1794491650123456', first_seen_us: '1794491650100000' }));
     expect(doc.timestamp).toBe(timestampHexFromMicros('1794491650100000'));
+    expect(doc.received_timestamp).toBe(timestampHexFromMicros('1794491650123456')); // change detection orders by it
     expect(doc.id).toMatch(/^3-1794491650123456-[0-9a-f]{12}$/);
     expect(doc.id).not.toContain('2687119');
   });

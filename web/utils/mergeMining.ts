@@ -12,6 +12,7 @@
 //   exSat               exSat consensus contracts (utils.hpp get_op_return_eos_account / account_decode)
 //   Syscoin             Syscoin 5 auxpow_miner.cpp createScriptPubKey ("sys" + block hash + height)
 //   Hathor              hathor-core merged_mining ("Hath" + mining base hash)
+//   OCB1                no published spec: the "OCB1" marker as seen on chain (20 bytes: marker + 16 undecoded bytes)
 //   AuxPoW              Bitcoin wiki "Merged mining specification" and Namecoin's CAuxPow::check / getExpectedIndex
 
 import { parseCoinbase, tokenizeScript, ByteRange, ParsedCoinbase, AuxPow } from "./coinbaseParser";
@@ -21,6 +22,7 @@ export type Confidence =
   | "spec" // layout from a published spec or the protocol's reference code, and it matches the data seen
   | "marker" // only the protocol marker is from a spec; the payload isn't decoded
   | "heuristic" // a shape match without a distinctive marker
+  | "observed" // a marker seen repeatedly in real coinbases, with no published spec; the payload isn't decoded
   | "structural"; // known from how the coinbase was built (e.g. the extranonce position), not from the bytes
 
 export type OpReturnProtocolId =
@@ -34,6 +36,7 @@ export type OpReturnProtocolId =
   | "runestone"
   | "stacks"
   | "bip47"
+  | "ocb1"
   | "extranonce"
   | "empty"
   | "malformed"
@@ -102,6 +105,7 @@ const SYSCOIN_TAG = ascii("sys");
 const HATHOR_TAG = ascii("Hath");
 const OMNI_TAG = ascii("omni");
 const STACKS_TAG = ascii("X2[");
+const OCB1_TAG = ascii("OCB1");
 
 // exSat account names: one byte per character, an index into this alphabet (contract-of-consensus account_decode).
 const EXSAT_ALPHABET = "abcdefghijklmnopqrstuvwxyz12345.";
@@ -282,6 +286,21 @@ function decodeOmni(d: Uint8Array): Omit<OpReturnDecoded, "dataHex"> {
   };
 }
 
+// "OCB1" + 16 bytes, seen in one pool's block coinbases on chain (2024 onwards). No spec is published, so only the
+// marker is known; the rest is shown as bytes and compared as a whole. In templates it follows the stratum extranonce
+// (pool-written) and changes on every job, consistent with per-job extranonce space for the pool's own miners.
+function decodeOcb1(d: Uint8Array): Omit<OpReturnDecoded, "dataHex"> {
+  const base = { id: "ocb1" as const, protocol: "OCB1", confidence: "observed" as const };
+  const fields: DecodedField[] = [
+    {
+      label: "Payload",
+      value: toHex(d, 4),
+      hint: "The 4-byte \"OCB1\" marker is followed by these bytes, which change on every job (likely extranonce space for the pool's own miners). Their layout isn't published.",
+    },
+  ];
+  return { ...base, fields, commitment: toHex(d, 4), error: d.length !== 20 ? `${d.length} bytes, 20 seen so far` : undefined };
+}
+
 function decodeUnknown(d: Uint8Array): Omit<OpReturnDecoded, "dataHex"> {
   const fields: DecodedField[] = [{ label: "Length", value: `${d.length} bytes` }];
   let n = 0;
@@ -298,6 +317,7 @@ const DECODERS: { prefix: number[]; decode: Decoder }[] = [
   { prefix: SYSCOIN_TAG, decode: decodeSyscoin },
   { prefix: HATHOR_TAG, decode: decodeHathor },
   { prefix: OMNI_TAG, decode: decodeOmni },
+  { prefix: OCB1_TAG, decode: decodeOcb1 },
   {
     prefix: STACKS_TAG,
     decode: () => ({ id: "stacks", protocol: "Stacks Block Commit", chain: "Stacks", confidence: "marker", fields: [] }),

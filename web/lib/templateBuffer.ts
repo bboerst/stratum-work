@@ -16,6 +16,12 @@ export interface BufferedTemplate {
   /** Collector receive time, ms since the epoch (from the hex-nanosecond `timestamp`). */
   timeMs: number;
   data: StratumV1Data;
+  /** Templates from this pool may have been missed just before this one: change detection doesn't compare it. */
+  gapBefore?: boolean;
+  /** Came from the live stream (else from the history pre-fill). */
+  live?: boolean;
+  /** markGap applied to it (gapBefore may also come from the pre-fill/stream seam). */
+  gapMarked?: boolean;
 }
 
 export interface TemplateBufferLimits {
@@ -51,7 +57,7 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
 }
 
 /**
- * De-duplication key: pool + receive time in µs + the template's content (ntime, coinbase1, coinbase2).
+ * De-duplication key: pool + own receive time in µs + the template's content (ntime, coinbase1, coinbase2).
  *
  * It's the same for a template whether it came from the stream or the API (the API's id, `<source>-<µs>-<hash>`,
  * isn't in the stream). Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
@@ -60,9 +66,11 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
  * stream keeps the pool's casing.
  */
 export function templateKey(
-  t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'ntime' | 'coinbase1' | 'coinbase2'>>,
+  t: Pick<StratumV1Data, 'pool_name' | 'timestamp'> & Partial<Pick<StratumV1Data, 'received_timestamp' | 'ntime' | 'coinbase1' | 'coinbase2'>>,
 ): string | null {
-  const us = timestampMicros(t.timestamp);
+  // The row's own receive time: a history read's `timestamp` can be the first-seen time over other connections' copies,
+  // while the live stream sends the shown connection's own, so keying on `timestamp` would buffer one template twice.
+  const us = timestampMicros(t.received_timestamp ?? t.timestamp);
   if (us === null || !t.pool_name) return null;
   const content = [t.ntime, t.coinbase1, t.coinbase2].map(v => (v ?? '').toLowerCase()).join('|');
   return `${t.pool_name}|${us.toString()}|${content}`;
@@ -79,6 +87,21 @@ export class TemplateBuffer {
   private tip: number | null = null;
   private maxTemplateHeight: number | null = null;
   private snapshot: BufferedTemplate[] | null = null;
+  /**
+   * Gaps (markGap): pools whose next live template follows a gap; a counter bumped by a gap for every pool, and the
+   * value each pool's last live template saw.
+   */
+  private readonly gapPools = new Set<string>();
+  private gapAllEpoch = 0;
+  private readonly liveEpochByPool = new Map<string, number>();
+  /**
+   * The pre-fill/stream seam: a pool's first live template follows its pre-fill rows, but templates sent between the
+   * pre-fill's read and the stream's start may be missing, unless the two overlap (a template arrived from both), which
+   * proves nothing was missed in between. Per pool: its first live entry, its oldest pre-fill time, and the overlap.
+   */
+  private readonly firstLive = new Map<string, BufferedTemplate>();
+  private readonly prefillMinMs = new Map<string, number>();
+  private readonly overlap = new Set<string>();
 
   /** Bumped on every change. */
   version = 0;
@@ -126,16 +149,18 @@ export class TemplateBuffer {
   }
 
   /**
-   * Merge templates (the history pre-fill or the live stream). Returns how many new entries were added. A template
+   * Merge templates (the history pre-fill, or the live stream with `live`). Returns how many new entries were added. A template
    * already buffered is not added again. Non-Bitcoin templates and pools rejected by `isAllowed` are skipped.
    */
   add(
     templates: StratumV1Data[],
     isAllowed: (poolName: string) => boolean = () => true,
+    { live = false }: { live?: boolean } = {},
   ): number {
     let added = 0;
     let outOfOrder = false;
     const newestByPool = this.newestByPool();
+    const seamPools = new Set<string>();
 
     for (const data of templates) {
       // Other chains' templates arrive untagged (collectors don't classify, docs/design/one-templates-table.md): the
@@ -150,24 +175,79 @@ export class TemplateBuffer {
       const key = templateKey(data);
       if (key === null) continue;
 
-      if (this.byKey.has(key)) continue;
+      const existing = this.byKey.get(key);
+      if (existing) {
+        // The same template from the pre-fill and the live stream: the two meet for this pool.
+        if (!!existing.live !== live && !this.overlap.has(data.pool_name)) {
+          this.overlap.add(data.pool_name);
+          seamPools.add(data.pool_name);
+        }
+        continue;
+      }
 
       const timeMs = Number(timestampMicros(data.timestamp)!) / 1000;
       const newest = newestByPool.get(data.pool_name);
       if (newest !== undefined && timeMs < newest) outOfOrder = true;
       if (newest === undefined || timeMs > newest) newestByPool.set(data.pool_name, timeMs);
 
-      this.byKey.set(key, { key, seq: this.nextSeq++, timeMs, data });
+      // A gap applies to the pool's next live template in receive order (not to an older one arriving late, nor to
+      // the pre-fill), and only when the pool had a template before it.
+      let gapMarked = false;
+      if (live && (newest === undefined || timeMs >= newest)) {
+        const seenLive = this.liveEpochByPool.get(data.pool_name);
+        gapMarked = newest !== undefined
+          && (this.gapPools.has(data.pool_name) || (seenLive !== undefined && seenLive !== this.gapAllEpoch));
+        this.gapPools.delete(data.pool_name);
+        this.liveEpochByPool.set(data.pool_name, this.gapAllEpoch);
+      }
+      const seq = this.nextSeq++;
+      const entry: BufferedTemplate = { key, seq, timeMs, data };
+      if (live) entry.live = true;
+      if (gapMarked) entry.gapMarked = entry.gapBefore = true;
+      this.byKey.set(key, entry);
+      if (live && !this.firstLive.has(data.pool_name)) {
+        this.firstLive.set(data.pool_name, entry);
+        seamPools.add(data.pool_name);
+      }
+      if (!live) {
+        const min = this.prefillMinMs.get(data.pool_name);
+        if (min === undefined || timeMs < min) this.prefillMinMs.set(data.pool_name, timeMs);
+        seamPools.add(data.pool_name);
+      }
       if (this.maxTemplateHeight === null || data.height > this.maxTemplateHeight) {
         this.maxTemplateHeight = data.height;
       }
       added++;
     }
 
+    // An entry already handed out whose gap flag changes needs consumers to rebuild (like an out-of-order arrival).
+    for (const pool of seamPools) if (this.updateSeam(pool)) outOfOrder = true;
     if (added > 0) this.trim();
     if (outOfOrder) this.epoch++;
     if (added > 0) this.changed();
     return added;
+  }
+
+  /** Sets the seam gap on a pool's first live entry; true if a flag changed. */
+  private updateSeam(pool: string): boolean {
+    const e = this.firstLive.get(pool);
+    if (!e) return false;
+    const min = this.prefillMinMs.get(pool);
+    const seam = min !== undefined && min < e.timeMs && !this.overlap.has(pool);
+    const gap = !!e.gapMarked || seam;
+    if (!!e.gapBefore === gap) return false;
+    if (gap) e.gapBefore = true;
+    else delete e.gapBefore;
+    return true;
+  }
+
+  /**
+   * Templates were missed (a throttled burst for `poolName`, or a pause or dropped stream for every pool): the next
+   * template of the pool (or of each pool) is marked `gapBefore`.
+   */
+  markGap(poolName?: string): void {
+    if (poolName === undefined) this.gapAllEpoch++;
+    else this.gapPools.add(poolName);
   }
 
   /** All entries, oldest first (receive time, then insertion order). The array is cached until the next change. */
@@ -178,6 +258,11 @@ export class TemplateBuffer {
 
   clear(): void {
     this.byKey.clear();
+    this.gapPools.clear();
+    this.liveEpochByPool.clear();
+    this.firstLive.clear();
+    this.prefillMinMs.clear();
+    this.overlap.clear();
     this.maxTemplateHeight = null;
     this.epoch++;
     this.changed();

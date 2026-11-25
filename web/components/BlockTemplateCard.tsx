@@ -5,6 +5,7 @@ import { StratumV1Data, CoinbaseOutput } from "@/lib/types";
 import { useSelectedTemplate } from '@/lib/SelectedTemplateContext';
 import {
     formatNbits,
+    formatCoinbaseRaw,
 } from '@/utils/formatters';
 import {
     computeCoinbaseOutputValue,
@@ -211,12 +212,8 @@ const BlockTemplateCard: React.FC<BlockTemplateCardProps> = ({ latestMessage }) 
         if (!displayMessage) return null;
 
         try {
-            const cbRaw = (
-                displayMessage.coinbase1 + 
-                displayMessage.extranonce1 + 
-                ('00'.repeat(displayMessage.extranonce2_length)) + 
-                displayMessage.coinbase2
-            );
+            const cbRaw = formatCoinbaseRaw(displayMessage.coinbase1, displayMessage.extranonce1,
+                displayMessage.extranonce2_length, displayMessage.coinbase2);
 
             const { scriptSigInfo, txDetails } = parseCoinbaseData(cbRaw);
             const coinbaseOutputValue = computeCoinbaseOutputValue(cbRaw);

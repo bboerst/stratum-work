@@ -1,3 +1,4 @@
+import { coinbaseHex } from "./coinbaseParser";
 // Utility functions for formatting data in the RealtimeTable
 
 // Reverse a hex string (e.g. for prev_block_hash)
@@ -37,14 +38,16 @@ export function formatPrevBlockHash(raw: string): string {
   return reverseHex(raw);
 }
 
-// Reconstruct the coinbase transaction from coinbase1 + extranonce1 + "00" * extranonce2_length + coinbase2
+// Reconstruct the coinbase transaction from coinbase1 + extranonce1 + "00" * extranonce2_length + coinbase2; "" when the
+// parts can't be a coinbase (utils/coinbaseParser.ts coinbaseHex: bounded, never throws), which every decoder treats as
+// unparseable.
 export function formatCoinbaseRaw(
   coinbase1: string,
   extranonce1: string,
   extranonce2_length: number,
   coinbase2: string
 ): string {
-  return coinbase1 + extranonce1 + "00".repeat(extranonce2_length) + coinbase2;
+  return coinbaseHex(coinbase1, extranonce1, extranonce2_length, coinbase2) ?? "";
 }
 
 // Format ntime as unix time

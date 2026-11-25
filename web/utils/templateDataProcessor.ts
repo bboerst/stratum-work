@@ -1,6 +1,6 @@
 import { StratumV1Data } from '@/lib/types';
 import { toOpReturnData } from './bitcoinUtils';
-import { parseCoinbase, ParsedCoinbase, ByteRange } from './coinbaseParser';
+import { coinbaseHex, parseCoinbase, ParsedCoinbase, ByteRange } from './coinbaseParser';
 import { decodeOpReturnScript } from './mergeMining';
 
 /**
@@ -109,14 +109,16 @@ function hexToBytesSafe(hex: string): Uint8Array {
 export function coinbaseContent(
   data: Pick<StratumV1Data, 'coinbase1' | 'extranonce1' | 'extranonce2_length' | 'coinbase2' | 'ntime'>,
 ): { content: CoinbaseContent; opReturns: Map<string, OpReturnEntry> } {
-  const extranonce1 = (data.extranonce1 || '').toLowerCase();
-  const coinbase1 = (data.coinbase1 || '').toLowerCase();
-  const coinbase2 = (data.coinbase2 || '').toLowerCase();
-  const ntime = data.ntime && /^[0-9a-fA-F]{1,8}$/.test(data.ntime) ? parseInt(data.ntime, 16) : undefined;
+  // A pool's message can carry any JSON type in any field (#105): anything that isn't a string reads as empty here.
+  const text = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+  const extranonce1 = text(data.extranonce1);
+  const coinbase1 = text(data.coinbase1);
+  const coinbase2 = text(data.coinbase2);
+  const ntime = typeof data.ntime === 'string' && /^[0-9a-fA-F]{1,8}$/.test(data.ntime) ? parseInt(data.ntime, 16) : undefined;
   const en2 = Number(data.extranonce2_length);
   const parsed: ParsedCoinbase = parseCoinbase(coinbase1, extranonce1, en2, coinbase2, { ntime });
   if (!parsed.ok || !parsed.scriptSig) return { content: { ...EMPTY_COINBASE, extranonce1, coinbase1, coinbase2 }, opReturns: new Map() };
-  const tx = coinbase1 + extranonce1 + '00'.repeat(en2) + coinbase2;
+  const tx = coinbaseHex(coinbase1, extranonce1, en2, coinbase2) ?? '';
   const en: ByteRange = { start: parsed.extranonce1.start, end: parsed.extranonce2.end };
   const masked = (r: ByteRange) => {
     if (r.end <= en.start || en.end <= r.start) return tx.slice(r.start * 2, r.end * 2);
@@ -227,7 +229,7 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
     nbits: data.nbits === undefined ? undefined : u32Hex(data.nbits),
     ntime: data.ntime === undefined ? undefined : u32Hex(data.ntime),
     cleanJobs: cleanJobsFlag(data.clean_jobs),
-    merkleBranches: (data.merkle_branches ?? []).map(lowerHex),
+    merkleBranches: Array.isArray(data.merkle_branches) ? data.merkle_branches.map(lowerHex) : [],
     extranonce2Length: Number(data.extranonce2_length),
     // site/replica name a connection the same way on the stream and on history reads; older history rows have only
     // source_id (another kind of name, which change detection doesn't compare against site/replica).

@@ -487,8 +487,25 @@ export function coinbaseTagText(parsed: ParsedCoinbase, maxLength = 80): string 
   return text.length > maxLength ? text.slice(0, maxLength) + "…" : text;
 }
 
-/** Hex of a range of the rebuilt coinbase (for display). */
+/**
+ * The coinbase rebuilt from its stratum parts (extranonce2 as zeros), or null when the parts can't be one: a part that
+ * isn't a string of hex digit pairs, an extranonce2 length that isn't an integer in 0..MAX_EXTRANONCE2_LENGTH, or a
+ * total over MAX_COINBASE_BYTES. Every rebuild goes through here, so a hostile or garbled value (a negative length, or
+ * one in the millions relayed by the live stream) can't throw or allocate without bound: callers show "not parsed".
+ * Display only; what is stored is never changed.
+ */
+export function coinbaseHex(coinbase1: unknown, extranonce1: unknown, extranonce2Length: unknown, coinbase2: unknown): string | null {
+  const en1 = extranonce1 === null || extranonce1 === undefined ? "" : extranonce1;
+  if (typeof coinbase1 !== "string" || typeof en1 !== "string" || typeof coinbase2 !== "string") return null;
+  const n = typeof extranonce2Length === "string" && /^[0-9]{1,3}$/.test(extranonce2Length) ? Number(extranonce2Length) : extranonce2Length;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > MAX_EXTRANONCE2_LENGTH) return null;
+  if (coinbase1.length + en1.length + n * 2 + coinbase2.length > MAX_COINBASE_BYTES * 2) return null;
+  if (!HEX_RE.test(coinbase1) || !HEX_RE.test(en1) || !HEX_RE.test(coinbase2)) return null;
+  return coinbase1 + en1 + "00".repeat(n) + coinbase2;
+}
+
+/** Hex of a range of the rebuilt coinbase (for display); "" when the parts can't be one (coinbaseHex). */
 export function rangeHex(coinbase1: string, extranonce1: string, extranonce2Length: number, coinbase2: string, r: ByteRange): string {
-  const hex = coinbase1 + (extranonce1 || "") + "00".repeat(Math.max(0, extranonce2Length | 0)) + coinbase2;
-  return hex.slice(r.start * 2, r.end * 2);
+  const hex = coinbaseHex(coinbase1, extranonce1, extranonce2Length, coinbase2);
+  return hex === null ? "" : hex.slice(r.start * 2, r.end * 2);
 }

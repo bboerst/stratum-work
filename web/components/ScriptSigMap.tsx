@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { parseCoinbase, ScriptSegmentKind } from "@/utils/coinbaseParser";
+import { coinbaseHex, parseCoinbase, ScriptSegmentKind } from "@/utils/coinbaseParser";
 
 // A byte map of the coinbase scriptSig: what each part is (height, the pool's tags, its clock, merge-mining,
 // extranonce), decoded by utils/coinbaseParser.
@@ -34,7 +34,7 @@ const ScriptSigMap: React.FC<Props> = ({ coinbase1, extranonce1, extranonce2Leng
   const sig = parsed.scriptSig;
   if (!sig) return <div className="italic text-muted-foreground">Coinbase not parseable{parsed.error ? `: ${parsed.error}` : ""}</div>;
 
-  const hex = coinbase1 + (extranonce1 || "") + "00".repeat(Math.max(0, Number(extranonce2Length) | 0)) + coinbase2;
+  const hex = coinbaseHex(coinbase1, extranonce1, extranonce2Length, coinbase2) ?? "";
   const used = new Set(sig.segments.map((s) => s.kind));
 
   return (

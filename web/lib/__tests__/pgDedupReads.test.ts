@@ -9,6 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
+import { templateIdSuffix } from '../connectionMask';
 
 const env = process.env;
 const enabled = !!env.PG_TEST_HOST;
@@ -82,7 +83,13 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
     await getPgPool().end();
   });
 
-  const jobId = (t: { id: string }) => t.id.split('-').pop();   // id = <source_id>-<own µs>-<job_id>
+  // id = <source_id>-<own µs>-<keyed hash of the job id>: the job id is found back among the ones inserted
+  const JOBS = ['a1', 'a2', 'a3', 'a4', 'b4', 'b7', 'b8', 'b9', 'c3', 'c4', 's1', 's2', 's3', 'oa', 'ob'];
+  const jobId = (t: { id: string }) => {
+    const [s, u, x] = t.id.split('-');
+    return JOBS.find(j => templateIdSuffix(s, u, j) === x);
+  };
+  const idOf = (source: number, at: string, job: string) => `${source}-${at}-${templateIdSuffix(source, at, job)}`;
   const us = (s: number) => String(BigInt(Math.round((T0 + s) * 1e6)));
   const hexNs = (s: number) => (BigInt(us(s)) * BigInt(1000)).toString(16);
 
@@ -97,15 +104,15 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
       [name, 'a4', 'a4', '00000096', hexNs(32.0), 7, 'tcp'],       // a copy at the same µs: the primary's
       [name, 'b9', 'b3', '0000012c', hexNs(200.0), 200000, 'tcp'], // gap fill: its own
     ]);
-    expect(got[0].id).toBe(`${sid['ci/a']}-${us(0.020)}-a1`);   // own receive time in the id
+    expect(got[0].id).toBe(idOf(sid['ci/a'], us(0.020), 'a1'));   // own receive time in the id
   });
 
   it('R1: one collector per pool returns the raw rows', async () => {
     const got = await pg.templatesAtHeight(h + 1);
     expect(got.map(t => [jobId(t), t.ntime, t.timestamp, t.id])).toEqual([
-      ['s1', '00000064', hexNs(1), `${sid.single}-${us(1)}-s1`],
-      ['s2', '00000065', hexNs(2), `${sid.single}-${us(2)}-s2`],
-      ['s3', '00000065', hexNs(3), `${sid.single}-${us(3)}-s3`],
+      ['s1', '00000064', hexNs(1), idOf(sid.single, us(1), 's1')],
+      ['s2', '00000065', hexNs(2), idOf(sid.single, us(2), 's2')],
+      ['s3', '00000065', hexNs(3), idOf(sid.single, us(3), 's3')],
     ]);
   });
 

@@ -155,17 +155,13 @@ const JsonViewerWithMerkleColors: React.FC<JsonViewerProps> = ({ data }) => {
 
   // Manually remove/redact properties
   delete (displayMessage as Record<string, unknown>)._id;
-  delete (displayMessage as Record<string, unknown>).job_id;
   delete (displayMessage as Record<string, unknown>).timestamp; // Hide timestamp
   delete (displayMessage as Record<string, unknown>).pool_name; // Hide pool_name
   delete (displayMessage as Record<string, unknown>).height;    // Hide height
 
-  // Add redacted values back
-  const redactedMessage = {
-    ...displayMessage,
-    job_id: '[REDACTED]',
-    // extranonce1 arrives masked from the server (a per-connection pseudonym of the same length), so it's shown as is.
-  };
+  // job_id isn't served; extranonce1 arrives masked from the server (a per-connection pseudonym of the same length),
+  // so it's shown as is.
+  const redactedMessage = displayMessage;
 
   const jsonString = JSON.stringify(redactedMessage, null, 2);
   const lines = jsonString.split('\n');

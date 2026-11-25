@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const h = parseInt(height);
-    // The height page's template table: every template in full (job id, coinbase, merkle branches), as the realtime
+    // The height page's template table: every template in full (coinbase, merkle branches), as the realtime
     // table shows them. POOL_BLACKLIST pools are left out at every height, as in the stream (#301); the analysis views
     // (first seen, /api/analysis-data, Forks) keep them at mined heights.
     const records = await getMiningNotifyByHeight(h);

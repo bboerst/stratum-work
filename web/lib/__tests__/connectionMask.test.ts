@@ -105,11 +105,24 @@ describe('maskTemplate', () => {
 });
 
 describe('maskStreamMessage', () => {
-  it('masks a template message', () => {
+  it('masks a template message and drops its job id', () => {
     const msg = JSON.stringify({ pool_name: 'PoolA', extranonce1: '0011aabb', job_id: '1' });
     const out = JSON.parse(maskStreamMessage(msg, mask)!);
     expect(out.extranonce1).toBe(mask('PoolA', '0011aabb'));
-    expect(out.job_id).toBe('1');
+    expect(out).not.toHaveProperty('job_id');
+  });
+
+  it('drops job ids at any depth from messages without extranonce1 (a block event\'s analysis)', () => {
+    const msg = JSON.stringify({ type: 'block', analysis: { coinbase_parse: { unparsed: [{ pool_name: 'PoolA', sample_job_id: 'JOBSENTINEL' }] } } });
+    const out = maskStreamMessage(msg, mask)!;
+    expect(out).not.toContain('JOBSENTINEL');
+    expect(JSON.parse(out)).toEqual({ type: 'block', analysis: { coinbase_parse: { unparsed: [{ pool_name: 'PoolA' }] } } });
+    expect(maskStreamMessage('{"job_id":"1"', mask)).toBeNull();   // unparseable and mentions it: dropped
+  });
+
+  it('keeps the same text when the words only appear inside values', () => {
+    const msg = '{"type":"note","text":"job_id and extranonce1"}';
+    expect(maskStreamMessage(msg, mask)).toBe(msg);
   });
 
   it('passes messages without the field unchanged', () => {

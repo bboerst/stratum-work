@@ -16,7 +16,6 @@ import { formatCoinbaseRaw } from './formatters';
 export interface ProcessedTemplateData {
   // Core stratum fields
   poolName: string;
-  jobId: string;
   height: number;
   prevHash: string;
   version: string;
@@ -151,7 +150,6 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
 
   const processed: ProcessedTemplateData = {
     poolName: data.pool_name,
-    jobId: data.job_id,
     height: data.height,
     prevHash: data.prev_hash,
     version: data.version,

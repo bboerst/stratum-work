@@ -59,7 +59,7 @@ describe('templateRowToMiningNotify', () => {
   it('rebuilds the template shape', () => {
     const doc = templateRowToMiningNotify(templateRow());
     expect(doc).toEqual({
-      id: '3-1794491650123456-2687119',
+      id: expect.stringMatching(/^3-1794491650123456-[0-9a-f]{12}$/),
       height: 975560,
       pool_name: 'PoolA',
       coinbase1: '0100000001',
@@ -88,14 +88,24 @@ describe('templateRowToMiningNotify', () => {
     expect(doc.lat_m).toBeNull();
   });
 
-  it('builds a stable id from the de-duplication key', () => {
-    expect(templateId({ source_id: 7, received_us: '42', job_id: 'a-b' })).toBe('7-42-a-b');
+  it('builds a stable id from the de-duplication key, without the raw job id', () => {
+    const id = templateId({ source_id: 7, received_us: '42', job_id: 'a-b' });
+    expect(id).toMatch(/^7-42-[0-9a-f]{12}$/);
+    expect(id).not.toContain('a-b');
+    expect(templateId({ source_id: 7, received_us: '42', job_id: 'a-b' })).toBe(id);
+  });
+
+  it('id suffixes: unlinkable across receive times, distinct within one µs', () => {
+    const suffix = (us: string, job: string) => templateId({ source_id: 7, received_us: us, job_id: job }).split('-')[2];
+    expect(suffix('42', '1')).not.toBe(suffix('43', '1'));   // the same job id at another time: unrelated values
+    expect(suffix('42', '1')).not.toBe(suffix('42', '2'));   // one socket read, two templates: still two ids
   });
 
   it('shows the first-seen time when given (templates_dedup) but keeps the own receive time in the id', () => {
     const doc = templateRowToMiningNotify(templateRow({ received_us: '1794491650123456', first_seen_us: '1794491650100000' }));
     expect(doc.timestamp).toBe(timestampHexFromMicros('1794491650100000'));
-    expect(doc.id).toBe('3-1794491650123456-2687119');
+    expect(doc.id).toMatch(/^3-1794491650123456-[0-9a-f]{12}$/);
+    expect(doc.id).not.toContain('2687119');
   });
 
   it('with a first-seen time, takes the latency of the copy that set it, not the row\'s own', () => {
@@ -164,6 +174,16 @@ describe('blockRowToBlock', () => {
       merkle_root: b('ab'.repeat(32)), size: 1, weight: 4, difficulty: 1.5 }));
     expect(block).toMatchObject({ transactions: 3000, version: 536870912, bits: '1701e5ac', nonce: 4294967295,
       merkle_root: 'ab'.repeat(32), size: 1, weight: 4, difficulty: 1.5 });
+  });
+
+  it('drops job ids from the analysis (the coinbase-parse report names a sample template by job id)', () => {
+    const analysis = { flags: [], coinbase_parse: { repaired: [], unparsed: [{ pool_name: 'PoolA', extranonce2_length: 4,
+      templates: 2, sample_job_id: 'JOBSENTINEL' }] } };
+    for (const out of [blockRowToBlock(blockRow({ analysis })), blockRowToInterestingItem(blockRow({ analysis }))]) {
+      expect(JSON.stringify(out)).not.toContain('JOBSENTINEL');
+      expect(out.analysis).toEqual({ flags: [], coinbase_parse: { repaired: [], unparsed: [{ pool_name: 'PoolA',
+        extranonce2_length: 4, templates: 2 }] } });
+    }
   });
 
   it('flags a stale block (lookup by hash) and adds nothing otherwise', () => {

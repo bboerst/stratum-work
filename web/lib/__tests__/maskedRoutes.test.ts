@@ -109,12 +109,13 @@ describe('served templates carry masked extranonce1', () => {
         stale_height: null, stale_header_source: null, stale_miner: null }]),
       getBestTipHeight: vi.fn(async () => null),
       getDrillRows: vi.fn(async () => ({ truncated: false, blocks: [],
-        templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'j1')) })),
+        templates: (Object.keys(RAW) as (keyof typeof RAW)[]).map(pool => pgRow(pool, 'JOBSENTINEL')) })),
     }));
     vi.doMock('../db/template-providers', () => ({ getEpochGroupInputs: vi.fn(async () => ({ nodes: [], pairs: [], counted: [] })) }));
     const { GET } = await import('../../app/api/forks/route');
     const text = await (await GET(new Request(`http://test/api/forks?parent=${parent}`))).text();
     expectMasked(text, JSON.parse(text).templates);
+    expect(text).not.toContain('JOBSENTINEL');   // job ids are per connection too: not in the template ids
   });
 
   it('/api/stream (direct and throttle-held templates)', async () => {
@@ -140,7 +141,7 @@ describe('served templates carry masked extranonce1', () => {
     let text = decoder.decode((await reader.read()).value); // connection message; the consumer is set up by now
     expect(onMessage).toBeDefined();
 
-    for (const t of [template('PoolA', { job_id: '1' }), template('PoolA', { job_id: '2' }), template('PoolB')]) {
+    for (const t of [template('PoolA', { job_id: 'JOBSENTINEL1', ntime: '66000001' }), template('PoolA', { job_id: 'JOBSENTINEL2', ntime: '66000002' }), template('PoolB')]) {
       onMessage!({ content: Buffer.from(JSON.stringify(t)) });
     }
     onMessage!({ content: Buffer.from(`{"broken": "${RAW.PoolA}", "extranonce1":`) }); // unparseable: dropped
@@ -149,7 +150,8 @@ describe('served templates carry masked extranonce1', () => {
 
     const served = text.split('\n\n').filter(l => l.startsWith('data: '))
       .map(l => JSON.parse(l.slice(6))).filter(m => m.extranonce1 !== undefined);
-    expect(served.map(m => m.job_id ?? 'B')).toEqual(expect.arrayContaining(['1', '2']));
+    expect(served.map(m => m.ntime)).toEqual(expect.arrayContaining(['66000001', '66000002']));
+    expect(text).not.toContain('JOBSENTINEL');   // job ids are per connection too: never streamed
     expectMasked(text, served);
   });
 });

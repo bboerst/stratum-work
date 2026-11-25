@@ -188,7 +188,7 @@ export default function RealtimeTable({
   const rowKeys = useMemo(() => {
     const seen = new Map<string, number>();
     return displayedRows.map((r) => {
-      const k = isFiltering ? `${r.pool_name}|${r.height}|${r.job_id}|${r.raw_timestamp ?? r.timestamp}` : r.pool_name;
+      const k = isFiltering ? `${r.pool_name}|${r.height}|${r.ntime}|${r.raw_timestamp ?? r.timestamp}` : r.pool_name;
       const n = seen.get(k) ?? 0;
       seen.set(k, n + 1);
       return n ? `${k}#${n}` : k;

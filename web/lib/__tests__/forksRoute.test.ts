@@ -314,7 +314,7 @@ describe('GET /api/forks', () => {
       { parent: P1, height: 900_001, pools: ['P'], from_ms: 1000 - 300_000, to_ms: 5000 + 300_000 }, { pools: ['Hidden'], tip: TIP });
     expect(body).toMatchObject({ from_ms: 1000 - 300_000, to_ms: 305_000, truncated: false, episode: { parent: P1 },
       blocks: [{ hash: 'ab'.repeat(32), height: 900_000, arrival_ms: 900, best: true, miner: 'P' }] });
-    expect(body.templates[0]).toMatchObject({ id: '1-1000123-j1', pool_name: 'P', parent: 'this', connections: ['a', 'b'],
+    expect(body.templates[0]).toMatchObject({ id: expect.stringMatching(/^1-1000123-[0-9a-f]{12}$/), pool_name: 'P', parent: 'this', connections: ['a', 'b'],
       copies: 2, received_at: 1000, height: 900_001, merkle_branches: 2 });
     await get(route, `?parent=${P1}`);
     expect(getDrillRows).toHaveBeenCalledTimes(1);

@@ -7,6 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
+import { templateIdSuffix } from '../connectionMask';
 
 const env = process.env;
 const enabled = !!env.PG_TEST_HOST;
@@ -58,7 +59,11 @@ describe.skipIf(!enabled)('Postgres height reads: only the height receive window
     await getPgPool().end();
   });
 
-  const jobId = (t: { id: string }) => t.id.split('-').pop();
+  // id = <source_id>-<µs>-<keyed hash of the job id>: the job id is found back among the ones inserted
+  const jobId = (t: { id: string }) => {
+    const [s, u, x] = t.id.split('-');
+    return ['current', 'stale', 'stale2'].find(j => templateIdSuffix(s, u, j) === x);
+  };
 
   it('R1 shows only the rows received inside the window', async () => {
     const got = await pg.templatesAtHeight(h);

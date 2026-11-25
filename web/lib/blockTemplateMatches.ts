@@ -80,3 +80,35 @@ export function blockMatches(blocks: readonly MatchBlockSql[], rows: readonly Ma
     return { ...base, state: 'no_match' as const, matches: [], closest };
   });
 }
+
+const FIT_RANK: Record<CoinbaseFit, number> = { coinbase: 3, layout: 2, merkle: 1 };
+
+export interface PoolMatch {
+  pool: string;
+  first: TemplateMatch;          // the connection that had it first (by the shown time)
+  t_ms: number;                  // its shown time: receive time, latency adjusted when `adjusted`
+  connections: TemplateMatch[];  // every connection with the set, by shown time
+  coinbase: CoinbaseFit | null;  // the best fit over its connections
+  mixed: boolean;                // its connections' fits differ
+}
+
+/**
+ * One row per pool: a pool's connections often each get the job (sometimes with different coinbase bytes), so the
+ * matches are grouped by pool. The row's time is its earliest connection's, the fit the best of them; the rest stays
+ * in `connections`. Pools by time.
+ */
+export function matchesByPool(matches: readonly TemplateMatch[], adjusted: boolean): PoolMatch[] {
+  const by = new Map<string, { m: TemplateMatch; t: number }[]>();
+  for (const m of matches) {
+    const list = by.get(m.pool) ?? [];
+    list.push({ m, t: matchTimeMs(m, adjusted) });
+    by.set(m.pool, list);
+  }
+  return [...by.entries()].map(([pool, list]) => {
+    list.sort((a, b) => a.t - b.t || a.m.connection.localeCompare(b.m.connection));
+    const fits = list.map(x => x.m.coinbase);
+    const known = fits.filter((f): f is CoinbaseFit => f !== null);
+    const coinbase = known.length ? known.reduce((a, b) => (FIT_RANK[b] > FIT_RANK[a] ? b : a)) : null;
+    return { pool, first: list[0].m, t_ms: list[0].t, connections: list.map(x => x.m), coinbase, mixed: new Set(fits).size > 1 };
+  }).sort((a, b) => a.t_ms - b.t_ms || a.pool.localeCompare(b.pool));
+}

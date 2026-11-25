@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useLatencyAdjusted } from "./TimingDisplayContext";
-import { matchTimeMs, type BlockMatches, type CoinbaseFit } from "@/lib/blockTemplateMatches";
+import { matchesByPool, matchTimeMs, type BlockMatches, type CoinbaseFit } from "@/lib/blockTemplateMatches";
 
 /**
  * The height page's "Winning template" (#235): which stored jobs carried exactly this block's transactions, proven by
@@ -37,7 +37,10 @@ function before(ms: number): string {
 }
 
 function Verified({ block, adjusted }: { block: BlockMatches; adjusted: boolean }) {
-  const pools = new Set(block.matches.map(m => m.pool)).size;
+  const rows = matchesByPool(block.matches, adjusted);
+  const detail = (r: (typeof rows)[number]) => r.connections.map(m =>
+    `${m.connection}: ${utc(matchTimeMs(m, adjusted))}, ${plural(m.templates, "template")}${m.coinbase ? `, ${FIT_LABEL[m.coinbase]}` : ""}`
+    + (adjusted && m.lat_ms === null ? " (no latency estimate: unadjusted)" : "")).join("\n");
   return (
     <div className="text-xs">
       <p className="mb-2 flex flex-wrap items-center gap-2">
@@ -45,36 +48,38 @@ function Verified({ block, adjusted }: { block: BlockMatches; adjusted: boolean 
           title="verified: the block's merkle path equals these templates' merkle branches, so they carried exactly its transactions">
           ✓ Verified
         </span>
-        <span className="text-foreground/70">its transactions were in jobs from {plural(pools, "pool")}</span>
+        <span className="text-foreground/70">its transactions were in jobs from {plural(rows.length, "pool")}</span>
       </p>
       <table className="w-full max-w-xl text-left">
         <thead className="text-foreground/50">
           <tr>
             <th className="py-0.5 pr-3 font-normal">Pool</th>
-            <th className="py-0.5 pr-3 font-normal" title="our connection to the pool">Conn</th>
-            <th className="py-0.5 pr-3 font-normal" title={`first received (UTC)${adjusted ? ", latency adjusted" : ""}`}>First</th>
+            <th className="py-0.5 pr-3 font-normal" title="the first connection to receive it, then our other connections to the pool that received it">Conns</th>
+            <th className="py-0.5 pr-3 font-normal" title={`first received on any of its connections (UTC)${adjusted ? ", latency adjusted" : ""}`}>First</th>
             {block.seen_ms !== null && <th className="py-0.5 pr-3 font-normal" title="how long before the block reached our node">Before block</th>}
-            <th className="py-0.5 font-normal">Coinbase</th>
+            <th className="py-0.5 font-normal" title="the best fit over its connections">Coinbase</th>
           </tr>
         </thead>
         <tbody className="font-mono">
-          {block.matches.map(m => ({ m, t: matchTimeMs(m, adjusted) })).sort((x, y) => x.t - y.t).map(({ m, t }) => {
-            return (
-              <tr key={`${m.pool}/${m.connection}/${m.first_us}`} className="border-t border-foreground/10">
-                <td className="py-0.5 pr-3 font-sans">{m.pool}</td>
-                <td className="py-0.5 pr-3">{m.connection}</td>
-                <td className="py-0.5 pr-3" title={`${plural(m.templates, "template")} with this set${adjusted && m.lat_ms === null ? " · no latency estimate: unadjusted" : ""}`}>{utc(t)}</td>
-                {block.seen_ms !== null && <td className="py-0.5 pr-3">{block.seen_ms >= t ? before(block.seen_ms - t) : "after"}</td>}
-                <td className="py-0.5 font-sans">
-                  {m.coinbase
-                    ? <span className={`rounded-sm px-1 ${FIT_CLASS[m.coinbase]}`} title={FIT_TITLE[m.coinbase]}>{FIT_LABEL[m.coinbase]}</span>
-                    : <span className="text-foreground/40" title="the block's coinbase bytes aren't stored">—</span>}
-                </td>
-              </tr>
-            );
-          })}
+          {rows.map(r => (
+            <tr key={r.pool} className="border-t border-foreground/10" title={detail(r)}>
+              <td className="py-0.5 pr-3 font-sans">{r.pool}</td>
+              <td className="py-0.5 pr-3">
+                <span>{r.first.connection}</span>
+                {r.connections.length > 1 && <span className="text-foreground/40"> {r.connections.slice(1).map(m => m.connection).join(" ")}</span>}
+              </td>
+              <td className="py-0.5 pr-3">{utc(r.t_ms)}</td>
+              {block.seen_ms !== null && <td className="py-0.5 pr-3">{block.seen_ms >= r.t_ms ? before(block.seen_ms - r.t_ms) : "after"}</td>}
+              <td className="py-0.5 font-sans">
+                {r.coinbase
+                  ? <span className={`rounded-sm px-1 ${FIT_CLASS[r.coinbase]}`} title={FIT_TITLE[r.coinbase]}>{FIT_LABEL[r.coinbase]}{r.mixed ? "*" : ""}</span>
+                  : <span className="text-foreground/40" title="the block's coinbase bytes aren't stored">—</span>}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
+      {rows.some(r => r.mixed) && <p className="mt-1 text-[11px] text-foreground/50">* its connections fit differently (hover the row)</p>}
       <p className="mt-2 text-[11px] text-foreground/50"
         title="unrelated pools can send the same transaction set: a match identifies the job's transactions, not who mined the block">
         Mined by {block.pool ?? "an unidentified pool"} (from its coinbase)
@@ -112,12 +117,12 @@ export default function BlockWinningTemplate({ height }: { height: number }) {
       .catch(e => { if (!ctl.signal.aborted) { console.error("Error reading template matches:", e); setGot({ height, data: null }); } });
     return () => ctl.abort();
   }, [height]);
-  if (!got || got.height !== height) return <div className="h-16 animate-pulse rounded-sm bg-foreground/5" />;
+  if (!got || got.height !== height) return <div className="p-4"><div className="h-16 animate-pulse rounded-sm bg-foreground/5" /></div>;
   const data = got.data;
-  if (!data) return <p className="py-2 text-xs text-foreground/60">Template matches unavailable.</p>;
-  if (!data.blocks?.length) return <p className="py-2 text-xs text-foreground/60">No block stored at this height.</p>;
+  if (!data) return <p className="px-6 py-4 text-xs text-foreground/60">Template matches unavailable.</p>;
+  if (!data.blocks?.length) return <p className="px-6 py-4 text-xs text-foreground/60">No block stored at this height.</p>;
   return (
-    <div className="space-y-3 py-1">
+    <div className="space-y-3 px-6 py-4">
       {data.blocks.map(b => (
         <div key={b.hash}>
           {data.blocks.length > 1 && <p className="mb-1 font-mono text-[11px] text-foreground/50">{b.hash}</p>}

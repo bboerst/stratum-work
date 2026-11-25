@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockMatches, coinbaseFit, matchTimeMs } from '../blockTemplateMatches';
+import { blockMatches, coinbaseFit, matchesByPool, matchTimeMs } from '../blockTemplateMatches';
 import type { MatchBlockSql, MatchRowSql } from '../db/block-template-matches';
 
 const H = 'aa'.repeat(32);
@@ -70,5 +70,23 @@ describe('matchTimeMs', () => {
     expect(matchTimeMs({ first_us: '1000000', lat_ms: 10 }, true)).toBe(990);
     expect(matchTimeMs({ first_us: '1000000', lat_ms: 10 }, false)).toBe(1000);
     expect(matchTimeMs({ first_us: '1000000', lat_ms: null }, true)).toBe(1000);
+  });
+});
+
+describe('matchesByPool', () => {
+  const m = (pool: string, connection: string, first_us: string, coinbase: 'coinbase' | 'layout' | 'merkle' | null, lat_ms: number | null = null) =>
+    ({ pool, connection, first_us, lat_ms, lat_m: null, templates: 1, coinbase });
+  it('one row per pool: its earliest connection\'s time, the best fit, the rest kept; pools by time', () => {
+    const rows = matchesByPool([
+      m('A', 'c', '3000000', 'merkle'), m('B', 'b', '2000000', 'layout'), m('A', 'b', '1000000', 'layout'), m('A', 'd', '4000000', 'layout'),
+    ], false);
+    expect(rows.map(r => [r.pool, r.first.connection, r.t_ms, r.connections.map(c => c.connection), r.coinbase, r.mixed])).toEqual([
+      ['A', 'b', 1000, ['b', 'c', 'd'], 'layout', true],
+      ['B', 'b', 2000, ['b'], 'layout', false],
+    ]);
+  });
+  it('picks the earliest by the shown (latency adjusted) time; no fit without coinbase bytes', () => {
+    const rows = matchesByPool([m('A', 'b', '1000000', null, 0), m('A', 'c', '1005000', null, 10)], true);
+    expect([rows[0].first.connection, rows[0].t_ms, rows[0].coinbase, rows[0].mixed]).toEqual(['c', 995, null, false]);
   });
 });

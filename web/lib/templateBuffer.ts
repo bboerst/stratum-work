@@ -277,10 +277,15 @@ export class TemplateBuffer {
     return changed;
   }
 
-  /** How many buffered templates received at or after `sinceMs` still follow an unproven gap. */
-  pendingGaps(sinceMs: number): number {
+  /**
+   * How many templates received within `windowMs` of the newest one still follow an unproven gap (the collectors'
+   * clock, not the viewer's).
+   */
+  pendingGaps(windowMs: number): number {
+    let newest = -Infinity;
+    for (const e of this.byKey.values()) if (e.recvMs > newest) newest = e.recvMs;
     let n = 0;
-    for (const e of this.byKey.values()) if (e.gapBefore && e.recvMs >= sinceMs) n++;
+    for (const e of this.byKey.values()) if (e.gapBefore && e.recvMs >= newest - windowMs) n++;
     return n;
   }
 

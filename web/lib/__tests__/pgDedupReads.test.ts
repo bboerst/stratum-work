@@ -105,6 +105,8 @@ describe.skipIf(!enabled)('Postgres template reads with collector replicas', () 
       [name, 'b9', 'b3', '0000012c', hexNs(200.0), 200000, 'tcp'], // gap fill: its own
     ]);
     expect(got[0].id).toBe(idOf(sid['ci/a'], us(0.020), 'a1'));   // own receive time in the id
+    // each row names its connection as the live stream does (change detection tells connections apart by it)
+    expect(got.map(t => `${t.site}/${t.replica}`)).toEqual(['ci/a', 'ci/a', 'ci/a', 'ci/a', `ci/b`]);
   });
 
   it('R1: one collector per pool returns the raw rows', async () => {

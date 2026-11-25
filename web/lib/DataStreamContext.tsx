@@ -8,6 +8,7 @@ import { StreamData, StreamDataType, StratumV1Data } from "./types";
 import { usePathname } from "next/navigation";
 import { BufferedTemplate, TemplateBuffer } from "./templateBuffer";
 import { PREFILL_WINDOW_MS, prefillTemplateBuffer } from "./prefill";
+import { GapBackfill } from "./gapBackfill";
 import { fetchWithRetry } from "./fetchRetry";
 import { configureTxApi } from "./txFeeRates";
 import type { TxApiConfig } from "./txApiConfig";
@@ -60,16 +61,6 @@ const TemplateBufferContext = createContext<TemplateBufferSnapshot | undefined>(
  */
 const BUFFER_NOTIFY_MS = 150;
 
-/**
- * Filling in gaps (the pre-fill/stream seam, a pause, a reconnect, a throttled burst): the history read is repeated
- * this long after a gap appears, then again, until the gaps are covered or the tries run out (TemplateBuffer: a read
- * that has both sides of a gap proves nothing was missed, and adds anything that was). The database has a template
- * a few seconds after the stream (measured on dev 2026-11-25: every pool's first live template was in a read 12-40 s
- * later), and the pre-fill response is shared for 5 s, so these reads cost the database at most one query per 5 s
- * however many viewers there are.
- */
-export const BACKFILL_DELAYS_MS = [8_000, 20_000, 45_000];
-const BACKFILL_JITTER_MS = 2_000;
 
 interface RuntimeConfig {
   streamEndpoint?: string;
@@ -121,54 +112,25 @@ export function DataStreamProvider({ children }: { children: ReactNode }) {
 
   const handleStreamGap = useCallback((poolName?: string) => buffer.markGap(poolName), [buffer]);
 
-  // Re-read history after gaps (BACKFILL_DELAYS_MS). Refs, so the stream callbacks stay stable.
+  // Re-read history after gaps (lib/gapBackfill.ts). Refs, so the stream callbacks stay stable.
   const historicalRef = useRef(false);
   const pausedRef = useRef(false);
-  const backfillRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; tries: number; seenGapVersion: number }>(
-    { timer: null, tries: 0, seenGapVersion: 0 },
-  );
-  // runBackfill re-arms itself through this ref
-  const runBackfillRef = useRef<() => void>(() => {});
-
-  const runBackfill = useCallback(async () => {
-    const state = backfillRef.current;
-    state.timer = null;
-    // Paused or hidden: nothing is shown; the next gap after resuming starts over.
-    if (pausedRef.current || (typeof document !== "undefined" && document.hidden)) {
-      state.seenGapVersion = -1;
-      return;
-    }
-    if (buffer.pendingGaps(Date.now() - PREFILL_WINDOW_MS) === 0) return;
-    state.tries++;
-    try {
-      await prefillTemplateBuffer(buffer, { historicalDataEnabled: true });
-      publishBuffer();
-    } catch (error) {
-      console.error("Error re-reading history to fill a gap", error);
-    }
-    // Gaps the read itself left (older than what it covers) won't be filled by reading again.
-    state.seenGapVersion = buffer.gapVersion;
-    if (state.timer === null && state.tries < BACKFILL_DELAYS_MS.length && buffer.pendingGaps(Date.now() - PREFILL_WINDOW_MS) > 0) {
-      const delay = BACKFILL_DELAYS_MS[state.tries] - BACKFILL_DELAYS_MS[state.tries - 1] + Math.random() * BACKFILL_JITTER_MS;
-      state.timer = setTimeout(() => runBackfillRef.current(), delay);
-    }
-  }, [buffer, publishBuffer]);
+  const backfillRef = useRef<GapBackfill | null>(null);
   useEffect(() => {
-    runBackfillRef.current = () => { void runBackfill(); };
-  }, [runBackfill]);
-
+    const backfill = new GapBackfill({
+      read: async () => {
+        await prefillTemplateBuffer(buffer, { historicalDataEnabled: true });
+        publishBuffer();
+      },
+      pending: () => buffer.pendingGaps(PREFILL_WINDOW_MS),
+      gapVersion: () => buffer.gapVersion,
+      canRun: () => !pausedRef.current && !document.hidden,
+    });
+    backfillRef.current = backfill;
+    return () => backfill.dispose();
+  }, [buffer, publishBuffer]);
   const scheduleBackfill = useCallback(() => {
-    const state = backfillRef.current;
-    if (!historicalRef.current || state.seenGapVersion === buffer.gapVersion) return;
-    // A new gap: start the tries over from the first delay.
-    state.seenGapVersion = buffer.gapVersion;
-    state.tries = 0;
-    if (state.timer !== null) clearTimeout(state.timer);
-    state.timer = setTimeout(() => runBackfillRef.current(), BACKFILL_DELAYS_MS[0] + Math.random() * BACKFILL_JITTER_MS);
-  }, [buffer]);
-
-  useEffect(() => () => {
-    if (backfillRef.current.timer !== null) clearTimeout(backfillRef.current.timer);
+    if (historicalRef.current) backfillRef.current?.notify();
   }, []);
 
   const handleStreamFlush = useCallback(() => {

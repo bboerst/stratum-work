@@ -316,7 +316,7 @@ describe('gaps (change detection must not compare across missed templates)', () 
     b.add([tpl('A', 100, 0), tpl('A', 100, 5), tpl('A', 100, 10)]); // the database caught up to A-10
     expect(gapOf(b, 'A-10')).toBe(false);
     expect(b.epoch).toBe(epoch + 1);
-    expect(b.pendingGaps(BASE_MS - 1)).toBe(0);
+    expect(b.pendingGaps(60_000)).toBe(0);
   });
 
   it('a history read fills in the templates a reconnect missed', () => {
@@ -351,7 +351,9 @@ describe('gaps (change detection must not compare across missed templates)', () 
     b.add([tpl('A', 100, 0), tpl('A', 100, 10)]); // A-30 not written yet
     expect(gapOf(b, 'A-10')).toBe(false);
     expect(gapOf(b, 'A-30')).toBe(true);
-    expect(b.pendingGaps(BASE_MS)).toBe(1);
+    expect(b.pendingGaps(60_000)).toBe(1);
+    expect(b.pendingGaps(10)).toBe(1); // A-30 is the newest
+    expect(b.pendingGaps(-1)).toBe(0);
   });
 
   it('links neighbours in receive order (own receive time), the order change detection compares in', () => {
@@ -428,7 +430,7 @@ describe('gaps: property test against a known sequence', () => {
       check();
       b.add(sent); // a read that has everything
       check();
-      expect(b.pendingGaps(0), `seed ${seed}`).toBe(0);
+      expect(b.pendingGaps(Infinity), `seed ${seed}`).toBe(0);
     }
   });
 });

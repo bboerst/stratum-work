@@ -9,7 +9,6 @@ import { decodeOpReturnScript } from './mergeMining';
  */
 export interface ProcessedTemplateData {
   poolName: string;
-  jobId: string;
   height: number;
   prevHash: string;
   version: string;
@@ -222,7 +221,6 @@ export function processTemplateData(data: StratumV1Data): ProcessedTemplateData 
   // to the same template read back from history.
   const processed: ProcessedTemplateData = {
     poolName: data.pool_name,
-    jobId: data.job_id,
     height: data.height,
     prevHash: lowerHex(data.prev_hash),
     version: u32Hex(data.version),

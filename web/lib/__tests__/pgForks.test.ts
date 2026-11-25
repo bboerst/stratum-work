@@ -36,6 +36,7 @@
  *   PG_TEST_HOST=… PG_TEST_USER=web PG_TEST_PASSWORD=… PG_TEST_ADMIN_DSN=postgresql://… npm test
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { jobIds } from './jobIds';
 import { Client } from 'pg';
 import { createMasker } from '../connectionMask';
 
@@ -82,6 +83,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
   let route: typeof import('../../app/api/forks/route');
   let admin: Client;
   const sid: Record<string, number> = {};
+  const jobs = jobIds();
 
   const insert = (src: string, s: number, height: number, job: string, parent: string, o: {
     nbits?: number; cb1?: string; ntime?: number } = {}) =>
@@ -90,7 +92,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
                               version, nbits, ntime, clean_jobs, extranonce1, extranonce2_length)
        VALUES (to_timestamp($1::float8), $2, $3, $4, stratum_prev_hash_to_block_hash(decode($5, 'hex')), decode($6, 'hex'),
                decode($7, 'hex'), decode(repeat('11', 32), 'hex'), 536870912, $8, $9, true, decode($10, 'hex'), 4)`,
-      [T0 + s, sid[src], height, job, parent, o.cb1 ?? CB1, CB2, o.nbits ?? BITS, o.ntime ?? 1_790_000_000 + Math.floor(s),
+      [T0 + s, sid[src], height, jobs.add(job), parent, o.cb1 ?? CB1, CB2, o.nbits ?? BITS, o.ntime ?? 1_790_000_000 + Math.floor(s),
        EN1[src]]);
   const block = (hash: string, height: number, arrival: number) => admin.query(
     `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig, bits)
@@ -348,7 +350,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect(body.episodes.some((e: Ep) => e.parent === X_H)).toBe(false);    // another chain: fail closed
     expect((await get(`?parent=${X_H}`)).status).toBe(404);
     const drill = await get(`?parent=${X_A}`);
-    const ids = drill.body.templates.map((t: { id: string }) => t.id.split('-').pop());
+    const ids = drill.body.templates.map((t: { id: string }) => jobs.of(t.id));
     expect(ids).toEqual(expect.arrayContaining(['x1', 'x3']));             // at H
     expect(ids).not.toContain('x4');                                        // at H + 1, inside the drill-in's minutes
     expect(drill.text).not.toContain(SITE);
@@ -378,7 +380,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     expect(body.to_ms).toBe((T0 + 65) * 1000 + 300_000);
     expect(body.truncated).toBe(false);
     const got = body.templates.map((t: { id: string; parent: string; connections: string[]; copies: number }) =>
-      [t.id.split('-').pop(), t.parent, t.connections.join(''), t.copies]);
+      [jobs.of(t.id), t.parent, t.connections.join(''), t.copies]);
     expect(got).toEqual([                     // the blacklisted pool's x1 and x3 at H (history), not its x4 at H + 1
       ['x1', 'this', 'a', 1], ['w1', 'best', 'a', 1], ['w4', 'best', 'a', 1], ['a1', 'this', 'a', 1], ['m1', 'this', 'ab', 2],
       ['w2', 'stale', 'a', 1], ['x3', 'stale', 'a', 1], ['n2', 'this', 'b', 1], ['a2', 'this', 'a', 1], ['w3', 'best', 'a', 1],
@@ -389,7 +391,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
       { hash: S1, height: H - 1, arrival_ms: (T0 + 5) * 1000, best: false, miner: 'Synthetic Miner' },
       { hash: B0, height: H, arrival_ms: (T0 + 120) * 1000, best: true, miner: null },
     ]);
-    const a2 = body.templates.find((t: { id: string }) => t.id.endsWith('-a2'));
+    const a2 = body.templates.find((t: { id: string }) => jobs.of(t.id) === 'a2');
     expect(a2).toMatchObject({ auxpow: true, auxpow_root: 'ab'.repeat(32), prev_hash: X_A, height: H, scriptsig_height: 1_000_000 });
   });
 
@@ -417,7 +419,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     // its drill-in: S1 is "this parent"
     const drill = await get(`?parent=${S1}`);
     expect(drill.status).toBe(200);
-    const labels = Object.fromEntries(drill.body.templates.map((t: { id: string; parent: string }) => [t.id.split('-').pop(), t.parent]));
+    const labels = Object.fromEntries(drill.body.templates.map((t: { id: string; parent: string }) => [jobs.of(t.id), t.parent]));
     expect(labels).toMatchObject({ w2: 'this', m1: 'other', w4: 'best', x3: 'this', x1: 'other' });   // the episode's pools only
     expect(labels).not.toHaveProperty('x4');                                    // the blacklisted pool above our tip
     // a stale block reorged back in is our best block again: no episode
@@ -463,7 +465,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     const drill = await get(`?parent=${B2}`);
     expect(drill.status).toBe(200);
     expect(drill.body.templates.every((t: { parent: string }) => t.parent !== 'this')).toBe(true);
-    expect(drill.body.templates.map((t: { id: string }) => t.id.split('-').pop())).toContain('w1');
+    expect(drill.body.templates.map((t: { id: string }) => jobs.of(t.id))).toContain('w1');
   });
 
   it('answers on the alias /api/unknown-parents too', async () => {
@@ -484,7 +486,7 @@ describe.skipIf(!enabled)('Postgres forks (stale and unknown parents, kinds, fin
     const { body, text } = await get(`?parent=${X_A}`);
     for (const raw of Object.values(EN1)) expect(text).not.toContain(raw);
     for (const t of body.templates as { pool_name: string; id: string; extranonce1: string }[]) {
-      const src = t.pool_name === multi ? `${multi}/${t.id.split('-').pop()!.startsWith('n') ? 'b' : 'a'}` : t.pool_name;
+      const src = t.pool_name === multi ? `${multi}/${jobs.of(t.id)!.startsWith('n') ? 'b' : 'a'}` : t.pool_name;
       expect(t.extranonce1).toBe(mask(t.pool_name, EN1[src]));
     }
   });

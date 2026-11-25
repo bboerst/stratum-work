@@ -124,7 +124,7 @@ These are local development credentials: don't expose the ports to an untrusted 
 | `COLLECTOR_SITE` / `COLLECTOR_REPLICA` | `local` / `a` | Collector identity in `sources` |
 | `COLLECTOR_NODE` | *(empty)* | The machine whose clock stamps `received_at`, recorded in its `ingest_events` `start` row (in Kubernetes, the pod's `spec.nodeName`) |
 | `STREAM_POOL_RATE` / `STREAM_POOL_BURST` | `5` / `20` | Per-pool live display limit (every template is still stored) |
-| `EXTRANONCE1_MASK_KEY` | *(random per start)* | Key for masking extranonce1 in everything the web serves |
+| `EXTRANONCE1_MASK_KEY` | *(random per start)* | Key for masking extranonce1 in everything the web serves, and for the hashed last part of template ids (job ids are never served) |
 | `TX_API_SOURCE` / `TX_API_MEMPOOL_SPACE_FALLBACK` | `mempool.space` / `false` | Where the table's first-transaction fee rates come from. Compose runs no mempool recorder, so it defaults to mempool.space; `auto` (the web's own default) = this deployment's `/api/tx` with historical data enabled, mempool.space otherwise; `local` forces `/api/tx`. The fallback asks mempool.space when `/api/tx` fails |
 
 ### Connecting a Bitcoin node

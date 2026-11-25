@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
 import { streamHub, type HubMessage } from '../../../lib/streamHub';
+import { HEARTBEAT, HEARTBEAT_MS } from '../../../lib/streamHeartbeat';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,6 +21,7 @@ export async function GET(request: NextRequest) {
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined = undefined;
       let unsubscribe: (() => void) | undefined;
 
       const send = (data: string) => {
@@ -36,6 +38,7 @@ export async function GET(request: NextRequest) {
         if (closed) return;
         closed = true;
         if (throttleTimer) clearInterval(throttleTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         unsubscribe?.();
         try {
           controller.close();
@@ -77,6 +80,14 @@ export async function GET(request: NextRequest) {
           for (const out of throttle.tick(Date.now())) send(out);
         }, 200);
       }
+      heartbeatTimer = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(HEARTBEAT));
+        } catch {
+          close();
+        }
+      }, HEARTBEAT_MS);
       // Confirms the connection; the viewer is subscribed by now.
       send('{"type":"connection","status":"connected"}');
     },

@@ -13,7 +13,7 @@ export interface SortedRow {
   replica?: string;
   lat_ms?: number;          // stored short key: one-way latency estimate
   lat_m?: string;
-  job_id: string;
+  job_id?: string;
   height: number;
   prev_hash: string;
   version: string;

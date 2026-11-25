@@ -59,7 +59,7 @@ export function timestampMicros(timestamp: string | undefined | null): bigint | 
 /**
  * De-duplication key: pool + own receive time in µs + the template's content (ntime, coinbase1, coinbase2).
  *
- * It's the same for a template whether it came from the stream or the API (the API's id, `<source>-<µs>-<job_id>`,
+ * It's the same for a template whether it came from the stream or the API (the API's id, `<source>-<µs>-<hash>`,
  * isn't in the stream). Pool + µs alone is NOT unique: the collector stamps every notification from one socket read
  * with the same receive time, so one pool can send two templates in the same µs (3 of 16,310 on dev data,
  * 2026-11-12, always with different ntime/coinbase). Hex is lower-cased because Postgres returns lower-case and the

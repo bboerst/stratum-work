@@ -231,6 +231,7 @@ export function parseCoinbase(
 
   p = r.pos;
   if (!r.has(36)) return fail("truncated prevout");
+  const nullPrevout = isNullPrevout(tx, r.pos);
   r.pos += 36;
   field("prevout", p);
 
@@ -242,7 +243,7 @@ export function parseCoinbase(
   const sigStart = r.pos;
   r.pos += sigLen;
   field("scriptSig", sigStart);
-  result.scriptSig = parseScriptSig(tx, sigStart, r.pos, result.extranonce1, result.extranonce2, options.ntime);
+  result.scriptSig = parseScriptSig(tx, sigStart, r.pos, result.extranonce1, result.extranonce2, options.ntime, nullPrevout);
 
   p = r.pos;
   const sequence = r.u32();
@@ -360,18 +361,51 @@ export function tokenizeScript(
   return { pushes, pushOnly, alignedUntil };
 }
 
+/**
+ * The BIP34 height: the scriptSig's first item, a push of 1-8 bytes read as a little-endian number with its sign bit
+ * clear, or OP_1..OP_16. The collector's rule (collector-go/coinbase.go parseBIP34Height), which wrote every stored
+ * templates.height; both are checked against the same cases (testdata/coinbase-height-vectors.json). One difference,
+ * recorded there: a value past 2^53 (only a 7- or 8-byte push can hold one) isn't exact in JavaScript, so it is null here.
+ */
 function decodeHeight(b: Uint8Array, sigStart: number, sigEnd: number): { height: number; end: number } | null {
   if (sigEnd <= sigStart) return null;
   const op = b[sigStart];
-  // BIP34: the first item is a minimal push of the height as a little-endian CScriptNum, or OP_1..OP_16.
   if (op >= 0x51 && op <= 0x60) return { height: op - 0x50, end: sigStart + 1 };
-  if (op >= 1 && op <= 6 && sigStart + 1 + op <= sigEnd) {
+  if (op >= 1 && op <= 8 && sigStart + 1 + op <= sigEnd) {
     if ((b[sigStart + op] & 0x80) !== 0) return null; // sign bit: negative, never a height
     let h = 0;
     for (let k = op; k >= 1; k--) h = h * 256 + b[sigStart + k];
+    if (!Number.isSafeInteger(h)) return null;
     return { height: h, end: sigStart + 1 + op };
   }
   return null;
+}
+
+/** The coinbase input's prevout: 32 zero bytes and index 0xffffffff. Without it there is no BIP34 height to read. */
+function isNullPrevout(b: Uint8Array, at: number): boolean {
+  if (at + 36 > b.length) return false;
+  for (let i = 0; i < 32; i++) if (b[at + i] !== 0) return false;
+  return b[at + 32] === 0xff && b[at + 33] === 0xff && b[at + 34] === 0xff && b[at + 35] === 0xff;
+}
+
+/**
+ * The BIP34 height from coinbase1 alone (hex), by exactly the collector's rule (collector-go/coinbase.go): version,
+ * optional segwit marker, one input with the null prevout, the scriptSig length, then decodeHeight within what
+ * coinbase1 holds of the scriptSig. null where the collector stores 0 (no height).
+ */
+export function heightFromCoinbase1(coinbase1: unknown): number | null {
+  if (typeof coinbase1 !== "string" || !HEX_RE.test(coinbase1) || coinbase1.length > MAX_COINBASE_BYTES * 2) return null;
+  const b = hexToBytes(coinbase1);
+  const r = new Reader(b);
+  r.pos = 4;
+  if (r.pos + 1 >= b.length) return null;
+  if (b[r.pos] === 0x00 && b[r.pos + 1] === 0x01) r.pos += 2;
+  if (r.varint() !== 1 || !isNullPrevout(b, r.pos)) return null;
+  r.pos += 36;
+  const sigLen = r.varint();
+  if (sigLen === null || sigLen === 0 || r.pos >= b.length) return null;
+  const h = decodeHeight(b, r.pos, Math.min(b.length, r.pos + sigLen));
+  return h ? h.height : null;
 }
 
 function findAuxPow(b: Uint8Array, start: number, end: number): AuxPow | null {
@@ -403,10 +437,11 @@ function parseScriptSig(
   end: number,
   en1: ByteRange,
   en2: ByteRange,
-  ntime?: number
+  ntime?: number,
+  coinbaseInput = true
 ): ParsedScriptSig {
   const { pushes, pushOnly, alignedUntil } = tokenizeScript(tx, start, end, { start: en1.start, end: en2.end });
-  const h = decodeHeight(tx, start, end);
+  const h = coinbaseInput ? decodeHeight(tx, start, end) : null;   // only a coinbase input (null prevout) has a height
   const auxpow = findAuxPow(tx, start, end);
 
   // Label every byte, highest priority first: extranonce > height > auxpow > push header > data.

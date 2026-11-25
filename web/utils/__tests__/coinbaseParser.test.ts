@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Transaction } from "bitcoinjs-lib";
-import { parseCoinbase, coinbaseTagText, tokenizeScript, MAX_COINBASE_BYTES, ParsedCoinbase } from "../coinbaseParser";
-import { decodeCoinbaseScriptSigInfo } from "../bitcoinUtils";
+import { parseCoinbase, coinbaseTagText, tokenizeScript, MAX_COINBASE_BYTES, ParsedCoinbase, heightFromCoinbase1 } from "../coinbaseParser";
 
 const hex = (s: string) => Buffer.from(s, "ascii").toString("hex");
 const le32 = (n: number) => Buffer.from([n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255]).toString("hex");
@@ -191,11 +190,10 @@ describe("parseCoinbase: structure", () => {
     expect(coinbaseTagText(parse(c))).toBe("tagpool ab/solo.example.org");
   });
 
-  it("matches the existing BIP34 height decoder on all its cases", () => {
+  it("gives the same height as heightFromCoinbase1 (the collector's rule) on a whole coinbase", () => {
     for (const pre of ["0393e20e", "0340420f", "03ffff7f", "0400008000", "023412", "0111", "51", "60", "0393e28e", "0b" + "00".repeat(11), ""]) {
       const b = build({ sigBefore: pre + push(hex("/tag/")) });
-      const old = decodeCoinbaseScriptSigInfo(Buffer.from(pre + push(hex("/tag/")) + b.extranonce1 + "00".repeat(8), "hex")).height ?? null;
-      expect(parse(b).scriptSig!.height).toBe(old);
+      expect(parse(b).scriptSig!.height).toBe(heightFromCoinbase1(b.coinbase1));
     }
   });
 });

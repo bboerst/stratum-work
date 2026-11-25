@@ -8,10 +8,10 @@ name: tests
 
 on:
   pull_request:
-    paths: ["web/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+    paths: ["web/**", "collector-go/**", "backend/**", "testdata/**", ".github/workflows/tests.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "collector-go/**", "backend/**", ".github/workflows/tests.yml"]
+    paths: ["web/**", "collector-go/**", "backend/**", "testdata/**", ".github/workflows/tests.yml"]
 
 permissions:
   contents: read

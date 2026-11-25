@@ -1,0 +1,160 @@
+{
+ "version": 1,
+ "about": "Writes coinbase-height-vectors.json: BIP34 height cases for coinbase1, shared by the collector (collector-go",
+ "cases": [
+  {
+   "name": "3-byte push (today's Bitcoin heights)",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff120394e90e2f706f6f6c2f",
+   "height": "977300"
+  },
+  {
+   "name": "segwit marker before the input count",
+   "coinbase1": "010000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff120394e90e2f706f6f6c2f",
+   "height": "977300"
+  },
+  {
+   "name": "1-byte push",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0a0105",
+   "height": "5"
+  },
+  {
+   "name": "2-byte push",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0b022c01",
+   "height": "300"
+  },
+  {
+   "name": "3-byte push past 1,000,000",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff120340420f2f706f6f6c2f",
+   "height": "1000000"
+  },
+  {
+   "name": "3-byte push at its limit (sign bit clear)",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff1203ffff7f2f706f6f6c2f",
+   "height": "8388607"
+  },
+  {
+   "name": "4-byte push just past the 3-byte limit",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff1304000080002f706f6f6c2f",
+   "height": "8388608"
+  },
+  {
+   "name": "11-byte push: a tag, not a height",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff140b2f746573742d706f6f6c2f",
+   "height": null
+  },
+  {
+   "name": "4-byte push (another chain's larger height)",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0d049f736a00",
+   "height": "6976415"
+  },
+  {
+   "name": "6-byte push",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0f06070000000001",
+   "height": "1099511627783"
+  },
+  {
+   "name": "7-byte push",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff100703000000000004",
+   "height": "1125899906842627"
+  },
+  {
+   "name": "8-byte push, small value",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff11080100000000000000",
+   "height": "1"
+  },
+  {
+   "name": "8-byte push past 2^53",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff11080100000000000010",
+   "height": "1152921504606846977",
+   "web": {
+    "height": null,
+    "why": "not exact as a JavaScript number; the web shows no height rather than a wrong one"
+   }
+  },
+  {
+   "name": "OP_1 (height 1)",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0f512f706f6f6c2f",
+   "height": "1"
+  },
+  {
+   "name": "OP_16 (height 16)",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0f602f706f6f6c2f",
+   "height": "16"
+  },
+  {
+   "name": "OP_0 is not a height",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0f002f706f6f6c2f",
+   "height": null
+  },
+  {
+   "name": "sign bit set: negative, never a height",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff12030000802f706f6f6c2f",
+   "height": null
+  },
+  {
+   "name": "9-byte push is too long",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff1209010000000000000000",
+   "height": null
+  },
+  {
+   "name": "a non-push first opcode",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0f6a2f706f6f6c2f",
+   "height": null
+  },
+  {
+   "name": "push truncated by the end of coinbase1",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0b03a0e4",
+   "height": null
+  },
+  {
+   "name": "push longer than the scriptSig length",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff030394e90e",
+   "height": null
+  },
+  {
+   "name": "empty scriptSig",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff00",
+   "height": null
+  },
+  {
+   "name": "two inputs: not a coinbase",
+   "coinbase1": "01000000020000000000000000000000000000000000000000000000000000000000000000ffffffff0c0394e90e",
+   "height": null
+  },
+  {
+   "name": "prevout not null: not a coinbase input",
+   "coinbase1": "01000000011111111111111111111111111111111111111111111111111111111111111111ffffffff0c0394e90e",
+   "height": null
+  },
+  {
+   "name": "prevout index not ffffffff",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000000000000c0394e90e",
+   "height": null
+  },
+  {
+   "name": "truncated before the prevout ends",
+   "coinbase1": "0100000001000000000000000000000000000000",
+   "height": null
+  },
+  {
+   "name": "version only",
+   "coinbase1": "01000000",
+   "height": null
+  },
+  {
+   "name": "not hex",
+   "coinbase1": "zz000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0c0394e90e",
+   "height": null
+  },
+  {
+   "name": "odd number of hex digits",
+   "coinbase1": "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0c0394e90ea",
+   "height": null
+  },
+  {
+   "name": "empty",
+   "coinbase1": "",
+   "height": null
+  }
+ ]
+}

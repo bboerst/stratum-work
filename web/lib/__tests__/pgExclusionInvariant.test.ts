@@ -156,6 +156,9 @@ function cases(): Record<string, Case[]> {
         { path: '$.items[*].analysis.flags[*].details.offenders[*].pool_name', why: BLOCK_FINDING.why },
       ] },
     ],
+    // the tip B(H)'s merkle path is both feeds' set at H: a mined height, so its matches are analysis and keep the pool
+    'block-template-matches': [{ qs: `height=${H}`, allow: [{ path: '$.blocks[*].matches[*].pool',
+      why: 'which stored templates a mined block was built from is analysis at a height at or below our tip (filterBlacklistedAboveTip)' }] }],
     'block-pool-first-seen': [{ qs: `height=${H}`, allow: [{ path: '$[*].poolName', why: LIVE_ONLY }] }, { qs: `height=${H + 1}` }],
     'blocks': [
       { qs: 'n=20', allow: [BLOCK_MINER, STALE_SIBLING, BLOCK_FINDING] },
@@ -343,6 +346,8 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     await block(B1, H - 1, NOW - 1200, PY);
     await block(B0, H, NOW - 120, PY,
       { analysis: { flags: [{ key: 'invalid_coinbase_no_merkle', icon: 'error', details: { offenders } }] } });
+    // its coinbase merkle path: the one branch both feeds' templates at H carry (block_template_matches)
+    await admin.query(`UPDATE blocks SET merkle_branches = decode($2, 'hex') WHERE block_hash = decode($1, 'hex')`, [B0, '11'.repeat(32)]);
     // S: a stale block at H - 1 mined by the excluded pool
     await admin.query(
       `INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce, merkle_root,

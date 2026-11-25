@@ -24,6 +24,9 @@ BEGIN
   SELECT * INTO r FROM block_template_matches(975501, 975501) m WHERE m.pool = 'Winner' AND m.replica = '0';
   IF NOT (r.full_match AND r.match_depth = 3 AND r.branches = 3 AND r.coinbase_prefix AND r.coinbase_suffix AND r.coinbase_layout AND r.n_rows = 2 AND r.block_pool = 'Winner') THEN
     RAISE EXCEPTION 'Winner/0: %', r; END IF;
+  -- the block hash as stored (display order, like every other read), not reversed (20261125000001)
+  IF r.block_hash <> '000000000000000000000000000000000000000000000000000000000000005c783031' THEN
+    RAISE EXCEPTION 'block_hash order: %', r.block_hash; END IF;
   -- Winner replica 1 (another extranonce1 of the same length): also a full match
   SELECT * INTO r FROM block_template_matches(975501, 975501) m WHERE m.pool = 'Winner' AND m.replica = '1';
   IF NOT (r.full_match AND r.coinbase_layout) THEN RAISE EXCEPTION 'Winner/1: %', r; END IF;

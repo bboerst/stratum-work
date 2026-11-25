@@ -13,7 +13,7 @@
  * old link still opens the episode it was shared for, or the one that replaced it.
  */
 
-export type ShareKind = 'stale' | 'bitcoin_block' | 'other_chain' | 'invalid_parent' | 'invalid_coinbase' | 'undetermined';
+export type ShareKind = 'stale' | 'bitcoin_block' | 'never_appeared' | 'other_chain' | 'invalid_parent' | 'invalid_coinbase' | 'undetermined';
 export type ShareRange = '6e' | '26e' | 'all';
 export const SHARE_RANGES: readonly ShareRange[] = ['6e', '26e', 'all'];
 
@@ -31,6 +31,7 @@ export interface ShareEpisode {
 export const KIND_SLUG: Record<ShareKind, string> = {
   stale: 'race',
   bitcoin_block: 'unrecorded',
+  never_appeared: 'never-appeared',
   other_chain: 'other-chain',
   invalid_parent: 'invalid-parent',
   invalid_coinbase: 'invalid-coinbase',
@@ -44,12 +45,13 @@ const SLUG_KIND = new Map(Object.entries(KIND_SLUG).map(([k, s]) => [s, k as Sha
  * kind: more pools, then more templates, then the earlier, then the lower parent hash (deterministic).
  */
 export const SELECTION_ORDER: readonly ShareKind[] =
-  ['invalid_coinbase', 'invalid_parent', 'stale', 'bitcoin_block', 'other_chain', 'undetermined'];
+  ['invalid_coinbase', 'invalid_parent', 'stale', 'bitcoin_block', 'never_appeared', 'other_chain', 'undetermined'];
 
 /** The glossary's names for the kinds, for titles and link previews. */
 export const KIND_TITLE: Record<ShareKind, string> = {
   stale: 'Race',
   bitcoin_block: 'Unrecorded block',
+  never_appeared: 'Never appeared',
   other_chain: 'Other chain',
   invalid_parent: 'Invalid parent',
   invalid_coinbase: 'Invalid coinbase',
@@ -185,6 +187,7 @@ export function episodeTitle(e: ShareEpisode): string {
 const BUILT_ON: Record<ShareKind, string> = {
   stale: 'a stale block we recorded',
   bitcoin_block: "a block with Bitcoin's proof of work that our node never recorded",
+  never_appeared: "a block header with Bitcoin's proof of work that no pool's node accepted",
   other_chain: "another chain's block",
   invalid_parent: "a parent that can't be a valid Bitcoin block",
   invalid_coinbase: '',

@@ -146,7 +146,7 @@ export interface InvalidCoinbase {
  */
 export type EpisodeKind = 'stale' | ParentKind | 'invalid_coinbase';
 export const EPISODE_KINDS: readonly EpisodeKind[] =
-  ['stale', 'bitcoin_block', 'other_chain', 'invalid_parent', 'invalid_coinbase', 'undetermined'];
+  ['stale', 'bitcoin_block', 'never_appeared', 'other_chain', 'invalid_parent', 'invalid_coinbase', 'undetermined'];
 
 export interface Episode {
   parent: string;                // the parent (a block other than our best one), display-order hex; for an

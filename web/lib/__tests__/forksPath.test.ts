@@ -43,7 +43,7 @@ describe('parseForksPath', () => {
 
 describe('selection at one height', () => {
   it('orders invalid coinbase > invalid parent > race > unrecorded block > other chain > undetermined', () => {
-    expect(SELECTION_ORDER).toEqual(['invalid_coinbase', 'invalid_parent', 'stale', 'bitcoin_block', 'other_chain', 'undetermined']);
+    expect(SELECTION_ORDER).toEqual(['invalid_coinbase', 'invalid_parent', 'stale', 'bitcoin_block', 'never_appeared', 'other_chain', 'undetermined']);
     const eps = [ep('undetermined', 7), ep('other_chain', 7), ep('bitcoin_block', 7), ep('stale', 7), ep('invalid_parent', 7), ep('stale', 8)];
     expect(rankAtHeight(eps, 7).map(e => e.kind)).toEqual(['invalid_parent', 'stale', 'bitcoin_block', 'other_chain', 'undetermined']);
     expect(selectEpisode([...eps, ep('invalid_coinbase', 7)], { height: 7, kind: null, suffix: null })?.episode.kind).toBe('invalid_coinbase');

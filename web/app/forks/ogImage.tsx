@@ -41,11 +41,11 @@ const FG = "#f8fafc";                          // --foreground: 210 40% 98%
 const FG70 = "rgba(248,250,252,0.7)", FG50 = "rgba(248,250,252,0.5)", FG60 = "rgba(248,250,252,0.6)";
 const STRIP = "#313131", TILE_TEXT = "#d7d7d7", TILE_SUB = "rgba(215,215,215,0.75)";
 const DOT: Record<ShareKind, string> = {        // KIND_BG, dark
-  stale: "#3b82f6", bitcoin_block: "#38bdf8", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
+  stale: "#3b82f6", bitcoin_block: "#38bdf8", never_appeared: "#14b8a6", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
   invalid_coinbase: "#f43f5e", undetermined: "#6b7280",
 };
 const OUTLINE: Record<ShareKind, string> = {    // WhyUnknown kindStroke
-  stale: "#6b7280", bitcoin_block: "#38bdf8", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
+  stale: "#6b7280", bitcoin_block: "#38bdf8", never_appeared: "#14b8a6", other_chain: "#8b5cf6", invalid_parent: "#f43f5e",
   invalid_coinbase: "#f43f5e", undetermined: "#6b7280",
 };
 const STALE_FILL = "#2563eb";                  // fill-blue-600 (dark)

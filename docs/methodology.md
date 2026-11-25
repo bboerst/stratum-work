@@ -376,13 +376,26 @@ The rules, in order:
 2. **Unrecorded block**: Bitcoin's difficulty (or unknown difficulty right at our tip) and the hash meets the
    target. Work at Bitcoin's target can't be faked, so this is a block hash with Bitcoin-level work that our node
    never recorded. Nothing more is shown: neither a rival block nor whether it was valid. It may have lost a race, or
-   never reached the network. It can also be a block mined
+   never reached the network (rule 3 picks out the ones whose own height shows that no pool's node accepted them). It can also be a block mined
    seconds before the page was computed, before we stored it: the page is recomputed every 5 minutes, so such an
    episode stays listed until then. Once its header is imported from the public stale-blocks dataset (see
    [Blocks](#blocks)) the parent is a recorded stale block and the episode's kind becomes `stale`.
-3. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a
+3. **Never appeared**: an unrecorded block whose own height shows that no pool's node accepted it. All of these hold,
+   read from the height's timeline (`web/lib/forkStatus.ts` `neverAppeared`):
+   - **no rival yet**: the first template on it came at least 10 seconds before the first on any other block at that
+     height (our active-chain block, a stale block or another unrecorded block), so a pool leaving it wasn't moving to
+     a rival;
+   - **only empty templates**: every template on it, from every pool, has no transactions. A node that accepted a
+     block builds templates with transactions on it within seconds;
+   - **a pool went back**: at least one pool then sent work on the block before it again, which a node never does
+     after accepting a block.
+
+   Its header went round (pools can start on a new block's header before their node has the block), but the block
+   itself was never accepted: it was invalid, or never sent. Which of the two isn't known, since we never have the
+   block. Proof of work alone shows that the header's work was done, not that the block was valid.
+4. **Invalid parent**: Bitcoin's difficulty (or unknown difficulty at our tip), but the hash misses the target: not a
    valid block at all.
-4. **Undetermined**: no stored block to compare with at all.
+5. **Undetermined**: no stored block to compare with at all.
 
 An episode that began before our first stored block (collection started part-way through that height) has no tip and
 no stored block to compare with. It is left out of the page and counted in the API response (`before_first_block`).

@@ -52,6 +52,7 @@ These follow Bitcoin Core's words.
 | **fork** | An episode in which feeds build on a parent other than the active chain's block. Its kinds, with the closest status Bitcoin Core's `getchaintips` would give the parent: | Forks page |
 | · **race** | the parent is a stale block we recorded: two valid blocks at one height (Core: *valid-fork*, or *headers-only* when we hold only its header). | `stale_blocks` |
 | · **unrecorded block** | the parent is a block hash with proof of work at Bitcoin's difficulty that our node never recorded (so Core lists nothing). Neither a rival block nor validity is shown: it may have lost a race, or never reached the network. | inferred |
+| · **never appeared** | an unrecorded block that no pool's node accepted: only empty templates were built on it, with no rival block yet, and pools went back to the block before. Invalid, or never sent; which isn't known. | inferred |
 | · **other chain** | the parent belongs to another chain mined on the same endpoint. | inferred |
 | · **invalid parent** | the parent can't be a valid Bitcoin block (closest: *invalid*). | inferred |
 | **invalid coinbase** | An episode, not a fork: templates whose coinbase pays more than the block can (an empty template paying more than the subsidy). | finding |

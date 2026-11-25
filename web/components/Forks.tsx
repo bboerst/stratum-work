@@ -20,7 +20,7 @@ import { wentBack } from "@/lib/forkStatus";
  * are inferred is in docs/methodology.md (linked from the header), not on the page.
  */
 
-type Kind = "stale" | "bitcoin_block" | "other_chain" | "invalid_parent" | "invalid_coinbase" | "undetermined";
+type Kind = "stale" | "bitcoin_block" | "never_appeared" | "other_chain" | "invalid_parent" | "invalid_coinbase" | "undetermined";
 type ParentLabel = "best" | "stale" | "this" | "other";
 type Range = "6e" | "26e" | "all";
 
@@ -116,7 +116,7 @@ const METHODOLOGY = "https://github.com/bboerst/stratum-work/blob/main/docs/meth
  * The filter chips. "Invalid" is all invalid work, work that could never make a valid block: an invalid parent, or an
  * invalid coinbase (an episode of its own, or a badge on the race it happened in).
  */
-const CHIPS: Kind[] = ["stale", "bitcoin_block", "other_chain", "invalid_parent", "undetermined"];
+const CHIPS: Kind[] = ["stale", "bitcoin_block", "never_appeared", "other_chain", "invalid_parent", "undetermined"];
 const CHIP_LABEL: Partial<Record<Kind, string>> = { invalid_parent: "Invalid" };
 const RANGES: Range[] = ["6e", "26e", "all"];
 const DEFAULT_RANGE: Range = "6e";
@@ -126,16 +126,19 @@ const RANGE_TEXT: Record<Range, string> = { "6e": "last 12,096 blocks", "26e": "
 const KIND_LABEL: Record<Kind, string> = {
   stale: "Race",
   bitcoin_block: "Unrecorded block",
+  never_appeared: "Never appeared",
   other_chain: "Other chain",
   invalid_parent: "Invalid parent",
   invalid_coinbase: "Invalid coinbase",
   undetermined: "Undetermined",
 };
 // Categorical colours (light / dark): blue = a stale block (the fork view's stale blue; lighter when we never recorded
-// it: the same family), violet = another chain, rose = invalid (an outline for an invalid coinbase on our own chain)
+// it: the same family), teal = a block whose header went round but that no node accepted (never appeared), violet =
+// another chain, rose = invalid (an outline for an invalid coinbase on our own chain)
 const KIND_BG: Record<Kind, string> = {
   stale: "bg-[#1550a4] dark:bg-blue-500",
   bitcoin_block: "bg-sky-400",
+  never_appeared: "bg-teal-500",
   other_chain: "bg-violet-600 dark:bg-violet-500",
   invalid_parent: "bg-rose-600 dark:bg-rose-500",
   invalid_coinbase: "border-2 border-rose-500",
@@ -263,7 +266,7 @@ function WhyUnknown({ episode, drill }: { episode: Episode; drill: DrillResponse
   const stale = episode.kind === "stale";
   const sb = f.stale_block;
   const kindStroke = episode.kind === "other_chain" ? "stroke-violet-500" : episode.kind === "invalid_parent" ? "stroke-rose-500"
-    : episode.kind === "bitcoin_block" ? "stroke-sky-400" : "stroke-gray-500";
+    : episode.kind === "bitcoin_block" ? "stroke-sky-400" : episode.kind === "never_appeared" ? "stroke-teal-500" : "stroke-gray-500";
   const miner = sb?.miner ? (sb.miner.length > 14 ? `${sb.miner.slice(0, 13)}…` : sb.miner) : null;
   const pools = episode.pools.map(p => p.pool);
   const checks: { ok: boolean | null; label: string; title: string }[] = [
@@ -450,6 +453,7 @@ const SIDE_DOT: Record<string, string> = {
   canonical: "bg-amber-600 dark:bg-amber-500",
   stale: "bg-[#1550a4] dark:bg-blue-500",
   bitcoin_block: "bg-sky-400",
+  never_appeared: "bg-teal-500",
   other_chain: "bg-violet-600 dark:bg-violet-500",
   invalid_parent: "bg-rose-600 dark:bg-rose-500",
   undetermined: "bg-gray-500",
@@ -458,6 +462,7 @@ const SIDE_TEXT: Record<string, string> = {
   canonical: "text-amber-600 dark:text-amber-500",
   stale: "text-[#1550a4] dark:text-blue-400",
   bitcoin_block: "text-sky-500 dark:text-sky-400",
+  never_appeared: "text-teal-600 dark:text-teal-400",
   other_chain: "text-violet-600 dark:text-violet-400",
   invalid_parent: "text-rose-600 dark:text-rose-400",
   undetermined: "text-gray-500",
@@ -725,7 +730,7 @@ function HistoryStrip({ strip, range, showOther, active, onPick, onHover }: {
             onClick={e => { if (c.length && window.matchMedia("(max-width: 639px)").matches) { e.preventDefault(); const r = c[c.length - 1]; onPick(r[4], r[1]); } }}>
             {c.map(r => (
               <button key={r[4]} type="button" aria-label={what(r)}
-                className={`aspect-square w-full max-w-3.5 rounded-[1px] max-sm:pointer-events-none ${r[2] === "stale" || r[2] === "bitcoin_block" ? (r[3] ? "bg-[linear-gradient(var(--race)_50%,var(--bad)_50%)]" : KIND_BG.stale) : "bg-rose-600 dark:bg-rose-500"} ${active === r[4] ? "outline-2 outline-offset-1 outline-foreground" : "hover:outline-2 hover:outline-offset-1 hover:outline-foreground/70"}`}
+                className={`aspect-square w-full max-w-3.5 rounded-[1px] max-sm:pointer-events-none ${r[2] === "stale" || r[2] === "bitcoin_block" ? (r[3] ? "bg-[linear-gradient(var(--race)_50%,var(--bad)_50%)]" : KIND_BG.stale) : r[2] === "never_appeared" ? KIND_BG.never_appeared : "bg-rose-600 dark:bg-rose-500"} ${active === r[4] ? "outline-2 outline-offset-1 outline-foreground" : "hover:outline-2 hover:outline-offset-1 hover:outline-foreground/70"}`}
                 style={{ ["--race" as string]: "var(--fork-race)", ["--bad" as string]: "var(--fork-bad)" }}
                 onPointerEnter={() => { setLabel(what(r)); onHover(r[4]); }} onFocus={() => setLabel(what(r))}
                 onClick={() => onPick(r[4], r[1])} />

@@ -21,13 +21,15 @@
  *     block: a hash with work at Bitcoin's target, which can't be faked, that our node never recorded; whether it lost a
  *     race or never reached the network isn't known), else 'invalid_parent' (not a valid block at all).
  *  4. No tip and no Bitcoin bits (an empty blocks table): 'undetermined'.
+ * 'never_appeared' refines 'bitcoin_block' from the height's lanes (lib/forkStatus.ts neverAppeared): parentKind()
+ * itself never returns it.
  * The nbits check comes before the PoW check on purpose: another chain's block at a lower difficulty fails Bitcoin's
  * target, and would otherwise read as an invalid Bitcoin parent.
  */
 
-export type ParentKind = 'bitcoin_block' | 'other_chain' | 'invalid_parent' | 'undetermined';
+export type ParentKind = 'bitcoin_block' | 'never_appeared' | 'other_chain' | 'invalid_parent' | 'undetermined';
 
-export const PARENT_KINDS: readonly ParentKind[] = ['bitcoin_block', 'other_chain', 'invalid_parent', 'undetermined'];
+export const PARENT_KINDS: readonly ParentKind[] = ['bitcoin_block', 'never_appeared', 'other_chain', 'invalid_parent', 'undetermined'];
 
 /** The height window around our tip that still counts as "at the tip" (a block race, or a block just above it). */
 export const NEAR_TIP = 1;

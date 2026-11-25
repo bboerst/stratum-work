@@ -157,6 +157,9 @@ describe.skipIf(!enabled)('Postgres fork timeline (one height, runs per pool)', 
     const r = await read([hidden]);
     expect(r.active).toBe(B1);
     expect(Object.fromEntries(r.parents.map(p => [p.hash, p.status]))).toEqual({ [B1]: 'canonical', [S1]: 'stale', [U]: 'unknown', [B2]: 'previous' });
+    // U meets the target and its pool went back, but rivals were worked on before it: an unrecorded block, not one
+    // that never appeared (lib/forkStatus.ts neverAppeared)
+    expect(r.parents.find(p => p.hash === U)?.kind).toBe('bitcoin_block');
     const s = r.blocks.find(b => b.hash === S1)!;
     expect(s).toMatchObject({ best: false, stale_only: true, seen_ms: null, miner: 'stale-miner' });
     expect(r.blocks.find(b => b.hash === B1)).toMatchObject({ best: true, seen_ms: T0 * 1000, miner: `miner-${H - 1}` });

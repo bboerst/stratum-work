@@ -5,6 +5,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from coinbase import coinbase_facts, dsha256, fold, merkle_branches, strip_witness  # noqa: E402
 from coinbase_fill import BlockCoinbaseFiller  # noqa: E402
+from gap_fill import HistoricalGapFiller  # noqa: E402
 
 
 def root_of(txids):
@@ -199,17 +200,69 @@ class CoinbaseFillTests(unittest.TestCase):
         self.assertEqual((stats["from_peer"], stats["pruned_at"]), (0, 1))
         self.assertEqual(f.asked, [])
 
-    def test_pruned_blocks_come_from_peers_read_at_once_with_rotating_peers_and_a_budget(self):
+    def test_pruned_blocks_come_from_peers_read_at_once_with_a_budget(self):
         hashes = [f"{i:064x}" for i in range(6)]
         node = FakeNode(6, pruned=set(hashes[1:]))
         f = FakeFetcher(node, deliverable=hashes)
         s = FakeStore([(h, 100 - i) for i, h in enumerate(hashes)])
         stats = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=3, header_fields=header_fields).run()
         self.assertEqual((stats["filled"], stats["from_peer"], stats["pruned_at"]), (4, 3, 1))   # 0 locally, 1-3 from peers
-        self.assertEqual([a[2] for a in f.asked], [1, 2, 3])                                  # one peer after another
+        self.assertEqual([a[2] for a in f.asked], [1, 1, 1])        # the run's one list, ordered by the fetcher
         self.assertEqual([d["coinbase_tx"] for d in s.filled], [node.blocks[h]["stripped"] for h in hashes[:4]])
         self.assertEqual(len(s.headers), 4)
         self.assertIn(("getblockchaininfo",), node.calls)                                     # prune height logged
+
+    def test_bad_peers_dont_stop_a_run_while_a_good_one_is_connected(self):
+        # With the real gap filler's peer path. Outbound 2 delivers 5 blocks, then disconnects; outbound 5 and
+        # inbound 3 never deliver (timeout); inbound 1 is gone; inbound 4 is pre-SegWit (no WITNESS); inbound 6
+        # delivers. The whole budget is fetched, each slow peer waited out once.
+        n = 21
+        hashes = [f"{i:064x}" for i in range(n)]
+        node = FakeNode(n, pruned=set(hashes))
+        info = [{"id": 2, "servicesnames": ["NETWORK", "WITNESS"], "inbound": False},
+                {"id": 5, "servicesnames": ["NETWORK", "WITNESS"], "inbound": False},
+                {"id": 1, "servicesnames": ["NETWORK", "WITNESS"], "inbound": True},
+                {"id": 3, "servicesnames": ["NETWORK", "WITNESS"], "inbound": True},
+                {"id": 4, "servicesnames": ["NETWORK"], "inbound": True},
+                {"id": 6, "servicesnames": ["NETWORK", "WITNESS"], "inbound": True}]
+        gone, delivered, asked = set(), {2: 0, 6: 0}, []
+
+        def rpc(method, *args):
+            if method == "getpeerinfo":
+                listed = [p for p in info if p["id"] not in gone]
+                gone.add(1)                                           # 1 disconnects right after the listing
+                return listed
+            if method == "getblockfrompeer":
+                h, p = args
+                asked.append(p)
+                if p in gone:
+                    raise RuntimeError("Peer does not exist")
+                if p == 4:
+                    raise RuntimeError("Pre-SegWit peer")
+                if p in delivered:
+                    node.pruned.discard(h)
+                    delivered[p] += 1
+                    if p == 2 and delivered[2] == 5:
+                        gone.add(2)
+                return {}
+            return node.rpc(method, *args)
+        t = [0.0]
+
+        def sleep(s):
+            t[0] += s
+        clock = lambda: t[0]  # noqa: E731
+        fetcher = HistoricalGapFiller(rpc, None, None, None, min_height=0, max_peers=3, peer_timeout=30,
+                                      poll_interval=1, sleep=sleep, clock=clock)
+        s = FakeStore([(h, 1000 - i) for i, h in enumerate(hashes)])
+        filler = BlockCoinbaseFiller(rpc, s, fetcher=fetcher, peer_max_blocks=n - 1, peer_max_failures=3, clock=clock)
+        stats = filler.run()
+        self.assertEqual((stats["from_peer"], stats["peer_failed"], stats["filled"]), (n - 1, 0, n - 1))
+        self.assertIn("budget of", filler._peer["stopped"])
+        self.assertNotIn(4, asked)                                    # filtered out by its services
+        self.assertEqual(asked[:5], [2] * 5)
+        self.assertEqual(asked[5:10], [2, 5, 1, 3, 6])                # 2 and 1 gone (no try used), 5 and 3 slow
+        self.assertEqual(asked[10:], [6] * (n - 1 - 6))               # then the peer that delivers
+        self.assertLessEqual(t[0], 2 * 31)                            # two timeouts in the whole run
 
     def test_peer_fetching_stops_after_failures_in_a_row_and_without_peers(self):
         hashes = [f"{i:064x}" for i in range(6)]

@@ -25,7 +25,7 @@ class Harness:
         self.node = FakeNode(base=BASE, length=LENGTH)
         self.store = PgStore()
         self.tracker = StaleBlockTracker(self.node, self.store, now=lambda: NOW)
-        self.pruned, self.fail_store, self.peer_list = set(), set(), [{"id": 1, "servicesnames": ["NETWORK"]}]
+        self.pruned, self.fail_store, self.peer_list = set(), set(), [{"id": 1, "servicesnames": ["NETWORK", "WITNESS"]}]
         self.stored, self.marked, self.hash_calls, self.on_processor_calls = [], [], [], []
         self.in_processor = False
         self.reconciler = BestChainReconciler(
@@ -181,7 +181,7 @@ class HistoryTests(unittest.TestCase):
         stats = t.check.run()
         self.assertEqual((stats["stored"], stats["failed"], t.marked), (0, 1, []))
         self.assertEqual(t.store.best_at(1005), [s])   # untouched: never marked without storing the node's block
-        t.peer_list = [{"id": 1, "servicesnames": ["NETWORK"]}]
+        t.peer_list = [{"id": 1, "servicesnames": ["NETWORK", "WITNESS"]}]
         t.check.run()
         self.assertTrue(t.node_chain_is_best())
 

@@ -198,6 +198,46 @@ class GapFillTests(unittest.TestCase):
         self.assertEqual((stats["from_peer"], stats["failed"]), (1, 0))
         self.assertGreaterEqual(f.fake_clock.t, 5)   # waited out peer 1
 
+    def test_unusable_peers_dont_use_up_tries(self):
+        # gone and pre-SegWit peers are dropped at once; the block's 3 tries go to peers that can answer
+        node = FakeNode(tip=110, pruned=[103], peers=[peer(i) for i in range(1, 6)], serves=[5])
+        real = node.__call__
+
+        def rpc(method, *args):
+            if method == "getblockfrompeer" and args[1] in (1, 3):
+                node.calls.append((method,) + args)
+                raise Exception("-1: Peer does not exist" if args[1] == 1 else "-1: Pre-SegWit peer")
+            return real(method, *args)
+        store = FakeStore(set(range(100, 111)) - {103})
+        f = make(node, store, max_peers=3, peer_timeout=2)
+        f.rpc = rpc
+        peers = f.peers()
+        self.assertTrue(f.fetch_from_peers(103, bh(103), peers))
+        self.assertEqual([c[2] for c in node.calls if c[0] == "getblockfrompeer"], [1, 2, 3, 4, 5])
+        self.assertEqual(peers, [5, 2, 4])   # 1 and 3 dropped, 5 delivered (first), 2 and 4 timed out (back)
+
+    def test_slow_peers_are_waited_out_once_per_run(self):
+        # peers 1 and 2 never deliver, 3 does: the first block pays their timeouts, later blocks ask 3 first
+        node = FakeNode(tip=110, pruned=[103, 104, 105], peers=[peer(1), peer(2), peer(3)], serves=[3])
+        store = FakeStore(set(range(100, 111)) - {103, 104, 105})
+        f = make(node, store, max_peers=3, peer_timeout=5, poll_interval=1)
+        stats = f.run()
+        self.assertEqual((stats["from_peer"], stats["failed"]), (3, 0))
+        self.assertEqual([c[2] for c in node.calls if c[0] == "getblockfrompeer"], [1, 2, 3, 3, 3])
+        self.assertLessEqual(f.fake_clock.t, 2 * 6)
+
+    def test_peer_list_refreshed_when_drops_leave_it_short(self):
+        # both listed peers have disconnected; a new peer connected since: one refresh finds it
+        node = FakeNode(tip=110, pruned=[103], peers=[peer(1), peer(2)], serves=[7])
+        store = FakeStore(set(range(100, 111)) - {103})
+        f = make(node, store, max_peers=3, peer_timeout=2)
+        peers = f.peers()
+        node.peers = [peer(7)]   # 1 and 2 disconnected, 7 connected since
+        self.assertTrue(f.fetch_from_peers(103, bh(103), peers))
+        self.assertEqual([c[2] for c in node.calls if c[0] == "getblockfrompeer"], [1, 2, 7])
+        self.assertEqual(node.rpc_methods().count("getpeerinfo"), 2)   # the run's list, then one refresh
+        self.assertEqual(peers, [7])
+
     def test_all_peers_fail(self):
         node = FakeNode(tip=110, pruned=[103], peers=[peer(1), peer(2)], serves=[])
         store = FakeStore(set(range(100, 111)) - {103})
@@ -303,8 +343,14 @@ class PeerSelectionTests(unittest.TestCase):
         self.assertEqual(full_history_peers(peers), [4, 9, 1, 5])
 
     def test_services_hex_fallback(self):
-        peers = [{"id": 1, "services": "0000000000000409"}, {"id": 2, "services": "0000000000000408"}]
+        peers = [{"id": 1, "services": "0000000000000409"}, {"id": 2, "services": "0000000000000408"},
+                 {"id": 3, "services": "0000000000000401"}]   # 2: no NETWORK; 3: no WITNESS
         self.assertEqual(full_history_peers(peers), [1])
+
+    def test_witness_required(self):
+        # bitcoind asks only witness peers for blocks: a NETWORK peer without WITNESS answers "Pre-SegWit peer"
+        peers = [peer(1, ["NETWORK", "NETWORK_LIMITED"]), peer(2)]
+        self.assertEqual(full_history_peers(peers), [2])
 
 
 class MainWiringTests(unittest.TestCase):

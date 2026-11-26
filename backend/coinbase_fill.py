@@ -18,8 +18,9 @@ node download it again (the gap filler's getblockfrompeer path, gap_fill.py), th
 budget), because blocks the node downloads push its oldest block files out: blocks pass 1 can still read locally
 would go first. Per run: at most
 `peer_max_blocks` blocks, `peer_max_seconds` seconds, and it stops after `peer_max_failures` blocks in a row that no
-peer delivered (bitcoind disconnects a peer that doesn't answer). Peers are rotated block by block. The node's prune
-height is logged each such run, to watch its window of block data shrink and regrow.
+peer delivered (bitcoind disconnects a peer that doesn't answer). The run keeps one peer list (gap_fill.py orders it:
+the peer that delivered last is asked first, peers that didn't move to the back, disconnected ones are dropped). The
+node's prune height is logged each such run, to watch its window of block data shrink and regrow.
 
 Nothing is recorded as done: the next run continues. Postgres only.
 """
@@ -82,10 +83,8 @@ class BlockCoinbaseFiller:
             st["stopped"] = stop
             logger.info("coinbase fill: stopped fetching pruned blocks from peers: %s", stop)
             return False, None
-        peers = st["peers"]
-        k = (stats["from_peer"] + stats["peer_failed"]) % len(peers)
         got: List[Optional[Dict[str, Any]]] = []
-        if self.fetcher.fetch_from_peers(height, block_hash, peers[k:] + peers[:k],
+        if self.fetcher.fetch_from_peers(height, block_hash, st["peers"],   # reordered in place by the fetcher
                                          lambda: self._read_arrived(block_hash, got)):
             stats["from_peer"] += 1
             st["in_a_row"] = 0
@@ -198,7 +197,7 @@ class BlockCoinbaseFiller:
 
     def _peer_stop(self, stats: Dict[str, int], peers: Optional[List[int]], deadline: float, in_a_row: int) -> str:
         if not peers:
-            return "no connected peer serves old blocks (NETWORK service)"
+            return "no connected peer serves old blocks (NETWORK + WITNESS services)"
         if stats["from_peer"] + stats["peer_failed"] >= self.peer_max_blocks:
             return f"budget of {self.peer_max_blocks} blocks per run reached"
         if self.clock() >= deadline:

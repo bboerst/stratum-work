@@ -12,11 +12,15 @@ One run:
      with no RPC at all.
   2. The missing heights, newest first, at most `max_blocks` of them. For each: getblockhash, then store it (on the
      block processor, so it never races a new block). Stored, or a block known already and marked best again: done.
-  3. Pruned: getpeerinfo once per run; candidates are peers that advertise NETWORK (full block history), outbound ones
-     first (peers this node chose). NETWORK_LIMITED-only peers serve just the last 288 blocks, which a pruned node
-     keeps anyway. Up to `max_peers` of them: getblockfrompeer, then poll getblock (verbosity 1, a few hundred kB on
-     mainnet) every `poll_interval` seconds for up to `peer_timeout` seconds, outside the block processor, so a slow
-     peer never delays a new block. Once the node has it, store it on the block processor.
+  3. Pruned: getpeerinfo once per run; candidates are peers that advertise NETWORK (full block history) and WITNESS
+     (bitcoind only asks witness peers for blocks: "Pre-SegWit peer"), outbound ones first (peers this node chose).
+     NETWORK_LIMITED-only peers serve just the last 288 blocks, which a pruned node keeps anyway. Up to `max_peers`
+     of them: getblockfrompeer, then poll getblock (verbosity 1, a few hundred kB on mainnet) every `poll_interval`
+     seconds for up to `peer_timeout` seconds, outside the block processor, so a slow peer never delays a new block.
+     Once the node has it, store it on the block processor. The run keeps one peer list in order of who delivers: a
+     peer that delivered moves to the front (the next block asks it first), one that didn't to the back, and one that
+     can't serve blocks any more (disconnected: "Peer does not exist") is dropped, without using up one of the
+     block's `max_peers` tries. A list a drop leaves shorter than `max_peers` is refreshed once (getpeerinfo).
   4. Anything that fails is logged and skipped. Nothing is recorded as done, so the next run tries again.
 
 A historical block is stored as synced, not seen live (Postgres: seen_at NULL), like the startup backfill.
@@ -31,7 +35,12 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger("backend.gap_fill")
 
 # NETWORK (1 << 0): serves the full block history. NETWORK_LIMITED (1 << 10): only the last 288 blocks.
+# WITNESS (1 << 3): serves witness data; bitcoind fetches blocks only from such peers.
 NODE_NETWORK = 1
+NODE_WITNESS = 1 << 3
+
+# getblockfrompeer errors that mean the peer can't serve this run's blocks at all: drop it.
+_UNUSABLE_PEER = ("peer does not exist", "pre-segwit peer")
 
 
 def is_pruned_error(exc: BaseException) -> bool:
@@ -39,13 +48,14 @@ def is_pruned_error(exc: BaseException) -> bool:
 
 
 def full_history_peers(peers: List[Dict[str, Any]]) -> List[int]:
-    """Peer ids that serve old blocks (NETWORK service bit), outbound first, then by id."""
+    """Peer ids that serve old blocks (NETWORK and WITNESS service bits), outbound first, then by id."""
     def full(p: Dict[str, Any]) -> bool:
         names = p.get("servicesnames")
         if names is not None:
-            return "NETWORK" in names
+            return "NETWORK" in names and "WITNESS" in names
         try:
-            return bool(int(str(p.get("services", "0")), 16) & NODE_NETWORK)
+            bits = int(str(p.get("services", "0")), 16)
+            return bool(bits & NODE_NETWORK) and bool(bits & NODE_WITNESS)
         except ValueError:
             return False
     usable = [p for p in peers if isinstance(p.get("id"), int) and full(p)]
@@ -109,7 +119,7 @@ class HistoricalGapFiller:
             if not peers:
                 stats["no_peer"] += 1
                 self.log.warning("Gap fill: block %d (%s) is pruned and no connected peer serves old blocks "
-                                 "(NETWORK service); retried next run", height, block_hash)
+                                 "(NETWORK + WITNESS services); retried next run", height, block_hash)
                 continue
             if self.fetch_from_peers(height, block_hash, peers):
                 stats["stored"] += 1
@@ -147,19 +157,47 @@ class HistoricalGapFiller:
                          store_step: Optional[Callable[[], str]] = None) -> bool:
         """Ask peers for a pruned block, outside the block processor, then run store_step once the node has it
         (default: the gap fill's store on the block processor; the best-chain history check passes its own).
-        store_step returns "ok" | "pruned" | "error". True = stored."""
+        store_step returns "ok" | "pruned" | "error". True = stored.
+
+        `peers` is the caller's list for the run, kept up to date in place: a peer that delivered moves to the
+        front, one that didn't (timeout, request error) to the back, one that can't serve (gone, pre-SegWit) is
+        removed without using up a try; a removal that leaves fewer than `max_peers` refreshes the list once."""
         if store_step is None:
             store_step = lambda: self.on_block_processor(lambda: self._store(height, block_hash))  # noqa: E731
-        for peer in peers[: max(1, self.max_peers)]:
+        max_tries = max(1, self.max_peers)
+        tried: set = set()
+        tries, refreshed = 0, False
+        while tries < max_tries:
+            peer = next((p for p in peers if p not in tried), None)
+            if peer is None:
+                break
+            tried.add(peer)
+            from_peer = True
             try:
                 self.rpc("getblockfrompeer", block_hash, peer)
             except Exception as e:
-                if "already downloaded" not in str(e).lower():
+                msg = str(e).lower()
+                if any(m in msg for m in _UNUSABLE_PEER):
+                    peers.remove(peer)
+                    self.log.info("Gap fill: peer %d dropped for this run (%s)", peer, e)
+                    if not refreshed and len(peers) < max_tries:
+                        refreshed = True
+                        self._refresh(peers)
+                    continue
+                if "already downloaded" not in msg:
+                    tries += 1
+                    _to_back(peers, peer)
                     self.log.warning("Gap fill: getblockfrompeer(%d, peer %d) failed: %s", height, peer, e)
                     continue
+                from_peer = False   # the node has it already: not this peer's doing
+            tries += 1
             if not self._wait_for_block(block_hash):
+                _to_back(peers, peer)
                 self.log.warning("Gap fill: peer %d didn't deliver block %d within %.0fs", peer, height, self.peer_timeout)
                 continue
+            if from_peer:
+                peers.remove(peer)
+                peers.insert(0, peer)   # it delivers: ask it first next time
             result = store_step()
             if result == "ok":
                 self.log.info("Gap fill: block %d (%s) fetched from peer %d", height, block_hash, peer)
@@ -168,8 +206,14 @@ class HistoricalGapFiller:
             if result != "pruned":
                 return False   # not a fetch problem: another peer won't help
         self.log.warning("Gap fill: block %d (%s) not fetched from any of %d peer(s); retried next run",
-                         height, block_hash, min(len(peers), max(1, self.max_peers)))
+                         height, block_hash, tries)
         return False
+
+    def _refresh(self, peers: List[int]) -> None:
+        """Append peers connected since the list was taken (getpeerinfo), keeping the order learned so far."""
+        new = [p for p in self.peers() if p not in peers]
+        peers.extend(new)
+        self.log.info("Gap fill: peer list refreshed: %d new peer(s), %d in all", len(new), len(peers))
 
     def _wait_for_block(self, block_hash: str) -> bool:
         """getblockfrompeer only queues the request: poll until the node has the block data."""
@@ -184,6 +228,11 @@ class HistoricalGapFiller:
             if self.clock() >= deadline:
                 return False
             self.sleep(self.poll_interval)
+
+
+def _to_back(peers: List[int], peer: int) -> None:
+    peers.remove(peer)
+    peers.append(peer)
 
 
 def _ranges(heights: List[int], limit: int = 10) -> str:

@@ -21,7 +21,7 @@
  *   child_package_fee_rate  the highest ancestor-package rate among its direct children that our node had seen by
  *                       `at`: each child's ancestor_fees / ancestor_vsize as of the child's first seen, which is the
  *                       package (this transaction included) a miner selecting by ancestor package mines it in when a
- *                       child pays for it (CPFP). From mempool_tx_inputs, so only within its 30-day retention; null
+ *                       child pays for it (CPFP). From mempool_tx_inputs, so only since recording started; null
  *                       without such a child. Grandchildren aren't followed.
  *   effective_fee_rate  the rate a miner selecting by ancestor package gets for it: the smaller of fee_rate and
  *                       ancestor_fee_rate when it has unconfirmed ancestors (low-fee parents pull it down; high-fee

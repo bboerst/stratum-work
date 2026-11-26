@@ -261,8 +261,8 @@ func (s *PGStore) withConn(ctx context.Context, fn func(*pgx.Conn) error) error 
 	return fn(c)
 }
 
-// OpenTxs loads the rows still open, with their inputs (mempool_tx_inputs, kept 30 days: longer than any open row
-// lasts). A row whose inputs are missing gets nil Inputs; the resync fetches them from the node.
+// OpenTxs loads the rows still open, with their inputs (mempool_tx_inputs, kept forever, so at least as long as
+// any open row lasts). A row whose inputs are missing gets nil Inputs; the resync fetches them from the node.
 func (s *PGStore) OpenTxs(ctx context.Context, since time.Time) ([]OpenTx, error) {
 	var out []OpenTx
 	err := s.withConn(ctx, func(c *pgx.Conn) error {

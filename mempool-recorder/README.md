@@ -6,7 +6,7 @@ Follows a Bitcoin Core node's mempool and records every transaction it accepts, 
 | Table | Rows |
 |---|---|
 | `mempool_txs` | One per stay in the mempool: `first_seen` (receipt of the ZMQ `A` event, UTC µs), txid and wtxid (`bytea`, **internal byte order**, the same order as `merkle_branches`; `hash_display()` gives the usual hex), size/vsize/weight, fee and modified fee, ancestor/descendant count, size and fees (from `getmempoolentry`, as of first seen), input count, then `removed_at`, `removal` and `replaced_by` / `block_hash` / `block_height`. |
-| `mempool_tx_inputs` | One per input (prevout txid + vout) of each row, **kept 30 days**: enough for replacement/conflict detection (a tx stays at most 14 days) and the restart reload; the resolver gets the last 30 days of inputs. |
+| `mempool_tx_inputs` | One per input (prevout txid + vout) of each row, **kept forever** like the rows (30 days until #329): the recorder needs them for replacement/conflict detection (a tx stays at most 14 days) and the restart reload; the resolver and analyses need every transaction's parent links. |
 | `mempool_blocks` | Every block connect and disconnect seen on the feed, with how many of its transactions came from our mempool and how many didn't. |
 | `mempool_offmempool` | Per block, the transactions that were never in our mempool (no row in the lookback window), with their position in the block. |
 | `mempool_tx_raw` | Raw transactions, only with `--store-raw` (~300 MB/day on mainnet; dropped after 14 days). |

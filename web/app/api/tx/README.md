@@ -71,10 +71,11 @@ transaction, computed from what our node reported when the transaction entered i
   as part of the child's package. A template's first transaction is often exactly such a parent: 1 sat/vB on its own,
   ~200 sat/vB with the child that pays for it.
 
-Children come from the recorder's inputs (`mempool_tx_inputs`), which are kept for **30 days**: for older transactions
-`child_package_fee_rate` is `null`. Only direct children count, each with its own ancestor package as our node reported
-it when the child arrived; grandchildren aren't followed. Only children seen by `at` count (`at` is rounded up to the
-hour, so a child seen up to an hour after a template can be included).
+Children come from the recorder's inputs (`mempool_tx_inputs`), kept as long as the transactions (they were dropped
+after 30 days before #329): where a transaction's children have no inputs stored, `child_package_fee_rate` is `null`.
+Only direct children count, each with its own ancestor package as our node reported it when the child arrived;
+grandchildren aren't followed. Only children seen by `at` count (`at` is rounded up to the hour, so a child seen up to
+an hour after a template can be included).
 
 mempool.space's `effectiveFeePerVsize` (its `/api/v1/cpfp/<txid>`, what the table showed before) is computed over the
 transaction's **current cluster, descendants included**. The two numbers can still differ when:

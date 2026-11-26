@@ -222,7 +222,7 @@ export class Fixture {
       const txs = 1000 + Math.floor(r() * 5000);
       const roll = r();
       const state = roll < 0.002 ? 1 : roll < 0.004 ? 3 : 0;
-      const off = state === 1 ? null : roll > 0.97 ? Math.floor(txs * r()) : Math.floor(r() * 3);
+      const off = state !== 0 ? null : roll > 0.97 ? Math.floor(txs * r()) : Math.floor(r() * 3);
       rows.push([h, `Pool ${h % 17}`, state === 1 ? null : txs, off, state, Math.floor(this.blockTime(h))]);
     }
     return { enabled: true, supported: true, range: "6e", tip_height: tip, from_height: from, record_from: from,

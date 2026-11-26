@@ -10,8 +10,8 @@
  *  - missed: a best-chain block with no recorder row (the recorder, or the node, was down when it connected);
  *  - unchecked: a recorder row written while it wasn't synced (off_mempool_checked false);
  *  - after a gap: one of the AFTER_GAP_BLOCKS blocks recorded after a gap (a missed or unchecked block, a resync,
- *    or the start of the record). Transactions broadcast while the recorder wasn't following are missing from its
- *    record, so the next blocks count them as never seen: on production the counts of the 3 blocks after each gap
+ *    or the start of the record). Transactions broadcast while our node or the recorder wasn't following are
+ *    missing, so the next blocks count them as never seen: on production the counts of the 3 blocks after each gap
  *    were 18-63% for miners otherwise near 0%. 6 is about twice that;
  *  - coinbase only: a block with no other transaction has no share (0 of 0).
  */
@@ -76,7 +76,8 @@ export function assembleOffMempool(blocks: ChainBlock[], recorded: Map<string, R
     if (!r.checked || r.off_mempool === null) { state = OFF_STATE.unchecked; sinceGap = 0; }
     else if (sinceGap < AFTER_GAP_BLOCKS) { state = OFF_STATE.afterGap; sinceGap++; }
     else state = txs <= 0 ? OFF_STATE.coinbaseOnly : OFF_STATE.measured;
-    rows.push([b.height, b.pool, txs, state === OFF_STATE.unchecked ? null : r.off_mempool, state, b.time_s]);
+    // a count is served only when it is a measurement (or 0 of 0): never the inflated count after a gap
+    rows.push([b.height, b.pool, txs, state === OFF_STATE.measured || state === OFF_STATE.coinbaseOnly ? r.off_mempool : null, state, b.time_s]);
   }
   return rows.filter(r => r[0] >= fromHeight);
 }

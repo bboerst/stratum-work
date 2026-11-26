@@ -61,6 +61,6 @@ export function nearestPoint(points: OffPoint[], x: (h: number) => number, y: (s
 export const NO_DATA_LABEL: Record<number, string> = {
   [OFF_STATE.missed]: "not recorded: the recorder or our node was down",
   [OFF_STATE.unchecked]: "not checked: the recorder wasn't synced",
-  [OFF_STATE.afterGap]: "just after a recorder gap: transactions sent during it look unseen",
+  [OFF_STATE.afterGap]: "just after a gap in our record: transactions sent during it would look unseen",
   [OFF_STATE.coinbaseOnly]: "no transactions besides the coinbase",
 };

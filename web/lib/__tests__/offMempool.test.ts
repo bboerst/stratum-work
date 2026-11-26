@@ -55,6 +55,8 @@ describe('assembleOffMempool', () => {
     const sync = seen(H0 + 10) - 1;                       // just before H0+10 connected
     const rows = assembleOffMempool(chain(H0, H0 + 20), recorder(H0, H0 + 20), [sync], H0, H0 + 8);
     expect(states(rows)).toEqual([OK, OK, ...Array(AFTER_GAP_BLOCKS).fill(G), ...Array(5).fill(OK)]);
+    // after a gap the (inflated) count is not served
+    expect(rows.filter(r => r[4] === G).every(r => r[3] === null && r[2] === 100)).toBe(true);
     // a resync at the very instant of the connect counts too
     const at = assembleOffMempool(chain(H0, H0 + 20), recorder(H0, H0 + 20), [seen(H0 + 10)], H0, H0 + 10);
     expect(at[0][4]).toBe(G);

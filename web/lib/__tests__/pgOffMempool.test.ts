@@ -101,7 +101,7 @@ describe.skipIf(!enabled)('Postgres off-mempool reads', () => {
     const [chain, rec, syncs] = await Promise.all([db.getChainBlocks(h, h + 3), db.getRecordedBlocks(h, h + 3), db.getResyncTimes(T0 * 1000)]);
     const rows = assembleOffMempool(chain, rec, syncs, h, h);
     expect(rows.map(r => [r[0] - h, r[3], r[4]])).toEqual([
-      [0, 3, OFF_STATE.afterGap], [1, 0, OFF_STATE.afterGap], [2, null, OFF_STATE.unchecked], [3, null, OFF_STATE.missed],
+      [0, null, OFF_STATE.afterGap], [1, null, OFF_STATE.afterGap], [2, null, OFF_STATE.unchecked], [3, null, OFF_STATE.missed],
     ]);
   });
 });

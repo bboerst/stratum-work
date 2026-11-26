@@ -28,6 +28,7 @@ Four words for four kinds of evidence. Mixing them up is how a guess turns into 
 | **transaction set** | The transactions a template commits to, identified by its merkle branches (the coinbase excluded). Two templates with the same branches carry the same transactions. | `templates.merkle_branches` |
 | **empty template** | A template with no transactions besides the coinbase. Common for a few seconds after a block; the usual reading (inferred, not measured) is that the pool mines on the new block before it has validated it (*SPV mining* or *headers-first mining*). Not the same as an **empty block**, a mined block with only its coinbase. | no merkle branches |
 | **connection** | One collector link to a feed. A feed has one or more (labelled a, b), so a template can arrive more than once; exact copies count once. | `sources` row |
+| **off-mempool transaction** (on the site: *unseen*) | A block's transaction our Bitcoin node never had in its mempool before the block connected. Not evidence it was sent privately: our node may simply never have received it, or rejected it ([methodology](methodology.md#off-mempool-transactions)). | `mempool_offmempool`, `mempool_blocks.off_mempool` |
 | **session** | One connect-to-disconnect of a connection. | `ingest_events` (`kind = 'session'`) |
 | **node** | Our Bitcoin node. A machine running our software is a **host**. | `blocks` is written from the node |
 

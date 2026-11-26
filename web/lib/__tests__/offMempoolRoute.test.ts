@@ -58,7 +58,7 @@ describe('/api/off-mempool', () => {
     expect(body.rows).toHaveLength(101);
     expect(m.getChainBlocks).toHaveBeenCalledWith(TIP - 100, TIP);
     // the record's first blocks are after a gap (its start), then measured: 10 transactions, 2 off-mempool
-    expect(body.rows[0].slice(2, 5)).toEqual([10, 2, 3]);
+    expect(body.rows[0].slice(2, 5)).toEqual([10, null, 3]);   // after a gap: no count served
     expect(body.rows[6].slice(2, 5)).toEqual([10, 2, 0]);
   });
 

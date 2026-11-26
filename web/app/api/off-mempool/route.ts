@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  *
  *   GET /api/off-mempool[?range=6e|26e|all]
  *       { enabled, supported, range, tip_height, from_height, record_from, after_gap_blocks, generated_at (ms),
- *         rows: [height, miner, transactions excl. the coinbase | null, off-mempool | null, state, header time (s)][] }
+ *         rows: [height, miner, transactions excl. the coinbase | null, off-mempool (null unless measured) | null, state, header time (s)][] }
  *       state (lib/offMempool.ts OFF_STATE): 0 measured; no data: 1 missed (no recorder row), 2 unchecked (written
  *       while not synced), 3 after a recorder gap, 4 coinbase only
  *   GET /api/off-mempool?height=<n>

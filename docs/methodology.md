@@ -603,8 +603,9 @@ the block shows as **no data**, never as zero (`web/lib/offMempool.ts`):
 - **Missed:** a block with no recorder row. The recorder, or the node, was down when it connected.
 - **Unchecked:** a recorder row written while the recorder wasn't synced (`off_mempool_checked` false).
 - **After a gap:** the first 6 recorded blocks after any of the above, after a resync, and after the start of the
-  record. Transactions broadcast while the recorder wasn't following are missing from its record, so the next
-  blocks would count them as never seen. The resyncs are found from the rows they close (`removed_src = 'resync'`,
+  record. Transactions broadcast while our node or the recorder wasn't following are missing, so the next blocks
+  would count them as never seen. Both gaps in the stored data came with our node restarting: a transaction sent
+  while it was down never reached it, even though it was in other nodes' mempools. The resyncs are found from the rows they close (`removed_src = 'resync'`,
   all at the sync's time). In the stored data, the 3 blocks after each gap had 18–63% of their transactions
   never seen, from miners whose blocks otherwise sit near 0%. 6 blocks is about twice that.
 - **Coinbase only:** a block with no other transaction has no share (0 of 0).
@@ -612,7 +613,9 @@ the block shows as **no data**, never as zero (`web/lib/offMempool.ts`):
 Limits:
 
 - A resync that closed no rows leaves no trace, so the 6 blocks after it are shown as measured. A recorder record of
-  each sync would close this (#331).
+  each sync would close this (#331). Resync times are read at most every 10 minutes, so a block just after a new
+  resync can show as measured for up to 10 minutes.
+- `range=all` returns every block since the record began (about 52,000 a year).
 - A transaction broadcast during a gap and mined much later (a low fee rate) still counts as never seen in that later
   block.
 - Only best-chain blocks are shown. A recorder row of a block that a reorg disconnected is ignored, because the join

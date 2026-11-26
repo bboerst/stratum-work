@@ -36,7 +36,7 @@ interface Options {
 function parseArgs(argv: string[]): Options {
   const o: Options = {
     baseUrl: process.env.PERF_BASE_URL ?? "http://127.0.0.1:3000",
-    pages: ["/", "/timing", "/sankey", "/v/pool-clocks", "/forks"],
+    pages: ["/", "/timing", "/sankey", "/v/pool-clocks", "/v/off-mempool", "/forks"],
     runs: 3,
     settleSeconds: 5,
     streamSeconds: 30,
@@ -208,6 +208,9 @@ async function measure(
         if (url.searchParams.get("view") === "strip") return json(fixture.forksStrip(nowS));
         return json(parent ? fixture.unknownParentDrill(nowS, parent) : fixture.unknownParents(nowS));
       }
+      case "/api/off-mempool":
+        return json(url.searchParams.get("height") ? { height: Number(url.searchParams.get("height")), runs: [[1, 3]] }
+          : fixture.offMempool(nowS));
       case "/api/forks/timeline":
         return json(fixture.forkLanes(nowS, Number(url.searchParams.get("height"))));
       case "/api/stream":

@@ -186,6 +186,11 @@ function cases(): Record<string, Case[]> {
     ],
     // the height page's template table: full templates, so the excluded pool is left out at every height (#301)
     'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
+    // a block's miner is history (like /api/blocks); the seed's recorder rows make B(H-2) a row
+    'off-mempool': [
+      { qs: 'range=all', allow: [{ path: '$.rows[*][*]', why: BLOCK_MINER.why }] },
+      { qs: `height=${H - 2}`, noPoolData: 'off-mempool positions of one block: numbers only' },
+    ],
     'pools': [{ allow: [{ path: '$[*].name', why: REFERENCE }, { path: '$[*].tag', why: REFERENCE }] }],
     'realtime-prefill': [{}],
     'runtime-config': [{ noPoolData: 'configuration only (stream endpoint, flags)' }],
@@ -249,7 +254,7 @@ async function callStream(): Promise<{ status: number; text: string; body: unkno
 async function call(route: string, c: Case, blacklist: string): Promise<{ status: number; text: string; body: unknown }> {
   vi.resetModules();
   const g = globalThis as Record<string, unknown>;
-  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks', '__forkLanes']) delete g[k];
+  for (const k of ['__templateSetEpochs', '__forksSummaries', '__forksCardBlocks', '__forkLanes', '__offMempool']) delete g[k];
   Object.assign(process.env, {
     PG_HOST: env.PG_TEST_HOST, PG_PORT: env.PG_TEST_PORT ?? '5432', PG_DATABASE: env.PG_TEST_DATABASE ?? 'stratum',
     PG_USER: env.PG_TEST_USER, PG_PASSWORD: env.PG_TEST_PASSWORD, PG_SSLMODE: 'disable',
@@ -325,6 +330,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     await admin.query(`DELETE FROM sources WHERE site = $1`, [SITE]);
     await admin.query(`DELETE FROM stale_blocks WHERE block_hash = decode($1, 'hex')`, [S]);
     await admin.query(`DELETE FROM blocks WHERE height BETWEEN $1 AND $2`, [H - 2, H + 1]);
+    await admin.query(`DELETE FROM mempool_blocks WHERE height BETWEEN $1 AND $2`, [H - 2, H + 1]);
     await admin.query(`DELETE FROM pools WHERE id IN ($1, $2)`, [PX, PY]);
   }
 
@@ -344,6 +350,11 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     const offenders = [EXCLUDED, CONTROL].map(p => ({ pool_name: p, total_sats: 330_000_000, subsidy_sats: 312_500_000 }));
     await block(B2, H - 2, NOW - 1800, PX);
     await block(B1, H - 1, NOW - 1200, PY);
+    // the mempool recorder saw the three blocks connect (/api/off-mempool); its hashes are in internal byte order
+    for (const [h, height, at] of [[B2, H - 2, NOW - 1800], [B1, H - 1, NOW - 1200], [B0, H, NOW - 120]] as const) {
+      await admin.query(`INSERT INTO mempool_blocks (seen_at, block_hash, height, event, tx_count, from_mempool, off_mempool, off_mempool_checked)
+        VALUES (to_timestamp($1), hash_from_display($2), $3, 'connect', 3, 1, 1, true)`, [at, h, height]);
+    }
     await block(B0, H, NOW - 120, PY,
       { analysis: { flags: [{ key: 'invalid_coinbase_no_merkle', icon: 'error', details: { offenders } }] } });
     // its coinbase merkle path: the one branch both feeds' templates at H carry (block_template_matches)

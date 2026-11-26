@@ -213,6 +213,22 @@ export class Fixture {
   /**
    * /api/forks?view=strip: 90 races and invalid rows over 65 epochs (all history), as the page's strip reads them.
    */
+  /** /api/off-mempool: 6 epochs of blocks (the default range), the record covering all of it, a few gaps. */
+  offMempool(nowS: number) {
+    const r = rng(this.opts.seed + 13);
+    const tip = this.tipAt(nowS), from = tip - 6 * 2016;
+    const rows = [];
+    for (let h = from; h <= tip; h++) {
+      const txs = 1000 + Math.floor(r() * 5000);
+      const roll = r();
+      const state = roll < 0.002 ? 1 : roll < 0.004 ? 3 : 0;
+      const off = state === 1 ? null : roll > 0.97 ? Math.floor(txs * r()) : Math.floor(r() * 3);
+      rows.push([h, `Pool ${h % 17}`, state === 1 ? null : txs, off, state, Math.floor(this.blockTime(h))]);
+    }
+    return { enabled: true, supported: true, range: "6e", tip_height: tip, from_height: from, record_from: from,
+      after_gap_blocks: 6, generated_at: nowS * 1000, rows };
+  }
+
   forksStrip(nowS: number) {
     const r = rng(this.opts.seed + 11);
     const tip = this.tipAt(nowS), from = tip - 65 * 2016;

@@ -22,6 +22,7 @@ details are in the other files in [`docs/`](./).
 - [Forks](#forks)
 - [Template providers](#template-providers)
 - [First transaction fee rate](#first-transaction-fee-rate)
+- [Off-mempool transactions](#off-mempool-transactions)
 - [Reported hashrate](#reported-hashrate)
 - [Older history](#older-history)
 
@@ -582,6 +583,40 @@ does and saw the same mempool our node saw, so it's shown beside the own rate ra
 
 Only the first transaction can be identified from a template: the merkle path reveals its id and commits to the rest
 without revealing them. See [first_transaction](first_transaction.md).
+
+## Off-mempool transactions
+
+The [Unseen transactions](../web/visuals/off-mempool/) view (`/v/off-mempool`) shows, for each block, the share of
+its transactions (not counting the coinbase) that our Bitcoin node never had in its mempool before the block
+connected (**observed**). The [mempool recorder](../mempool-recorder/README.md) writes this when the block connects:
+a block transaction counts as never seen when no `mempool_txs` row for it starts within the recorder's lookback (15
+days by default). The transaction's position in the block is kept too (`mempool_offmempool`).
+
+This measures what our node saw, not how a transaction travelled. A transaction sent to a miner directly
+(out-of-band, accelerated, private) looks like this. So does one our node never received from its peers, and one its
+relay policy rejected (for example a fee rate below its minimum relay fee). One node's view can't tell these apart.
+
+A count is only a measurement when the recorder was following the node for long enough before the block. Otherwise
+the block shows as **no data**, never as zero (`web/lib/offMempool.ts`):
+
+- **Before the record:** blocks below the first one the recorder wrote.
+- **Missed:** a block with no recorder row. The recorder, or the node, was down when it connected.
+- **Unchecked:** a recorder row written while the recorder wasn't synced (`off_mempool_checked` false).
+- **After a gap:** the first 6 recorded blocks after any of the above, after a resync, and after the start of the
+  record. Transactions broadcast while the recorder wasn't following are missing from its record, so the next
+  blocks would count them as never seen. The resyncs are found from the rows they close (`removed_src = 'resync'`,
+  all at the sync's time). In the stored data, the 3 blocks after each gap had 18–63% of their transactions
+  never seen, from miners whose blocks otherwise sit near 0%. 6 blocks is about twice that.
+- **Coinbase only:** a block with no other transaction has no share (0 of 0).
+
+Limits:
+
+- A resync that closed no rows leaves no trace, so the 6 blocks after it are shown as measured. A recorder record of
+  each sync would close this (#331).
+- A transaction broadcast during a gap and mined much later (a low fee rate) still counts as never seen in that later
+  block.
+- Only best-chain blocks are shown. A recorder row of a block that a reorg disconnected is ignored, because the join
+  is on the block hash.
 
 ## Reported hashrate
 

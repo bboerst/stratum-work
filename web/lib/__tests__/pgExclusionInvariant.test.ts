@@ -186,9 +186,11 @@ function cases(): Record<string, Case[]> {
     ],
     // the height page's template table: full templates, so the excluded pool is left out at every height (#301)
     'mining-notify': [{ qs: `height=${H}` }, { qs: `height=${H + 1}` }],
-    // a block's miner is history (like /api/blocks); the seed's recorder rows make B(H-2) a row
+    // a block's miner and its template provider's pools are history (like /api/blocks, /api/template-providers); the
+    // seed's recorder rows make B(H-2) a row
     'off-mempool': [
-      { qs: 'range=all', allow: [{ path: '$.rows[*][*]', why: BLOCK_MINER.why }] },
+      { qs: 'range=all', allow: [{ path: '$.rows[*][*]', why: BLOCK_MINER.why },
+        { path: '$.providers[*].pools[*]', why: PROVIDERS_HISTORY }] },
       { qs: `height=${H - 2}`, noPoolData: 'off-mempool positions of one block: numbers only' },
     ],
     'pools': [{ allow: [{ path: '$[*].name', why: REFERENCE }, { path: '$[*].tag', why: REFERENCE }] }],

@@ -9,6 +9,16 @@ import type { ChainBlock, RecordedBlock } from '../offMempool';
 const TIP = 3_020_000;
 const hash = (h: number) => h.toString(16).padStart(64, '0');
 
+// one counted epoch; feeds f1 (pool 1) and f2 (pool 2) share a provider; pool 3 is on no feed
+const E = Math.floor((TIP - 100) / 2016);
+const providerInputs = {
+  counted: [{ epoch: E, heights: 2016 }],
+  nodes: [{ epoch: E, feed: 'f1', pool_id: 1, sets: 50, templates: 50 }, { epoch: E, feed: 'f2', pool_id: 2, sets: 50, templates: 50 }],
+  pairs: [{ epoch: E, feed_a: 'f1', pool_a: 1, feed_b: 'f2', pool_b: 2, shared: 50 }],
+  blocks: Array.from({ length: 101 }, (_, i) => ({ height: TIP - 100 + i, pool_id: (i % 3) + 1, pool: `Pool ${(i % 3) + 1}`, creator: null, time_ms: i })),
+  poolNames: new Map([[1, 'Pool 1'], [2, 'Pool 2'], [3, 'Pool 3']]),
+};
+
 async function loadRoute({ historical = true, recordFrom = TIP - 100 as number | null, tip = TIP as number | null } = {}) {
   vi.resetModules();
   delete (globalThis as { __offMempool?: unknown }).__offMempool;
@@ -25,9 +35,11 @@ async function loadRoute({ historical = true, recordFrom = TIP - 100 as number |
   const getOffPositions = vi.fn(async (height: number) => { void height; return [1, 2, 3, 9]; });
   vi.doMock('../db/blocks', () => ({ enableHistoricalData: historical }));
   vi.doMock('../db/unknown-parents', async importOriginal => ({ ...(await importOriginal<object>()), getBestTipHeight }));
+  const getTemplateProviderInputs = vi.fn(async (ex: string[]) => { void ex; return providerInputs; });
+  vi.doMock('../db/template-providers', () => ({ getTemplateProviderInputs }));
   vi.doMock('../db/off-mempool', () => ({ getRecordFrom, getChainBlocks, getRecordedBlocks, getResyncTimes, getOffPositions }));
   const route = await import('../../app/api/off-mempool/route');
-  return { route, getBestTipHeight, getRecordFrom, getChainBlocks, getRecordedBlocks, getResyncTimes, getOffPositions };
+  return { route, getTemplateProviderInputs, getBestTipHeight, getRecordFrom, getChainBlocks, getRecordedBlocks, getResyncTimes, getOffPositions };
 }
 const get = async (route: { GET: (r: Request) => Promise<Response> }, qs = '') => {
   const r = await route.GET(new Request(`http://localhost/api/off-mempool${qs}`));
@@ -70,6 +82,16 @@ describe('/api/off-mempool', () => {
     expect(m.getResyncTimes).toHaveBeenCalledWith((from - 6) * 1000);
     expect(body.rows[0][0]).toBe(from);
     expect(body.rows[0][4]).toBe(0);
+  });
+
+  it('each row with its template provider, grouped as the home page groups them (excluded pools counted: history)', async () => {
+    const m = await loadRoute();
+    const { body } = await get(m.route);
+    expect(m.getTemplateProviderInputs).toHaveBeenCalledWith([]);
+    expect(body.row_provider).toHaveLength(body.rows.length);
+    const names = body.row_provider.map((i: number) => body.providers[i].name);
+    expect(new Set(names)).toEqual(new Set(['Pool 1 +1', 'not on our feeds']));
+    expect(body.providers.find((p: { name: string }) => p.name === 'Pool 1 +1')).toMatchObject({ kind: 'producer', pools: ['Pool 1', 'Pool 2'] });
   });
 
   it('no record yet, or no tip: no rows', async () => {

@@ -3,12 +3,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import type { SettingsOf, VisualProps } from "../framework/types";
-import { useOffMempool, useOffPositions } from "../framework/data";
+import { useOffMempool, type OffMempoolView } from "../framework/data";
 import { useElementWidth } from "../framework/useElementWidth";
 import { VisualMessage } from "../framework/VisualFrame";
-import { formatRuns } from "@/lib/offMempool";
 import { NO_DATA_LABEL, epochTicks, nearestPoint, offMempoolLayout, type OffPoint } from "./selectors";
 import type { offMempoolSettings } from "./settings";
+import ByProvider from "./ByProvider";
+import { BlockTip, useDwellPositions, viewMessage } from "./shared";
 
 type Settings = SettingsOf<typeof offMempoolSettings>;
 
@@ -17,20 +18,23 @@ const M = { top: 10, right: 12, bottom: 34, left: 44 };
 const STRIP = 4;          // the no-data strip under the plot
 const R = 2.5;            // dot radius
 
-const pct = (s: number) => (s === 0 ? "0%" : s < 0.001 ? "<0.1%" : `${(s * 100).toFixed(s < 0.1 ? 1 : 0)}%`);
+
+/** One data read; by template provider (default) or by height. */
+export default function OffMempool({ settings, instanceKey }: VisualProps<typeof offMempoolSettings>) {
+  const s = settings as Settings;
+  const view = useOffMempool(s.range);
+  return s.view === "height" ? <ByHeight view={view} instanceKey={instanceKey} /> : <ByProvider view={view} instanceKey={instanceKey} />;
+}
 
 /**
  * One dot per measured block at its off-mempool share, on a block-height axis with difficulty epochs; blocks with no
  * data as grey marks on a strip below. Dots on a canvas (tens of thousands over 26 epochs), axes in SVG.
  */
-export default function OffMempool({ settings, instanceKey }: VisualProps<typeof offMempoolSettings>) {
-  const s = settings as Settings;
-  const view = useOffMempool(s.range);
+function ByHeight({ view, instanceKey }: { view: OffMempoolView; instanceKey: string }) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const canvas = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<{ p: OffPoint; x: number; y: number } | null>(null);
-  const [dwell, setDwell] = useState<number | null>(null);   // the hovered block, after a short pause (positions)
-  const positions = useOffPositions(hover && dwell === hover.p.height ? dwell : null);
+  const positions = useDwellPositions(hover?.p ?? null);
 
   const layout = useMemo(() => offMempoolLayout(view.rows), [view.rows]);
   const innerW = Math.max(200, width - M.left - M.right);
@@ -62,17 +66,8 @@ export default function OffMempool({ settings, instanceKey }: VisualProps<typeof
     ctx.fill();
   }, [layout.points, x, y, innerW, innerH]);
 
-  useEffect(() => {
-    if (!hover || hover.p.off === 0) return;
-    const t = setTimeout(() => setDwell(hover.p.height), 250);
-    return () => clearTimeout(t);
-  }, [hover]);
-
   // the measured wrapper is always mounted, so its width is known when the data arrives
-  let message: string | null = null;
-  if (view.loading && view.rows.length === 0 && !view.error) message = "Loading blocks…";
-  else if (view.error) message = view.error;
-  else if (view.recordFrom === null) message = "The mempool recorder hasn't recorded a block yet.";
+  const message = viewMessage(view);
   if (message !== null) return <div ref={ref} className="w-full"><VisualMessage>{message}</VisualMessage></div>;
 
   const ticks = epochTicks(from, to);
@@ -132,10 +127,7 @@ export default function OffMempool({ settings, instanceKey }: VisualProps<typeof
         {hover && hoverRow && (
           <div className="pointer-events-none absolute z-10 rounded-md border border-border bg-card px-2 py-1.5 text-xs shadow-md"
             style={{ left: Math.min(M.left + hover.x + 12, Math.max(0, width - 230)), top: Math.max(0, M.top + hover.y - 64), width: 220 }}>
-            <div className="font-medium">{hover.p.height.toLocaleString("en-US")} · {hover.p.pool}</div>
-            <div>{hover.p.off.toLocaleString("en-US")} of {hover.p.txs.toLocaleString("en-US")} never seen ({pct(hover.p.share)})</div>
-            {positions && positions.runs.length > 0 && <div className="text-muted-foreground">positions {formatRuns(positions.runs)}</div>}
-            <div className="text-muted-foreground">{new Date(hover.p.time_s * 1000).toLocaleString()}</div>
+            <BlockTip p={hover.p} runs={positions?.runs} />
           </div>
         )}
       </div>

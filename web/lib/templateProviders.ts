@@ -235,6 +235,31 @@ function isOwnCreator(creator: string, prefixes: readonly string[]): boolean {
 
 /** Template providers: columns per epoch, pies per range, legend (rules above). */
 export function deriveTemplateProviders(input: ProviderInputs): TemplateProviders | null {
+  return attribute(input)?.providers ?? null;
+}
+
+/** A block's template provider as the "All" pie groups it: one key per provider across epochs (rules above). */
+export interface BlockProviders {
+  /** height → group key, for every block placed (blocks before the first counted epoch aren't) */
+  keyOf: Map<number, string>;
+  /** group key → the "All" pie's group (name, kind, pools by blocks) */
+  groups: Map<string, TemplateGroup>;
+}
+
+/** Each block's template provider, by the same placement as the home page's pies (one rule, never two). */
+export function blockProviders(input: ProviderInputs): BlockProviders | null {
+  const a = attribute(input);
+  if (!a) return null;
+  const keyOf = new Map<number, string>();
+  for (const b of a.blocks) {
+    const k = a.blockKey(b);
+    if (k !== null) keyOf.set(b.height, k);
+  }
+  return { keyOf, groups: a.allGroups };
+}
+
+function attribute(input: ProviderInputs): { providers: TemplateProviders; blocks: BlockRow[];
+  blockKey: (b: BlockRow) => string | null; allGroups: Map<string, TemplateGroup> } | null {
   const prefixes = input.ownCreatorPrefixes ?? [];
   const counted = [...input.counted].filter(c => c.heights > 0).sort((a, b) => a.epoch - b.epoch);
   if (counted.length === 0) return null;
@@ -341,6 +366,7 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
     inc(groupPools.get(k)!, poolLabel(b));
   }
   const identity = new Map([...groupPools].map(([k, c]) => [k, identOf(mostCommon(c).map(([p]) => p))]));
+  let allGroups = new Map<string, TemplateGroup>();
   const pies: GroupPie[] = PIE_RANGES.map(({ blocks: n, label }) => {
     const buckets = new Map<string, Bucket>();
     let tot = 0;
@@ -358,6 +384,7 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
       if (!buckets.has(key)) buckets.set(key, { ...bucket(p.kind), lead });
       addTo(buckets.get(key)!, b, p);
     }
+    if (n === null) allGroups = new Map([...buckets].map(([k, bk]) => [k, out(bk, k.startsWith("x:") ? k.slice(2) : undefined)]));
     return { label, tot, groups: finish(buckets, false) };
   });
 
@@ -371,8 +398,16 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
   ];
   const legend = items.map((x, i) => ({ ...x, i })).sort((a, b) => b.s - a.s || a.i - b.i).map(({ name, colour }) => ({ name, colour }));
 
+  const blockKey = (b: BlockRow): string | null => {
+    const p = place(b);
+    if (!p) return null;
+    return p.kind === "producer" ? `g:${identity.get(`${p.epoch}:${p.group}`)!}` : p.key;
+  };
   return {
-    columns, pies, legend, tip_height: tip, from_height: blocks.length ? blocks[0].height : null,
-    heights_counted: counted.reduce((s, c) => s + c.heights, 0),
+    providers: {
+      columns, pies, legend, tip_height: tip, from_height: blocks.length ? blocks[0].height : null,
+      heights_counted: counted.reduce((s, c) => s + c.heights, 0),
+    },
+    blocks, blockKey, allGroups,
   };
 }

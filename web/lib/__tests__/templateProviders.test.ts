@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  deriveTemplateProviders, feedProviders, groupEpoch, groupEpochs, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
+  blockProviders, deriveTemplateProviders, feedProviders, groupEpoch, groupEpochs, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
   type BlockRow, type NodeRow, type PairRow, type ProviderInputs, type TemplateGroup,
 } from '../templateProviders';
 
@@ -248,5 +248,27 @@ describe('feedProviders (Forks: template providers per episode)', () => {
       [{ epoch: 0, heights: 2016 }, { epoch: 1, heights: 2016 }]);
     expect(feedProviders(['feed-a', 'feed-b'], by.get(0)).providers).toBe(1);
     expect(feedProviders(['feed-a', 'feed-b'], by.get(1)).providers).toBe(2);
+  });
+});
+
+describe('blockProviders (one placement rule with the pies)', () => {
+  it('every block keyed to its "All" pie group, with the same counts and names', () => {
+    const blocks = [blk(h0 + 1, 1), blk(h0 + 2, 2), blk(h0 + 3, 1), blk(h0 + 4, 3), blk(h0 + 5, 9), blk(h0 + 6, null),
+      blk(h1 + 1, 1), blk(h1 + 2, 2), blk(h1 + 3, 3, 'miner-x')];
+    const bp = blockProviders(inputs(blocks))!;
+    const all = deriveTemplateProviders(inputs(blocks))!.pies[4].groups;
+    expect(bp.keyOf.size).toBe(blocks.length);
+    const counts = new Map<string, number>();
+    for (const k of bp.keyOf.values()) counts.set(bp.groups.get(k)!.name, (counts.get(bp.groups.get(k)!.name) ?? 0) + 1);
+    expect(Object.fromEntries(counts)).toEqual(Object.fromEntries(all.map(g => [g.name, g.n])));
+    // Pool A and Pool B share a provider in E0 but not in E1: each block with its own epoch's group
+    expect(bp.groups.get(bp.keyOf.get(h0 + 2)!)!.name).toBe(bp.groups.get(bp.keyOf.get(h0 + 1)!)!.name);
+    expect(bp.keyOf.get(h1 + 2)).not.toBe(bp.keyOf.get(h1 + 1));
+    expect(bp.groups.get(bp.keyOf.get(h1 + 3)!)!.kind).toBe('miner');
+    expect(bp.groups.get(bp.keyOf.get(h0 + 5)!)!.name).toBe('not on our feeds');
+  });
+  it('null with nothing counted; blocks before the first counted epoch are not placed', () => {
+    expect(blockProviders({ ...inputs([]), counted: [] })).toBeNull();
+    expect(blockProviders(inputs([blk(h0 - 5, 1), blk(h0 + 1, 1)]))!.keyOf.has(h0 - 5)).toBe(false);
   });
 });

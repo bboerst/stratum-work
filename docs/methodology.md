@@ -592,6 +592,14 @@ connected (**observed**). The [mempool recorder](../mempool-recorder/README.md) 
 a block transaction counts as never seen when no `mempool_txs` row for it starts within the recorder's lookback (15
 days by default). The transaction's position in the block is kept too (`mempool_offmempool`).
 
+**By template provider** (the default view): one row per [template provider](#template-providers), a dot per
+block, grouped exactly as the home page's "All" pie groups blocks (one rule in `web/lib/templateProviders.ts`: each
+block with its own epoch's providers, merged across epochs). It's whoever chose the block's transactions that the
+measure says something about, not the brand on the coinbase. Each row's share is its unseen transactions over all
+transactions of its measured blocks; blocks with no data (below) count in its block total but not in its share. A
+block whose epoch's transaction sets aren't counted yet is in a row of its own ("provider not counted"). The other
+view plots every block by height, which is where the gaps in the record show.
+
 This measures what our node saw, not how a transaction travelled. A transaction sent to a miner directly
 (out-of-band, accelerated, private) looks like this. So does one our node never received from its peers, and one its
 relay policy rejected (for example a fee rate below its minimum relay fee). One node's view can't tell these apart.

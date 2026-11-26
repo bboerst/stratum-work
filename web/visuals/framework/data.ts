@@ -49,6 +49,9 @@ export interface OffMempoolView {
   /** The first block the mempool recorder wrote: blocks below it have no data. */
   recordFrom: number | null;
   afterGapBlocks: number;
+  /** Template providers as the home page groups them; rowProvider[i] is rows[i]'s index in it (null: not counted). */
+  providers: { name: string; kind: "producer" | "miner" | "other"; pools: string[] }[];
+  rowProvider: (number | null)[];
   loading: boolean;
   error: string | null;
 }
@@ -60,7 +63,7 @@ export function useOffMempool(range: "6e" | "26e" | "all"): OffMempoolView {
   const [got, setGot] = useState<(Omit<OffMempoolView, "loading"> & { range: string }) | null>(null);
   useEffect(() => {
     let live = true;
-    const empty = { rows: [], tipHeight: null, fromHeight: null, recordFrom: null, afterGapBlocks: 0 };
+    const empty = { rows: [], tipHeight: null, fromHeight: null, recordFrom: null, afterGapBlocks: 0, providers: [], rowProvider: [] };
     const load = () => fetch(`/api/off-mempool?range=${range}`)
       .then(r => r.json())
       .then(d => {
@@ -70,7 +73,7 @@ export function useOffMempool(range: "6e" | "26e" | "all"): OffMempoolView {
           return;
         }
         setGot({ range, rows: d.rows ?? [], tipHeight: d.tip_height, fromHeight: d.from_height, recordFrom: d.record_from,
-          afterGapBlocks: d.after_gap_blocks, error: null });
+          afterGapBlocks: d.after_gap_blocks, providers: d.providers ?? [], rowProvider: d.row_provider ?? [], error: null });
       })
       .catch(e => { if (live) setGot({ ...empty, range, error: String(e) }); });
     load();
@@ -79,10 +82,12 @@ export function useOffMempool(range: "6e" | "26e" | "all"): OffMempoolView {
   }, [range]);
   // until this range's first answer: loading, with no rows (never another range's)
   if (!got || got.range !== range) {
-    return { rows: [], tipHeight: null, fromHeight: null, recordFrom: null, afterGapBlocks: 0, loading: true, error: null };
+    return { rows: [], tipHeight: null, fromHeight: null, recordFrom: null, afterGapBlocks: 0, providers: [], rowProvider: [],
+      loading: true, error: null };
   }
-  return { rows: got.rows, tipHeight: got.tipHeight, fromHeight: got.fromHeight, recordFrom: got.recordFrom,
-    afterGapBlocks: got.afterGapBlocks, loading: false, error: got.error };
+  const { range: _r, ...rest } = got;
+  void _r;
+  return { ...rest, loading: false };
 }
 
 /** The off-mempool positions of one block, as runs [first, last] (fetched when `height` is set). */

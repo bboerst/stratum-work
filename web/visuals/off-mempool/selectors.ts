@@ -64,3 +64,54 @@ export const NO_DATA_LABEL: Record<number, string> = {
   [OFF_STATE.afterGap]: "just after a gap in our record: transactions sent during it would look unseen",
   [OFF_STATE.coinbaseOnly]: "no transactions besides the coinbase",
 };
+
+export interface ProviderRow {
+  name: string;
+  kind: "producer" | "miner" | "other" | "uncounted";
+  pools: string[];
+  points: OffPoint[];       // measured blocks
+  blocks: number;           // all its blocks in the range, measured or not
+  /** unseen transactions over all transactions of its measured blocks (null: none measured) */
+  pooled: number | null;
+}
+
+export const UNCOUNTED = "provider not counted";
+
+/**
+ * One row per template provider (the home page's grouping, from the API): its measured blocks as points and its share
+ * over all of them. Most blocks first; "other" groups (not on our feeds, unidentified) and blocks whose provider isn't
+ * counted last.
+ */
+export function providerRows(rows: OffRow[], rowProvider: (number | null)[],
+  providers: { name: string; kind: "producer" | "miner" | "other"; pools: string[] }[]): ProviderRow[] {
+  const out = new Map<number, ProviderRow>();
+  const sums = new Map<number, { off: number; txs: number }>();
+  rows.forEach((r, i) => {
+    const pi = rowProvider[i] ?? -1;
+    if (!out.has(pi)) {
+      const p = providers[pi];
+      out.set(pi, p ? { name: p.name, kind: p.kind, pools: p.pools, points: [], blocks: 0, pooled: null }
+        : { name: UNCOUNTED, kind: "uncounted", pools: [], points: [], blocks: 0, pooled: null });
+      sums.set(pi, { off: 0, txs: 0 });
+    }
+    const row = out.get(pi)!;
+    row.blocks++;
+    const [height, pool, txs, off, state, time_s] = r;
+    if (state === OFF_STATE.measured && txs !== null && txs > 0 && off !== null) {
+      row.points.push({ height, pool, txs, off, share: off / txs, time_s });
+      const s = sums.get(pi)!;
+      s.off += off; s.txs += txs;
+    }
+  });
+  for (const [pi, row] of out) {
+    const s = sums.get(pi)!;
+    row.pooled = s.txs > 0 ? s.off / s.txs : null;
+  }
+  const last = (k: ProviderRow["kind"]) => (k === "other" ? 1 : k === "uncounted" ? 2 : 0);
+  return [...out.values()].sort((a, b) => last(a.kind) - last(b.kind) || b.blocks - a.blocks || a.name.localeCompare(b.name));
+}
+
+/** A stable vertical offset in [-1, 1] for a block's dot within its row (so dots at the same share don't stack). */
+export function jitter(height: number): number {
+  return (((height * 2654435761) >>> 0) % 1000) / 500 - 1;
+}

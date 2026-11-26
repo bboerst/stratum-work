@@ -225,8 +225,9 @@ export class Fixture {
       const off = state !== 0 ? null : roll > 0.97 ? Math.floor(txs * r()) : Math.floor(r() * 3);
       rows.push([h, `Pool ${h % 17}`, state === 1 ? null : txs, off, state, Math.floor(this.blockTime(h))]);
     }
+    const providers = Array.from({ length: 12 }, (_, i) => ({ name: `Provider ${i}`, kind: "producer", pools: [`Pool ${i}`] }));
     return { enabled: true, supported: true, range: "6e", tip_height: tip, from_height: from, record_from: from,
-      after_gap_blocks: 6, generated_at: nowS * 1000, rows };
+      after_gap_blocks: 6, generated_at: nowS * 1000, rows, providers, row_provider: rows.map(r => (r[0] as number) % 12) };
   }
 
   forksStrip(nowS: number) {

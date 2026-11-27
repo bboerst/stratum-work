@@ -31,6 +31,18 @@ Idempotent: candidates exclude known blocks and the insert is ON CONFLICT DO NOT
 
     python -m stale_import --csv stale-blocks.csv [--blocks-dir blocks/] [--dry-run] [--from-height H] [--to-height H]
 
+Coinbase fill (--coinbase-fill, #339): stale blocks our node did see are in `blocks` (and `stale_blocks`), so the
+import above leaves them alone; the coinbase fill (coinbase_fill.py) can't get their data once the node has pruned
+them, because peers don't serve stale blocks. For every such row still without merkle branches, coinbase txid or
+coinbase bytes, the dataset's `blocks/<height>-<hash>.bin` is read and checked: its header hashes to the row's
+block hash, the block parses exactly and its transactions fold to the stored merkle root (full_block_fields), and the
+witness-stripped coinbase hashes to the coinbase txid (and to the stored one, if any). Only then are the branches,
+coinbase txid and bytes stored, plus size, weight and transaction count, each only where still NULL (the coinbase
+fill's store methods). Every block is reported: filled, not_in_dataset or failed (with the check). Idempotent; with
+--dry-run nothing is stored. No CSV needed:
+
+    python -m stale_import --coinbase-fill --blocks-dir blocks/ [--dry-run]
+
 Connects like the backend (PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD, PG_SSLMODE, PG_SSLROOTCERT), as a user
 in the stratum_backend role. Prints the summary as JSON.
 """
@@ -47,7 +59,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from coinbase import _varint, dsha256, fold, merkle_branches, strip_witness
+from coinbase import _varint, coinbase_facts, dsha256, fold, merkle_branches, strip_witness
 
 HEADER_SOURCE = "bitcoin-data/stale-blocks"
 STATUS = "not-in-node"
@@ -343,6 +355,57 @@ def run(store: Any, dataset: Dict[str, Dict[str, Any]], blocks_dir: Optional[str
     return s
 
 
+# --- coinbase data of stale blocks our node saw (#339) ------------------------------------------------------------------
+def coinbase_doc(raw: bytes, row: Dict[str, Any]) -> Dict[str, Any]:
+    """The coinbase fill's block document ({block_hash, merkle_branches, coinbase_txid, coinbase_tx} and "header":
+    size, weight, transactions) from a dataset block for a stored row {block_hash, merkle_root, coinbase_txid};
+    ValueError naming the failed check."""
+    if not row.get("merkle_root"):
+        raise ValueError("no stored merkle root to check against")
+    if dsha256(raw[:80])[::-1].hex() != row["block_hash"]:
+        raise ValueError("the block's header doesn't hash to the stored block hash")
+    fields = full_block_fields(raw, raw[:80], row["merkle_root"], None)   # parses exactly, folds to the merkle root
+    blk = parse_block(raw)
+    txs = [{"txid": t[::-1].hex()} for t in blk["txids"]]
+    txs[0]["hex"] = blk["txs"][0].hex()
+    facts = coinbase_facts({"tx": txs, "merkleroot": row["merkle_root"]})  # stripped coinbase hashes to its txid
+    if not facts or not facts.get("coinbase_tx"):
+        raise ValueError("no coinbase in the block")
+    if row.get("coinbase_txid") and facts["coinbase_txid"] != row["coinbase_txid"]:
+        raise ValueError("the coinbase txid isn't the stored one")
+    return {"block_hash": row["block_hash"], **facts,
+            "header": {"block_hash": row["block_hash"], "size": fields["size"], "weight": fields["weight"],
+                       "transactions": fields["tx_count"]}}
+
+
+def fill_coinbase(store: Any, blocks_dir: str, dry_run: bool = False, log: logging.Logger = logger) -> Dict[str, Any]:
+    """Coinbase data for stale blocks in `blocks` from the dataset's block files. Returns the summary."""
+    s: Dict[str, Any] = {"dry_run": dry_run, "missing": 0, "filled": [], "not_in_dataset": [], "failed": []}
+    for row in store.stale_blocks_missing_coinbase():
+        s["missing"] += 1
+        ref = {"height": row["height"], "block_hash": row["block_hash"]}
+        path = pathlib.Path(blocks_dir) / f"{row['height']}-{row['block_hash']}.bin"
+        if not path.is_file():
+            s["not_in_dataset"].append(ref)
+            log.warning("Stale block %s at %d: not in the dataset", row["block_hash"], row["height"])
+            continue
+        try:
+            doc = coinbase_doc(path.read_bytes(), row)
+        except (ValueError, IndexError) as e:
+            s["failed"].append(dict(ref, reason=str(e)))
+            log.warning("Stale block %s at %d: dataset block fails a check, not stored: %s", row["block_hash"],
+                        row["height"], e)
+            continue
+        if not dry_run:
+            header = doc.pop("header")
+            store.fill_block_coinbase([doc])
+            store.fill_block_headers([header])
+        s["filled"].append(ref)
+        log.info("Stale block %s at %d: coinbase data %s from the dataset", row["block_hash"], row["height"],
+                 "checked (dry run)" if dry_run else "stored")
+    return s
+
+
 def _postgres_store() -> Any:
     # integrations/__init__.py connects to the configured store and to RabbitMQ at import; this needs neither, so
     # load the store module on its own.
@@ -355,16 +418,25 @@ def _postgres_store() -> Any:
 
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="python -m stale_import", description=__doc__.split("\n\n")[0])
-    p.add_argument("--csv", required=True, help="stale-blocks.csv from github.com/bitcoin-data/stale-blocks")
+    p.add_argument("--csv", help="stale-blocks.csv from github.com/bitcoin-data/stale-blocks (the import)")
+    p.add_argument("--coinbase-fill", action="store_true",
+                   help="instead of the import: coinbase data for stale blocks in blocks, from --blocks-dir")
     p.add_argument("--blocks-dir", help="its blocks/ directory (<height>-<hash>.bin), for full blocks")
     p.add_argument("--dry-run", action="store_true", help="validate and report, store nothing")
     p.add_argument("--from-height", type=int, help="lowest template height to read (default: above the first block)")
     p.add_argument("--to-height", type=int, help="highest template height to read (default: above the tip)")
     p.add_argument("--chunk", type=int, default=CHUNK_HEIGHTS, help="template heights per query")
     args = p.parse_args(argv)
+    if args.coinbase_fill and not args.blocks_dir:
+        p.error("--coinbase-fill needs --blocks-dir")
+    if not args.coinbase_fill and not args.csv:
+        p.error("--csv is required (or --coinbase-fill)")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stderr)
-    dataset = read_dataset(args.csv)
     store = _postgres_store()
+    if args.coinbase_fill:
+        print(json.dumps(fill_coinbase(store, args.blocks_dir, args.dry_run), indent=2, default=str))
+        return 0
+    dataset = read_dataset(args.csv)
     from analytics.pool_identification import identify_pool_from_data
     pools = {p.get("id"): p for p in store.load_pools()}
     identify = (lambda script, addresses: identify_pool_from_data(pools, script, addresses)) if pools else None

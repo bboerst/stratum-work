@@ -598,6 +598,28 @@ class PostgresStore:
                                              ([_to_bytes(h) for h in hashes],)).fetchall())
         return {r[0] for r in rows}
 
+    def stale_blocks_missing_coinbase(self) -> List[Dict[str, Any]]:
+        """Blocks in both blocks and stale_blocks still without merkle branches, coinbase txid or coinbase bytes
+        (stale_import --coinbase-fill, #339): {block_hash, height, merkle_root (blocks', else stale_blocks'),
+        coinbase_txid (as RPC displays it, or None)}, newest first. Hashes hex as RPC displays them."""
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(b.block_hash, 'hex'), b.height, encode(COALESCE(b.merkle_root, s.merkle_root), 'hex'),"
+            "       encode(b.coinbase_txid, 'hex')"
+            "  FROM blocks b JOIN stale_blocks s ON s.block_hash = b.block_hash"
+            " WHERE b.merkle_branches IS NULL OR b.coinbase_txid IS NULL OR b.coinbase_tx IS NULL"
+            " ORDER BY b.height DESC").fetchall())
+        return [{"block_hash": h, "height": height, "merkle_root": root or None,
+                 "coinbase_txid": bytes.fromhex(txid)[::-1].hex() if txid else None} for h, height, root, txid in rows]
+
+    def stale_block_hashes(self, hashes: List[str]) -> Set[str]:
+        """Which of these hashes are stale blocks (in stale_blocks and not active again); the coinbase fill (#339)."""
+        if not hashes:
+            return set()
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex') FROM stale_blocks WHERE block_hash = ANY(%s) AND reorged_in_at IS NULL",
+            ([_to_bytes(h) for h in hashes],)).fetchall())
+        return {r[0] for r in rows}
+
     def current_stale_blocks(self, min_height: int) -> List[Dict[str, Any]]:
         rows = self._run(lambda c: c.execute(
             "SELECT encode(block_hash, 'hex'), height FROM stale_blocks WHERE height >= %s AND reorged_in_at IS NULL"

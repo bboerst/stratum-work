@@ -294,6 +294,93 @@ class RunTests(unittest.TestCase):
         return d
 
 
+class CoinbaseFillStore:
+    """stale_blocks_missing_coinbase + the coinbase fill's two store methods."""
+    def __init__(self, rows):
+        self.rows, self.filled, self.headers = rows, [], []
+
+    def stale_blocks_missing_coinbase(self):
+        return [dict(r) for r in self.rows]
+
+    def fill_block_coinbase(self, docs):
+        self.filled += docs
+
+    def fill_block_headers(self, docs):
+        self.headers += docs
+
+
+def missing_row(bh, txid=None):
+    e = DATASET[bh]
+    return {"block_hash": bh, "height": e["height"], "merkle_root": si.parse_header(e["header"])["merkle_root"],
+            "coinbase_txid": txid}
+
+
+class CoinbaseFillTests(unittest.TestCase):
+    """#339: coinbase data for stale blocks our node saw, from the dataset's block files."""
+
+    def test_filled_from_the_block_file_and_self_checked(self):
+        store = CoinbaseFillStore([missing_row(H813), missing_row(H188)])
+        s = si.fill_coinbase(store, str(FIX / "blocks"))
+        self.assertEqual((s["missing"], [r["block_hash"] for r in s["filled"]], s["not_in_dataset"], s["failed"]),
+                         (2, [H813, H188], [], []))
+        blk = si.parse_block(bin_path(188175, H188).read_bytes())
+        doc = store.filled[1]
+        self.assertEqual(doc["coinbase_txid"], blk["txids"][0][::-1].hex())
+        self.assertEqual(doc["coinbase_tx"], blk["coinbase"].hex())
+        branches = bytes.fromhex(doc["merkle_branches"])
+        self.assertEqual(len(branches), 4 * 32)                           # nine transactions: four levels
+        self.assertEqual(si.fold(blk["txids"][0], [branches[i:i + 32] for i in range(0, len(branches), 32)])[::-1].hex(),
+                         missing_row(H188)["merkle_root"])
+        self.assertEqual(store.headers[1], {"block_hash": H188, "size": 2237, "weight": 8948, "transactions": 9})
+        self.assertEqual(store.headers[0], {"block_hash": H813, "size": 456, "weight": 1824, "transactions": 1})
+
+    def test_dry_run_stores_nothing(self):
+        store = CoinbaseFillStore([missing_row(H813)])
+        s = si.fill_coinbase(store, str(FIX / "blocks"), dry_run=True)
+        self.assertEqual((len(s["filled"]), store.filled, store.headers), (1, [], []))
+
+    def test_every_block_is_reported_and_only_checked_ones_stored(self):
+        d = pathlib.Path(self._tmp())
+        raw = bin_path(188175, H188).read_bytes()
+        (d / f"188175-{H188}.bin").write_bytes(raw[:-5] + bytes([raw[-5] ^ 1]) + raw[-4:])   # breaks the merkle fold
+        (d / f"813210-{H813}.bin").write_bytes(bin_path(813210, H813).read_bytes())
+        wrong_root = dict(missing_row(H813), block_hash=H813)
+        rows = [missing_row(H188),                                          # tampered file
+                dict(missing_row(H813), coinbase_txid="ab" * 32),           # a stored txid that differs
+                {"block_hash": H974, "height": 974000, "merkle_root": "00" * 32, "coinbase_txid": None},  # no file
+                dict(wrong_root, merkle_root="00" * 32),                    # stored merkle root differs
+                dict(missing_row(H813), merkle_root=None)]                  # nothing to check against
+        store = CoinbaseFillStore(rows)
+        s = si.fill_coinbase(store, str(d))
+        self.assertEqual((s["missing"], s["filled"], s["not_in_dataset"]),
+                         (5, [], [{"height": 974000, "block_hash": H974}]))
+        self.assertEqual([r["reason"] for r in s["failed"]],
+                         ["the transactions don't fold to the header's merkle root", "the coinbase txid isn't the stored one",
+                          "the transactions don't fold to the header's merkle root",
+                          "no stored merkle root to check against"])
+        self.assertEqual((store.filled, store.headers), ([], []))
+
+    def test_a_file_under_the_wrong_name_fails_the_hash_check(self):
+        d = pathlib.Path(self._tmp())
+        (d / f"813210-{OTHER}.bin").write_bytes(bin_path(813210, H813).read_bytes())
+        row = dict(missing_row(H813), block_hash=OTHER)
+        s = si.fill_coinbase(CoinbaseFillStore([row]), str(d))
+        self.assertEqual([r["reason"] for r in s["failed"]], ["the block's header doesn't hash to the stored block hash"])
+
+    def test_cli_arguments(self):
+        import contextlib
+        import io
+        for args in (["--coinbase-fill"], []):                              # no --blocks-dir; no --csv
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                si.main(args)
+
+    def _tmp(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        return d
+
+
 @unittest.skipUnless(os.getenv("PG_TEST_HOST"), "set PG_TEST_HOST etc. to run against a migrated Postgres")
 class PostgresImportTests(unittest.TestCase):
     """Against a real, migrated database: seeded as the owner, imported as a user in the stratum_backend role."""
@@ -402,6 +489,37 @@ class PostgresImportTests(unittest.TestCase):
             self.assertEqual(c.execute("SELECT header_source, full_block, mining_pool IS NOT NULL FROM stale_blocks "
                                        "WHERE block_hash = %s", (bytes.fromhex(H813),)).fetchone(),
                              ("bitcoin-data/stale-blocks", True, True))
+
+    def test_coinbase_fill_of_a_stale_block_in_blocks(self):
+        # #339: the stale block is a row our node saw (in blocks and stale_blocks), size already known
+        hd = si.parse_header(DATASET[H813]["header"])
+        with self.psycopg.connect(self.admin) as c:
+            c.execute("INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig, bits, "
+                      "merkle_root, size) VALUES (%s, 813210, %s, %s, '\\x00', %s, %s, 1)",
+                      (bytes.fromhex(H813), self.block_time, self.block_time, hd["bits"], bytes.fromhex(hd["merkle_root"])))
+            c.execute("""INSERT INTO stale_blocks (block_hash, height, prev_hash, version, block_time, bits, nonce,
+                         merkle_root, chaintip_status, last_status, tip_hash, fork_height, was_active)
+                         VALUES (%(b)s, 813210, %(p)s, 1, now(), 1, 1, %(m)s, 'valid-fork', 'valid-fork', %(b)s, 813209,
+                                 true)""",
+                      dict(b=bytes.fromhex(H813), p=bytes.fromhex(PREV813), m=bytes.fromhex(hd["merkle_root"])))
+        missing = [r for r in self.store.stale_blocks_missing_coinbase() if r["block_hash"] == H813]
+        self.assertEqual(missing, [{"block_hash": H813, "height": 813210, "merkle_root": hd["merkle_root"],
+                                    "coinbase_txid": None}])
+        dry = si.fill_coinbase(self.store, str(FIX / "blocks"), dry_run=True)
+        self.assertIn({"height": 813210, "block_hash": H813}, dry["filled"])
+        self.assertTrue(any(r["block_hash"] == H813 for r in self.store.stale_blocks_missing_coinbase()))
+        s = si.fill_coinbase(self.store, str(FIX / "blocks"))
+        self.assertIn({"height": 813210, "block_hash": H813}, s["filled"])
+        blk = si.parse_block(bin_path(813210, H813).read_bytes())
+        with self.psycopg.connect(self.admin) as c:
+            row = c.execute("SELECT encode(merkle_branches, 'hex'), encode(coinbase_txid, 'hex'), "
+                            "encode(coinbase_tx, 'hex'), size, weight, tx_count FROM blocks WHERE block_hash = %s",
+                            (bytes.fromhex(H813),)).fetchone()
+        # one transaction: empty branches; txid in internal byte order; size kept (only NULLs are filled)
+        self.assertEqual(row, ("", blk["txids"][0].hex(), blk["coinbase"].hex(), 1, 1824, 1))
+        self.assertFalse(any(r["block_hash"] == H813 for r in self.store.stale_blocks_missing_coinbase()))
+        again = si.fill_coinbase(self.store, str(FIX / "blocks"))
+        self.assertNotIn({"height": 813210, "block_hash": H813}, again["filled"])
 
     def test_a_wrong_parent_is_not_stored(self):
         with self.psycopg.connect(self.admin) as c:

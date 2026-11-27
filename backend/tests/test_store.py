@@ -178,6 +178,8 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             self.assertLess(self.store.highest_block_height(), top)     # a reorged-out block isn't the tip
             # by-hash maintenance still sees every stored block
             self.assertEqual(self.store.known_block_hashes(["d1" * 32, "d5" * 32]), {"d1" * 32, "d5" * 32})
+            # the coinbase fill's peer path leaves out stale blocks, not ones active again (#339)
+            self.assertEqual(self.store.stale_block_hashes(["d1" * 32, "d2" * 32, "d4" * 32]), {"d1" * 32})
             self.assertIn("d1" * 32, {b["block_hash"] for b in self.store.blocks_for_reidentify()})
             self.assertIn("d3" * 32, {b["block_hash"] for b in self.store.block_hashes_by_height_desc()})
         finally:

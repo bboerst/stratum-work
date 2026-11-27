@@ -1,6 +1,6 @@
 /**
  * /api/template-providers against a mocked read: 404 with historical data disabled (no database touched) and while
- * nothing is counted, range validation and narrowing (the epoch columns only; "now", pies and legend unchanged),
+ * nothing is counted, range validation and narrowing (the epoch columns only; pies and legend unchanged),
  * POOL_BLACKLIST and POOL_OWN_TEMPLATE_CREATORS passed through, and the summary cache (one read per period, served
  * stale while a refresh runs, a failure not kept).
  */
@@ -71,13 +71,13 @@ describe('/api/template-providers', () => {
   it('range narrows the epoch columns only', async () => {
     const { get } = await load();
     const all = (await get()).body;
-    expect(all.columns).toHaveLength(31);
+    expect(all.columns).toHaveLength(30);
     expect(all.range).toBe('all');
     const six = (await get('?range=6e')).body;
-    expect(six.columns.map((c: { label: string }) => c.label)).toEqual([...all.columns.slice(24, 30).map((c: { label: string }) => c.label), 'now']);
+    expect(six.columns.map((c: { label: string }) => c.label)).toEqual(all.columns.slice(24, 30).map((c: { label: string }) => c.label));
     expect(six.pies).toEqual(all.pies);
     expect(six.legend).toEqual(all.legend);
-    expect((await get('?range=26e')).body.columns).toHaveLength(27);
+    expect((await get('?range=26e')).body.columns).toHaveLength(26);
     expect((await get('?range=90d')).status).toBe(400);
   });
 
@@ -95,15 +95,15 @@ describe('/api/template-providers', () => {
     expect(read).toHaveBeenCalledTimes(2);
     release(inputs(3));
     await new Promise(r => setTimeout(r, 0));
-    expect((await get()).body.columns).toHaveLength(4);
+    expect((await get()).body.columns).toHaveLength(3);
     vi.setSystemTime(Date.now() + 6 * 60_000);
     read.mockRejectedValueOnce(new Error('db down'));
-    expect((await get()).body.columns).toHaveLength(4);   // stale while the failing refresh runs
+    expect((await get()).body.columns).toHaveLength(3);   // stale while the failing refresh runs
     await new Promise(r => setTimeout(r, 0));
     read.mockResolvedValueOnce(inputs(5));
-    expect((await get()).body.columns).toHaveLength(4);   // the failure wasn't kept: a new refresh started
+    expect((await get()).body.columns).toHaveLength(3);   // the failure wasn't kept: a new refresh started
     await new Promise(r => setTimeout(r, 0));
     expect(read).toHaveBeenCalledTimes(4);
-    expect((await get()).body.columns).toHaveLength(6);
+    expect((await get()).body.columns).toHaveLength(5);
   });
 });

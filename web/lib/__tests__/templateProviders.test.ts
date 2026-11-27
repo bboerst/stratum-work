@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  deriveTemplateProviders, feedProviders, groupEpoch, groupEpochs, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
+  deriveTemplateProviders, DEFAULT_PIE_BLOCKS, feedProviders, groupEpoch, groupEpochs, nodeKey, EPOCH_BLOCKS, GREY, MINER_COLOUR, OTHER_COLOUR, PALETTE,
   type BlockRow, type NodeRow, type PairRow, type ProviderInputs, type TemplateGroup,
 } from '../templateProviders';
 
@@ -103,11 +103,11 @@ describe('deriveTemplateProviders', () => {
     expect(deriveTemplateProviders({ ...inputs([]), counted: [] })).toBeNull();
   });
 
-  it('columns per counted epoch plus now; groups, payers, hatching, other kinds', () => {
+  it('columns per counted epoch (no "now" column); groups, payers, hatching, other kinds', () => {
     const blocks = [blk(h0 + 1, 1), blk(h0 + 2, 2), blk(h0 + 3, 1), blk(h0 + 4, 3), blk(h0 + 5, 9), blk(h0 + 6, null),
       blk(h1 + 1, 1), blk(h1 + 2, 2)];
     const r = deriveTemplateProviders(inputs(blocks))!;
-    expect(r.columns.map(c => c.label)).toEqual(['907,200', '909,216', 'now']);
+    expect(r.columns.map(c => c.label)).toEqual(['907,200', '909,216']);
     expect(r.columns[0].title).toMatch(/^blocks 907,200–909,215 \(to 907,206 so far\), \d{4}-\d\d-\d\d to /);
     const c0 = byName(r.columns[0].groups);
     expect(c0['Pool A +1']).toMatchObject({ n: 3, pools: ['Pool A', 'Pool B'], payers: ['Pool A', 'Pool B'], feeds: ['feed-a', 'feed-b'], hatched: true, kind: 'producer' });
@@ -157,10 +157,13 @@ describe('deriveTemplateProviders', () => {
     expect(r.from_height).toBe(h0 + 1);
     expect(r.pies[4].tot).toBe(2);
     expect(r.pies[4].groups.map(g => [g.name, g.n])).toEqual([['Pool A +1', 2]]);
-    expect(r.columns.map(c => c.label)).toEqual(['907,200', 'now']);
+    // the tip's epoch isn't counted yet: its column groups its block with the last counted epoch's (B with A)
+    expect(r.columns.map(c => c.label)).toEqual(['907,200', '909,216']);
+    expect(r.columns[1].title).toMatch(/^blocks 909,216–911,231 \(to 909,219 so far\), /);
+    expect(r.columns[1].groups.map(g => [g.name, g.n])).toEqual([['Pool B +1', 1]]);
   });
 
-  it('colours the top 8 lead pools, the rest grey; legend by the 144-block share', () => {
+  it('colours the top 8 lead pools, the rest grey', () => {
     // ten pools, each alone on its own feed, pool k with k blocks
     const ids = Array.from({ length: 10 }, (_, i) => 101 + i);
     const names = new Map(ids.map(id => [id, `P${id}`]));
@@ -175,6 +178,23 @@ describe('deriveTemplateProviders', () => {
     expect(col['P103'].colour).toBe(PALETTE[7]);
     expect(col['P102'].colour).toBe(GREY);
     expect(r.legend.map(l => l.name)).toEqual(['P110', 'P109', 'P108', 'P107', 'P106', 'P105', 'P104', 'P103', 'miner-built templates', 'others']);
+  });
+
+  it('orders the legend by the 2,016-block pie, not the 144-block one', () => {
+    // one epoch, two pools on their own feeds: A leads over the last 2,016 blocks (744 to 400), B over the last 144
+    // (100 to 44)
+    const names = new Map([[1, 'Pool A'], [2, 'Pool B']]);
+    const pools = [...Array(700).fill(1), ...Array(300).fill(2), ...Array(44).fill(1), ...Array(100).fill(2)];
+    const blocks = pools.map((id, i) => ({ ...blk(h0 + i, id), pool: names.get(id)! }));
+    const r = deriveTemplateProviders({
+      counted: [{ epoch: E0, heights: 2016 }], pairs: [], blocks, poolNames: names,
+      nodes: [node('feed-a', 1, 10, 10, E0), node('feed-b', 2, 10, 10, E0)],
+    })!;
+    expect(DEFAULT_PIE_BLOCKS).toBe(2016);
+    const share = (label: string) => r.pies.find(p => p.label === label)!.groups.map(g => [g.name, g.n]);
+    expect(share('144 blocks')).toEqual([['Pool B', 100], ['Pool A', 44]]);
+    expect(share('2,016 blocks')).toEqual([['Pool A', 744], ['Pool B', 400]]);
+    expect(r.legend.map(l => l.name)).toEqual(['Pool A', 'Pool B', 'miner-built templates', 'others']);
   });
 
   it('matches the home page loader\'s shape rules', () => {

@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
  * providers"), derived at read time from the backend's per-height transaction-set counts.
  *
  *   GET /api/template-providers[?range=6e|26e|all]
- *       { columns (one per counted difficulty epoch, oldest first, then "now" = the last 144 blocks), pies (the last
- *       144 / 2,016 / 12,096 / 52,416 blocks and All), legend, tip_height, from_height, heights_counted, range,
- *       generated_at (ms) }. range narrows the columns to the last 6 or 26 epochs (default all); pies, colours and
- *       legend don't change with it.
+ *       { columns (one per difficulty epoch, oldest first: the counted epochs, then the tip's epoch while it isn't
+ *       counted yet), pies (the last 144 / 2,016 / 12,096 / 52,416 blocks and All; 2,016 is the default), legend (by
+ *       the 2,016-block pie), tip_height, from_height, heights_counted, range, generated_at (ms) }. range narrows the
+ *       columns to the last 6 or 26 epochs (default all); pies, colours and legend don't change with it.
  *       404 while nothing is counted yet (also before the migration has created the tables), or with historical data
  *       disabled (the home page leaves the section out).
  *
@@ -66,9 +66,7 @@ export async function GET(request: Request) {
     const summary = await getSummary();
     if (!summary) return NextResponse.json({ error: "no transaction sets counted yet" }, { status: 404 });
     const epochs = RANGES[range];
-    // the epoch columns, then "now" (always last)
-    const columns = epochs === null ? summary.columns
-      : [...summary.columns.slice(0, -1).slice(-epochs), ...summary.columns.slice(-1)];
+    const columns = epochs === null ? summary.columns : summary.columns.slice(-epochs);
     return NextResponse.json({ ...summary, columns, range, generated_at: Date.now() },
       { headers: { "Cache-Control": "public, max-age=60" } });
   } catch (error: unknown) {

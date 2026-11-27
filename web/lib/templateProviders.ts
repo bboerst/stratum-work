@@ -18,10 +18,11 @@
  *   group    otherwise the block's pool (blocks.pool_id) goes to the group of the node paying that pool with the most
  *            sets in the block's epoch (then templates, then node key).
  *   other    "not on our feeds" when no node pays the block's pool; "unidentified" when the block's pool is.
- * Columns are the epochs with counted heights plus "now" (the last 144 blocks); pies are the last 144 / 2,016 /
- * 12,096 / 52,416 blocks and all blocks from the first counted epoch, each block counted with its own epoch's groups.
- * A block above the last counted epoch (a new epoch's first blocks, before their windows close) uses the last
- * counted epoch's groups.
+ * Columns are the epochs with counted heights, plus the tip's epoch while its first heights aren't counted yet; pies are
+ * the last 144 / 2,016 / 12,096 / 52,416 blocks and all blocks from the first counted epoch, each block counted with
+ * its own epoch's groups. A block above the last counted epoch (a new epoch's first blocks, before their windows close)
+ * uses the last counted epoch's groups. Share visuals default to the last 2,016 blocks (DEFAULT_PIE_BLOCKS;
+ * docs/methodology.md, "Share windows"): the legend is ordered by that pie.
  *
  * Colours: the 8 lead pools with the most blocks over all columns get the palette, in that order; a group's colour is
  * that of the first of its pools (most blocks first) that has one, other groups are grey. In the pies a group is
@@ -36,6 +37,8 @@ export const PIE_RANGES: readonly { blocks: number | null; label: string }[] = [
   { blocks: 144, label: "144 blocks" }, { blocks: 2016, label: "2,016 blocks" }, { blocks: 12096, label: "12,096 blocks" },
   { blocks: 52416, label: "52,416 blocks" }, { blocks: null, label: "All" },
 ];
+/** The default share window: the legend's order, and the pie a page shows first (docs/methodology.md, "Share windows"). */
+export const DEFAULT_PIE_BLOCKS = 2016;
 export const PALETTE = ["#f59e0b", "#3b82f6", "#8b5cf6", "#ef4444", "#10b981", "#06b6d4", "#f472b6", "#84cc16"];
 export const GREY = "#5d5c57";
 export const OTHER_COLOUR = "#2a2a28";
@@ -272,7 +275,8 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
     for (const f of g.feeds) bk.feeds.add(f);
   };
 
-  // columns: per counted epoch, plus "now"
+  // columns: per counted epoch, plus the tip's epoch while it isn't counted yet (its blocks use the last counted
+  // epoch's groups, as in the pies)
   const colBuckets: { label: string; title: string; buckets: Map<string, Bucket>; tot: number }[] = [];
   const timeOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
   const fmt = (h: number) => h.toLocaleString("en-US");
@@ -288,15 +292,16 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
     }
     colBuckets.push({ label, title, buckets, tot });
   };
-  for (const c of counted) {
-    const lo = c.epoch * EPOCH_BLOCKS, hi = lo + EPOCH_BLOCKS - 1;
+  const columnEpochs = counted.map(c => c.epoch);
+  if (tip !== null && Math.floor(tip / EPOCH_BLOCKS) > lastCounted) columnEpochs.push(Math.floor(tip / EPOCH_BLOCKS));
+  for (const epoch of columnEpochs) {
+    const lo = epoch * EPOCH_BLOCKS, hi = lo + EPOCH_BLOCKS - 1;
     const rows = blocks.filter(b => b.height >= lo && b.height <= hi);
     if (rows.length === 0) continue;
     const last = rows[rows.length - 1];
     const title = `blocks ${fmt(lo)}–${fmt(hi)}${last.height < hi ? ` (to ${fmt(last.height)} so far)` : ""}, ${timeOf(rows[0].time_ms)} to ${timeOf(last.time_ms)}`;
     makeColumn(rows, fmt(lo), title);
   }
-  if (tip !== null) makeColumn(blocks.filter(b => b.height > tip - 144), "now", "last 144 blocks");
 
   // colours: the lead pools (most blocks in each column's producer groups), top 8 over all columns
   const leadOf = (bk: Bucket) => mostCommon(bk.pools)[0]?.[0];
@@ -361,9 +366,9 @@ export function deriveTemplateProviders(input: ProviderInputs): TemplateProvider
     return { label, tot, groups: finish(buckets, false) };
   });
 
-  // legend: coloured leads, miner-built, others; by share of the 144-block pie
+  // legend: coloured leads, miner-built, others; by share of the default (2,016-block) pie
   const share: Counter = new Map();
-  for (const g of pies[0].groups) inc(share, g.kind === "miner" ? "\u0000miner" : g.kind === "other" ? "\u0000other" : identOf(g.pools), g.n);
+  for (const g of pies[PIE_RANGES.findIndex(r => r.blocks === DEFAULT_PIE_BLOCKS)].groups) inc(share, g.kind === "miner" ? "\u0000miner" : g.kind === "other" ? "\u0000other" : identOf(g.pools), g.n);
   const items: { name: string; colour: string; s: number }[] = [
     ...[...leads].map(([k, c]) => ({ name: k, colour: c, s: share.get(k) ?? 0 })),
     { name: "miner-built templates", colour: MINER_COLOUR, s: share.get("\u0000miner") ?? 0 },

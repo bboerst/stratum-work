@@ -141,7 +141,9 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     expect(cols[0].tot).toBe(9);
     const g1 = Object.fromEntries(cols[1].groups.map((g: { name: string }) => [g.name, g]));
     expect(Object.keys(g1).sort()).toEqual([NAME[A], NAME[B]].sort());
-    expect(body.columns.at(-1).label).toBe('now');
+    // the tip's epoch (E1 + 1) isn't counted: its column is last and groups B's block with E1's groups
+    expect(body.columns.at(-1).label).toBe((h1 + 2016).toLocaleString('en-US'));
+    expect(body.columns.at(-1).groups.map((g: { pools: string[]; n: number }) => [g.pools[0], g.n])).toEqual([[NAME[B], 1]]);
     expect(body.tip_height).toBe(h1 + 2016 + 3);
     const all = body.pies.at(-1);
     expect(all.label).toBe('All');

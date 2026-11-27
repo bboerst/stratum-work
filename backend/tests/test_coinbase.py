@@ -74,8 +74,12 @@ class CoinbaseTests(unittest.TestCase):
 
 
 class FakeStore:
-    def __init__(self, missing=(), missing_tx=()):
+    def __init__(self, missing=(), missing_tx=(), stale=()):
         self.missing, self.missing_tx, self.filled, self.headers = list(missing), list(missing_tx), [], []
+        self.stale = set(stale)
+
+    def stale_block_hashes(self, hashes):
+        return self.stale & set(hashes)
 
     def blocks_missing_branches(self, limit):
         return self.missing[:limit]
@@ -293,6 +297,34 @@ class CoinbaseFillTests(unittest.TestCase):
         stats = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=5).run()
         self.assertEqual((stats["tx_filled"], stats["from_peer"], stats["tx_pruned_at"]), (2, 1, 0))
         self.assertEqual([d["coinbase_tx"] for d in s.filled], [b["stripped"] for b in node.blocks.values()])
+
+    def test_stale_blocks_at_the_head_of_both_passes_dont_stop_the_run(self):
+        # #339: peers never serve stale blocks. One heads pass 1, two head pass 2; before the fix they were 3
+        # failures in a row and the run stopped with nothing fetched.
+        hashes = [f"{i:064x}" for i in range(7)]
+        node = FakeNode(7, pruned=set(hashes))
+        stale = {hashes[0], hashes[3], hashes[4]}
+        f = FakeFetcher(node, deliverable=set(hashes) - stale)
+        s = FakeStore([(h, 90 - i) for i, h in enumerate(hashes[3:])],                     # pass 2: 3, 4 stale; 5, 6
+                      [(h, node.blocks[h]["tx"][0], 99 - i) for i, h in enumerate(hashes[:3])],  # pass 1: 0 stale; 1, 2
+                      stale=stale)
+        filler = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=4, peer_max_failures=3)
+        stats = filler.run()
+        self.assertEqual((stats["from_peer"], stats["peer_failed"], stats["stale_skipped"]), (4, 0, 3))
+        self.assertEqual((stats["tx_filled"], stats["filled"], stats["tx_pruned_at"]), (2, 2, 0))
+        self.assertEqual([a[1] for a in f.asked], [hashes[1], hashes[2], hashes[5], hashes[6]])   # stale never asked
+        self.assertEqual(filler._peer["stopped"], "")              # the budget of 4 held exactly the 4 non-stale blocks
+        self.assertEqual({d["block_hash"] for d in s.filled}, {hashes[1], hashes[2], hashes[5], hashes[6]})
+
+    def test_a_stale_block_the_node_still_has_is_read_locally(self):
+        hashes = [f"{i:064x}" for i in range(2)]
+        node = FakeNode(2, pruned={hashes[1]})
+        f = FakeFetcher(node, deliverable=hashes)
+        s = FakeStore([(h, 9 - i) for i, h in enumerate(hashes)], stale=set(hashes))
+        stats = BlockCoinbaseFiller(node.rpc, s, fetcher=f, peer_max_blocks=5).run()
+        self.assertEqual((stats["filled"], stats["from_peer"], stats["stale_skipped"]), (1, 0, 1))
+        self.assertEqual([d["block_hash"] for d in s.filled], [hashes[0]])
+        self.assertEqual(f.asked, [])
 
 
 if __name__ == "__main__":

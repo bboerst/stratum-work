@@ -208,6 +208,10 @@ git clone --depth 1 https://github.com/bitcoin-data/stale-blocks /tmp/stale-bloc
 cd backend && python -m stale_import --csv /tmp/stale-blocks/stale-blocks.csv --blocks-dir /tmp/stale-blocks/blocks --dry-run
 # then without --dry-run; --from-height / --to-height bound the template heights read, --chunk the heights per query
 ```
+Stale blocks our node did see are in `blocks`, and peers don't serve them once the node has pruned them, so the coinbase fill can leave them without coinbase data. `--coinbase-fill` takes it from the dataset's block files instead: each file's header must hash to the stored block hash, the block must parse exactly, its transactions must fold to the stored merkle root and its coinbase must hash to its txid; only then are the merkle branches, coinbase txid and bytes (and size, weight, transaction count where empty) filled, never overwriting a value. The summary lists every block as filled, not in the dataset, or failed (with the check):
+```bash
+cd backend && python -m stale_import --coinbase-fill --blocks-dir /tmp/stale-blocks/blocks --dry-run
+```
 
 **Active chain**: after each sync, new block and reorg the backend compares its stored active-chain block at each of the last `BLOCK_GAP_WINDOW` heights with the node's (`getblockhash`). A missing block is fetched; a stored block the node's active chain no longer has (a reorg) is replaced by the node's block, stored with `seen_at` = when the backend noticed. The replaced block stays stored: it gets a `stale_blocks` row (`was_active`, and a `chain_reorgs` row), so `blocks_best` hides it, even with `STALE_BLOCKS_ENABLED=false`. RPC methods used: `getblockcount`, `getblockhash`, `getblock`, `getchaintips`, `getblockheader`.
 

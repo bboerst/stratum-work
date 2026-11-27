@@ -22,13 +22,19 @@ peer delivered (bitcoind disconnects a peer that doesn't answer). The run keeps 
 the peer that delivered last is asked first, peers that didn't move to the back, disconnected ones are dropped). The
 node's prune height is logged each such run, to watch its window of block data shrink and regrow.
 
+Stale blocks (in `stale_blocks`, not active again) are left out of the peer path (#339): peers don't serve them, so
+they would fail on every run, stay at the head of the list and stop it on the failures-in-a-row limit. They are still
+read locally while the node has them; pruned, they are skipped without counting toward the per-run budget or the
+failures in a row, and the number skipped is logged each run. Their data comes from the public stale-blocks
+dataset instead (python -m stale_import --coinbase-fill).
+
 Nothing is recorded as done: the next run continues. Postgres only.
 """
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from coinbase import coinbase_facts, dsha256, strip_witness
 
@@ -47,8 +53,8 @@ def _pruned(e: Exception) -> bool:
 
 
 class BlockCoinbaseFiller:
-    """rpc(method, *args); store: blocks_missing_coinbase_tx, blocks_missing_branches, fill_block_coinbase and (with
-    header_fields) fill_block_headers; fetcher: the gap filler (peers(), fetch_from_peers(height, hash, peers,
+    """rpc(method, *args); store: blocks_missing_coinbase_tx, blocks_missing_branches, fill_block_coinbase, (with
+    header_fields) fill_block_headers and (with peers) stale_block_hashes; fetcher: the gap filler (peers(), fetch_from_peers(height, hash, peers,
     store_step)), used only when peer_max_blocks > 0."""
 
     def __init__(self, rpc: Callable[..., Any], store: Any, max_blocks: int = 1000, batch: int = 200,
@@ -62,18 +68,31 @@ class BlockCoinbaseFiller:
 
     def run(self) -> Dict[str, int]:
         self._peer: Dict[str, Any] = {"deadline": None, "peers": None, "in_a_row": 0, "stopped": ""}
-        stats = {"from_peer": 0, "peer_failed": 0}
+        stats = {"from_peer": 0, "peer_failed": 0, "stale_skipped": 0}
         stats.update(self._fill_coinbase_tx(stats))
         caught_up = stats["tx_missing"] < self.max_blocks or bool(stats["tx_pruned_at"])
         stats.update(self._fill_branches(stats, peers_allowed=caught_up))
         return stats
 
-    def _from_peers(self, stats: Dict[str, int], block_hash: str, height: int) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _peers_on(self) -> bool:
+        return self.peer_max_blocks > 0 and self.fetcher is not None
+
+    def _stale(self, hashes: List[str]) -> Set[str]:
+        """Which of a pass's blocks are stale (asked only with peers on: only the peer path leaves them out)."""
+        if not self._peers_on() or not hashes:
+            return set()
+        return set(self.store.stale_block_hashes(hashes))
+
+    def _from_peers(self, stats: Dict[str, int], block_hash: str, height: int,
+                    stale: Set[str]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """A pruned block from peers. (False, None): no peer fetching (off, or a per-run limit reached) - the pass
-        stops; (True, None): not delivered - skip it; (True, doc): delivered and read."""
+        stops; (True, None): not delivered, or stale (never asked) - skip it; (True, doc): delivered and read."""
         st = self._peer
-        if self.peer_max_blocks <= 0 or self.fetcher is None or st["stopped"]:
+        if not self._peers_on() or st["stopped"]:
             return False, None
+        if block_hash in stale:                # peers don't serve it: not asked, not a failure, not in the budget
+            stats["stale_skipped"] += 1
+            return True, None
         if st["deadline"] is None:
             st["deadline"] = self.clock() + self.peer_max_seconds
             st["peers"] = self.fetcher.peers()
@@ -130,11 +149,12 @@ class BlockCoinbaseFiller:
         todo = self.store.blocks_missing_coinbase_tx(self.max_blocks)
         stats = {"tx_missing": len(todo), "tx_filled": 0, "tx_failed": 0, "tx_pruned_at": 0}
         docs: List[Dict[str, Any]] = []
+        stale = self._stale([t[0] for t in todo])
         for block_hash, txid, height in todo:
             try:
                 docs.append({"block_hash": block_hash, "coinbase_tx": self._coinbase_tx(block_hash, txid)})
             except Pruned:
-                fetching, doc = self._from_peers(peer_stats, block_hash, height)
+                fetching, doc = self._from_peers(peer_stats, block_hash, height, stale)
                 if not fetching:
                     stats["tx_pruned_at"] = 1
                     break                      # older blocks are pruned too
@@ -164,11 +184,12 @@ class BlockCoinbaseFiller:
         todo: List[Tuple[str, int]] = self.store.blocks_missing_branches(self.max_blocks)
         stats = {"missing": len(todo), "filled": 0, "failed": 0, "pruned_at": 0}
         docs: List[Dict[str, Any]] = []
+        stale = self._stale([t[0] for t in todo]) if peers_allowed else set()
         for block_hash, height in todo:
             try:
                 doc = self._block_doc(block_hash)
             except Pruned:
-                fetching, doc = self._from_peers(peer_stats, block_hash, height) if peers_allowed else (False, None)
+                fetching, doc = self._from_peers(peer_stats, block_hash, height, stale) if peers_allowed else (False, None)
                 if not fetching:
                     stats["pruned_at"] = 1
                     break                      # older blocks are pruned too
@@ -190,9 +211,9 @@ class BlockCoinbaseFiller:
         if stats["missing"]:
             logger.info("coinbase fill: %(missing)d blocks without merkle branches, %(filled)d filled, %(failed)d failed"
                         "%(pruned)s", dict(stats, pruned=", stopped at a pruned block" if stats["pruned_at"] else ""))
-        if peer_stats["from_peer"] or peer_stats["peer_failed"]:
-            logger.info("coinbase fill: %(from_peer)d pruned blocks fetched from peers, %(peer_failed)d not delivered",
-                        peer_stats)
+        if peer_stats["from_peer"] or peer_stats["peer_failed"] or peer_stats["stale_skipped"]:
+            logger.info("coinbase fill: %(from_peer)d pruned blocks fetched from peers, %(peer_failed)d not delivered, "
+                        "%(stale_skipped)d stale blocks skipped (peers don't serve them)", peer_stats)
         return stats
 
     def _peer_stop(self, stats: Dict[str, int], peers: Optional[List[int]], deadline: float, in_a_row: int) -> str:

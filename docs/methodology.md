@@ -266,7 +266,9 @@ older blocks whose full data the node no longer keeps.
 To link a block to the work it was built from, the backend also stores the block's coinbase merkle path (the same
 shape as a template's `merkle_branches`), its coinbase txid and its coinbase transaction. Blocks stored before these
 were recorded get them from the node, which prunes old blocks; a pruned block can be downloaded again from peers
-(`getblockfrompeer`) and checked the same way. Blocks not filled yet have none of them, or only the path and txid. All of these are self-checked against the node's data before they are stored: the path must hash the
+(`getblockfrompeer`) and checked the same way. Peers don't serve stale blocks, so a pruned stale block is not asked
+for; its data comes from the public stale-blocks dataset (see [Blocks](#blocks)) when it has the block, after the
+block's header hashes to the stored block hash and the same two checks pass. Blocks not filled yet have none of them, or only the path and txid. All of these are self-checked against the node's data before they are stored: the path must hash the
 coinbase txid to the block's merkle root, and the coinbase must hash to its txid. `block_template_matches(h_from, h_to)`
 compares them with the stored templates at read time:
 

@@ -556,8 +556,9 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
     a creator. A one-part tag names no one.
   - **A gateway's default secondary tag** (`DATUM_GATEWAY_DEFAULTS`, e.g. "DATUM User": the miner never named itself)
     is stored as its own value, `mining_pool.datum_gateway_default`, not as a creator: many miners can share it, so it
-    names no one. Such a block still counts for the pool here. What a default tag means for who built the template is
-    an open question, not a measured result.
+    names no one. Such a block is miner-built, with the creator "unnamed (default tag)": the gateway builds its
+    templates from the miner's own node, and a default tag means the miner never set a name (inferred from the
+    gateway's source, not yet measured against our feeds).
   - Changing these lists doesn't change stored blocks: `python -m coinbase_reanalysis --datum-creators [--dry-run]`
     re-runs the choice from each stored block's coinbase (only the creator keys change; the pool stays).
 - **Per epoch.** Each block counts with its own epoch's template providers. A new epoch whose first heights aren't counted yet

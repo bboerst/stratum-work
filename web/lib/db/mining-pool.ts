@@ -6,6 +6,7 @@ export interface MiningPool {
   name: string;
   tag?: string;
   datum_template_creator?: string;
+  datum_gateway_default?: string;
   link?: string;
   slug?: string;
   match_type?: string;
@@ -19,6 +20,7 @@ interface PoolData extends Record<string, unknown> {
   name?: string;
   tag?: string;
   datum_template_creator?: string;
+  datum_gateway_default?: string;
   link?: string;
   slug?: string;
   match_type?: string;
@@ -55,6 +57,7 @@ export function formatMiningPool(poolData: Record<string, unknown> | null | unde
     name: (pool.name as string) || 'Unknown',
     tag: readString(pool, 'tag'),
     datum_template_creator: readString(pool, 'datum_template_creator'),
+    datum_gateway_default: readString(pool, 'datum_gateway_default'),
     link: pool.link as string | undefined,
     slug: pool.slug as string | undefined,
     match_type: pool.match_type as string | undefined,

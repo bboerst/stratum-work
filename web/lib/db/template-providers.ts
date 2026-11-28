@@ -7,7 +7,7 @@
  * (exact match on pools.name; an unidentified payer is kept), and every pair touching one. All SQL is parameterized.
  */
 import { getPgPool } from './pg';
-import { EPOCH_BLOCKS, type BlockRow, type NodeRow, type PairRow, type ProviderInputs } from '../templateProviders';
+import { EPOCH_BLOCKS, UNNAMED_CREATOR, type BlockRow, type NodeRow, type PairRow, type ProviderInputs } from '../templateProviders';
 
 const toNum = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
@@ -20,6 +20,7 @@ export async function getTemplateProviderInputs(excluded: string[]): Promise<Omi
   const [blocks, pools] = await Promise.all([
     pool.query(
       `SELECT height, pool_id, mining_pool->>'name' AS pool, nullif(mining_pool->>'datum_template_creator', '') AS creator,
+              mining_pool ? 'datum_gateway_default' AS gateway_default,
               (extract(epoch FROM block_time) * 1000)::bigint AS time_ms
          FROM blocks_best WHERE height >= $1 ORDER BY height`, [from]),
     pool.query(`SELECT id, name FROM pools`),
@@ -27,7 +28,7 @@ export async function getTemplateProviderInputs(excluded: string[]): Promise<Omi
   return {
     counted,
     nodes, pairs,
-    blocks: blocks.rows.map((r): BlockRow => ({ height: Number(r.height), pool_id: toNum(r.pool_id), pool: r.pool ?? null, creator: r.creator ?? null, time_ms: Number(r.time_ms) })),
+    blocks: blocks.rows.map((r): BlockRow => ({ height: Number(r.height), pool_id: toNum(r.pool_id), pool: r.pool ?? null, creator: r.creator ?? (r.gateway_default ? UNNAMED_CREATOR : null), time_ms: Number(r.time_ms) })),
     poolNames: new Map(pools.rows.map(r => [Number(r.id), String(r.name)])),
   };
 }

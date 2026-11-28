@@ -93,7 +93,8 @@ DATUM_POOL_MARKERS = frozenset({
     "DATUM Gateway",   # datum_gateway's default primary tag when not on a pool (src/datum_conf.c, coinbase_tag_primary)
 })
 # A gateway's default secondary tag: the miner never named itself. Recorded as its own value (datum_gateway_default),
-# never as a template creator: many miners share one default, so it names no one.
+# never as a template creator: many miners share one default, so it names no one. The site counts such a block as
+# miner-built, creator unnamed (the gateway builds templates from the miner's own node).
 DATUM_GATEWAY_DEFAULTS = frozenset({
     "DATUM User",       # datum_gateway's default (src/datum_conf.c, coinbase_tag_secondary)
     "DATUM on Umbrel",  # the Umbrel app's shipped config (datum/data/settings/datum_gateway_config.json)

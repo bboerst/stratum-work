@@ -163,7 +163,7 @@ describe('blockRowToBlock', () => {
       analysis: { pool_identification: { method: 'address' } },
       coinbase_script_sig: '03c8e20e',
       height: 975560,
-      mining_pool: { id: 111, name: 'Pool', tag: undefined, datum_template_creator: undefined,
+      mining_pool: { id: 111, name: 'Pool', tag: undefined, datum_template_creator: undefined, datum_gateway_default: undefined,
         link: 'https://example.com', slug: 'pool', match_type: 'address', identification_method: 'address' },
       timestamp: 1794491650,
       id: '000000000000000000000f4248771a27b166478bcf8e40354f035205ff238860',

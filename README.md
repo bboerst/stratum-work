@@ -440,7 +440,7 @@ The backend runs analytics plug-ins for each processed block. They inspect the t
 
 - Location: `backend/analytics/`: `prev_hash_divergence.py` (pools advertising different previous block hashes), `invalid_coinbase_no_merkle.py` (every template's coinbase parsed strictly; templates with no merkle branches whose coinbase pays more than the subsidy), `pool_identification.py` (pool identification and `PoolsManager`).
 - Output: `analysis.flags[]`, each `{ key, icon, details }`, e.g. `{"key": "prev_hash_fork", "icon": "fork", "details": {"groups": [{"prev_hash": "…", "pools": ["PoolA", "PoolB"]}]}}`; `analysis.pool_identification` = `{ mining_pool, method: "address|tag", addresses_considered }`; and `analysis.coinbase_parse` = `{ repaired: [{pool_name, stored_extranonce2_length, extranonce2_length, templates}], unparsed: [{pool_name, extranonce2_length, templates, sample_job_id}] }` when any coinbase needed another extranonce2 length or didn't parse.
-- Analyses run once, when the block is stored. After changing the coinbase checks, `python -m coinbase_reanalysis [--from H] [--to H] [--dry-run]` brings stored blocks up to date.
+- Analyses run once, when the block is stored. After changing the coinbase checks, `python -m coinbase_reanalysis [--from H] [--to H] [--dry-run]` brings stored blocks up to date; after changing the DATUM template-creator rule, `python -m coinbase_reanalysis --datum-creators [--dry-run]` does the same for the creator.
 
 1. Add a module, e.g. `backend/analytics/my_feature.py`, with a function returning a finding or `None`:
    ```python

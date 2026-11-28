@@ -58,6 +58,7 @@ export interface BlockData {
     name: string;
     tag?: string;
     datum_template_creator?: string;
+    datum_gateway_default?: string;   // a DATUM gateway's default tag: miner-built, the miner unnamed
     link?: string;
     slug?: string;
     match_type?: string;

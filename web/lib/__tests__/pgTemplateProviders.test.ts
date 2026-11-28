@@ -42,11 +42,11 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
   const pairRow = (h: number, a: string, pa: number | null, b: string, pb: number | null, shared: number) => admin.query(
     `INSERT INTO template_set_pairs (height, feed_a, pool_a, feed_b, pool_b, shared) VALUES ($1, $2, $3, $4, $5, $6)`,
     [h, a, pa, b, pb, shared]);
-  const block = (height: number, pool: number | null, creator?: string) => admin.query(
+  const block = (height: number, pool: number | null, creator?: string, extra: Record<string, string> = {}) => admin.query(
     `INSERT INTO blocks (block_hash, height, block_time, seen_at, coinbase_script_sig, pool_id, mining_pool)
      VALUES (decode($1, 'hex'), $2, to_timestamp($3), to_timestamp($3), '\\x00', $4, $5::jsonb)`,
     [(height.toString(16).padStart(16, '0') + 'ab'.repeat(24)), height, T0 + (height - h0) * 600, pool,
-     JSON.stringify(pool === null ? { name: 'Unknown', id: 'unknown' } : { name: NAME[pool], id: pool, ...(creator ? { datum_template_creator: creator } : {}) })]);
+     JSON.stringify(pool === null ? { name: 'Unknown', id: 'unknown' } : { name: NAME[pool], id: pool, ...(creator ? { datum_template_creator: creator } : {}), ...extra })]);
 
   async function route(blacklist: string) {
     vi.resetModules();
@@ -102,6 +102,7 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     await block(h0 + 1, A); await block(h0 + 2, A); await block(h0 + 3, B); await block(h0 + 4, C);
     await block(h0 + 5, Z); await block(h0 + 6, null); await block(h0 + 7, C, 'miner-q'); await block(h0 + 8, C, 'OWN-2');
     await block(h0 + 9, X);                    // paid only on the excluded feed: "not on our feeds" when it's excluded
+    await block(h0 + 10, C, undefined, { datum_gateway_default: 'DATUM User' });   // a gateway's default tag: miner-built
     // E1: A, B; above the last counted epoch (E1 + 1): B
     await block(h1 + 1, A); await block(h1 + 2, B); await block(h1 + 2016 + 3, B);
   });
@@ -135,17 +136,18 @@ describe.skipIf(!enabled)('Postgres template providers', () => {
     const g0 = Object.fromEntries(cols[0].groups.map((g: { name: string }) => [g.name, g]));
     expect(g0[`${NAME[A]} +1`]).toMatchObject({ n: 3, pools: [NAME[A], NAME[B]], payers: [NAME[A], NAME[B]], feeds: [fa, fb], hatched: true, kind: 'producer' });
     expect(g0[NAME[C]]).toMatchObject({ n: 2, feeds: [fc], hatched: false });   // its block and its own server's
-    expect(g0['Miner-built']).toMatchObject({ n: 1, kind: 'miner', creators: [['miner-q', 1]], via: [[NAME[C], 1]] });
+    expect(g0['Miner-built']).toMatchObject({ n: 2, kind: 'miner', via: [[NAME[C], 2]] });
+    expect(g0['Miner-built'].creators).toEqual(expect.arrayContaining([['miner-q', 1], ['unnamed (default tag)', 1]]));
     expect(g0['not on our feeds']).toMatchObject({ n: 2, kind: 'other' });   // Z's, and X's (only fx pays X)
     expect(g0['unidentified']).toMatchObject({ n: 1, kind: 'other' });
-    expect(cols[0].tot).toBe(9);
+    expect(cols[0].tot).toBe(10);
     const g1 = Object.fromEntries(cols[1].groups.map((g: { name: string }) => [g.name, g]));
     expect(Object.keys(g1).sort()).toEqual([NAME[A], NAME[B]].sort());
     expect(body.columns.at(-1).label).toBe('now');
     expect(body.tip_height).toBe(h1 + 2016 + 3);
     const all = body.pies.at(-1);
     expect(all.label).toBe('All');
-    expect(all.tot).toBe(12);
+    expect(all.tot).toBe(13);
     // the block above the last counted epoch counts with E1's groups: B on its own
     expect(body.pies[0].groups.find((g: { pools: string[] }) => g.pools[0] === NAME[B])?.feeds).toEqual([fb]);
     expect(body.heights_counted).toBe(3);

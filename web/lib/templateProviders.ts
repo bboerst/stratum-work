@@ -13,8 +13,9 @@
  *   feed     a feed's provider (Forks: providers per episode) is the group of its node with the most sets, when that
  *            node has at least SETS_MIN; otherwise unknown. A group lists only the feeds it is the provider of.
  * Blocks (our best chain, exact by height):
- *   miner    the coinbase names a DATUM template creator that isn't one of the pool's own (ownCreatorPrefixes):
- *            a miner-built template, its own kind, split by creator.
+ *   miner    the coinbase names a DATUM template creator that isn't one of the pool's own (ownCreatorPrefixes), or
+ *            carries a DATUM gateway's default tag (creator UNNAMED_CREATOR): a miner-built template, its own kind,
+ *            split by creator.
  *   group    otherwise the block's pool (blocks.pool_id) goes to the group of the node paying that pool with the most
  *            sets in the block's epoch (then templates, then node key).
  *   other    "not on our feeds" when no node pays the block's pool; "unidentified" when the block's pool is.
@@ -43,6 +44,8 @@ export const MINER_COLOUR = "#facc15";
 export const CREATORS_MAX = 40;
 export const NOT_ON_FEEDS = "not on our feeds";
 export const UNIDENTIFIED = "unidentified";
+/** The creator of a miner-built block whose coinbase carries a DATUM gateway's default tag (no name of its own). */
+export const UNNAMED_CREATOR = "unnamed (default tag)";
 
 // --- inputs ---------------------------------------------------------------------------------------------------------
 export interface NodeRow { epoch: number; feed: string; pool_id: number | null; sets: number; templates: number }
@@ -51,7 +54,7 @@ export interface BlockRow {
   height: number;
   pool_id: number | null;
   pool: string | null;               // the block's pool name (blocks.mining_pool)
-  creator: string | null;            // mining_pool.datum_template_creator
+  creator: string | null;            // mining_pool.datum_template_creator, or UNNAMED_CREATOR for a gateway default
   time_ms: number;
 }
 export interface ProviderInputs {

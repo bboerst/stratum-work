@@ -54,6 +54,18 @@ interface UseDataStreamResult {
  */
 export const RESUME_STALE_MS = 20_000;
 
+/**
+ * Messages the stream sends only with `?connections=all` (app/api/stream, #321): another connection's distinct work, the
+ * notice that it ended, and that connection's burst marker. They aren't the pool's stream, so they never enter the
+ * data, the per-pool latest, onMessage (the template buffer) or the burst state: views that don't ask for them ignore
+ * them even when a shared connection carries them.
+ */
+export const CONNECTION_MESSAGE_TYPES: ReadonlySet<string> = new Set(['connection_template', 'connection_copy', 'connection_burst']);
+
+export function isConnectionMessage(parsed: unknown): boolean {
+  return typeof parsed === 'object' && parsed !== null && CONNECTION_MESSAGE_TYPES.has(String((parsed as { type?: unknown }).type));
+}
+
 /** A burst episode ends (for the indicator) when no marker came for this long. */
 export const BURST_EPISODE_GAP_MS = 30_000;
 
@@ -209,8 +221,10 @@ export function useDataStream({
       // or the old format (direct StratumV1Data)
       let newData: StreamData | null = null;
       let stratumData: StratumV1Data | null = null;
-      
-      if ('type' in parsedData && parsedData.type === 'replay') {
+
+      if (isConnectionMessage(parsedData)) {
+        return;
+      } else if ('type' in parsedData && parsedData.type === 'replay') {
         // Templates the server's consumer received just before this connection (app/api/stream): for the template
         // buffer only (onMessage), part of this connection's live run. Not added to the recent messages.
         const t = parsedData.data as StratumV1Data | undefined;

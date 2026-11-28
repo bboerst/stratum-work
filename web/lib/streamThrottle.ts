@@ -6,6 +6,10 @@
  * weren't shown. This only affects the live display: every template is still stored by the collector.
  *
  * Markers carry `pool_name`, so the stream route's pool blacklist applies to them too (it filters before this).
+ *
+ * `?connections=all` (#321) gives another connection's messages their own state, keyed per pool + connection (the
+ * `connection` argument), so they don't use up the pool's rate; their markers are `connection_burst` with the
+ * connection's letter, so views that read `burst` as a gap in the pool's stream don't see them.
  */
 
 export interface PoolThrottleOptions {
@@ -27,12 +31,20 @@ export interface BurstMarker {
   last_ms: number;
 }
 
+/** A burst on another connection of the pool (`?connections=all`). */
+export interface ConnectionBurstMarker extends Omit<BurstMarker, "type"> {
+  type: "connection_burst";
+  connection: string;
+}
+
 export const DEFAULT_POOL_THROTTLE: PoolThrottleOptions = { ratePerSecond: 5, burst: 20, markerIntervalMs: 1000 };
 
 /** Idle pool state is forgotten after this long (bounds memory per connection). */
 const IDLE_FORGET_MS = 60_000;
 
 interface PoolState {
+  pool: string;
+  connection?: string;
   tokens: number;
   refilledAt: number;
   pending: string | null;
@@ -55,10 +67,13 @@ export class PoolStreamThrottle {
     return this.opts.ratePerSecond > 0;
   }
 
-  /** Messages to forward now for a template from `pool` (possibly none: it's held as the newest). */
-  offer(pool: string, message: string, now: number): string[] {
+  /**
+   * Messages to forward now for a template from `pool` (possibly none: it's held as the newest). `connection`: a
+   * message of that connection of the pool (`?connections=all`), with its own rate.
+   */
+  offer(pool: string, message: string, now: number, connection?: string): string[] {
     if (!this.enabled) return [message];
-    const s = this.state(pool, now);
+    const s = this.state(pool, now, connection);
     s.lastSeen = now;
     this.refill(s, now);
     if (s.pending === null && s.tokens >= 1) {
@@ -78,7 +93,7 @@ export class PoolStreamThrottle {
   tick(now: number): string[] {
     if (!this.enabled) return [];
     const out: string[] = [];
-    for (const [pool, s] of this.pools) {
+    for (const [key, s] of this.pools) {
       this.refill(s, now);
       if (s.pending !== null && s.tokens >= 1) {
         s.tokens -= 1;
@@ -87,30 +102,34 @@ export class PoolStreamThrottle {
         // Templates were skipped before this one: the marker always goes first, so the browser knows this template
         // doesn't follow the last one it got (change detection doesn't compare across the gap). At most one marker
         // per forwarded template, so still bounded by the rate.
-        if (s.unreported > 0) out.push(this.marker(pool, s, now));
+        if (s.unreported > 0) out.push(this.marker(s, now));
         out.push(latest);
       } else if (s.pending === null && s.unreported > 0 && now - s.lastMarker >= this.opts.markerIntervalMs) {
-        out.push(this.marker(pool, s, now)); // the burst is over: report what's left
+        out.push(this.marker(s, now)); // the burst is over: report what's left
       }
-      if (s.pending === null && s.unreported === 0 && now - s.lastSeen > IDLE_FORGET_MS) this.pools.delete(pool);
+      if (s.pending === null && s.unreported === 0 && now - s.lastSeen > IDLE_FORGET_MS) this.pools.delete(key);
     }
     return out;
   }
 
-  private marker(pool: string, s: PoolState, now: number): string {
-    const m: BurstMarker = { type: "burst", pool_name: pool, suppressed: s.unreported, first_ms: s.firstMs, last_ms: s.lastMs };
+  private marker(s: PoolState, now: number): string {
+    const m: BurstMarker | ConnectionBurstMarker = s.connection === undefined
+      ? { type: "burst", pool_name: s.pool, suppressed: s.unreported, first_ms: s.firstMs, last_ms: s.lastMs }
+      : { type: "connection_burst", pool_name: s.pool, connection: s.connection, suppressed: s.unreported,
+        first_ms: s.firstMs, last_ms: s.lastMs };
     s.unreported = 0;
     s.lastMarker = now;
     s.firstMs = now;
     return JSON.stringify(m);
   }
 
-  private state(pool: string, now: number): PoolState {
-    let s = this.pools.get(pool);
+  private state(pool: string, now: number, connection?: string): PoolState {
+    const key = connection === undefined ? pool : `${pool}\0${connection}`;
+    let s = this.pools.get(key);
     if (!s) {
-      s = { tokens: this.opts.burst, refilledAt: now, pending: null, unreported: 0, firstMs: now, lastMs: now,
+      s = { pool, connection, tokens: this.opts.burst, refilledAt: now, pending: null, unreported: 0, firstMs: now, lastMs: now,
         lastMarker: 0, lastSeen: now };
-      this.pools.set(pool, s);
+      this.pools.set(key, s);
     }
     return s;
   }

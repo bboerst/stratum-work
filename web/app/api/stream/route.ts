@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { PoolStreamThrottle, poolThrottleFromEnv } from '../../../lib/streamThrottle';
-import { streamHub, type HubMessage } from '../../../lib/streamHub';
+import { streamHub, type ConnectionMessage, type HubMessage } from '../../../lib/streamHub';
 import { HEARTBEAT, HEARTBEAT_MS } from '../../../lib/streamHeartbeat';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,12 @@ export const runtime = 'nodejs';
 // The live stream. Every viewer in this process shares one RabbitMQ consumer (lib/streamHub.ts), which masks, parses
 // and drops excluded pools once, and decides one stream per pool (shared, so a new viewer starts on the active
 // connection); each viewer keeps its own throttle here.
+//
+// `?connections=all` (#321): the same messages, plus other connections' distinct work and the notices that it ended
+// (decided in the hub, lib/streamConnections.ts), each with the connection's letter and their own type so views that
+// don't know them ignore them. Any other value, or none, is the default stream.
 export async function GET(request: NextRequest) {
+  const allConnections = request.nextUrl.searchParams.get('connections') === 'all';
   const encoder = new TextEncoder();
   let closed = false;
   // Ends this viewer's stream: set in start(), also run by cancel().
@@ -20,6 +25,9 @@ export async function GET(request: NextRequest) {
       // Per-pool rate limit for templates (#105): a pool flooding templates can't freeze the browser. Normal traffic
       // passes untouched; held templates are flushed by this timer, newest first, with a burst marker.
       const throttle = new PoolStreamThrottle(poolThrottleFromEnv());
+      // Other connections' messages (?connections=all): their own instance, keyed per pool + connection, so they
+      // neither use up the pool's rate nor trip its burst marker.
+      const connectionThrottle = allConnections ? new PoolStreamThrottle(poolThrottleFromEnv()) : null;
       let throttleTimer: ReturnType<typeof setInterval> | undefined;
       let heartbeatTimer: ReturnType<typeof setInterval> | undefined = undefined;
       let unsubscribe: (() => void) | undefined;
@@ -60,6 +68,10 @@ export async function GET(request: NextRequest) {
         }
       };
 
+      const onConnection = (m: ConnectionMessage) => {
+        for (const out of connectionThrottle!.offer(m.pool, m.data, Date.now(), m.connection)) send(out);
+      };
+
       end = close;
       request.signal.addEventListener('abort', close);
 
@@ -69,7 +81,8 @@ export async function GET(request: NextRequest) {
         const onReplay = (ms: HubMessage[]) => {
           for (const m of ms) send(`{"type":"replay","data":${m.data}}`);
         };
-        unsubscribe = await streamHub().subscribe({ onMessage, onReplay, onEnd: close });
+        unsubscribe = await streamHub().subscribe(
+          allConnections ? { onMessage, onReplay, onConnection, onEnd: close } : { onMessage, onReplay, onEnd: close });
       } catch (err) {
         console.error('Error setting up stream:', err);
         close();
@@ -82,7 +95,9 @@ export async function GET(request: NextRequest) {
       }
       if (throttle.enabled) {
         throttleTimer = setInterval(() => {
-          for (const out of throttle.tick(Date.now())) send(out);
+          const now = Date.now();
+          for (const out of throttle.tick(now)) send(out);
+          if (connectionThrottle) for (const out of connectionThrottle.tick(now)) send(out);
         }, 200);
       }
       heartbeatTimer = setInterval(() => {

@@ -24,6 +24,7 @@ interface Fixture {
 
 const FIXTURES = join(__dirname, 'fixtures');
 const GOLDEN = join(FIXTURES, 'stream-multi-source.golden.txt');
+const GOLDEN_ALL = join(FIXTURES, 'stream-multi-source.connections-all.golden.txt');
 
 /** Reads a stream into `out.text` until it ends. */
 function pump(body: ReadableStream<Uint8Array>, out: { text: string }): void {
@@ -45,6 +46,17 @@ export async function playFixture(qs = '', extraEnv: Record<string, string> = {}
   vi.stubEnv('POOL_BLACKLIST', fx.blacklist);
   vi.stubEnv('EXTRANONCE1_MASK_KEY', 'golden-test-key');
   for (const [k, v] of Object.entries(extraEnv)) vi.stubEnv(k, v);
+  // The connection ranking (?connections=all) the sources table would give: by (site, replica) per pool.
+  vi.doMock('../db/sources', () => ({
+    getSourceRanks: vi.fn(async () => {
+      const pools = [...new Set(fx.events.flatMap(e => {
+        const b = e.body as { pool_name?: unknown; site?: unknown } | undefined;
+        return typeof b?.pool_name === 'string' && typeof b.site === 'string' ? [b.pool_name] : [];
+      }))];
+      return pools.flatMap(name => [['site1', 'a'], ['site1', 'b'], ['site2', 'a']].map(([site, replica], i) =>
+        ({ name, site, replica, conn: i + 1 })));
+    }),
+  }));
   let onMessage: OnMessage | undefined;
   const channel = {
     assertQueue: vi.fn(async () => ({ queue: 'q' })), bindQueue: vi.fn(async () => {}),
@@ -95,6 +107,7 @@ describe('/api/stream default output (golden)', () => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.doUnmock('../rabbitmq');
+    vi.doUnmock('../db/sources');
   });
 
   it('is byte-identical to the recorded output', async () => {
@@ -106,5 +119,15 @@ describe('/api/stream default output (golden)', () => {
     expect(text).toContain(': keepalive');
     expect(text).not.toContain('Pool Hidden');
     expect(text).toBe(readFileSync(GOLDEN, 'utf8'));
+  });
+
+  it('?connections=all: the default messages unchanged, plus other connections\' distinct work and notices', async () => {
+    const text = goldenText(await playFixture('?connections=all'));
+    if (process.env.UPDATE_GOLDEN === '1') writeFileSync(GOLDEN_ALL, text);
+    const added = /^data: \{"type":"connection_(template|copy|burst)".*\n\n/gm;
+    // Without the added messages, exactly the default stream.
+    expect(text.replace(added, '')).toBe(readFileSync(GOLDEN, 'utf8'));
+    expect(text).not.toContain('Pool Hidden');
+    expect(text).toBe(readFileSync(GOLDEN_ALL, 'utf8'));
   });
 });

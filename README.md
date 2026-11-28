@@ -325,7 +325,7 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 
 | Route | Returns |
 |---|---|
-| `GET /api/stream` | Server-Sent Events: live templates and block events, what the UI renders. A new connection first gets `{"type":"replay","data":<template>}` for the templates the server received in the last 20 s (plus each pool's one before), then the live stream |
+| `GET /api/stream` | Server-Sent Events: live templates and block events, what the UI renders. A new connection first gets `{"type":"replay","data":<template>}` for the templates the server received in the last 20 s (plus each pool's one before), then the live stream. One connection's templates per pool ([how](docs/methodology.md#several-connections-per-pool)); a pool flooding templates is throttled, with `{"type":"burst","pool_name":…,"suppressed":N,"first_ms":…,"last_ms":…}` saying how many weren't sent. `?connections=all` adds the pool's other connections' work ([below](#every-connection-on-the-stream)) |
 | `GET /api/mining-notify?height=H` | Templates at a height |
 | `GET /api/blocks?n=20[&before=H\|&after=H\|&height=H]` | Blocks, newest first, with pool and analysis |
 | `GET /api/block-pool-first-seen?height=H` | Each pool's first template time at a height, with a `reliable` flag |
@@ -342,6 +342,15 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 | `GET /api/template-providers[?range=6e\|26e\|all]` | Blocks by template provider ([rules](docs/methodology.md#template-providers)): `columns` (one per counted difficulty epoch, then `now` = the last 144 blocks; `range` keeps the last 6 or 26 epochs), `pies` (the last 144 / 2,016 / 12,096 / 52,416 blocks and All), `legend`, each group with its kind (`producer` = a template provider, `miner` = miner-built, `other` = not on our feeds / unidentified), blocks, pools, pools paid, feeds and colour; plus `tip_height`, `from_height`, `heights_counted`. Recomputed every 5 minutes; 404 until heights are counted |
 | `GET /api/tx/<txid>` / `GET /api/tx?txids=a,b,…[&at=ms]` | A transaction as our node saw it: fee, vsize, fee rates (own and ancestor package), first seen, how it left (mined, replaced, …) or mined off-mempool; `found: false` if never seen. Up to 100 txids, display-order hex ([details](web/app/api/tx/README.md)) |
 | `GET /api/realtime-prefill` | The tip and the current templates the realtime views start from: heights tip − 1 … tip + 1 in one read, the last 5 minutes by each row's own receive time plus each pool's latest before. Templates carry `site` and `replica` (their connection), as on the stream |
+
+#### Every connection on the stream
+`GET /api/stream?connections=all` sends exactly the default messages, plus three types. Clients that don't know them can ignore them.
+
+- `{"type":"connection_template","connection":"b","data":<template>}`: work on another of the pool's connections that matches no template any other of its connections received within 10 s of it (exact match on height, pool, `prev_hash`, `merkle_branches`, `version`, `nbits` and `ntime`; no tolerance). It is sent 10 s after it arrived, once that window has passed. Copies are never sent.
+- `{"type":"connection_copy","pool_name":…,"connection":"b","height":H}`: that connection's latest template is an exact copy again, or it is now the connection the default stream shows. Its distinct work has ended.
+- `{"type":"connection_burst","pool_name":…,"connection":"b","suppressed":N,"first_ms":…,"last_ms":…}`: like `burst`, for that connection's messages, which have their own rate.
+
+`connection` is the pool's connection ranked by (site, replica): `a`, `b`, … as on the height page. It never changes while another connection is down. The first 10 s after the server's consumer starts aren't judged.
 
 ## Metrics
 

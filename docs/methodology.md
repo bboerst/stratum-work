@@ -550,6 +550,16 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **Miner-built.** A block whose coinbase names a DATUM template creator is miner-built, a kind of its own, split by
   creator. Creators that are the pool's own template servers are the exception (`POOL_OWN_TEMPLATE_CREATORS`, name
   prefixes, none by default): their blocks count for the pool.
+  - **The creator** is the last part of the DATUM coinbase tag (primary tag, 0x0f, secondary tag) that isn't an exact
+    pool marker (`DATUM_POOL_MARKERS` in `backend/analytics/pool_identification.py`: the pool's own primary tag and the
+    gateway's default primary tag). The match is exact, not a substring, so a miner whose name contains "datum" is still
+    a creator. A one-part tag names no one.
+  - **A gateway's default secondary tag** (`DATUM_GATEWAY_DEFAULTS`, e.g. "DATUM User": the miner never named itself)
+    is stored as its own value, `mining_pool.datum_gateway_default`, not as a creator: many miners can share it, so it
+    names no one. Such a block still counts for the pool here. What a default tag means for who built the template is
+    an open question, not a measured result.
+  - Changing these lists doesn't change stored blocks: `python -m coinbase_reanalysis --datum-creators [--dry-run]`
+    re-runs the choice from each stored block's coinbase (only the creator keys change; the pool stays).
 - **Per epoch.** Each block counts with its own epoch's template providers. A new epoch whose first heights aren't counted yet
   uses the last counted epoch's providers. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
   and all blocks from the first counted epoch, exact by height.

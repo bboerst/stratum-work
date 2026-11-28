@@ -113,6 +113,35 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                                        "encode(coinbase_tx, 'hex') FROM blocks WHERE height = %s", (h + 1,)).fetchone(),
                              ("", "aa" * 32, "0200"))                 # only the bytes changed
 
+    def test_datum_creator_update_changes_only_the_creator_keys(self):
+        h = self.h + 40
+        ocean = {"id": 142, "name": "OCEAN", "slug": "ocean", "match_type": "address", "datum_template_creator": "Old"}
+        doc = dict(self._block(h, "e1", pool=ocean), coinbase_script_sig="03aabbcc",
+                   analysis={"pool_identification": {"mining_pool": dict(ocean), "method": "address",
+                                                     "addresses_considered": ["bc1q"]}, "flags": []})
+        self.store.save_block(doc, is_new_block=False)
+        self.store.save_block(dict(self._block(h + 1, "e2", pool=dict(ocean, name="Ocean")),
+                                   analysis={"pool_identification": {"method": "tag"}}), is_new_block=False)
+        self.store.save_block(self._block(h + 2, "e3"), is_new_block=False)          # another pool: not listed
+        listed = {b["block_hash"]: b for b in self.store.datum_pool_blocks() if h <= b["height"] <= h + 2}
+        self.assertEqual(sorted(listed), ["e1" * 32, "e2" * 32])
+        self.assertEqual(listed["e1" * 32]["coinbase_script_sig"], "03aabbcc")
+        self.assertEqual(listed["e1" * 32]["analysis_mining_pool"]["datum_template_creator"], "Old")
+        self.assertIsNone(listed["e2" * 32]["analysis_mining_pool"])
+        self.store.update_datum_creator("e1" * 32, {"datum_gateway_default": "DATUM User"})
+        self.store.update_datum_creator("e2" * 32, {})
+        with self.psycopg.connect(self.admin) as c:
+            rows = {r[0]: r[1:] for r in c.execute(
+                "SELECT height, pool_id, mining_pool, analysis FROM blocks WHERE height IN (%s, %s)", (h, h + 1)).fetchall()}
+        expected = {k: v for k, v in ocean.items() if k != "datum_template_creator"}
+        pool_id, mp, analysis = rows[h]
+        self.assertEqual((pool_id, mp), (142, dict(expected, datum_gateway_default="DATUM User")))
+        self.assertEqual(analysis, {"pool_identification": {"mining_pool": dict(expected, datum_gateway_default="DATUM User"),
+                                                            "method": "address", "addresses_considered": ["bc1q"]},
+                                    "flags": []})
+        self.assertEqual(rows[h + 1][1], dict(expected, name="Ocean"))
+        self.assertEqual(rows[h + 1][2], {"pool_identification": {"method": "tag"}})   # no copy: left as it was
+
     def test_header_columns_are_written_and_the_fill_only_touches_nulls(self):
         h = self.h + 20
         full = dict(self._block(h, "c1"), transactions=3123, size=1_550_000, weight=3_993_000, version=0x2000E000,

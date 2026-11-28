@@ -7,9 +7,15 @@ block row at that height (the invalid_coinbase_no_merkle flag and `coinbase_pars
 touched). Idempotent: a height whose result hasn't changed isn't written.
 
     python -m coinbase_reanalysis [--from HEIGHT] [--to HEIGHT] [--dry-run]
+    python -m coinbase_reanalysis --datum-creators [--dry-run]
 
 Prints a JSON summary: heights read, blocks changed, flags added / removed / changed (with heights and pools), and the
 repaired / unparsed template counts per pool. Runs as the backend role (UPDATE on blocks).
+
+--datum-creators re-runs only the DATUM creator choice (pool_identification.datum_creator_fields, #320) on the stored
+blocks it applies to, from each block's own coinbase scriptSig: it sets mining_pool.datum_template_creator /
+datum_gateway_default (and the copy in analysis.pool_identification) and nothing else. The block's pool stays as it was
+identified. It reads no templates; the summary lists every block whose creator keys change, before and after.
 """
 import argparse
 import importlib.util
@@ -21,6 +27,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from analytics.invalid_coinbase_no_merkle import analyze_coinbases
+from analytics.pool_identification import DATUM_CREATOR_KEYS, datum_creator_fields
 
 logger = logging.getLogger("backend.coinbase_reanalysis")
 PROGRESS_EVERY = 500
@@ -65,6 +72,33 @@ def reanalyze(store: Any, heights: List[int], dry_run: bool = False) -> Dict[str
     return summary
 
 
+def _creator_keys(pool: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    return {k: pool[k] for k in DATUM_CREATOR_KEYS if isinstance(pool, dict) and k in pool}
+
+
+def reanalyze_datum_creators(store: Any, dry_run: bool = False) -> Dict[str, Any]:
+    """Recompute the DATUM creator keys of every block the rule applies to (store.datum_pool_blocks()); write only the
+    blocks whose keys differ (in mining_pool or in the analysis copy, when there is one)."""
+    blocks = store.datum_pool_blocks()
+    summary: Dict[str, Any] = {"dry_run": dry_run, "datum_blocks": len(blocks), "blocks_changed": 0, "changes": [],
+                               "after": {"creator": 0, "gateway_default": 0, "none": 0}}
+    for block in blocks:
+        new = datum_creator_fields(block.get("coinbase_script_sig") or "")
+        kind = ("creator" if "datum_template_creator" in new else
+                "gateway_default" if "datum_gateway_default" in new else "none")
+        summary["after"][kind] += 1
+        before = _creator_keys(block.get("mining_pool"))
+        copy = block.get("analysis_mining_pool")
+        if before == new and (not isinstance(copy, dict) or _creator_keys(copy) == new):
+            continue
+        summary["blocks_changed"] += 1
+        summary["changes"].append({"height": block["height"], "block_hash": block["block_hash"],
+                                   "before": before, "after": new})
+        if not dry_run:
+            store.update_datum_creator(block["block_hash"], new)
+    return summary
+
+
 def _postgres_store() -> Any:
     # integrations/__init__.py connects to the configured store and to RabbitMQ at import; this needs neither, so
     # load the store module on its own.
@@ -80,9 +114,16 @@ def main(argv: Optional[List[str]] = None, store: Any = None) -> int:
     p.add_argument("--from", dest="h_from", type=int, help="first height (default: the lowest stored block)")
     p.add_argument("--to", dest="h_to", type=int, help="last height (default: the highest stored block)")
     p.add_argument("--dry-run", action="store_true", help="compute and report, write nothing")
+    p.add_argument("--datum-creators", action="store_true",
+                   help="only re-run the DATUM template creator choice on stored blocks (no templates read)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stderr)
     store = store or _postgres_store()
+    if args.datum_creators:
+        if args.h_from is not None or args.h_to is not None:
+            p.error("--datum-creators runs over every stored block; --from/--to don't apply")
+        print(json.dumps(reanalyze_datum_creators(store, dry_run=args.dry_run), indent=2))
+        return 0
     low, high = store.block_height_range()
     if low is None:
         print(json.dumps({"heights": 0, "note": "no blocks"}))

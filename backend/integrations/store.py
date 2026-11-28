@@ -202,6 +202,34 @@ class PostgresStore:
                       pool_identification=json.dumps(pool_identification or {}, default=str))
         self._run(lambda c: c.execute(self._BLOCK_POOL_UPDATE, params))
 
+    # DATUM creator re-analysis (coinbase_reanalysis --datum-creators, #320). The selection mirrors
+    # identify_pool_from_data's _is_ocean_pool (name, slug or id "ocean", any case): the only blocks the creator rule
+    # applies to. A few thousand rows.
+    def datum_pool_blocks(self) -> List[Dict[str, Any]]:
+        rows = self._run(lambda c: c.execute(
+            "SELECT encode(block_hash, 'hex'), height, encode(coinbase_script_sig, 'hex'), mining_pool,"
+            " analysis -> 'pool_identification' -> 'mining_pool' FROM blocks"
+            " WHERE 'ocean' IN (lower(mining_pool ->> 'name'), lower(mining_pool ->> 'slug'), lower(mining_pool ->> 'id'))"
+            " ORDER BY height").fetchall())
+        return [{"block_hash": h, "height": height, "coinbase_script_sig": script, "mining_pool": mp,
+                 "analysis_mining_pool": amp} for h, height, script, mp, amp in rows]
+
+    _DATUM_CREATOR_UPDATE = """
+        UPDATE blocks SET
+            mining_pool = (mining_pool - 'datum_template_creator' - 'datum_gateway_default') || %(fields)s::jsonb,
+            analysis = CASE WHEN jsonb_typeof(analysis -> 'pool_identification' -> 'mining_pool') = 'object'
+                THEN jsonb_set(analysis, '{pool_identification,mining_pool}',
+                               ((analysis -> 'pool_identification' -> 'mining_pool')
+                                - 'datum_template_creator' - 'datum_gateway_default') || %(fields)s::jsonb)
+                ELSE analysis END
+        WHERE block_hash = %(block_hash)s"""
+
+    def update_datum_creator(self, block_hash: str, fields: Dict[str, str]) -> None:
+        """Replace only the DATUM creator keys (datum_template_creator, datum_gateway_default) of a block's mining_pool
+        and of its stored pool_identification copy with `fields`. The pool, pool_id and every other key are kept."""
+        params = dict(block_hash=_to_bytes(block_hash), fields=json.dumps(fields))
+        self._run(lambda c: c.execute(self._DATUM_CREATOR_UPDATE, params))
+
     def update_coinbase_analysis(self, height: int, flag: Optional[Dict[str, Any]], report: Optional[Dict[str, Any]],
                                  dry_run: bool = False) -> List[Dict[str, Any]]:
         """Re-analysis (coinbase_reanalysis.py): set the coinbase results of every block stored at `height` (best and

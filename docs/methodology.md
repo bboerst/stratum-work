@@ -538,10 +538,13 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **Sharing a provider.** Two nodes share a template provider when the sets both received are at least 80% of the
   smaller node's sets, and each has at least 5.
 - **Providers.** The providers are the connected components of these links: every pair at or above the bar is a link.
-  Nodes on one provider overlap almost completely. A feed can't join two separate providers: 80% of its sets on each
-  would need most of its sets to be in both. Independent builders match on a few tenths of a percent of their sets, and
-  no independent pair has reached 5% in any epoch. A feed that alternates between two providers overlaps each only
-  partly and joins neither.
+  Nodes on one provider overlap almost completely. Independent builders match on a few tenths of a percent of their
+  sets, and no independent pair has reached 5% in any epoch.
+- **A feed that switches provider within an epoch** may join neither side, join one side, or link both into one
+  provider, depending on how its sets fall on each side of the switch. In a pre-registered check, 21 such switches
+  joined neither side 17 times and one side twice, and none linked two providers itself. Found afterwards, not
+  registered: one switch at an uneven split, 14% into its epoch, did link two providers. No coalition count moved. That
+  check only sees switches well inside the epoch, about 21-79% of the way through.
 - **Which feeds a provider lists.** A feed is listed under one provider: the provider of its node with the most sets
   in that epoch, when that node has at least 5. A feed's smaller node can sit in another provider (a few of its
   templates paying another pool, sharing that pool's transaction sets) without listing the feed there.
@@ -580,8 +583,8 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
 - **The epoch window was tested, and it blurs a change of provider.** In a pre-registered test, grouping per 144 blocks
   instead of per epoch credited 0.2% of blocks to a different provider, against a pass bar of 1%. Those blocks belong
   to the few pools whose feeds move between providers within an epoch. The epoch credits such a pool's blocks to one
-  provider for the whole epoch, or to neither if it splits about evenly. Changing the 5-set minimum to anything from 2
-  to 20 changed no block.
+  provider for the whole epoch: one side, or, usually when it splits about evenly, neither. Changing the 5-set minimum
+  to anything from 2 to 20 changed no block.
 - **Timing isn't part of the rule.** Matching sets are counted whenever they arrived within the height.
 
 ## First transaction fee rate

@@ -565,8 +565,9 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
   - Changing these lists doesn't change stored blocks: `python -m coinbase_reanalysis --datum-creators [--dry-run]`
     re-runs the choice from each stored block's coinbase (only the creator keys change; the pool stays).
 - **Per epoch.** Each block counts with its own epoch's template providers. A new epoch whose first heights aren't counted yet
-  uses the last counted epoch's providers. Columns are epochs; the pies are the last 144, 2,016, 12,096 and 52,416 blocks
-  and all blocks from the first counted epoch, exact by height.
+  uses the last counted epoch's providers. Columns are epochs, the newest one so far included; the pies are the last
+  144, 2,016, 12,096 and 52,416 blocks and all blocks from the first counted epoch, exact by height. The legend is
+  ordered by the 2,016-block pie ([share windows](#share-windows)).
 - **Pools excluded from the live site** are counted like any other ([the rule](#pools-excluded-from-the-live-site)): the
   counts are per height once its receive window has closed, so they are history.
 
@@ -586,6 +587,20 @@ Bitcoin block at h − 1 that we know. Templates for other chains and work on pa
   provider for the whole epoch: one side, or, usually when it splits about evenly, neither. Changing the 5-set minimum
   to anything from 2 to 20 changed no block.
 - **Timing isn't part of the rule.** Matching sets are counted whenever they arrived within the height.
+
+### Share windows
+
+**Share visuals default to the last 2,016 blocks** (**modelled**). A visual of each pool's or template provider's
+share of blocks opens on the last 2,016 blocks. Its other ranges are whole difficulty epochs (6 epochs = 12,096
+blocks, 26 = 52,416) or All. 144 blocks stays an option.
+
+- **Why 2,016.** Blocks are found at random, so a share over a few blocks is mostly luck. One standard deviation of a
+  25% share is 3.61 share points over 144 blocks and 0.96 over 2,016. In a pre-registered test, each range's shares
+  were compared with the next 144 blocks: 504 points over 36 epochs. The last 2,016 blocks came closest. The error over
+  144 blocks was 2.39 times as large, and 83% of it (0.834) was its own luck. 12,096 and 52,416 blocks lag a real
+  change, at 4.25 and 15.35 times the error. Keyed by pool instead of provider, the result was 2,016 too.
+- **Not share visuals:** the realtime and per-height views show single templates and blocks, not shares. Forks counts
+  episodes, which are rare, over 6 or 26 epochs.
 
 ## First transaction fee rate
 

@@ -11,6 +11,12 @@ import { SelectedTemplateProvider } from "@/lib/SelectedTemplateContext";
 import { PoolFilterProvider } from "@/components/PoolFilterContext";
 import ClientNavigation from "@/components/ClientNavigation";
 
+// Prerendered pages (home, /timing, /sankey, /infra, /v/…) are shells: the data arrives over the stream and the API.
+// A short revalidate makes Next send `s-maxage=60, stale-while-revalidate=…` (see expireTime in next.config.mjs)
+// instead of its year-long default, so a shared cache in front of the app may hold a shell for a minute, and a new
+// deploy's shell replaces it within a minute or so. Request-dependent pages (force-dynamic) stay uncached.
+export const revalidate = 60;
+
 export const metadata: Metadata = {
   title: "Stratum Work",
   description: "Web app that streams realtime mining pool stratum v1 messages to a table. ",

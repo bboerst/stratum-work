@@ -8,6 +8,14 @@ const nextConfig = {
     .split(",")
     .map((host) => host.trim())
     .filter(Boolean),
+  // Prerendered pages revalidate every 60 s (app/layout.tsx). A shared cache may serve a page past that while it
+  // fetches a new one, for up to expireTime - revalidate = 300 s (stale-while-revalidate=300), instead of a year.
+  expireTime: 360,
+  experimental: {
+    // Keep regenerated pages in memory only: the build output stays as built, and an app run with a read-only
+    // filesystem doesn't try to write into .next.
+    isrFlushToDisk: false,
+  },
   // The Other chains page became Unknown parents (episodes per unknown parent), which became Forks (every parent other
   // than our best block). Redirects keep the query string (?range=…&parent=…).
   async redirects() {

@@ -10,6 +10,9 @@
  * * A hidden template (another connection's stream, or an exact copy) is judged `holdMs` after it arrived (10 s,
  *   template_stream_lead()). If no other connection of the pool received a template with the same key within
  *   ±holdMs of it, it is that connection's distinct work: a `template` event.
+ * * A template the dedup dropped as an exact copy of one the stream already forwarded (`copyOfShown`, e.g. a primary
+ *   back from an outage re-sending what the next connection showed more than 10 s earlier) is shown work, never
+ *   distinct.
  * * When a connection whose last judged template was distinct receives an exact copy of another connection's
  *   template again (within ±holdMs), or its template is now the one the pool's stream shows (its lower-ranked
  *   connections fell silent), a `copy` event says its distinct work has ended.
@@ -64,7 +67,7 @@ interface Pending {
   replica: string;
   height: number;
   hk: string;
-  /** Forwarded in the pool's shown stream (never distinct work: it is shown already). */
+  /** Forwarded in the pool's shown stream, or a copy of a template it forwarded (never distinct: it is shown already). */
   shown: boolean;
   data: string;
 }
@@ -99,10 +102,11 @@ export class StreamConnections {
   }
 
   /**
-   * Records a template as it arrives. `shown`: the dedup forwarded it in the pool's stream. Templates without site,
-   * replica or the key fields are ignored (they are never filtered either).
+   * Records a template as it arrives. `shown`: the dedup forwarded it in the pool's stream; `copyOfShown`: the dedup
+   * dropped it as an exact copy of a template it forwarded. Templates without site, replica or the key fields are
+   * ignored (they are never filtered either).
    */
-  observe(t: StreamTemplateFields, data: string, shown: boolean, now: number): void {
+  observe(t: StreamTemplateFields, data: string, shown: boolean, now: number, copyOfShown = false): void {
     if (typeof t.site !== 'string' || typeof t.replica !== 'string' || typeof t.pool_name !== 'string') return;
     if (typeof t.height !== 'number' || !Number.isFinite(t.height)) return;
     if (t.prev_hash === undefined || t.merkle_branches === undefined || t.version === undefined
@@ -117,7 +121,7 @@ export class StreamConnections {
     list.push(e);
     while (pool.entries.length - pool.head > this.opts.maxEntriesPerPool) this.dropEntry(pool);
     if (now < this.startedAt + this.opts.holdMs) return;
-    pool.pending.push({ at: now, source, site: t.site, replica: t.replica, height: t.height, hk, shown, data });
+    pool.pending.push({ at: now, source, site: t.site, replica: t.replica, height: t.height, hk, shown: shown || copyOfShown, data });
     while (pool.pending.length - pool.pendingHead > this.opts.maxPendingPerPool) {
       pool.pendingHead += 1;
       this.droppedPending += 1;

@@ -160,8 +160,10 @@ describe('the views ignore ?connections=all messages', () => {
 describe('StreamHub connection messages', () => {
   type OnMessage = (msg: { content: Buffer } | null) => void;
   let onMessage: OnMessage | undefined;
+  let connectDelay = 0;
 
   beforeEach(() => {
+    connectDelay = 0;
     vi.resetModules();
     vi.useFakeTimers();
     vi.setSystemTime(T);
@@ -172,7 +174,10 @@ describe('StreamHub connection messages', () => {
     };
     vi.doMock('../rabbitmq', () => ({
       RABBITMQ_EXCHANGES: ['x'],
-      createRabbitmqChannel: vi.fn(async () => ({ channel, connection: { close: vi.fn(async () => {}) } })),
+      createRabbitmqChannel: vi.fn(async () => {
+        if (connectDelay) await new Promise(ok => setTimeout(ok, connectDelay)); // a slow (retried) connect
+        return { channel, connection: { close: vi.fn(async () => {}) } };
+      }),
     }));
     vi.stubEnv('POOL_BLACKLIST', 'Hidden');
   });
@@ -217,5 +222,36 @@ describe('StreamHub connection messages', () => {
     unsub();
     // Only the linger timer is left.
     expect(vi.getTimerCount()).toBe(before + 1);
+  });
+  const ranksPQ = () => new ConnectionRanks(async () => [
+    { name: 'P', site: 's1', replica: 'a', conn: 1 }, { name: 'P', site: 's1', replica: 'b', conn: 2 }]);
+  const send = (o: object) => onMessage!({ content: Buffer.from(JSON.stringify(o)) });
+
+  it('starts the first unjudged window when the consumer starts, not when the connect began', async () => {
+    const { StreamHub } = await import('../streamHub');
+    const hub = new StreamHub(1_000, ranksPQ());
+    const all: string[] = [];
+    connectDelay = 30_000;
+    const sub = hub.subscribe({ onMessage: () => {}, onConnection: m => all.push(m.data), onEnd: () => {} });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await sub;
+    await vi.advanceTimersByTimeAsync(1_000);
+    send(tpl('a', { ntime: '01' }));
+    send(tpl('b', { ntime: '02' })); // hidden; its copy on a may have come before the consumer listened
+    await vi.advanceTimersByTimeAsync(3 * H);
+    expect(all).toEqual([]);
+  });
+
+  it('a primary back from an outage re-sending what the next connection showed is not distinct work', async () => {
+    const { StreamHub } = await import('../streamHub');
+    const hub = new StreamHub(1_000, ranksPQ());
+    const all: string[] = [];
+    await hub.subscribe({ onMessage: () => {}, onConnection: m => all.push(m.data), onEnd: () => {} });
+    await vi.advanceTimersByTimeAsync(H);
+    send(tpl('b', { ntime: '07' }));          // a has been silent: b's stream is shown
+    await vi.advanceTimersByTimeAsync(30_000);
+    send(tpl('a', { ntime: '07' }));          // a is back, with the template b showed 30 s ago
+    await vi.advanceTimersByTimeAsync(3 * H);
+    expect(all).toEqual([]);
   });
 });

@@ -128,6 +128,14 @@ describe('/api/stream default output (golden)', () => {
     // Without the added messages, exactly the default stream.
     expect(text.replace(added, '')).toBe(readFileSync(GOLDEN, 'utf8'));
     expect(text).not.toContain('Pool Hidden');
+    // Masked and without job ids, like the default stream.
+    expect(text).not.toContain('job_id');
+    const fx = JSON.parse(readFileSync(join(FIXTURES, 'stream-multi-source.json'), 'utf8')) as Fixture;
+    const raw = new Set(fx.events.flatMap(e => {
+      const v = (e.body as { extranonce1?: unknown } | undefined)?.extranonce1;
+      return typeof v === 'string' ? [v] : [];
+    }));
+    expect([...raw].filter(v => text.includes(`"extranonce1":"${v}"`))).toEqual([]);
     expect(text).toBe(readFileSync(GOLDEN_ALL, 'utf8'));
   });
 });

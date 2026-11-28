@@ -187,7 +187,6 @@ export class StreamHub {
 
   private async start(): Promise<Live> {
     this.tail.clear();
-    this.connections.reset(Date.now());
     // The close callback can't see `live` before createRabbitmqChannel returns; it is set right after.
     const ref: { live?: Live } = {};
     const conn = await createRabbitmqChannel(() => { if (ref.live) this.lost(ref.live, 'connection closed'); });
@@ -199,6 +198,8 @@ export class StreamHub {
       // Exclusive and auto-delete: the queue lives exactly as long as this connection.
       const qok = await channel.assertQueue('', { exclusive: true, autoDelete: true, arguments: { 'x-expires': 60000 } });
       for (const exchange of RABBITMQ_EXCHANGES) await channel.bindQueue(qok.queue, exchange, '');
+      // The judging's first window starts when the consumer does (the connect above can take a while, with retries).
+      this.connections.reset(Date.now());
       // noAck: a live view of a transient queue, nothing to redeliver; and one consumer must not wait on an ack
       // round trip per message.
       const consumer = await channel.consume(qok.queue, (msg: ConsumeMessage | null) => this.onRaw(live, msg), { noAck: true });
@@ -230,13 +231,16 @@ export class StreamHub {
     }
     if (m === null) return;
     // Only templates (published without a `type`); blocks and other events pass as before.
+    // A template the dedup drops as an exact copy of one already forwarded is shown work: never another connection's.
+    const copiesBefore = this.dedup.dropped;
     if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !this.dedup.accept(m.parsed)) {
       m.skip = true;
     }
+    const copyOfShown = this.dedup.dropped > copiesBefore;
     if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined) {
       if (!m.skip) this.remember(m.parsed.pool_name, m);
       const now = Date.now();
-      this.connections.observe(m.parsed, m.data, !m.skip, now);
+      this.connections.observe(m.parsed, m.data, !m.skip, now, copyOfShown);
       if (now - this.judgedAt >= CONNECTIONS_TICK_MS) this.judgeConnections(now);
     }
     for (const v of this.viewers) {

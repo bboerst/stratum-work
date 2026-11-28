@@ -7,7 +7,8 @@
  * web pods, not viewers.
  *
  * Work that is the same for every viewer happens once here: masking extranonce1 (#105), parsing, dropping excluded
- * pools, and the one-stream-per-pool decision (lib/streamDedup.ts). The dedup is shared so a viewer who connects later
+ * pools, the one-stream-per-pool decision (lib/streamDedup.ts), and which hidden templates are a connection's distinct
+ * work, for viewers of `?connections=all` (lib/streamConnections.ts, delivered through `onConnection` only). The dedup is shared so a viewer who connects later
  * already knows which of a pool's connections is the active one, instead of showing another connection's templates
  * first and switching (which the timing chart can't compare across). Per-viewer state (the throttle) stays in the
  * route.
@@ -23,6 +24,8 @@ import type { Channel, ConsumeMessage } from 'amqplib';
 import { maskStreamMessage } from './connectionMask';
 import { isPoolBlacklisted } from './poolBlacklist';
 import { StreamTemplateDedup } from './streamDedup';
+import { StreamConnections } from './streamConnections';
+import { ConnectionRanks } from './connectionRanks';
 import { createRabbitmqChannel, RABBITMQ_EXCHANGES, type RabbitMQConnection } from './rabbitmq';
 
 export const LINGER_MS = 10 * 60_000;
@@ -49,8 +52,20 @@ export interface HubMessage {
   skip?: boolean;
 }
 
+/** A `?connections=all` message (lib/streamConnections.ts), as one JSON text with the connection's letter. */
+export interface ConnectionMessage {
+  pool: string;
+  connection: string;
+  data: string;
+}
+
+/** How often the hub judges held templates (lib/streamConnections.ts). */
+export const CONNECTIONS_TICK_MS = 250;
+
 export interface Viewer {
   onMessage(m: HubMessage): void;
+  /** `?connections=all` messages; viewers without it never see them. */
+  onConnection?(m: ConnectionMessage): void;
   /** The recent templates (Replay above), oldest first: called once, before any onMessage. */
   onReplay?(ms: HubMessage[]): void;
   /** The shared connection is gone; the viewer's stream should end. */
@@ -87,13 +102,24 @@ export class StreamHub {
   private lingerTimer: ReturnType<typeof setTimeout> | null = null;
   /** One stream per pool, for every viewer (kept across reconnects: its state ages out by itself). */
   private readonly dedup = new StreamTemplateDedup();
+  /** Other connections' distinct work (?connections=all); cleared with the tail, its judging needs a full window. */
+  private readonly connections = new StreamConnections();
+  private readonly ranks: ConnectionRanks;
+  /** Judges on a timer only while a viewer wants connection messages; otherwise as messages arrive (onRaw). */
+  private connectionsTimer: ReturnType<typeof setInterval> | null = null;
+  private connectionViewers = 0;
+  private judgedAt = -Infinity;
+  /** Connection events dropped because the connection's letter wasn't known (tests, logs). */
+  unlabelled = 0;
   /** Per pool, the templates the current consumer accepted recently, oldest first (Replay above). */
   private readonly tail = new Map<string, { at: number; seq: number; m: HubMessage }[]>();
   private seq = 0;
   /** Connections opened so far (tests, logs). */
   connects = 0;
 
-  constructor(private readonly lingerMs = LINGER_MS) {}
+  constructor(private readonly lingerMs = LINGER_MS, ranks?: ConnectionRanks) {
+    this.ranks = ranks ?? new ConnectionRanks();
+  }
 
   get viewerCount(): number {
     return this.viewers.size;
@@ -108,6 +134,7 @@ export class StreamHub {
     // The snapshot and the add happen together, so the viewer gets every message exactly once: replayed or live.
     const replay = this.replay(Date.now());
     this.viewers.add(viewer);
+    if (viewer.onConnection && ++this.connectionViewers === 1) this.armConnectionsTimer();
     if (viewer.onReplay) {
       try {
         viewer.onReplay(replay);
@@ -119,7 +146,7 @@ export class StreamHub {
     return () => {
       if (done) return;
       done = true;
-      this.viewers.delete(viewer);
+      if (this.viewers.delete(viewer) && viewer.onConnection && --this.connectionViewers === 0) this.disarmConnectionsTimer();
       if (this.viewers.size === 0) this.scheduleLinger();
     };
   }
@@ -171,6 +198,8 @@ export class StreamHub {
       // Exclusive and auto-delete: the queue lives exactly as long as this connection.
       const qok = await channel.assertQueue('', { exclusive: true, autoDelete: true, arguments: { 'x-expires': 60000 } });
       for (const exchange of RABBITMQ_EXCHANGES) await channel.bindQueue(qok.queue, exchange, '');
+      // The judging's first window starts when the consumer does (the connect above can take a while, with retries).
+      this.connections.reset(Date.now());
       // noAck: a live view of a transient queue, nothing to redeliver; and one consumer must not wait on an ack
       // round trip per message.
       const consumer = await channel.consume(qok.queue, (msg: ConsumeMessage | null) => this.onRaw(live, msg), { noAck: true });
@@ -181,6 +210,7 @@ export class StreamHub {
       throw err;
     }
     this.live = live;
+    this.startConnections();
     console.log('Live stream: shared RabbitMQ consumer started');
     return live;
   }
@@ -201,11 +231,17 @@ export class StreamHub {
     }
     if (m === null) return;
     // Only templates (published without a `type`); blocks and other events pass as before.
+    // A template the dedup drops as an exact copy of one already forwarded is shown work: never another connection's.
+    const copiesBefore = this.dedup.dropped;
     if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !this.dedup.accept(m.parsed)) {
       m.skip = true;
     }
-    if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined && !m.skip) {
-      this.remember(m.parsed.pool_name, m);
+    const copyOfShown = this.dedup.dropped > copiesBefore;
+    if (m.parsed && typeof m.parsed.pool_name === 'string' && m.parsed.type === undefined) {
+      if (!m.skip) this.remember(m.parsed.pool_name, m);
+      const now = Date.now();
+      this.connections.observe(m.parsed, m.data, !m.skip, now, copyOfShown);
+      if (now - this.judgedAt >= CONNECTIONS_TICK_MS) this.judgeConnections(now);
     }
     for (const v of this.viewers) {
       try {
@@ -216,15 +252,65 @@ export class StreamHub {
     }
   }
 
+  /** The consumer is running (its templates' judging started with the reset in start()): load the letters. */
+  private startConnections(): void {
+    void this.ranks.refresh();
+  }
+
+  private stopConnections(): void {
+    this.connections.reset(Date.now());
+  }
+
+  private armConnectionsTimer(): void {
+    this.disarmConnectionsTimer();
+    this.connectionsTimer = setInterval(() => this.judgeConnections(Date.now()), CONNECTIONS_TICK_MS);
+    this.connectionsTimer.unref?.();
+  }
+
+  private disarmConnectionsTimer(): void {
+    if (this.connectionsTimer) clearInterval(this.connectionsTimer);
+    this.connectionsTimer = null;
+  }
+
+  /** Sends the judged connection events to the viewers that asked for them. */
+  private judgeConnections(now: number): void {
+    this.judgedAt = now;
+    const events = this.connections.tick(now);
+    if (events.length === 0) return;
+    for (const e of events) {
+      if (this.connectionViewers === 0) continue; // judged for the state only
+      const connection = this.ranks.letter(e.pool, e.site, e.replica, now);
+      if (connection === null) {
+        this.unlabelled += 1;
+        continue;
+      }
+      const data = e.kind === 'template'
+        ? `{"type":"connection_template","connection":${JSON.stringify(connection)},"data":${e.data}}`
+        : JSON.stringify({ type: 'connection_copy', pool_name: e.pool, connection, height: e.height });
+      const m: ConnectionMessage = { pool: e.pool, connection, data };
+      for (const v of this.viewers) {
+        if (!v.onConnection) continue;
+        try {
+          v.onConnection(m);
+        } catch (err) {
+          console.error('Live stream: viewer error:', err);
+        }
+      }
+    }
+  }
+
   /** The connection is gone unexpectedly: end every viewer so their browsers reconnect. */
   private lost(live: Live, why: string): void {
     if (live.closing) return;
     live.closing = true;
     if (this.live === live) this.live = null;
     this.tail.clear();
+    this.stopConnections();
     console.error(`Live stream: shared RabbitMQ consumer lost (${why}); ending ${this.viewers.size} viewer stream(s)`);
     const ended = [...this.viewers];
     this.viewers.clear();
+    this.connectionViewers = 0;
+    this.disarmConnectionsTimer();
     this.cancelLinger();
     for (const v of ended) {
       try {
@@ -257,6 +343,7 @@ export class StreamHub {
     live.closing = true;
     this.live = null;
     this.tail.clear();
+    this.stopConnections();
     if (live.consumerTag) await live.channel.cancel(live.consumerTag).catch(() => {});
     await live.channel.close().catch(() => {});
     await live.conn.connection.close().catch(() => {});

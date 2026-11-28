@@ -134,7 +134,7 @@ const excludedOn = (parent: string) => (b: { episodes: { parent: string; pools: 
   b.episodes.filter(e => e.parent === parent).flatMap(e => e.pools).filter(p => p.pool === EXCLUDED);
 
 let H = 0;          // set in beforeAll
-let S = '', U = '', UX = '', UA = '', TXID = '';
+let S = '', U = '', UX = '', UA = '', TXID = '', SITE = '';
 let ABOVE_TIP_JOBS: string[] = [];   // the excluded feed's templates at H + 1 on UA (above the tip)
 
 function cases(): Record<string, Case[]> {
@@ -194,9 +194,13 @@ function cases(): Record<string, Case[]> {
       { path: '$.stale_blocks[*].templates[*].pool',
         why: 'templates on a stale block below the tip are history and stay (stale-blocks route; filterBlacklistedAboveTip)' },
     ] }],
-    'stream': [{ allow: [
-      { path: '$[*].data.mining_pool.name', why: 'a block event names the pool that mined it, like /api/blocks' },
-    ] }],
+    'stream': [
+      { allow: [{ path: '$[*].data.mining_pool.name', why: 'a block event names the pool that mined it, like /api/blocks' }] },
+      // another connection's distinct work (#321): by value, the excluded feed's second connection is never sent
+      { qs: 'connections=all', allow: [{ path: '$[*].data.mining_pool.name', why: 'a block event names the pool that mined it, like /api/blocks' }],
+        aboveTip: (b: { type?: string; data?: { pool_name?: string } }[]) =>
+          b.filter(m => m.type === 'connection_template' && m.data?.pool_name === EXCLUDED) },
+    ],
     'template-providers': [{ qs: 'range=all', allow: ['columns', 'pies'].flatMap(k => ['pools', 'payers', 'feeds'].map(f => (
       { path: `$.${k}[*].groups[*].${f}[*]`, why: PROVIDERS_HISTORY }))) }],
     'tx': [{ qs: `txids=${TXID}`, noPoolData: 'mempool transactions: no pool fields' }],
@@ -205,19 +209,28 @@ function cases(): Record<string, Case[]> {
   };
 }
 
-/** Live stream messages the mocked RabbitMQ delivers: both feeds' templates, a block event by each pool, then an end marker. */
-function streamMessages(): unknown[] {
-  const t = (pool: string, job: string) => ({
+/**
+ * Live stream messages the mocked RabbitMQ delivers: both feeds' templates, a block event by each pool, then an end
+ * marker. With `connections`, both feeds' first and second connections, the second with work of its own.
+ */
+function streamMessages(connections = false): unknown[] {
+  const t = (pool: string, job: string, replica?: string) => ({
     id: `${pool}-${job}`, height: H + 1, pool_name: pool, job_id: job, coinbase1: '01', coinbase2: '02', merkle_branches: [],
     version: '20000000', prev_hash: '00'.repeat(32), timestamp: (BigInt(Date.now()) * BigInt(1_000_000)).toString(16),
-    nbits: '207fffff', ntime: '66000000', clean_jobs: true, extranonce1: 'aabbccdd', extranonce2_length: 4,
+    nbits: '207fffff', ntime: replica === 'b' ? '66000001' : '66000000', clean_jobs: true, extranonce1: 'aabbccdd',
+    extranonce2_length: 4, ...(replica ? { site: SITE, replica } : {}),
   });
   const block = (pool: string, height: number) => ({ type: 'block', id: `b-${height}`, timestamp: new Date().toISOString(),
     data: { hash: '00'.repeat(32), height, timestamp: new Date().toISOString(), mining_pool: { id: 1, name: pool }, analysis: {} } });
+  if (connections) {
+    return [t(EXCLUDED, 'x1', 'a'), t(CONTROL, 'y1', 'a'), t(EXCLUDED, 'x2', 'b'), t(CONTROL, 'y2', 'b'),
+      block(EXCLUDED, H + 1), block(CONTROL, H + 2)];
+  }
   return [t(EXCLUDED, 'x1'), t(CONTROL, 'y1'), block(EXCLUDED, H + 1), block(CONTROL, H + 2), { type: 'end-of-test' }];
 }
 
-async function callStream(): Promise<{ status: number; text: string; body: unknown }> {
+async function callStream(qs?: string): Promise<{ status: number; text: string; body: unknown }> {
+  const connections = qs === 'connections=all';
   let onMessage: ((msg: { content: Buffer } | null) => void) | undefined;
   const channel = {
     assertQueue: vi.fn(async () => ({ queue: 'q' })), bindQueue: vi.fn(async () => {}),
@@ -229,18 +242,42 @@ async function callStream(): Promise<{ status: number; text: string; body: unkno
     createRabbitmqChannel: vi.fn(async () => ({ channel, connection: { close: vi.fn(async () => {}) } })),
   }));
   try {
+    // ?connections=all judges another connection's template 10 s after it arrived (and not in the first 10 s after the
+    // consumer started): the clock is moved, the hub's timers run for real.
+    const start = Date.now();
+    if (connections) vi.useFakeTimers({ toFake: ['Date'], now: start });
     const { GET } = await import('../../app/api/stream/route');
     const abort = new AbortController();
-    const res = await GET(new NextRequest('http://localhost/api/stream', { signal: abort.signal }));
+    const res = await GET(new NextRequest(`http://localhost/api/stream${qs ? `?${qs}` : ''}`, { signal: abort.signal }));
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let text = decoder.decode((await reader.read()).value);   // the connection message; the consumer is set up by now
-    for (const m of streamMessages()) onMessage!({ content: Buffer.from(JSON.stringify(m)) });
-    while (!text.includes('end-of-test')) text += decoder.decode((await reader.read()).value);
+    if (connections) vi.setSystemTime(start + 11_000);
+    for (const m of streamMessages(connections)) onMessage!({ content: Buffer.from(JSON.stringify(m)) });
+    if (connections) {
+      vi.setSystemTime(start + 22_000);
+      // the control feed's second connection: its letter comes from the sources table (read in the background)
+      const deadline = performance.now() + 15_000;
+      const controlExtra = () => text.split('\n\n').some(l => l.includes('"connection_template"') && l.includes(CONTROL));
+      let pending = reader.read();
+      while (!controlExtra() && performance.now() < deadline) {
+        const r = await Promise.race([pending, new Promise<null>(ok => setTimeout(() => ok(null), 200))]);
+        if (r) { text += decoder.decode(r.value); pending = reader.read(); }
+      }
+      onMessage!({ content: Buffer.from(JSON.stringify({ type: 'end-of-test' })) });
+      while (!text.includes('end-of-test')) {
+        const r = await pending;
+        text += decoder.decode(r.value);
+        pending = reader.read();
+      }
+    } else {
+      while (!text.includes('end-of-test')) text += decoder.decode((await reader.read()).value);
+    }
     abort.abort();
     const body = text.split('\n\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
     return { status: res.status, text, body };
   } finally {
+    vi.useRealTimers();
     vi.doUnmock('../rabbitmq');
   }
 }
@@ -256,7 +293,7 @@ async function call(route: string, c: Case, blacklist: string): Promise<{ status
     POOL_BLACKLIST: blacklist, ENABLE_HISTORICAL_DATA: 'true', EXTRANONCE1_MASK_KEY: 'exclusion-test-key',
   });
   try {
-    if (route === 'stream') return await callStream();
+    if (route === 'stream') return await callStream(c.qs);
     const file = pathToFileURL(join(API_DIR, route, 'route.ts')).href;
     const m = await import(/* @vite-ignore */ file);
     const req = new NextRequest(`http://localhost/api/${route}${c.qs ? `?${c.qs}` : ''}`);
@@ -294,7 +331,7 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
   const [B2, B1, B0] = [hash('b2'), hash('b1'), hash('b0')];
   S = hash('5e'); U = hash('3a'); UX = hash('3b'); UA = hash('3c');
   TXID = 'ee'.repeat(32);
-  const SITE = `zz-excl-${run}`;
+  SITE = `zz-excl-${run}`;
   const tagHex = Buffer.from(`/${EXCLUDED}/`).toString('hex');
   const cb1 = (tag = '') => '01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff'
     + (4 + tag.length / 2 + 8).toString(16).padStart(2, '0') + '0340420f' + tag;
@@ -339,6 +376,8 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
     }
     for (const feed of [EXCLUDED, CONTROL]) {
       sid[feed] = (await admin.query(`INSERT INTO sources (name, site, replica) VALUES ($1, $2, 'a') RETURNING id`, [feed, SITE])).rows[0].id;
+      // a second connection, without templates: the live stream's ?connections=all case labels it 'b'
+      await admin.query(`INSERT INTO sources (name, site, replica) VALUES ($1, $2, 'b')`, [feed, SITE]);
     }
     // the chain: the tip B(H) arrived two minutes ago (recent: the realtime pre-fill reads H and H + 1)
     const offenders = [EXCLUDED, CONTROL].map(p => ({ pool_name: p, total_sats: 330_000_000, subsidy_sats: 312_500_000 }));
@@ -412,6 +451,13 @@ describe.skipIf(!enabled)('POOL_BLACKLIST exclusion invariant (every API route, 
   it('covers every route with at least one case', () => {
     expect(all().length).toBeGreaterThanOrEqual(discoverRoutes().length);
   });
+
+  it('/api/stream?connections=all with the blacklist still sends the control feed\'s second connection, as b', async () => {
+    const shut = await call('stream', { qs: 'connections=all' }, EXCLUDED);
+    const extras = (shut.body as { type?: string; connection?: string; data?: { pool_name?: string } }[])
+      .filter(m => m.type === 'connection_template');
+    expect(extras.map(m => [m.connection, m.data?.pool_name])).toEqual([['b', CONTROL]]);
+  }, 60_000);
 
   // it.each needs the cases at collection time, before beforeAll has set H: iterate inside one test per route instead.
   for (const route of discoverRoutes()) {

@@ -1,0 +1,4716 @@
+{
+ "t0": 1795867200000,
+ "blacklist": "Pool Hidden",
+ "end": 245000,
+ "events": [
+  {
+   "at": 500,
+   "kind": "message",
+   "body": {
+    "_id": "id-37",
+    "timestamp": "18ec33b43593e524",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j37",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000200",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 1000,
+   "kind": "message",
+   "body": {
+    "_id": "id-2",
+    "timestamp": "18ec33b453614a01",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j2",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 1200,
+   "kind": "message",
+   "body": {
+    "_id": "id-38",
+    "timestamp": "18ec33b45f4d0c25",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j38",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000200",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 1300,
+   "kind": "message",
+   "body": {
+    "_id": "id-1",
+    "timestamp": "18ec33b46542ed00",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j1",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 2000,
+   "kind": "message",
+   "body": {
+    "_id": "id-19",
+    "timestamp": "18ec33b48efc1412",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j19",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000100",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 2050,
+   "kind": "message",
+   "body": {
+    "_id": "id-20",
+    "timestamp": "18ec33b491f70493",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j20",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000100",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 2200,
+   "kind": "message",
+   "body": {
+    "_id": "id-3",
+    "timestamp": "18ec33b49ae7d602",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j3",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 2400,
+   "kind": "message",
+   "body": {
+    "_id": "id-21",
+    "timestamp": "18ec33b4a6d39814",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j21",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000101",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 3000,
+   "kind": "message",
+   "body": {
+    "_id": "id-76",
+    "timestamp": "18ec33b4ca96de4b",
+    "pool_name": "Pool Legacy",
+    "height": 900001,
+    "job_id": "j76",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000300",
+    "clean_jobs": false,
+    "extranonce1": "abcd0123",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp"
+   }
+  },
+  {
+   "at": 4000,
+   "kind": "message",
+   "body": {
+    "_id": "id-80",
+    "timestamp": "18ec33b50631a84f",
+    "pool_name": "Pool Single",
+    "height": 900001,
+    "job_id": "j80",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000400",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 5000,
+   "kind": "message",
+   "body": {
+    "_id": "id-84",
+    "timestamp": "18ec33b541cc7253",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j84",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 5100,
+   "kind": "message",
+   "body": {
+    "_id": "id-85",
+    "timestamp": "18ec33b547c25354",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j85",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 7000,
+   "kind": "raw",
+   "body": "not json"
+  },
+  {
+   "at": 8000,
+   "kind": "message",
+   "body": {
+    "_id": "id-172",
+    "timestamp": "18ec33b5f49cd0ab",
+    "pool_name": "Pool Jobs",
+    "height": 6976415,
+    "job_id": "j172",
+    "prev_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 8100,
+   "kind": "message",
+   "body": {
+    "_id": "id-173",
+    "timestamp": "18ec33b5fa92b1ac",
+    "pool_name": "Pool Jobs",
+    "height": 6976415,
+    "job_id": "j173",
+    "prev_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 10500,
+   "kind": "message",
+   "body": {
+    "_id": "id-39",
+    "timestamp": "18ec33b6899fc926",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j39",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000201",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 11200,
+   "kind": "message",
+   "body": {
+    "_id": "id-40",
+    "timestamp": "18ec33b6b358f027",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j40",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000201",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 17000,
+   "kind": "message",
+   "body": {
+    "_id": "id-22",
+    "timestamp": "18ec33b80d0dea15",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j22",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000101",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 17050,
+   "kind": "message",
+   "body": {
+    "_id": "id-23",
+    "timestamp": "18ec33b81008da96",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j23",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000101",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 17400,
+   "kind": "message",
+   "body": {
+    "_id": "id-24",
+    "timestamp": "18ec33b824e56e17",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j24",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000102",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 20500,
+   "kind": "message",
+   "body": {
+    "_id": "id-41",
+    "timestamp": "18ec33b8ddabad28",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j41",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000202",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 21000,
+   "kind": "message",
+   "body": {
+    "_id": "id-5",
+    "timestamp": "18ec33b8fb791204",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j5",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000001",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 21200,
+   "kind": "message",
+   "body": {
+    "_id": "id-42",
+    "timestamp": "18ec33b90764d429",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j42",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000202",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 21300,
+   "kind": "message",
+   "body": {
+    "_id": "id-4",
+    "timestamp": "18ec33b90d5ab503",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j4",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000001",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 22200,
+   "kind": "message",
+   "body": {
+    "_id": "id-6",
+    "timestamp": "18ec33b942ff9e05",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j6",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000001",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 25000,
+   "kind": "message",
+   "body": {
+    "_id": "id-86",
+    "timestamp": "18ec33b9e9e43a55",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j86",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 25100,
+   "kind": "message",
+   "body": {
+    "_id": "id-87",
+    "timestamp": "18ec33b9efda1b56",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j87",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 28000,
+   "kind": "message",
+   "body": {
+    "_id": "id-77",
+    "timestamp": "18ec33ba9cb4984c",
+    "pool_name": "Pool Legacy",
+    "height": 900001,
+    "job_id": "j77",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000300",
+    "clean_jobs": false,
+    "extranonce1": "abcd0123",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp"
+   }
+  },
+  {
+   "at": 29000,
+   "kind": "message",
+   "body": {
+    "_id": "id-81",
+    "timestamp": "18ec33bad84f6250",
+    "pool_name": "Pool Single",
+    "height": 900001,
+    "job_id": "j81",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000401",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 31200,
+   "kind": "message",
+   "body": {
+    "_id": "id-43",
+    "timestamp": "18ec33bb5b70b82a",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j43",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000203",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 32000,
+   "kind": "message",
+   "body": {
+    "_id": "id-25",
+    "timestamp": "18ec33bb8b1fc018",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j25",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000102",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 32050,
+   "kind": "message",
+   "body": {
+    "_id": "id-26",
+    "timestamp": "18ec33bb8e1ab099",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j26",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000102",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 32400,
+   "kind": "message",
+   "body": {
+    "_id": "id-27",
+    "timestamp": "18ec33bba2f7441a",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j27",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000103",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 41000,
+   "kind": "message",
+   "body": {
+    "_id": "id-8",
+    "timestamp": "18ec33bda390da07",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j8",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000002",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 41200,
+   "kind": "message",
+   "body": {
+    "_id": "id-44",
+    "timestamp": "18ec33bdaf7c9c2b",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j44",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000204",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 41300,
+   "kind": "message",
+   "body": {
+    "_id": "id-7",
+    "timestamp": "18ec33bdb5727d06",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j7",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000002",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 42200,
+   "kind": "message",
+   "body": {
+    "_id": "id-9",
+    "timestamp": "18ec33bdeb176608",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j9",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000002",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 45000,
+   "kind": "message",
+   "body": {
+    "_id": "id-88",
+    "timestamp": "18ec33be91fc0257",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j88",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 45100,
+   "kind": "message",
+   "body": {
+    "_id": "id-89",
+    "timestamp": "18ec33be97f1e358",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j89",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 47000,
+   "kind": "message",
+   "body": {
+    "_id": "id-28",
+    "timestamp": "18ec33bf0931961b",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j28",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000103",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 47050,
+   "kind": "message",
+   "body": {
+    "_id": "id-29",
+    "timestamp": "18ec33bf0c2c869c",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j29",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000103",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 47400,
+   "kind": "message",
+   "body": {
+    "_id": "id-30",
+    "timestamp": "18ec33bf21091a1d",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j30",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000104",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 51200,
+   "kind": "message",
+   "body": {
+    "_id": "id-45",
+    "timestamp": "18ec33c00388802c",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j45",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000205",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 53000,
+   "kind": "message",
+   "body": {
+    "_id": "id-78",
+    "timestamp": "18ec33c06ed2524d",
+    "pool_name": "Pool Legacy",
+    "height": 900001,
+    "job_id": "j78",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000300",
+    "clean_jobs": false,
+    "extranonce1": "abcd0123",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp"
+   }
+  },
+  {
+   "at": 54000,
+   "kind": "message",
+   "body": {
+    "_id": "id-82",
+    "timestamp": "18ec33c0aa6d1c51",
+    "pool_name": "Pool Single",
+    "height": 900001,
+    "job_id": "j82",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000402",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60000,
+   "kind": "message",
+   "body": {
+    "_id": "id-92",
+    "timestamp": "18ec33c2100dd85b",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j92",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000500",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60002,
+   "kind": "message",
+   "body": {
+    "_id": "id-93",
+    "timestamp": "18ec33c2102c5cdc",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j93",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000500",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60005,
+   "kind": "message",
+   "body": {
+    "_id": "id-94",
+    "timestamp": "18ec33c2105a239d",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j94",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000501",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60007,
+   "kind": "message",
+   "body": {
+    "_id": "id-95",
+    "timestamp": "18ec33c21078a81e",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j95",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000501",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60010,
+   "kind": "message",
+   "body": {
+    "_id": "id-96",
+    "timestamp": "18ec33c210a66edf",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j96",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000502",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60012,
+   "kind": "message",
+   "body": {
+    "_id": "id-97",
+    "timestamp": "18ec33c210c4f360",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j97",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000502",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60015,
+   "kind": "message",
+   "body": {
+    "_id": "id-98",
+    "timestamp": "18ec33c210f2ba21",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j98",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000503",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60017,
+   "kind": "message",
+   "body": {
+    "_id": "id-99",
+    "timestamp": "18ec33c211113ea2",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j99",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000503",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60020,
+   "kind": "message",
+   "body": {
+    "_id": "id-100",
+    "timestamp": "18ec33c2113f0563",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j100",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000504",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60022,
+   "kind": "message",
+   "body": {
+    "_id": "id-101",
+    "timestamp": "18ec33c2115d89e4",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j101",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000504",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60025,
+   "kind": "message",
+   "body": {
+    "_id": "id-102",
+    "timestamp": "18ec33c2118b50a5",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j102",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000505",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60027,
+   "kind": "message",
+   "body": {
+    "_id": "id-103",
+    "timestamp": "18ec33c211a9d526",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j103",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000505",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60030,
+   "kind": "message",
+   "body": {
+    "_id": "id-104",
+    "timestamp": "18ec33c211d79be7",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j104",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000506",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60032,
+   "kind": "message",
+   "body": {
+    "_id": "id-105",
+    "timestamp": "18ec33c211f62068",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j105",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000506",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60035,
+   "kind": "message",
+   "body": {
+    "_id": "id-106",
+    "timestamp": "18ec33c21223e729",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j106",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000507",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60037,
+   "kind": "message",
+   "body": {
+    "_id": "id-107",
+    "timestamp": "18ec33c212426baa",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j107",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000507",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60040,
+   "kind": "message",
+   "body": {
+    "_id": "id-108",
+    "timestamp": "18ec33c21270326b",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j108",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000508",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60042,
+   "kind": "message",
+   "body": {
+    "_id": "id-109",
+    "timestamp": "18ec33c2128eb6ec",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j109",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000508",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60045,
+   "kind": "message",
+   "body": {
+    "_id": "id-110",
+    "timestamp": "18ec33c212bc7dad",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j110",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000509",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60047,
+   "kind": "message",
+   "body": {
+    "_id": "id-111",
+    "timestamp": "18ec33c212db022e",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j111",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000509",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60050,
+   "kind": "message",
+   "body": {
+    "_id": "id-112",
+    "timestamp": "18ec33c21308c8ef",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j112",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050a",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60052,
+   "kind": "message",
+   "body": {
+    "_id": "id-113",
+    "timestamp": "18ec33c213274d70",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j113",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050a",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60055,
+   "kind": "message",
+   "body": {
+    "_id": "id-114",
+    "timestamp": "18ec33c213551431",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j114",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050b",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60057,
+   "kind": "message",
+   "body": {
+    "_id": "id-115",
+    "timestamp": "18ec33c2137398b2",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j115",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050b",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60060,
+   "kind": "message",
+   "body": {
+    "_id": "id-116",
+    "timestamp": "18ec33c213a15f73",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j116",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050c",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60062,
+   "kind": "message",
+   "body": {
+    "_id": "id-117",
+    "timestamp": "18ec33c213bfe3f4",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j117",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050c",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60065,
+   "kind": "message",
+   "body": {
+    "_id": "id-118",
+    "timestamp": "18ec33c213edaab5",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j118",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050d",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60067,
+   "kind": "message",
+   "body": {
+    "_id": "id-119",
+    "timestamp": "18ec33c2140c2f36",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j119",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050d",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60070,
+   "kind": "message",
+   "body": {
+    "_id": "id-120",
+    "timestamp": "18ec33c21439f5f7",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j120",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050e",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60072,
+   "kind": "message",
+   "body": {
+    "_id": "id-121",
+    "timestamp": "18ec33c214587a78",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j121",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050e",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60075,
+   "kind": "message",
+   "body": {
+    "_id": "id-122",
+    "timestamp": "18ec33c214864139",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j122",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60077,
+   "kind": "message",
+   "body": {
+    "_id": "id-123",
+    "timestamp": "18ec33c214a4c5ba",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j123",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00050f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60080,
+   "kind": "message",
+   "body": {
+    "_id": "id-124",
+    "timestamp": "18ec33c214d28c7b",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j124",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000510",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60082,
+   "kind": "message",
+   "body": {
+    "_id": "id-125",
+    "timestamp": "18ec33c214f110fc",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j125",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000510",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60085,
+   "kind": "message",
+   "body": {
+    "_id": "id-126",
+    "timestamp": "18ec33c2151ed7bd",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j126",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000511",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60087,
+   "kind": "message",
+   "body": {
+    "_id": "id-127",
+    "timestamp": "18ec33c2153d5c3e",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j127",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000511",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60090,
+   "kind": "message",
+   "body": {
+    "_id": "id-128",
+    "timestamp": "18ec33c2156b22ff",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j128",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000512",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60092,
+   "kind": "message",
+   "body": {
+    "_id": "id-129",
+    "timestamp": "18ec33c21589a780",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j129",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000512",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60095,
+   "kind": "message",
+   "body": {
+    "_id": "id-130",
+    "timestamp": "18ec33c215b76e41",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j130",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000513",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60097,
+   "kind": "message",
+   "body": {
+    "_id": "id-131",
+    "timestamp": "18ec33c215d5f2c2",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j131",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000513",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60100,
+   "kind": "message",
+   "body": {
+    "_id": "id-132",
+    "timestamp": "18ec33c21603b983",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j132",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000514",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60102,
+   "kind": "message",
+   "body": {
+    "_id": "id-133",
+    "timestamp": "18ec33c216223e04",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j133",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000514",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60105,
+   "kind": "message",
+   "body": {
+    "_id": "id-134",
+    "timestamp": "18ec33c2165004c5",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j134",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000515",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60107,
+   "kind": "message",
+   "body": {
+    "_id": "id-135",
+    "timestamp": "18ec33c2166e8946",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j135",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000515",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60110,
+   "kind": "message",
+   "body": {
+    "_id": "id-136",
+    "timestamp": "18ec33c2169c5007",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j136",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000516",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60112,
+   "kind": "message",
+   "body": {
+    "_id": "id-137",
+    "timestamp": "18ec33c216bad488",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j137",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000516",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60115,
+   "kind": "message",
+   "body": {
+    "_id": "id-138",
+    "timestamp": "18ec33c216e89b49",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j138",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000517",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60117,
+   "kind": "message",
+   "body": {
+    "_id": "id-139",
+    "timestamp": "18ec33c217071fca",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j139",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000517",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60120,
+   "kind": "message",
+   "body": {
+    "_id": "id-140",
+    "timestamp": "18ec33c21734e68b",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j140",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000518",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60122,
+   "kind": "message",
+   "body": {
+    "_id": "id-141",
+    "timestamp": "18ec33c217536b0c",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j141",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000518",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60125,
+   "kind": "message",
+   "body": {
+    "_id": "id-142",
+    "timestamp": "18ec33c2178131cd",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j142",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000519",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60127,
+   "kind": "message",
+   "body": {
+    "_id": "id-143",
+    "timestamp": "18ec33c2179fb64e",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j143",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000519",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60130,
+   "kind": "message",
+   "body": {
+    "_id": "id-144",
+    "timestamp": "18ec33c217cd7d0f",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j144",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051a",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60132,
+   "kind": "message",
+   "body": {
+    "_id": "id-145",
+    "timestamp": "18ec33c217ec0190",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j145",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051a",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60135,
+   "kind": "message",
+   "body": {
+    "_id": "id-146",
+    "timestamp": "18ec33c21819c851",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j146",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051b",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60137,
+   "kind": "message",
+   "body": {
+    "_id": "id-147",
+    "timestamp": "18ec33c218384cd2",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j147",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051b",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60140,
+   "kind": "message",
+   "body": {
+    "_id": "id-148",
+    "timestamp": "18ec33c218661393",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j148",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051c",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60142,
+   "kind": "message",
+   "body": {
+    "_id": "id-149",
+    "timestamp": "18ec33c218849814",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j149",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051c",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60145,
+   "kind": "message",
+   "body": {
+    "_id": "id-150",
+    "timestamp": "18ec33c218b25ed5",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j150",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051d",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60147,
+   "kind": "message",
+   "body": {
+    "_id": "id-151",
+    "timestamp": "18ec33c218d0e356",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j151",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051d",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60150,
+   "kind": "message",
+   "body": {
+    "_id": "id-152",
+    "timestamp": "18ec33c218feaa17",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j152",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051e",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60152,
+   "kind": "message",
+   "body": {
+    "_id": "id-153",
+    "timestamp": "18ec33c2191d2e98",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j153",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051e",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60155,
+   "kind": "message",
+   "body": {
+    "_id": "id-154",
+    "timestamp": "18ec33c2194af559",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j154",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60157,
+   "kind": "message",
+   "body": {
+    "_id": "id-155",
+    "timestamp": "18ec33c2196979da",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j155",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00051f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60160,
+   "kind": "message",
+   "body": {
+    "_id": "id-156",
+    "timestamp": "18ec33c21997409b",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j156",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000520",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60162,
+   "kind": "message",
+   "body": {
+    "_id": "id-157",
+    "timestamp": "18ec33c219b5c51c",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j157",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000520",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60165,
+   "kind": "message",
+   "body": {
+    "_id": "id-158",
+    "timestamp": "18ec33c219e38bdd",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j158",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000521",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60167,
+   "kind": "message",
+   "body": {
+    "_id": "id-159",
+    "timestamp": "18ec33c21a02105e",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j159",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000521",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60170,
+   "kind": "message",
+   "body": {
+    "_id": "id-160",
+    "timestamp": "18ec33c21a2fd71f",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j160",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000522",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60172,
+   "kind": "message",
+   "body": {
+    "_id": "id-161",
+    "timestamp": "18ec33c21a4e5ba0",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j161",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000522",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60175,
+   "kind": "message",
+   "body": {
+    "_id": "id-162",
+    "timestamp": "18ec33c21a7c2261",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j162",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000523",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60177,
+   "kind": "message",
+   "body": {
+    "_id": "id-163",
+    "timestamp": "18ec33c21a9aa6e2",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j163",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000523",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60180,
+   "kind": "message",
+   "body": {
+    "_id": "id-164",
+    "timestamp": "18ec33c21ac86da3",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j164",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000524",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60182,
+   "kind": "message",
+   "body": {
+    "_id": "id-165",
+    "timestamp": "18ec33c21ae6f224",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j165",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000524",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60185,
+   "kind": "message",
+   "body": {
+    "_id": "id-166",
+    "timestamp": "18ec33c21b14b8e5",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j166",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000525",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60187,
+   "kind": "message",
+   "body": {
+    "_id": "id-167",
+    "timestamp": "18ec33c21b333d66",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j167",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000525",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60190,
+   "kind": "message",
+   "body": {
+    "_id": "id-168",
+    "timestamp": "18ec33c21b610427",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j168",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000526",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60192,
+   "kind": "message",
+   "body": {
+    "_id": "id-169",
+    "timestamp": "18ec33c21b7f88a8",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j169",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000526",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 60195,
+   "kind": "message",
+   "body": {
+    "_id": "id-170",
+    "timestamp": "18ec33c21bad4f69",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j170",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000527",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 60197,
+   "kind": "message",
+   "body": {
+    "_id": "id-171",
+    "timestamp": "18ec33c21bcbd3ea",
+    "pool_name": "Pool Flood",
+    "height": 900001,
+    "job_id": "j171",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000527",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 61000,
+   "kind": "message",
+   "body": {
+    "_id": "id-11",
+    "timestamp": "18ec33c24ba8a20a",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j11",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000003",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 61200,
+   "kind": "message",
+   "body": {
+    "_id": "id-46",
+    "timestamp": "18ec33c25794642d",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j46",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000206",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 61300,
+   "kind": "message",
+   "body": {
+    "_id": "id-10",
+    "timestamp": "18ec33c25d8a4509",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j10",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000003",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 62000,
+   "kind": "message",
+   "body": {
+    "_id": "id-31",
+    "timestamp": "18ec33c287436c1e",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j31",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000104",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 62050,
+   "kind": "message",
+   "body": {
+    "_id": "id-32",
+    "timestamp": "18ec33c28a3e5c9f",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j32",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000104",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 62200,
+   "kind": "message",
+   "body": {
+    "_id": "id-12",
+    "timestamp": "18ec33c2932f2e0b",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j12",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000003",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 62400,
+   "kind": "message",
+   "body": {
+    "_id": "id-33",
+    "timestamp": "18ec33c29f1af020",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j33",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000105",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 65000,
+   "kind": "message",
+   "body": {
+    "_id": "id-90",
+    "timestamp": "18ec33c33a13ca59",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j90",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 65100,
+   "kind": "message",
+   "body": {
+    "_id": "id-91",
+    "timestamp": "18ec33c34009ab5a",
+    "pool_name": "Pool Hidden",
+    "height": 900001,
+    "job_id": "j91",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 71200,
+   "kind": "message",
+   "body": {
+    "_id": "id-47",
+    "timestamp": "18ec33c4aba0482e",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j47",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000207",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 77000,
+   "kind": "message",
+   "body": {
+    "_id": "id-34",
+    "timestamp": "18ec33c605554221",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j34",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000105",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 77050,
+   "kind": "message",
+   "body": {
+    "_id": "id-35",
+    "timestamp": "18ec33c6085032a2",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j35",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "4444444444444444444444444444444444444444444444444444444444444444",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000105",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 77400,
+   "kind": "message",
+   "body": {
+    "_id": "id-36",
+    "timestamp": "18ec33c61d2cc623",
+    "pool_name": "Pool Jobs",
+    "height": 900001,
+    "job_id": "j36",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "2222222222222222222222222222222222222222222222222222222222222222",
+     "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000106",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 78000,
+   "kind": "message",
+   "body": {
+    "_id": "id-79",
+    "timestamp": "18ec33c640f00c4e",
+    "pool_name": "Pool Legacy",
+    "height": 900001,
+    "job_id": "j79",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000300",
+    "clean_jobs": false,
+    "extranonce1": "abcd0123",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp"
+   }
+  },
+  {
+   "at": 79000,
+   "kind": "message",
+   "body": {
+    "_id": "id-83",
+    "timestamp": "18ec33c67c8ad652",
+    "pool_name": "Pool Single",
+    "height": 900001,
+    "job_id": "j83",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000403",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 81000,
+   "kind": "message",
+   "body": {
+    "_id": "id-14",
+    "timestamp": "18ec33c6f3c06a0d",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j14",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000004",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 81200,
+   "kind": "message",
+   "body": {
+    "_id": "id-48",
+    "timestamp": "18ec33c6ffac2c2f",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j48",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000208",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 81300,
+   "kind": "message",
+   "body": {
+    "_id": "id-13",
+    "timestamp": "18ec33c705a20d0c",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j13",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000004",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 82200,
+   "kind": "message",
+   "body": {
+    "_id": "id-15",
+    "timestamp": "18ec33c73b46f60e",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j15",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000004",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 91200,
+   "kind": "message",
+   "body": {
+    "_id": "id-49",
+    "timestamp": "18ec33c953b81030",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j49",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000209",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 101000,
+   "kind": "message",
+   "body": {
+    "_id": "id-17",
+    "timestamp": "18ec33cb9bd83210",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j17",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000005",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 101200,
+   "kind": "message",
+   "body": {
+    "_id": "id-50",
+    "timestamp": "18ec33cba7c3f431",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j50",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020a",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 101300,
+   "kind": "message",
+   "body": {
+    "_id": "id-16",
+    "timestamp": "18ec33cbadb9d50f",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j16",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000005",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 102200,
+   "kind": "message",
+   "body": {
+    "_id": "id-18",
+    "timestamp": "18ec33cbe35ebe11",
+    "pool_name": "Pool Copies",
+    "height": 900001,
+    "job_id": "j18",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000005",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 111200,
+   "kind": "message",
+   "body": {
+    "_id": "id-51",
+    "timestamp": "18ec33cdfbcfd832",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j51",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020b",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 121200,
+   "kind": "message",
+   "body": {
+    "_id": "id-52",
+    "timestamp": "18ec33d04fdbbc33",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j52",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020c",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 130000,
+   "kind": "message",
+   "body": {
+    "_id": "id-73",
+    "timestamp": "18ec33d25c611448",
+    "pool_name": "Pool Copies",
+    "height": 900002,
+    "job_id": "j73",
+    "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee2a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site2",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 130050,
+   "kind": "message",
+   "body": {
+    "type": "block",
+    "id": "b-900001",
+    "timestamp": "2026-11-28T12:02:10.050Z",
+    "data": {
+     "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "height": 900001,
+     "timestamp": "2026-11-28T12:02:10.000Z",
+     "mining_pool": {
+      "id": 1,
+      "name": "Pool Copies"
+     },
+     "analysis": {}
+    }
+   }
+  },
+  {
+   "at": 130100,
+   "kind": "message",
+   "body": {
+    "_id": "id-74",
+    "timestamp": "18ec33d26256f549",
+    "pool_name": "Pool Copies",
+    "height": 900002,
+    "job_id": "j74",
+    "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 130200,
+   "kind": "message",
+   "body": {
+    "_id": "id-75",
+    "timestamp": "18ec33d2684cd64a",
+    "pool_name": "Pool Copies",
+    "height": 900002,
+    "job_id": "j75",
+    "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "1111111111111111111111111111111111111111111111111111111111111111"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000000",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 131200,
+   "kind": "message",
+   "body": {
+    "_id": "id-53",
+    "timestamp": "18ec33d2a3e7a034",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j53",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020d",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 135000,
+   "kind": "join"
+  },
+  {
+   "at": 141200,
+   "kind": "message",
+   "body": {
+    "_id": "id-54",
+    "timestamp": "18ec33d4f7f38435",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j54",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020e",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 150500,
+   "kind": "message",
+   "body": {
+    "_id": "id-55",
+    "timestamp": "18ec33d722464136",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j55",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 151200,
+   "kind": "message",
+   "body": {
+    "_id": "id-56",
+    "timestamp": "18ec33d74bff6837",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j56",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a00020f",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 160500,
+   "kind": "message",
+   "body": {
+    "_id": "id-57",
+    "timestamp": "18ec33d976522538",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j57",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000210",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 161200,
+   "kind": "message",
+   "body": {
+    "_id": "id-58",
+    "timestamp": "18ec33d9a00b4c39",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j58",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000210",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 170500,
+   "kind": "message",
+   "body": {
+    "_id": "id-59",
+    "timestamp": "18ec33dbca5e093a",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j59",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000211",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 171200,
+   "kind": "message",
+   "body": {
+    "_id": "id-60",
+    "timestamp": "18ec33dbf417303b",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j60",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000211",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 180500,
+   "kind": "message",
+   "body": {
+    "_id": "id-61",
+    "timestamp": "18ec33de1e69ed3c",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j61",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000212",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 181200,
+   "kind": "message",
+   "body": {
+    "_id": "id-62",
+    "timestamp": "18ec33de4823143d",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j62",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000212",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 190500,
+   "kind": "message",
+   "body": {
+    "_id": "id-63",
+    "timestamp": "18ec33e07275d13e",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j63",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000213",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 191200,
+   "kind": "message",
+   "body": {
+    "_id": "id-64",
+    "timestamp": "18ec33e09c2ef83f",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j64",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000213",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 200000,
+   "kind": "leave"
+  },
+  {
+   "at": 200500,
+   "kind": "message",
+   "body": {
+    "_id": "id-65",
+    "timestamp": "18ec33e2c681b540",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j65",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000214",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 201200,
+   "kind": "message",
+   "body": {
+    "_id": "id-66",
+    "timestamp": "18ec33e2f03adc41",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j66",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000214",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 210500,
+   "kind": "message",
+   "body": {
+    "_id": "id-67",
+    "timestamp": "18ec33e51a8d9942",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j67",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000215",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 211200,
+   "kind": "message",
+   "body": {
+    "_id": "id-68",
+    "timestamp": "18ec33e54446c043",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j68",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000215",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 220500,
+   "kind": "message",
+   "body": {
+    "_id": "id-69",
+    "timestamp": "18ec33e76e997d44",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j69",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000216",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 221200,
+   "kind": "message",
+   "body": {
+    "_id": "id-70",
+    "timestamp": "18ec33e79852a445",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j70",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000216",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  },
+  {
+   "at": 230500,
+   "kind": "message",
+   "body": {
+    "_id": "id-71",
+    "timestamp": "18ec33e9c2a56146",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j71",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "5555555555555555555555555555555555555555555555555555555555555555"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000217",
+    "clean_jobs": false,
+    "extranonce1": "eeee1a00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "a"
+   }
+  },
+  {
+   "at": 231200,
+   "kind": "message",
+   "body": {
+    "_id": "id-72",
+    "timestamp": "18ec33e9ec5e8847",
+    "pool_name": "Pool Outage",
+    "height": 900001,
+    "job_id": "j72",
+    "prev_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coinbase1": "01000000cccccccc",
+    "coinbase2": "dddddddd00000000",
+    "merkle_branches": [
+     "6666666666666666666666666666666666666666666666666666666666666666"
+    ],
+    "version": "20000000",
+    "nbits": "1702c4e4",
+    "ntime": "6a000217",
+    "clean_jobs": false,
+    "extranonce1": "eeee1b00",
+    "extranonce2_length": 8,
+    "lat_ms": 12.5,
+    "lat_m": "tcp",
+    "site": "site1",
+    "replica": "b"
+   }
+  }
+ ]
+}

@@ -92,6 +92,17 @@ function compareSource(aSite: string, aReplica: string, bSite: string, bReplica:
   return 0;
 }
 
+/**
+ * The exact-copy key of a template within its pool and height: prev_hash, merkle_branches, version, nbits and ntime as
+ * published (strings, the branch list in order; no tolerance), as its SHA-256 (32 bytes instead of ~1 KB with a dozen
+ * branches; a collision is computationally infeasible, so this is still an exact match).
+ */
+export function templateKey(t: StreamTemplateFields): string {
+  return createHash("sha256")
+    .update(JSON.stringify([t.prev_hash, t.merkle_branches, t.version, t.nbits, t.ntime]))
+    .digest("base64");
+}
+
 export class StreamTemplateDedup {
   private readonly opts: StreamDedupOptions;
   private readonly pools = new Map<string, PoolState>();
@@ -124,12 +135,8 @@ export class StreamTemplateDedup {
       return false;
     }
 
-    // Exact copies among forwarded templates. Exact, unambiguous key: the values as published (strings, the branch
-    // list in order), stored as its SHA-256 (32 bytes instead of ~1 KB with a dozen branches; a collision is
-    // computationally infeasible, so this is still an exact match).
-    const key = createHash("sha256")
-      .update(JSON.stringify([t.prev_hash, t.merkle_branches, t.version, t.nbits, t.ntime]))
-      .digest("base64");
+    // Exact copies among forwarded templates (templateKey; the pool and height are part of the state's path).
+    const key = templateKey(t);
     const keys = this.height(pool, t.height);
     let s = keys.get(key);
     if (s === undefined) {

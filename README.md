@@ -350,7 +350,7 @@ Read-only, served by `web/app/api/` on any deployment (e.g. `https://stratum.wor
 - `{"type":"connection_copy","pool_name":…,"connection":"b","height":H}`: that connection's latest template is an exact copy again, or it is now the connection the default stream shows. Its distinct work has ended.
 - `{"type":"connection_burst","pool_name":…,"connection":"b","suppressed":N,"first_ms":…,"last_ms":…}`: like `burst`, for that connection's messages, which have their own rate.
 
-`connection` is the pool's connection ranked by (site, replica): `a`, `b`, … as on the height page. It never changes while another connection is down. The first 10 s after the server's consumer starts aren't judged.
+`connection` is the pool's connection ranked by (site, replica) over every connection it has had, as on the height page: `a`, `b`, …. A retired connection keeps its letter, so a pool's live connections can start at `b`, and a letter never changes while another connection is down. The first 10 s after the server's consumer starts aren't judged.
 
 ## Metrics
 

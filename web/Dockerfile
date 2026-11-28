@@ -24,6 +24,8 @@ WORKDIR /app
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json* ./
+# next start reads next.config.mjs at runtime (expireTime, experimental.isrFlushToDisk); without it, Next's defaults apply
+COPY --from=builder /app/next.config.mjs ./next.config.mjs
 
 # Install production dependencies only if in production
 ARG ENVIRONMENT=production
